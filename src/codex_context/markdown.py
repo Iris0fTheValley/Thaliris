@@ -9,6 +9,7 @@ import re
 import subprocess
 
 REQUIRED = ("Evidence", "Revision", "Status", "Applicability", "Confidence")
+OPTIONAL_LISTS = ("Audience", "Topics", "Symbols")
 # STALE is an effective runtime state, never a captured historical value.
 CONFIDENCE = {"CONFIRMED", "SUPPORTED", "UNVERIFIED"}
 STATUS = {"DRAFT", "ACTIVE", "SUPERSEDED", "DONE"}
@@ -45,6 +46,11 @@ def parse(path: Path) -> Entry:
         raise ValueError(f"{path}: required metadata invalid")
     if not isinstance(meta["Revision"], str) or not re.fullmatch(r"[1-9][0-9]*", meta["Revision"]):
         raise ValueError(f"{path}: Revision must be a positive integer")
+    for key in OPTIONAL_LISTS:
+        if key in meta and (not isinstance(meta[key], list) or not all(isinstance(item, str) and item for item in meta[key])):
+            raise ValueError(f"{path}: {key} must be a JSON string list")
+    if "Audience" in meta and not set(meta["Audience"]) <= {"all", "controller", "sol-high", "luna", "terra-implementer", "terra-reviewer"}:
+        raise ValueError(f"{path}: Audience contains an unknown role")
     return Entry(path, meta, text[end + 5:])
 
 

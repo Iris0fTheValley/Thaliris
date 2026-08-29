@@ -8,7 +8,7 @@ import subprocess
 import tomllib
 
 from .models import ContextConfig
-from .core import MANAGED_END, MANAGED_START, entries, milestone_check
+from .core import MANAGED_END, MANAGED_START, entries, milestone_check, _load_state
 
 UNKNOWN = "UNKNOWN"
 
@@ -24,7 +24,7 @@ def _codex_config() -> tuple[dict[str, object], bool]:
 
 
 def _states(configured: str = UNKNOWN, enabled: str = UNKNOWN) -> dict[str, str]:
-    return {"configured": configured, "enabled": enabled, "authorized": UNKNOWN, "running": UNKNOWN, "healthy": UNKNOWN}
+    return {"configured": configured, "enabled": enabled}
 
 
 def _version(command: str) -> str:
@@ -88,4 +88,14 @@ def report(root: Path) -> dict[str, object]:
             agents_state = UNKNOWN
     else:
         agents_state = "NO"
-    return {"ok": True, "codex": {"version": _version("codex"), "model": model, "reasoning": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": _states(), "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}
+    task = {"present": "NO", "valid": UNKNOWN, "status": UNKNOWN, "revision": UNKNOWN}
+    if (root / ".context" / "state.json").is_file():
+        task["present"] = "YES"
+        try:
+            current = _load_state(root)
+            task.update({"valid": "YES", "status": current["status"], "revision": current["revision"]})
+        except ValueError:
+            task["valid"] = "NO"
+        except OSError:
+            pass
+    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}

@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from .core import init, migrate, milestone_check, prepare, rollback, stale, uninstall
+from .core import init, migrate, milestone_check, prepare, rollback, stale, uninstall, task_close, task_show, task_start, task_update
 from .doctor import report
 
 
@@ -25,8 +25,19 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("init", "migrate", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
         sub.add_parser(name)
     q = sub.add_parser("prepare")
-    q.add_argument("task")
+    q.add_argument("task", nargs="?")
     q.add_argument("--role", required=True, choices=("sol-high", "luna", "terra-implementer", "terra-reviewer"))
+    q = sub.add_parser("task-start")
+    q.add_argument("goal")
+    q.add_argument("--milestone")
+    q.add_argument("--input")
+    q = sub.add_parser("task-update")
+    q.add_argument("--role", required=True, choices=("controller", "sol-high", "luna", "terra-implementer", "terra-reviewer"))
+    q.add_argument("--base-revision", required=True, type=int)
+    q.add_argument("--input", required=True)
+    sub.add_parser("task-show")
+    q = sub.add_parser("task-close")
+    q.add_argument("--base-revision", required=True, type=int)
     q = sub.add_parser("rollback")
     q.add_argument("backup")
     sub.add_parser("version")
@@ -51,6 +62,10 @@ def main(argv: list[str] | None = None) -> int:
             data = stale(root); out = {"ok": data["ok"], "entries": len(data["entries"]), "stale": data["stale"]}
         elif args.command == "milestone-check": out = milestone_check(root)
         elif args.command == "prepare": out = prepare(root, args.task, args.role)
+        elif args.command == "task-start": out = task_start(root, args.goal, args.milestone, args.input)
+        elif args.command == "task-update": out = task_update(root, args.role, args.base_revision, args.input)
+        elif args.command == "task-show": out = task_show(root)
+        elif args.command == "task-close": out = task_close(root, args.base_revision)
         elif args.command == "rollback": out = rollback(root, args.backup)
         elif args.command == "uninstall": out = uninstall(root)
         else: out = {"ok": True, "version": __version__}

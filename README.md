@@ -1,4 +1,4 @@
-# codex-context
+# Thaliris
 
 [English](README.en.md)
 
@@ -9,7 +9,7 @@
 
 注意力才是最贵资源
 
-`codex-context` 帮助多代理编码工作流把正确的信息放入正确的推理上下文，同时避免把仓库变成 Agent Framework。
+`Thaliris` 帮助多代理编码工作流把正确的信息放入正确的推理上下文，同时避免把仓库变成 Agent Framework。
 
 它提供：
 
@@ -60,7 +60,7 @@ Codex 仍然是 runtime 和 Controller。源代码、Git、测试、编译器和
 
 那么它所解决的问题，已经不同于让代理根据必要证据专注回答一个推理问题。
 
-`codex-context` 建立在一个简单理念之上：
+`Thaliris` 建立在一个简单理念之上：
 
 > **保留有用信息，但不强迫每个角色携带每一条信息。**
 
@@ -122,7 +122,7 @@ Codex 仍然是 runtime 和 Controller。源代码、Git、测试、编译器和
     → 做什么 + 事实 + 硬约束
 ```
 
-因此，`codex-context` 不会尝试给每个代理提供相同的提示词。
+因此，`Thaliris` 不会尝试给每个代理提供相同的提示词。
 
 调查和机械验证可以使用明确的 schema 与流程。
 
@@ -386,7 +386,7 @@ Controller 决策
 直接从仓库安装：
 
 ```bash
-uv tool install git+https://github.com/Iris0fTheValley/codex-context
+uv tool install git+https://github.com/Iris0fTheValley/Thaliris
 ```
 
 接入现有 Git 仓库：
@@ -400,8 +400,8 @@ context doctor --pretty
 用于本地开发：
 
 ```bash
-git clone https://github.com/Iris0fTheValley/codex-context
-cd codex-context
+git clone https://github.com/Iris0fTheValley/Thaliris
+cd Thaliris
 
 uv run --extra test pytest
 uv run context version
@@ -413,11 +413,11 @@ uv run context version
 
 如果 Codex 已加载相应的 AGENTS.md 规则，通常不需要手动为每个项目执行初始化。
 
-在已有 Git 仓库中开始实质性工作前，Agent 会先检查 codex-context 控制层：
+在已有 Git 仓库中开始实质性工作前，Agent 会先检查 Thaliris 控制层：
 
 Git repository
       ↓
-codex-context ready?
+Thaliris ready?
       ├─ no  → context init
       ├─ old → context migrate
       └─ yes → continue
@@ -426,9 +426,9 @@ context doctor --pretty
       ↓
 normal task routing
 
-只有在控制层可用后，才进入调查、子代理委派和实质性修改。非 Git 工作区不会仅为了启用 codex-context 而自动执行 git init。
+只有在控制层可用后，才进入调查、子代理委派和实质性修改。非 Git 工作区不会仅为了启用 Thaliris 而自动执行 git init。
 
-这使 codex-context 可以作为项目工作的透明 bootstrap 层：用户仍然正常向 Codex 提交任务，而无需手动管理每次初始化。
+这使 Thaliris 可以作为项目工作的透明 bootstrap 层：用户仍然正常向 Codex 提交任务，而无需手动管理每次初始化。
 
 
 
@@ -674,7 +674,7 @@ verification.md
 
 ## 可选工具
 
-`codex-context` 可以与下列优化工具共存：
+`Thaliris` 可以与下列优化工具共存：
 
 | 工具        | 预期用途                       |
 | ----------- | ------------------------------ |
@@ -684,7 +684,7 @@ verification.md
 
 这些工具都是可选的。
 
-`codex-context` 不会替代它们的数据库，也不会编排它们的生命周期。
+`Thaliris` 不会替代它们的数据库，也不会编排它们的生命周期。
 
 如果它们不可用，请使用原生的源代码检查、Git、搜索、编译器、测试和运行时行为。
 
@@ -747,7 +747,7 @@ context uninstall
 
 ## 本项目不是什么
 
-`codex-context` 有意**不做**：
+`Thaliris` 有意**不做**：
 
 * Agent runtime；
 * 工作流引擎；

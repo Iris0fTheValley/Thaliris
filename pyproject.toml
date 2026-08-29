@@ -3,13 +3,13 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "codex-context"
+name = "thaliris"
 version = "0.2.0"
-description = "Git-native context packs for Codex workflows"
+description = "Thaliris: Git-native context packs for Codex workflows"
 requires-python = ">=3.11"
 readme = "README.md"
 license = "MIT"
-authors = [{name = "codex-context contributors"}]
+authors = [{name = "Thaliris contributors"}]
 keywords = ["codex", "context", "memory", "multi-agent"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -19,18 +19,21 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/Iris0fTheValley/codex-context"
-Issues = "https://github.com/Iris0fTheValley/codex-context/issues"
+Repository = "https://github.com/Iris0fTheValley/Thaliris"
+Issues = "https://github.com/Iris0fTheValley/Thaliris/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
 
 [project.scripts]
-context = "codex_context.cli:main"
+context = "thaliris.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/codex_context"]
+packages = ["src/thaliris"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/HANDOFF.md"]

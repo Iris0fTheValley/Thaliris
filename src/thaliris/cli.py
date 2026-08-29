@@ -18,7 +18,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = _Parser(prog="context")
+    p = _Parser(prog="context", description="Thaliris: Git-native context packs for Codex workflows")
     p.add_argument("--pretty", action="store_true")
     p.add_argument("--root", type=Path, default=Path.cwd())
     sub = p.add_subparsers(dest="command", required=True)

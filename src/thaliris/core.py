@@ -18,13 +18,19 @@ import uuid
 from .markdown import Entry, evidence_status, parse
 from .models import ContextConfig
 
-MANAGED_START = "<!-- codex-context:begin -->"
-MANAGED_END = "<!-- codex-context:end -->"
-IGNORE_START = "# codex-context:begin"
-IGNORE_END = "# codex-context:end"
+MANAGED_START = "<!-- thaliris:begin -->"
+MANAGED_END = "<!-- thaliris:end -->"
+IGNORE_START = "# thaliris:begin"
+IGNORE_END = "# thaliris:end"
+# Accepted only so repositories initialized before the rename can be upgraded
+# or uninstalled without losing content outside the managed block.
+LEGACY_MANAGED_START = "<!-- codex-context:begin -->"
+LEGACY_MANAGED_END = "<!-- codex-context:end -->"
+LEGACY_IGNORE_START = "# codex-context:begin"
+LEGACY_IGNORE_END = "# codex-context:end"
 IGNORE_RULES = (".context/backups/", ".context/state.json", ".context/context.lock")
 MANAGED = f"""{MANAGED_START}
-## Codex context
+## Thaliris
 
 Sol mid is Controller: only Controller delegates, promotes findings, and maintains task control state; children MUST NOT delegate (default concurrency: 1). Luna investigator appends raw findings; before high reasoning or when findings accumulate, a fresh Luna curator maintains the bounded snapshot. Terra implements and independently reviews. Raw investigation/review history never enters Sol high. Sol high reasons only; it does not maintain task state. Use the Microtask fast path. Route memory and milestones through INDEX files. Use `context task-*` for concise, evidence-referenced handoffs—never transcripts or raw tool/test output. Current source/Git/tests are the correctness core; adapters MUST fall back to native behavior.
 {MANAGED_END}
@@ -174,16 +180,32 @@ def _template_files(*, include_routing: bool = True, include_kind: bool = True, 
     }
 
 
+def _managed_span(current: str, start_marker: str, end_marker: str, legacy_start: str, legacy_end: str, label: str) -> tuple[int, int] | None:
+    counts = tuple(current.count(marker) for marker in (start_marker, end_marker, legacy_start, legacy_end))
+    if counts == (0, 0, 0, 0):
+        return None
+    if counts == (1, 1, 0, 0):
+        start, end_start = current.index(start_marker), current.index(end_marker)
+        end = end_start + len(end_marker)
+    elif counts == (0, 0, 1, 1):
+        start, end_start = current.index(legacy_start), current.index(legacy_end)
+        end = end_start + len(legacy_end)
+    else:
+        raise ValueError(f"{label} has duplicate, mixed, or damaged managed markers")
+    if start >= end_start:
+        raise ValueError(f"{label} has duplicate, mixed, or damaged managed markers")
+    return start, end
+
+
 def _managed_agents(current: str) -> str:
-    begins, ends = current.count(MANAGED_START), current.count(MANAGED_END)
-    if begins != ends or begins > 1: raise ValueError("AGENTS.md has duplicate or damaged codex-context markers")
+    span = _managed_span(current, MANAGED_START, MANAGED_END, LEGACY_MANAGED_START, LEGACY_MANAGED_END, "AGENTS.md")
     newline = "\r\n" if "\r\n" in current else "\n"
     block = MANAGED.replace("\n", newline)
-    if begins == 0:
+    if span is None:
         if not current: return block
         separator = "" if current.endswith(("\n", "\r")) else newline
         return current + separator + block
-    start, end = current.index(MANAGED_START), current.index(MANAGED_END) + len(MANAGED_END)
+    start, end = span
     suffix = current[end:]
     if suffix.startswith("\r\n"): suffix = suffix[2:]
     elif suffix.startswith("\n"): suffix = suffix[1:]
@@ -191,15 +213,14 @@ def _managed_agents(current: str) -> str:
 
 
 def _managed_gitignore(current: str) -> str:
-    begins, ends = current.count(IGNORE_START), current.count(IGNORE_END)
-    if begins != ends or begins > 1: raise ValueError(".gitignore has duplicate or damaged codex-context markers")
-    if begins == 0 and set(IGNORE_RULES) <= set(current.splitlines()): return current
+    span = _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
+    if span is None and set(IGNORE_RULES) <= set(current.splitlines()): return current
     newline = "\r\n" if "\r\n" in current else "\n"
     block = newline.join((IGNORE_START, *IGNORE_RULES, IGNORE_END)) + newline
-    if begins == 0:
+    if span is None:
         separator = "" if not current or current.endswith(("\n", "\r")) else newline
         return current + separator + block
-    start, end = current.index(IGNORE_START), current.index(IGNORE_END) + len(IGNORE_END)
+    start, end = span
     suffix = current[end:]
     if suffix.startswith("\r\n"): suffix = suffix[2:]
     elif suffix.startswith("\n"): suffix = suffix[1:]
@@ -286,32 +307,42 @@ def rollback(root: Path, backup_id: str) -> dict[str, object]:
 
 def uninstall(root: Path) -> dict[str, object]:
     root = _repo_root(root)
+    # Validate before acquiring the operational lock: corrupt markers must fail
+    # without creating the tool-owned .context directory or lock file.
+    pre_agents = _safe(root, "AGENTS.md")
+    if pre_agents.is_file():
+        current = pre_agents.read_bytes().decode("utf-8")
+        _managed_span(current, MANAGED_START, MANAGED_END, LEGACY_MANAGED_START, LEGACY_MANAGED_END, "AGENTS.md")
+    pre_ignore = _safe(root, ".gitignore")
+    if pre_ignore.is_file():
+        current = pre_ignore.read_bytes().decode("utf-8")
+        _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
     with _lock(root):
         writes: dict[str, bytes] = {}; deletes: list[str] = []; kept: list[str] = []
         agents = _safe(root, "AGENTS.md")
         if agents.is_file():
             current = agents.read_bytes().decode("utf-8")
-            if MANAGED_START in current and MANAGED_END in current:
-                start, end = current.index(MANAGED_START), current.index(MANAGED_END) + len(MANAGED_END)
+            span = _managed_span(current, MANAGED_START, MANAGED_END, LEGACY_MANAGED_START, LEGACY_MANAGED_END, "AGENTS.md")
+            if span is not None:
+                start, end = span
                 suffix = current[end:]
                 if suffix.startswith("\r\n"): suffix = suffix[2:]
                 elif suffix.startswith("\n"): suffix = suffix[1:]
                 stripped = current[:start] + suffix
                 if stripped: writes["AGENTS.md"] = stripped.encode()
                 else: deletes.append("AGENTS.md")
-            elif MANAGED_START in current or MANAGED_END in current: kept.append("AGENTS.md")
         ignore = _safe(root, ".gitignore")
         if ignore.is_file():
             current = ignore.read_bytes().decode("utf-8")
-            if IGNORE_START in current and IGNORE_END in current:
-                start, end = current.index(IGNORE_START), current.index(IGNORE_END) + len(IGNORE_END)
+            span = _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
+            if span is not None:
+                start, end = span
                 suffix = current[end:]
                 if suffix.startswith("\r\n"): suffix = suffix[2:]
                 elif suffix.startswith("\n"): suffix = suffix[1:]
                 stripped = current[:start] + suffix
                 if stripped: writes[".gitignore"] = stripped.encode()
                 else: deletes.append(".gitignore")
-            elif IGNORE_START in current or IGNORE_END in current: kept.append(".gitignore")
         expected = _template_files() | {".context/config.json": ContextConfig().write(root)}
         for relative, template in expected.items():
             target = _safe(root, relative)

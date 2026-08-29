@@ -2,7 +2,7 @@
 
 ## Boundary
 
-`codex-context` is a deterministic file and routing layer around Codex. It does not execute agents, decide correctness, or replace the repository. The source tree, Git, compiler/type checker, tests, runtime, and freshly verified repo-owned memory are authoritative in that order.
+Thaliris is a deterministic file and routing layer around Codex. It does not execute agents, decide correctness, or replace the repository. The source tree, Git, compiler/type checker, tests, runtime, and freshly verified repo-owned memory are authoritative in that order.
 
 The system has three deliberately small layers:
 
@@ -50,7 +50,7 @@ Memory declares a `Kind` and `Audience` and is filtered per role; legacy entries
 - cachebro owns unchanged-read caching and delta production; this project does not duplicate its cache.
 - agentmemory is episodic and explicit-recall-only. Durable facts must be promoted into Git-owned memory and revalidated.
 
-These integrations are an awareness and policy boundary, not runtime orchestration: `codex-context` does not call their MCP tools while producing packs. Diagnostics report only directly observable states and preserve `UNKNOWN` for authorization, running, health, and subagent claims that cannot be proved.
+These integrations are an awareness and policy boundary, not runtime orchestration: Thaliris does not call their MCP tools while producing packs. Diagnostics report only directly observable states and preserve `UNKNOWN` for authorization, running, health, and subagent claims that cannot be proved.
 
 These choices borrow the useful ideas of structured project memory and source-linked invalidation without making `taichuy/agentMemory`, project-memory, PackMind, or Kage runtime dependencies. PackMind remains a future experiment only if real coding tasks demonstrate lower token use without lower downstream quality or weaker provenance. Kage's runtime is not used.
 

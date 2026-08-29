@@ -1,10 +1,10 @@
-# codex-context
+# Thaliris
 
 [中文](README.md)
 
 A lightweight, Git-native context and orchestration layer for Codex.
 
-`codex-context` helps multi-agent coding workflows keep the right information in the right reasoning context without turning the repository into an agent framework.
+Thaliris helps multi-agent coding workflows keep the right information in the right reasoning context without turning the repository into an agent framework.
 
 It provides:
 
@@ -55,7 +55,7 @@ An agent asked to simultaneously:
 
 is solving a different problem from an agent given a focused reasoning question with the necessary evidence.
 
-`codex-context` is built around a simple idea:
+Thaliris is built around a simple idea:
 
 > **Preserve useful information without forcing every role to carry every piece of information.**
 
@@ -117,7 +117,7 @@ strong reasoning model
     → WHAT + FACTS + HARD CONSTRAINTS
 ```
 
-`codex-context` therefore does not try to give every agent the same prompt.
+Thaliris therefore does not try to give every agent the same prompt.
 
 Investigation and mechanical verification can use explicit schemas and procedures.
 
@@ -381,7 +381,7 @@ Python 3.11 or newer and Git are required.
 Install directly from the repository:
 
 ```bash
-uv tool install git+https://github.com/Iris0fTheValley/codex-context
+uv tool install git+https://github.com/Iris0fTheValley/Thaliris
 ```
 
 Attach it to an existing Git repository:
@@ -395,8 +395,8 @@ context doctor --pretty
 For local development:
 
 ```bash
-git clone https://github.com/Iris0fTheValley/codex-context
-cd codex-context
+git clone https://github.com/Iris0fTheValley/Thaliris
+cd Thaliris
 
 uv run --extra test pytest
 uv run context version
@@ -646,7 +646,7 @@ Existing user content outside the managed markers is preserved.
 
 ## Optional tools
 
-`codex-context` can coexist with optimization tools such as:
+Thaliris can coexist with optimization tools such as:
 
 | Tool        | Intended use                      |
 | ----------- | --------------------------------- |
@@ -656,7 +656,7 @@ Existing user content outside the managed markers is preserved.
 
 These tools are optional.
 
-`codex-context` does not replace their databases or orchestrate their lifecycle.
+Thaliris does not replace their databases or orchestrate their lifecycle.
 
 If they are unavailable, use native source inspection, Git, search, compilers, tests, and runtime behavior.
 
@@ -719,7 +719,7 @@ User-modified project memory is preserved rather than silently overwritten.
 
 ## What this project is not
 
-`codex-context` is intentionally **not**:
+Thaliris is intentionally **not**:
 
 * an agent runtime;
 * a workflow engine;

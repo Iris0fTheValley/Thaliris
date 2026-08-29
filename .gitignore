@@ -1,6 +1,8 @@
+# thaliris:begin
 .context/backups/
 .context/state.json
 .context/context.lock
+# thaliris:end
 .venv/
 __pycache__/
 .pytest_cache/

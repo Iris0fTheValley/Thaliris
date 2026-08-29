@@ -6,10 +6,10 @@ from pathlib import Path
 import subprocess
 import sys
 
-from codex_context.cli import main
-from codex_context import core
-from codex_context.markdown import parse
-from codex_context import doctor
+from thaliris.cli import main
+from thaliris import core
+from thaliris.markdown import parse
+from thaliris import doctor
 
 
 def run(capsys, root: Path, *args: str):
@@ -39,7 +39,7 @@ def test_init_preserves_crlf_outside_managed_block(tmp_path, capsys):
     assert code == 0 and first["changed"]
     rendered = (root / "AGENTS.md").read_bytes()
     assert rendered.startswith(original)
-    assert b"\r\n<!-- codex-context:end -->\r\n" in rendered
+    assert b"\r\n<!-- thaliris:end -->\r\n" in rendered
     assert b"\n" not in rendered.replace(b"\r\n", b"")
     assert subprocess.run(["git", "check-ignore", "-q", ".context/state.json"], cwd=root).returncode == 0
     code, second = run(capsys, root, "init")
@@ -53,6 +53,61 @@ def test_damaged_agents_markers_fail_without_mutation(tmp_path, capsys):
     code, result = run(capsys, root, "init")
     assert code == 2 and "damaged" in result["error"] and (root / "AGENTS.md").read_text() == source
     assert not (root / ".context").exists()
+
+
+def test_init_and_migrate_upgrade_legacy_markers_without_duplicates(tmp_path, capsys):
+    for command in ("init", "migrate"):
+        root = repo(tmp_path / command)
+        (root / "AGENTS.md").write_text(
+            "Keep.\n<!-- codex-context:begin -->\n## Codex context\nOld block.\n<!-- codex-context:end -->\n",
+            encoding="utf-8",
+        )
+        (root / ".gitignore").write_text(
+            "keep.me\n# codex-context:begin\n.context/backups/\n.context/state.json\n.context/context.lock\n# codex-context:end\n",
+            encoding="utf-8",
+        )
+        _, diagnostic = run(capsys, root, "doctor")
+        assert diagnostic["context"]["agents"] == "YES"
+        code, result = run(capsys, root, command)
+        assert code == 0 and result["changed"]
+        agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+        ignored = (root / ".gitignore").read_text(encoding="utf-8")
+        assert "Keep." in agents and "keep.me" in ignored
+        assert agents.count("<!-- thaliris:begin -->") == agents.count("<!-- thaliris:end -->") == 1
+        assert ignored.count("# thaliris:begin") == ignored.count("# thaliris:end") == 1
+        assert "codex-context:" not in agents and "codex-context:" not in ignored
+
+
+def test_uninstall_accepts_legacy_markers_and_damaged_markers_fail_closed(tmp_path, capsys):
+    legacy = repo(tmp_path / "legacy")
+    (legacy / "AGENTS.md").write_text(
+        "Keep.\n<!-- codex-context:begin -->\nOld block.\n<!-- codex-context:end -->\n",
+        encoding="utf-8",
+    )
+    (legacy / ".gitignore").write_text(
+        "keep.me\n# codex-context:begin\n.context/state.json\n# codex-context:end\n",
+        encoding="utf-8",
+    )
+    code, result = run(capsys, legacy, "uninstall")
+    assert code == 0 and result["changed"]
+    assert (legacy / "AGENTS.md").read_text(encoding="utf-8") == "Keep.\n"
+    assert (legacy / ".gitignore").read_text(encoding="utf-8") == "keep.me\n"
+
+    damaged = repo(tmp_path / "damaged")
+    source = "Keep.\n<!-- thaliris:begin -->\n<!-- codex-context:end -->\n"
+    (damaged / "AGENTS.md").write_text(source, encoding="utf-8")
+    code, result = run(capsys, damaged, "uninstall")
+    assert code == 2 and "damaged" in result["error"]
+    assert (damaged / "AGENTS.md").read_text(encoding="utf-8") == source
+    assert not (damaged / ".context").exists()
+
+    damaged_ignore = repo(tmp_path / "damaged-ignore")
+    ignore_source = "keep.me\n# thaliris:begin\n# codex-context:end\n"
+    (damaged_ignore / ".gitignore").write_text(ignore_source, encoding="utf-8")
+    code, result = run(capsys, damaged_ignore, "uninstall")
+    assert code == 2 and "damaged" in result["error"]
+    assert (damaged_ignore / ".gitignore").read_text(encoding="utf-8") == ignore_source
+    assert not (damaged_ignore / ".context").exists()
 
 
 def test_repo_root_and_rollback_guard(tmp_path, capsys):
@@ -257,7 +312,7 @@ def test_stale_applicability_does_not_become_modification_boundary(tmp_path, cap
 def test_console_pretty_after_command(tmp_path):
     root = repo(tmp_path)
     result = subprocess.run(
-        [sys.executable, "-m", "codex_context.cli", "--root", str(root), "doctor", "--pretty"],
+        [sys.executable, "-m", "thaliris.cli", "--root", str(root), "doctor", "--pretty"],
         capture_output=True,
         text=True,
         check=False,
@@ -265,6 +320,13 @@ def test_console_pretty_after_command(tmp_path):
     assert result.returncode == 0
     assert json.loads(result.stdout)["ok"]
     assert "\n" in result.stdout
+    help_result = subprocess.run(
+        [sys.executable, "-m", "thaliris.cli", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert help_result.returncode == 0 and "Thaliris" in help_result.stdout
 
 
 def test_milestone_directory_contract_and_path_escape(tmp_path, capsys):

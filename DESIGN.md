@@ -10,6 +10,8 @@ The system has three deliberately small layers:
 2. **Transient task state:** one ignored, revision-checked `.context/state.json` carrying structured claims and evidence references, never transcripts or raw exploration.
 3. **Optimization layer:** Serena navigation, cachebro read deltas, agentmemory episodic recall, and role-specific projections.
 
+An independent, optional **Intent Audit / Capture Plane** sits beside these layers. It is not part of the correctness core or control plane: ignored `.context/audit/` files contain only root prompts and actual delegation instructions needed to compare framing. They never enter task state, memory, milestones, or role projections.
+
 Deleting every optimization cache or losing every adapter must leave a correct native workflow. The acceptable degradation is additional reads and tokens, never weaker validation.
 
 ## Decisions
@@ -54,9 +56,21 @@ These integrations are an awareness and policy boundary, not runtime orchestrati
 
 These choices borrow the useful ideas of structured project memory and source-linked invalidation without making `taichuy/agentMemory`, project-memory, PackMind, or Kage runtime dependencies. PackMind remains a future experiment only if real coding tasks demonstrate lower token use without lower downstream quality or weaker provenance. Kage's runtime is not used.
 
+### Intent audit is a fail-open runtime adapter
+
+Initialization conservatively merges exact Thaliris command handlers into `.codex/hooks.json`, preserving user hook order and unknown fields; unsafe or malformed configurations are reported for manual handling rather than overwritten. The thin adapter uses `SessionStart` and `UserPromptSubmit` for root input, filtered `PostToolUse` events for real native delegation instructions, and root `Stop` for a one-shot tail audit. Capture and the Stop guard are isolated by `session_id` and `turn_id`; missing turn identity uses an explicit unknown-turn partition. Child events carrying `agent_id` are ignored. No transcript path, tool log, worker output, repository data, test output, or Controller reasoning is captured.
+
+A fresh, ephemeral Luna auditor receives only a fixed drift rubric plus captured prompt and delegation values as untrusted evidence. Strings are recorded as `AVAILABLE_UNVERIFIED`, while non-string or unavailable values remain `UNKNOWN`. Minimal tool-response flags classify dispatch as `ACCEPTED`, `REJECTED`, or `UNKNOWN`; rejected calls do not enter a batch, response bodies are never stored, and an unknown dispatch prevents `PASS`. Five new delegations form a checkpoint; omission findings are forbidden there because the turn may be incomplete. A failed or invalid checkpoint advances the cursor as an `UNKNOWN` attempt instead of retrying on the next delegation. Stop performs the final comparison and persists `final_attempted` before model execution. Before emitting a blocking drift, it stores a one-shot hash so the generated continuation prompt is ignored rather than captured as user intent. `PASS` and `UNKNOWN` produce no hook output; `DRIFT` alone emits a bounded finding, with Stop using one guarded continuation. Recursion is suppressed by `THALIRIS_INTENT_AUDIT_ACTIVE=1`.
+
+Each turn retains a bounded append-only view of up to 32 normalized audit results: mode, attempt number, categorical status, at most four short findings, fresh-verification state, and a short failure category. It never retains runner stdout, logs, error bodies, or tool-response content, and this trace is not part of any normal projection.
+
+The adapter trusts the Codex hook contract exposed by the official `/hooks` runtime boundary. Production has exactly one auditor path: a new built-in `codex exec --ephemeral --model gpt-5.6-luna` process from a temporary non-repository directory, with no environment or CLI runner override. Hook configuration, observed execution, root classification, payload fidelity, runner availability, and fresh execution are separate diagnostic claims. Encrypted/non-string fields and execution paths not validated by a live runtime probe remain `UNKNOWN`; mere string capture never upgrades payload fidelity, and test fakes cannot prove native-session freshness. Storage, runner, schema, and configuration failures exit successfully with no output, so deleting the capture plane can remove only supplemental protection, never native correctness.
+
 ## Mutations and recovery
 
 Initialization and uninstall acquire a non-blocking cross-process lock, write through same-directory temporary files, and use atomic replacement. Before mutation, the tool records prior bytes and expected written hashes in `.context/backups/`. Rollback refuses to overwrite a later user edit. Existing `AGENTS.md` and `.gitignore` content outside the managed markers is preserved.
+
+The same conservative ownership applies to `.codex/hooks.json`: init/migrate append missing exact handlers, repeated runs are idempotent, and uninstall removes only those handlers. Malformed or structurally unsafe hook files are left byte-for-byte unchanged and reported for manual migration.
 
 Transient task updates use the same lock and atomic replacement plus compare-and-swap revision checks. The single state file is ignored, size-bounded, schema-validated, and marked `DONE` on close; it has no event database or separate history store. Append-only semantics for raw investigation and reviewer findings, and additions-only immutable evidence identity, are enforced within the current task state; only bounded working snapshot/cursors and Controller Decision Context are replaceable. Projection computes effective stale/unknown state for raw and snapshot material without rewriting historical records. A later `task-start` replaces the completed task state.
 

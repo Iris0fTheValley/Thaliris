@@ -2,6 +2,7 @@
 .context/backups/
 .context/state.json
 .context/context.lock
+.context/audit/
 # thaliris:end
 .venv/
 __pycache__/

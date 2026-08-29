@@ -17,6 +17,7 @@ import uuid
 
 from .markdown import Entry, evidence_status, parse
 from .models import ContextConfig
+from .intent_audit import MANAGED_HOOKS_DESCRIPTION, merge_hooks, remove_hooks
 
 MANAGED_START = "<!-- thaliris:begin -->"
 MANAGED_END = "<!-- thaliris:end -->"
@@ -28,7 +29,7 @@ LEGACY_MANAGED_START = "<!-- codex-context:begin -->"
 LEGACY_MANAGED_END = "<!-- codex-context:end -->"
 LEGACY_IGNORE_START = "# codex-context:begin"
 LEGACY_IGNORE_END = "# codex-context:end"
-IGNORE_RULES = (".context/backups/", ".context/state.json", ".context/context.lock")
+IGNORE_RULES = (".context/backups/", ".context/state.json", ".context/context.lock", ".context/audit/")
 MANAGED = f"""{MANAGED_START}
 ## Thaliris
 
@@ -237,15 +238,28 @@ def init(root: Path) -> dict[str, object]:
     _managed_gitignore(pre_ignore.read_bytes().decode("utf-8") if pre_ignore.exists() else "")
     with _lock(root):
         files = {path: content for path, content in _template_files().items() if not _safe(root, path).exists()}
+        manual: list[str] = []
         agents = _safe(root, "AGENTS.md"); current = agents.read_bytes().decode("utf-8") if agents.exists() else ""
         rendered = _managed_agents(current)
         if current != rendered: files["AGENTS.md"] = rendered.encode()
         ignore = _safe(root, ".gitignore"); current_ignore = ignore.read_bytes().decode("utf-8") if ignore.exists() else ""
         rendered_ignore = _managed_gitignore(current_ignore)
         if current_ignore != rendered_ignore: files[".gitignore"] = rendered_ignore.encode()
+        hooks = _safe(root, ".codex/hooks.json")
+        if hooks.exists():
+            try:
+                hook_data = json.loads(hooks.read_text(encoding="utf-8"))
+                if not isinstance(hook_data, dict): raise ValueError("hooks root must be an object")
+                rendered_hooks, hooks_changed = merge_hooks(hook_data)
+                if hooks_changed: files[".codex/hooks.json"] = (json.dumps(rendered_hooks, ensure_ascii=False, indent=2) + "\n").encode()
+            except (OSError, ValueError, json.JSONDecodeError):
+                manual.append(".codex/hooks.json")
+        else:
+            rendered_hooks, _ = merge_hooks({"description": MANAGED_HOOKS_DESCRIPTION})
+            files[".codex/hooks.json"] = (json.dumps(rendered_hooks, ensure_ascii=False, indent=2) + "\n").encode()
         if not _safe(root, ".context/config.json").exists(): files[".context/config.json"] = ContextConfig().write(root)
-        if not files: return {"ok": True, "changed": False, "backup": None}
-        return {"ok": True, "changed": True, "backup": _apply_with_backup(root, files, [], "init"), "files": sorted(files)}
+        if not files: return {"ok": True, "changed": False, "backup": None, "manual_migration_required": manual}
+        return {"ok": True, "changed": True, "backup": _apply_with_backup(root, files, [], "init"), "files": sorted(files), "manual_migration_required": manual}
 
 
 def migrate(root: Path) -> dict[str, object]:
@@ -263,7 +277,7 @@ def migrate(root: Path) -> dict[str, object]:
         _template_files(include_routing=True, include_kind=True, decision_link=False),
     )
     writes: dict[str, bytes] = {}
-    manual: list[str] = []
+    manual: list[str] = list(result.get("manual_migration_required", []))
     with _lock(root):
         base = root / ".agent-memory"
         if base.is_dir():
@@ -318,7 +332,7 @@ def uninstall(root: Path) -> dict[str, object]:
         current = pre_ignore.read_bytes().decode("utf-8")
         _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
     with _lock(root):
-        writes: dict[str, bytes] = {}; deletes: list[str] = []; kept: list[str] = []
+        writes: dict[str, bytes] = {}; deletes: list[str] = []; kept: list[str] = []; manual: list[str] = []
         agents = _safe(root, "AGENTS.md")
         if agents.is_file():
             current = agents.read_bytes().decode("utf-8")
@@ -349,8 +363,25 @@ def uninstall(root: Path) -> dict[str, object]:
             if not target.is_file(): continue
             if _digest(target.read_bytes()) == _digest(template): deletes.append(relative)
             else: kept.append(relative)
-        if not writes and not deletes: return {"ok": True, "changed": False, "kept": sorted(set(kept)), "backup": None}
-        return {"ok": True, "changed": True, "kept": sorted(set(kept)), "backup": _apply_with_backup(root, writes, deletes, "uninstall"), "deleted": sorted(deletes)}
+        hooks = _safe(root, ".codex/hooks.json")
+        if hooks.is_file():
+            try:
+                hook_data = json.loads(hooks.read_text(encoding="utf-8"))
+                if not isinstance(hook_data, dict): raise ValueError("hooks root must be an object")
+                rendered_hooks, hooks_changed = remove_hooks(hook_data)
+                if hooks_changed:
+                    owned_empty = (
+                        hook_data.get("description") == MANAGED_HOOKS_DESCRIPTION
+                        and set(rendered_hooks) <= {"description", "hooks"}
+                        and rendered_hooks.get("description") == MANAGED_HOOKS_DESCRIPTION
+                        and rendered_hooks.get("hooks", {}) == {}
+                    )
+                    if owned_empty: deletes.append(".codex/hooks.json")
+                    else: writes[".codex/hooks.json"] = (json.dumps(rendered_hooks, ensure_ascii=False, indent=2) + "\n").encode()
+            except (OSError, ValueError, json.JSONDecodeError):
+                manual.append(".codex/hooks.json")
+        if not writes and not deletes: return {"ok": True, "changed": False, "kept": sorted(set(kept)), "backup": None, "manual_migration_required": manual}
+        return {"ok": True, "changed": True, "kept": sorted(set(kept)), "backup": _apply_with_backup(root, writes, deletes, "uninstall"), "deleted": sorted(deletes), "manual_migration_required": manual}
 
 
 def entries(root: Path) -> list[Entry]:

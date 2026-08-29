@@ -9,6 +9,7 @@ import sys
 from . import __version__
 from .core import init, migrate, milestone_check, prepare, rollback, stale, uninstall, task_close, task_show, task_start, task_update
 from .doctor import report
+from .intent_audit import handle_hook
 
 
 class _Parser(argparse.ArgumentParser):
@@ -41,6 +42,8 @@ def _parser() -> argparse.ArgumentParser:
     q = sub.add_parser("rollback")
     q.add_argument("backup")
     sub.add_parser("version")
+    q = sub.add_parser("audit-hook", help=argparse.SUPPRESS)
+    q.add_argument("event", choices=("SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"))
     return p
 
 
@@ -54,6 +57,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = _parser().parse_args(argv)
         root = args.root.resolve()
+        if args.command == "audit-hook":
+            try:
+                payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                payload = None
+            response = handle_hook(root, args.event, payload)
+            if response:
+                sys.stdout.write(response)
+            return 0
         if args.command == "init": out = init(root)
         elif args.command == "migrate": out = migrate(root)
         elif args.command == "doctor": out = report(root)

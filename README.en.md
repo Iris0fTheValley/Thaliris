@@ -795,6 +795,18 @@ The intended principle is narrower:
 
 ---
 
+## Intent Audit / Capture Plane
+
+`context init` conservatively merges Thaliris command hooks for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, and `Stop` into `.codex/hooks.json`. The side plane isolates each session and turn while recording root user input and the actual delegation instruction supplied to `spawn_agent`, `Agent`, or `followup_task` under the Git-ignored `.context/audit/`. It never captures child transcripts, worker output, Controller reasoning, repository content, or tool logs, and audit data never enters task state, memory, milestones, or ordinary role packs. Events without a `turn_id` use an explicit unknown-turn partition.
+
+Every five unaudited delegations not explicitly rejected starts a fresh Luna checkpoint audit; root Stop performs one final audit for each turn's tail batch. An explicitly failed tool response is excluded, explicit success is `ACCEPTED`, and an indeterminate response is `UNKNOWN` and cannot yield `PASS`. `PASS` and `UNKNOWN` are completely invisible to the Controller. Only `DRIFT` emits a very short hook finding. A failed checkpoint is still consumed as `UNKNOWN` so the next delegation does not immediately retry it. The Stop guard is persisted before the auditor runs, and the generated continuation prompt is ignored by an exact one-shot hash so it cannot loop or be mistaken for user input. Capture, configuration, and runner failures all fail open: the original workflow continues and only the supplemental audit protection is lost.
+
+Each turn retains at most 32 normalized `audit_results` containing mode, attempt, status, short findings, freshness, and a failure category. Runner stdout, error bodies, and tool-response bodies are never stored. These results exist only for audit traceability and are never projected to the Controller or another role pack.
+
+The integration trusts the Codex hook schema and root topology documented by the official `/hooks` surface. Production permits only the built-in fresh `codex exec --ephemeral --model gpt-5.6-luna` auditor; there is no environment or CLI runner override. Captured strings are only `AVAILABLE_UNVERIFIED`, not proof of plaintext fidelity. Specialized execution paths, encrypted or non-string payloads, and root classification or payload fidelity without a live probe remain `UNKNOWN`; a test fake does not prove a fresh native session. Use `context doctor --pretty` to inspect the separate `intent_audit` health dimensions.
+
+---
+
 ## Current limitations
 
 The project is still early.
@@ -807,6 +819,7 @@ Current limitations include:
 * role execution is still performed by Codex rather than by this package;
 * external adapter health cannot always be observed directly;
 * the benefits of cognitive isolation still require controlled evaluation on real coding workloads.
+* Intent Audit depends on Codex hook runtime behavior; without a real live probe, `context doctor` reports `UNKNOWN` rather than claiming protection.
 
 Complexity will only be added when real tasks demonstrate that it improves downstream quality or reliability.
 

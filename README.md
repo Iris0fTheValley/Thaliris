@@ -823,6 +823,18 @@ Terra：
 
 ---
 
+## Intent Audit / Capture Plane
+
+`context init` 会保守地把 Thaliris 的 `SessionStart`、`UserPromptSubmit`、`PostToolUse` 和 `Stop` command hooks 合并到 `.codex/hooks.json`。它在 Git ignored 的 `.context/audit/` 中按 session 与 turn 隔离捕获 root 用户原始输入与 `spawn_agent` / `Agent` / `followup_task` 实际 delegation instruction；不会捕获 child transcript、worker output、Controller reasoning、repo 内容或工具日志，也不会把 audit 数据放入 task state、memory、milestone 或普通 role pack。缺少 `turn_id` 的事件进入明确的 unknown-turn 分区。
+
+每累计五次尚未审核且未明确拒绝的 delegation 会启动一个 fresh Luna checkpoint audit；root Stop 会对每个 turn 的尾批执行一次 final audit。明确失败的 tool response 不进入批次，明确成功标为 `ACCEPTED`，无法判断则标为 `UNKNOWN` 并禁止产生 `PASS`。`PASS` 与 `UNKNOWN` 完全不向 Controller 输出，只有 `DRIFT` 才产生一条很短的 hook finding。失败的 checkpoint 仍作为 `UNKNOWN` 被消费，避免下一次 delegation 立即重试；Stop guard 会在 auditor 启动前持久化，且自动 continuation prompt 会用 one-shot hash 精确忽略，避免循环或误记为用户输入。任何 capture、配置或 runner 故障均 fail open：原有工作流继续，仅失去额外审计保护。
+
+每个 turn 会保留最多 32 条规范化 `audit_results`（mode、attempt、status、短 finding、freshness，以及失败类别），不保存 runner stdout、错误正文或 tool response 正文。结果只供审计追溯，永不投影给 Controller 或其他 role pack。
+
+该集成信任 Codex 官方 `/hooks` 所展示的 hook schema 和 root topology。生产路径只允许内建的 fresh `codex exec --ephemeral --model gpt-5.6-luna` auditor，不提供环境变量或 CLI runner override。捕获到的字符串只标记为 `AVAILABLE_UNVERIFIED`，不是 plaintext fidelity 证明；特殊执行路径、加密或非字符串 payload、以及未经过 live probe 的 root classification/payload fidelity 都保持 `UNKNOWN`。测试 fake 的成功也不能证明 fresh native session。可用 `context doctor --pretty` 查看 `intent_audit` 的分项状态。
+
+---
+
 ## 当前限制
 
 本项目仍处于早期阶段。
@@ -835,6 +847,7 @@ Terra：
 * 角色执行仍由 Codex 完成，而不是由本 package 完成；
 * 外部 adapter 的健康状态并非总能被直接观察；
 * cognitive isolation 的收益仍需在真实编码工作负载上进行受控评估。
+* Intent Audit 依赖 Codex hooks 的运行时行为；未做真实 live probe 时，`context doctor` 会如实报告 `UNKNOWN`。
 
 只有当真实任务证明增加复杂度能改善下游质量或可靠性时，才会增加复杂度。
 

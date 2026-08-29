@@ -10,6 +10,7 @@ import tomllib
 
 from .models import ContextConfig
 from .core import LEGACY_MANAGED_END, LEGACY_MANAGED_START, MANAGED_END, MANAGED_START, entries, milestone_check, _load_state, _managed_span
+from .intent_audit import hooks_health
 
 UNKNOWN = "UNKNOWN"
 
@@ -105,4 +106,4 @@ def report(root: Path) -> dict[str, object]:
             task["valid"] = "NO"
         except OSError:
             pass
-    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}
+    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "intent_audit": hooks_health(root), "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}

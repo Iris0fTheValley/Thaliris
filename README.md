@@ -407,6 +407,29 @@ uv run context version
 
 ---
 
+##Agent 自动接入
+
+如果 Codex 已加载相应的 AGENTS.md 规则，通常不需要手动为每个项目执行初始化。
+
+在已有 Git 仓库中开始实质性工作前，Agent 会先检查 codex-context 控制层：
+
+Git repository
+      ↓
+codex-context ready?
+      ├─ no  → context init
+      ├─ old → context migrate
+      └─ yes → continue
+      ↓
+context doctor --pretty
+      ↓
+normal task routing
+
+只有在控制层可用后，才进入调查、子代理委派和实质性修改。非 Git 工作区不会仅为了启用 codex-context 而自动执行 git init。
+
+这使 codex-context 可以作为项目工作的透明 bootstrap 层：用户仍然正常向 Codex 提交任务，而无需手动管理每次初始化。
+
+
+
 ## 快速开始
 
 启动一个任务：

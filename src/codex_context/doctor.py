@@ -1,0 +1,91 @@
+"""Read-only adapter and Codex configuration diagnostics."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tomllib
+
+from .models import ContextConfig
+from .core import MANAGED_END, MANAGED_START, entries, milestone_check
+
+UNKNOWN = "UNKNOWN"
+
+
+def _codex_config() -> tuple[dict[str, object], bool]:
+    base = Path(os.environ["CODEX_HOME"]) if os.environ.get("CODEX_HOME") else Path.home() / ".codex"
+    path = base / "config.toml"
+    if not path.is_file(): return {}, False
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        return (data if isinstance(data, dict) else {}), True
+    except (OSError, tomllib.TOMLDecodeError): return {}, False
+
+
+def _states(configured: str = UNKNOWN, enabled: str = UNKNOWN) -> dict[str, str]:
+    return {"configured": configured, "enabled": enabled, "authorized": UNKNOWN, "running": UNKNOWN, "healthy": UNKNOWN}
+
+
+def _version(command: str) -> str:
+    executable = shutil.which(command)
+    if not executable: return UNKNOWN
+    try:
+        output = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=2, check=False).stdout.strip()
+        return output or UNKNOWN
+    except (OSError, subprocess.SubprocessError): return UNKNOWN
+
+
+def _adapter(name: str, expected: str, entry: object | None, project_enabled: bool | None, probe: bool) -> dict[str, str]:
+    result = _states("YES" if entry is not None else "NO", "UNKNOWN" if project_enabled is None else ("YES" if project_enabled else "NO"))
+    result["version"] = _version(name) if probe else UNKNOWN
+    result["installed"] = "YES" if expected in result["version"] else ("NO" if result["version"] != UNKNOWN else UNKNOWN)
+    return result
+
+
+def report(root: Path) -> dict[str, object]:
+    raw, codex_configured = _codex_config(); servers = raw.get("mcp_servers") if isinstance(raw, dict) else None
+    lookup = lambda name: servers.get(name) if isinstance(servers, dict) else None
+    try:
+        project_config = ContextConfig.load(root); context_config = "YES"
+        enabled = lambda name: project_config.adapters.get(name, False)
+        probes = project_config.adapter_probes
+    except ValueError:
+        project_config = None; context_config = "NO"
+        enabled = lambda name: None
+        probes = False
+    serena = _adapter("serena", "1.7.0", lookup("serena"), enabled("serena"), probes)
+    cachebro = _adapter("cachebro", "0.2.2", lookup("cachebro"), enabled("cachebro"), probes)
+    agentmemory = _adapter("agentmemory", "0.9.29", lookup("agentmemory"), enabled("agentmemory"), probes)
+    serena["activation"] = "YES" if any((root / ".serena" / n).is_file() for n in ("project.yml", "project.yaml")) else "NO"
+    cache_entry = lookup("cachebro")
+    cachebro["cache"] = "YES" if isinstance(cache_entry, dict) and (cache_entry.get("cache") is True or isinstance(cache_entry.get("cache_path"), str)) else UNKNOWN
+    agentmemory["automatic_injection"] = "UNKNOWN" if project_config is None else ("YES" if project_config.automatic_injection else "NO")
+    agentmemory["automatic_compression"] = "UNKNOWN" if project_config is None else ("YES" if project_config.automatic_compression else "NO")
+    model = raw.get("model", UNKNOWN) if isinstance(raw.get("model", UNKNOWN), str) else UNKNOWN
+    reasoning = raw.get("model_reasoning_effort", UNKNOWN) if isinstance(raw.get("model_reasoning_effort", UNKNOWN), str) else UNKNOWN
+    memory, milestones = (root / ".agent-memory").is_dir(), (root / ".milestones").is_dir()
+    memory_state = _states("YES" if memory else "NO", "YES" if memory else "NO")
+    milestone_state = _states("YES" if milestones else "NO", "YES" if milestones else "NO")
+    if memory:
+        try:
+            entries(root)
+            memory_state["structure"] = "YES"
+        except (OSError, ValueError):
+            memory_state["structure"] = "NO"
+    else:
+        memory_state["structure"] = "NO"
+    if milestones:
+        milestone_state["structure"] = "YES" if milestone_check(root)["ok"] else "NO"
+    else:
+        milestone_state["structure"] = "NO"
+    agents = root / "AGENTS.md"
+    if agents.is_file():
+        try:
+            agents_text = agents.read_text(encoding="utf-8")
+            agents_state = "YES" if agents_text.count(MANAGED_START) == agents_text.count(MANAGED_END) == 1 else "NO"
+        except OSError:
+            agents_state = UNKNOWN
+    else:
+        agents_state = "NO"
+    return {"ok": True, "codex": {"version": _version("codex"), "model": model, "reasoning": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": _states(), "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}

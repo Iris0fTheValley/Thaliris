@@ -1,0 +1,10 @@
+.context/backups/
+.context/state.json
+.context/context.lock
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+build/
+dist/
+.coverage

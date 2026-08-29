@@ -1,147 +1,853 @@
 # codex-context
 
-`codex-context` is a small, Git-native context and memory layer for Codex. It reduces repeated source reads, repeated investigation, repeated verification, and wasteful agent bootstrap without reducing necessary reasoning.
+A lightweight, Git-native context and orchestration layer for Codex.
 
-It is **not** an agent framework. Codex remains the runtime and controller. Current source, Git, compilers, tests, and runtime evidence remain the correctness core; optional tools may make work cheaper, but their failure must only make it slower or larger.
+`codex-context` helps multi-agent coding workflows keep the right information in the right reasoning context without turning the repository into an agent framework.
 
-## What it provides
+It provides:
 
-- A short managed router in an existing repository's `AGENTS.md`.
-- Structured, evidence-backed Markdown in `.agent-memory/`.
-- Scoped milestone state in `.milestones/`.
-- A single ignored transient task snapshot in `.context/state.json` for compact, evidence-addressable handoffs.
-- Role-specific Task Context Packs for Sol high, Luna, Terra implementers, and isolated reviewers.
-- `CONFIRMED`, `SUPPORTED`, `UNVERIFIED`, and dynamically derived `STALE` evidence states.
-- SHA-256 file evidence and Git blob evidence with deterministic freshness checks.
-- Environment diagnostics for Codex, Serena, cachebro, agentmemory, repository state, and native fallbacks.
-- Idempotent initialization, conservative migration, hash-guarded rollback, and non-destructive uninstall.
+* role-specific context packs;
+* evidence-backed project memory;
+* transient task state;
+* investigation and review handoffs;
+* freshness tracking;
+* milestone state;
+* conservative routing;
+* deterministic validation and recovery.
 
-## Install and attach to a repository
+Codex remains the runtime and controller. Source code, Git, tests, compilers, and runtime behavior remain the correctness core.
+
+> **Status:** Alpha. The current implementation is intentionally small and is still being evaluated on real coding workloads.
+
+---
+
+## Why this project exists
+
+Long coding tasks tend to accumulate context.
+
+A single agent may eventually carry:
+
+* repository exploration;
+* failed search paths;
+* implementation details;
+* test output;
+* debugging traces;
+* architectural reasoning;
+* reviewer criteria;
+* old decisions;
+* unrelated historical context.
+
+More context is not automatically better context.
+
+For strong reasoning models, the larger risk is often not the raw number of tokens but the number of competing objectives inside the same reasoning trajectory.
+
+An agent asked to simultaneously:
+
+* investigate,
+* design,
+* implement,
+* verify,
+* review its own design,
+* remember previous failures,
+* and satisfy a large procedural checklist
+
+is solving a different problem from an agent given a focused reasoning question with the necessary evidence.
+
+`codex-context` is built around a simple idea:
+
+> **Preserve useful information without forcing every role to carry every piece of information.**
+
+The project therefore treats context boundaries as part of the engineering architecture.
+
+---
+
+## Design philosophy
+
+### One dominant objective per reasoning context
+
+Strong models already contain substantial learned engineering knowledge.
+
+The goal is not to tell them every reasoning procedure they should execute. The goal is to give them:
+
+* the problem;
+* confirmed facts;
+* relevant evidence;
+* hard constraints;
+* unresolved questions.
+
+Then let the model reason.
+
+The system tries to avoid explicitly combining unrelated cognitive roles inside the same context.
+
+For example:
+
+```text
+investigate → summarize evidence → reason → implement → verify
+```
+
+is preferred over:
+
+```text
+one agent investigates
+        + designs
+        + implements
+        + judges its own design
+        + verifies everything
+        + rereads all previous logs
+```
+
+---
+
+### Weak models need procedure; strong models need evidence
+
+Different capabilities benefit from different amounts of scaffolding.
+
+A useful approximation is:
+
+```text
+weaker model
+    → WHAT + HOW + CHECKLIST
+
+mid-level model
+    → WHAT + BOUNDARY + SOME HOW
+
+strong reasoning model
+    → WHAT + FACTS + HARD CONSTRAINTS
+```
+
+`codex-context` therefore does not try to give every agent the same prompt.
+
+Investigation and mechanical verification can use explicit schemas and procedures.
+
+High-reasoning roles receive a much smaller evidence-oriented context.
+
+---
+
+### Working set is not handoff set
+
+An investigator may need to inspect hundreds of files, searches, symbols, and intermediate hypotheses.
+
+That does not mean the next agent should receive all of them.
+
+The intended flow is:
+
+```text
+large investigation working set
+            ↓
+structured raw findings
+            ↓
+bounded curated snapshot
+            ↓
+Controller selection
+            ↓
+small Decision Context
+            ↓
+high-reasoning agent
+```
+
+Raw exploration remains available for traceability, but it does not automatically gain the right to enter every downstream context.
+
+---
+
+### Evidence over memory
+
+Project memory is useful, but memory is not truth.
+
+The effective precedence is:
+
+```text
+current source / Git / tests / runtime
+                ↓
+fresh verified project memory
+                ↓
+milestone state
+                ↓
+historical memory
+```
+
+A stored interpretation can become stale when its supporting evidence changes.
+
+An unchanged hash proves that the referenced evidence did not change. It does **not** prove that the previous interpretation was correct.
+
+---
+
+### Optimization must not become a correctness dependency
+
+Optional tools may reduce repeated reads or accelerate navigation.
+
+They must never be required for correctness.
+
+If Serena, cachebro, agentmemory, or another optimization layer fails, the workflow should become slower—not less correct.
+
+---
+
+## Architecture
+
+The default roles are intentionally narrow.
+
+### Controller — Sol mid
+
+The parent Controller owns:
+
+* task routing;
+* task state;
+* context promotion;
+* phase transitions;
+* integration;
+* final acceptance.
+
+Only the Controller delegates work.
+
+The Controller should operate on bounded task views rather than raw investigation transcripts.
+
+---
+
+### Luna investigator
+
+Used for focused investigation and mechanical evidence gathering:
+
+* repository search;
+* symbol discovery;
+* reference lookup;
+* Git inspection;
+* targeted verification;
+* structured extraction;
+* test execution;
+* residual-reference checks.
+
+Luna may have a large working set.
+
+Its durable output is structured findings and evidence references, not its transcript.
+
+---
+
+### Luna curator
+
+A fresh Luna invocation may compact accumulated investigation findings.
+
+It can:
+
+* merge duplicates;
+* remove resolved unknowns from the active snapshot;
+* consolidate related evidence;
+* replace obsolete snapshot entries;
+* keep the current investigation state bounded.
+
+It cannot manufacture stronger certainty than its source findings support.
+
+Curation changes representation, not evidence.
+
+---
+
+### Sol high
+
+Reserved for reasoning that genuinely benefits from a stronger reasoning context:
+
+* architecture;
+* lifecycle behavior;
+* concurrency;
+* cross-module semantics;
+* ambiguous root causes;
+* difficult migration semantics;
+* provenance or security reasoning;
+* hard trade-offs.
+
+Sol high does not maintain task state and does not perform routine evidence bookkeeping.
+
+Its ideal trajectory is:
+
+```text
+facts → reasoning → decision → exit
+```
+
+---
+
+### Terra implementer
+
+Receives an explicit implementation boundary and the facts necessary to perform the change.
+
+Its job is implementation, not architectural scope expansion.
+
+When assumptions fail or the required scope expands materially, control returns to the Controller.
+
+---
+
+### Terra reviewer
+
+High-risk changes may receive a fresh independent review.
+
+The reviewer is deliberately isolated from:
+
+* previous reviewer findings;
+* implementer self-justification;
+* raw investigation history;
+* scoring rubrics;
+* unnecessary debugging history.
+
+It returns structured issues with impact and evidence.
+
+The Controller decides whether those findings should affect Decision Context.
+
+---
+
+## Typical workflows
+
+### Microtask
+
+For an obvious, local, low-risk change:
+
+```text
+Controller
+    ↓
+direct edit
+    ↓
+deterministic check
+    ↓
+done
+```
+
+No subagent is required.
+
+---
+
+### Normal implementation
+
+```text
+Controller
+    ↓
+Terra implementer
+    ↓
+deterministic checks
+    ↓
+Luna verification when useful
+```
+
+---
+
+### Investigation
+
+```text
+Controller
+    ↓
+Luna investigator
+    ↓
+curated findings when needed
+    ↓
+Controller
+
+        ├─ obvious solution → Terra
+        └─ difficult reasoning → Sol high
+```
+
+---
+
+### Complex change
+
+```text
+Luna investigation
+        ↓
+bounded evidence
+        ↓
+Sol high reasoning
+        ↓
+Terra implementation
+        ↓
+deterministic checks
+        ↓
+Luna verification
+```
+
+For sufficiently risky changes:
+
+```text
+        ↓
+fresh Terra review
+        ↓
+Controller decision
+```
+
+Default concurrency is one.
+
+Parallelism is reserved for clearly independent work.
+
+---
+
+## Installation
 
 Python 3.11 or newer and Git are required.
 
+Install directly from the repository:
+
 ```bash
 uv tool install git+https://github.com/Iris0fTheValley/codex-context
-cd existing-repository
+```
+
+Attach it to an existing Git repository:
+
+```bash
+cd your-repository
 context init
 context doctor --pretty
 ```
 
-For development:
+For local development:
 
 ```bash
 git clone https://github.com/Iris0fTheValley/codex-context
 cd codex-context
+
 uv run --extra test pytest
 uv run context version
 ```
 
-`context init` requires the repository root. It preserves existing `AGENTS.md` content and owns only the marked `codex-context` block. Every mutation creates a local backup under `.context/backups/` and returns its backup ID.
+---
 
-## Core workflow
+## Quick start
+
+Start a task:
 
 ```bash
-context task-start "fix request cancellation" --milestone M001-name
-context task-update --role controller --base-revision 1 --input update.json
-context prepare --role luna-investigator --pretty
-context prepare --role luna-curator --pretty
-context prepare --role sol-high --pretty
-context prepare --role terra-implementer --pretty
-context prepare --role terra-reviewer --pretty
-context task-show --pretty
-context task-close --base-revision 2
-context stale --pretty
-context milestone-check --pretty
-context memory-status --pretty
+context task-start "fix request cancellation"
 ```
 
-The four controller routes are:
+Inspect the Controller view:
 
-| Route | When | Flow |
-|---|---|---|
-| Microtask | A local, obvious, low-risk change | Sol mid edits and runs the smallest deterministic check; no context pack or child agent. |
-| Normal | The goal and approach are clear, but implementation is substantial | Terra implementer, deterministic checks, then Luna only if useful. |
-| Investigation | Facts or locations are missing | Luna scouts once; Sol mid reuses those facts and routes to Terra or Sol high. |
-| Complex | Lifecycle, state, concurrency, architecture, or semantic trade-offs | Focused Luna evidence, Sol high reasoning, Terra implementation, deterministic checks, Luna verification; add a fresh reviewer only for high risk. |
+```bash
+context prepare --role controller --pretty
+```
 
-Default concurrency is one. Only the Sol mid controller spawns children, and context packs contain only the role's required fields.
+Prepare an investigation:
 
-## Memory, milestones, and task packs
+```bash
+context prepare --role luna-investigator --pretty
+```
 
-`.agent-memory/INDEX.md` is a router, not a summary dump. It links stable operator constraints, prompt policy, project conventions, project decisions, and verified lessons. Each entry has strict front matter:
+Prepare a curator when investigation findings need compaction:
 
-```markdown
+```bash
+context prepare --role luna-curator --pretty
+```
+
+Prepare deep reasoning context:
+
+```bash
+context prepare --role sol-high --pretty
+```
+
+Prepare implementation:
+
+```bash
+context prepare --role terra-implementer --pretty
+```
+
+Prepare an independent review:
+
+```bash
+context prepare --role terra-reviewer --pretty
+```
+
+Inspect diagnostic state:
+
+```bash
+context doctor --pretty
+context stale --pretty
+context milestone-check --pretty
+```
+
+Close the current task using its current revision:
+
+```bash
+context task-close --base-revision <revision>
+```
+
 ---
-Evidence: file:src/example.py#<sha256>
+
+## Repository layout
+
+After initialization, a repository may contain:
+
+```text
+AGENTS.md
+
+.agent-memory/
+├── INDEX.md
+├── operator.md
+├── prompt-policy.md
+├── project-conventions.md
+├── decisions/
+│   ├── INDEX.md
+│   └── ...
+└── lessons/
+    ├── INDEX.md
+    └── ...
+
+.milestones/
+├── INDEX.md
+└── M001-name/
+    ├── INDEX.md
+    ├── scope.md
+    ├── decisions.md
+    ├── progress.md
+    └── verification.md
+
+.context/
+├── config.json
+├── state.json
+└── backups/
+```
+
+`.context/state.json` is transient and ignored by Git.
+
+Project memory and milestone documents are Git-owned.
+
+---
+
+## Task state
+
+A task keeps structured state rather than conversation transcripts.
+
+Conceptually it separates:
+
+```text
+Investigation history
+    ↓
+Curated investigation state
+    ↓
+Controller-promoted Decision Context
+
+Review findings
+    ↓
+Controller promotion when relevant
+```
+
+Typical Decision Context contains:
+
+* confirmed facts;
+* supported evidence;
+* unknowns;
+* contradictions;
+* constraints;
+* decisions;
+* relevant files and symbols;
+* modification boundary;
+* verification target;
+* architectural intent.
+
+Task state rejects raw transcript and tool-log fields.
+
+The intent is to preserve traceability without converting `.context/state.json` into a second conversation history.
+
+---
+
+## Evidence model
+
+The project uses four effective evidence states:
+
+| State        | Meaning                                                      |
+| ------------ | ------------------------------------------------------------ |
+| `CONFIRMED`  | Supported by sufficiently strong current native evidence     |
+| `SUPPORTED`  | Evidence exists, but it is weaker or indirect                |
+| `UNVERIFIED` | Not yet established                                          |
+| `STALE`      | Previously recorded evidence no longer matches current state |
+
+Native evidence can include:
+
+```text
+file:path/to/file#sha256
+git:path/to/file#blob-id
+```
+
+Test and runtime observations may reference the source snapshots they observed.
+
+Their freshness proves only that those explicitly declared sources have not changed.
+
+It does not prove that every possible dependency remains unchanged.
+
+---
+
+## Project memory
+
+`.agent-memory/` stores durable project knowledge.
+
+Examples include:
+
+* project conventions;
+* operator constraints;
+* adopted decisions;
+* verified recurring failure modes.
+
+Memory entries use metadata such as:
+
+```yaml
+Evidence: file:src/example.py#...
 Revision: 1
 Status: ACTIVE
 Applicability: src/example.py
-Confidence: CONFIRMED
+Confidence: SUPPORTED
 Kind: MEMORY
 Audience: ["sol-high", "terra-implementer"]
 Topics: ["request cancellation"]
 Symbols: ["Request.cancel"]
----
 ```
 
-`Evidence` also accepts `git:path#<blob-id>`. When the referenced bytes change, `context stale` reports an effective confidence of `STALE` without rewriting the historical entry. An unchanged hash proves that evidence did not change; it does not prove that an old interpretation was correct.
+The INDEX files are routers, not summary documents.
 
-`.milestones/` keeps one directory per milestone with `scope.md`, `decisions.md`, `progress.md`, and `verification.md`. Progress is the latest state, not an append-only session log. `context milestone-check` verifies the routed structure.
+Normal routing is conservative and lexical.
 
-A Task Context Pack is transient output. It never replaces source inspection and is not committed as project truth.
+Fresh project-wide `HARD_CONSTRAINT` entries may bypass lexical matching when their audience and evidence permit it.
 
-`task-start`, `task-update`, and `task-close` maintain one current task in the ignored `.context/state.json`. Updates use an expected revision so two roles cannot silently overwrite each other. The state rejects transcript, raw-log, stdout, and stderr fields: a handoff carries claims and addressable evidence, not exploratory history.
+---
 
-Investigation has two layers. A Luna investigator (`luna` remains a compatibility alias) appends raw `investigation_findings` (`kind`, `text`, and evidence refs); an update supplies additions, never a replacement. A fresh `luna-curator` invocation may fully rewrite `investigation_snapshot` at a phase boundary, before high-reasoning work, or when the snapshot budget is reached. Each snapshot item has an `id`, `kind`, compact `text`, raw list indexes in `derived_from`, optional prior snapshot IDs in `supersedes`, and evidence refs inherited from those raw findings. The snapshot is deterministically limited to 64 items and 32 KiB. Curation may deduplicate, merge, remove resolved unknowns, and compress evidence, but cannot promote epistemic status—for example, a merely `SUPPORTED` source cannot become `CONFIRMED` through summarization.
+## Milestones
 
-A fresh reviewer appends only `review_findings` (`issue`, `impact`, and evidence refs); earlier reviewer findings are never rewritten. The curator cannot modify raw findings, evidence, verification targets, or Sol-facing fields. Sol high has no task-state write permission: it returns reasoning to the controller instead of maintaining evidence or verification state. Only the controller selects and promotes material from the curated snapshot or reviewer output into the Decision Context: confirmed facts, supported evidence, unknowns, contradictions, hard constraints, decisions, verification target, and architectural intent. Neither raw findings, the curated snapshot, nor reviewer findings are projected into Sol high.
+`.milestones/` keeps persistent project progress separate from transient task context.
 
-`Confirmed Facts` require currently fresh file-hash or Git-blob evidence. `Supported Evidence` remains explicitly weaker and may cite tests, runtime observations, task input, or memory. Test and runtime references must declare non-empty `source_refs` to fresh file/Git evidence; when a bound source changes, preparation demotes the affected supported claim until it is reverified. This freshness proves only that the explicitly bound `source_refs` have not changed. It does not prove that every file capable of affecting the test or runtime observation is unchanged, and unbound source is outside the freshness proof. Memory `Applicability` helps route relevant files only; it never expands the task's `Modification Boundary`.
+A milestone contains:
 
-Each memory entry also declares `Kind`, `Audience`, `Topics`, and `Symbols`; entries without `Audience` remain readable for migration and stale checks but are not projected to any role. Ordinary `MEMORY` entries use Unicode-safe lexical routing. A `HARD_CONSTRAINT` bypasses lexical matching only when it is project-wide, ACTIVE, audience-allowed, backed by fresh evidence, and captured as CONFIRMED or SUPPORTED. There is no embedding index. Milestone scope, decisions, and verification are projected with source, status, and confidence metadata. A fresh reviewer receives only intent, hard constraints, durable decisions, the actual changed surface/diff, and evidence necessary for those fields, not earlier findings, implementation explanations, known-risk framing, or a scoring rubric.
+```text
+scope.md
+decisions.md
+progress.md
+verification.md
+```
 
-Passing a task string to `context prepare` remains a stateless compatibility path. Omitting it prepares the current task snapshot.
+These files answer different questions:
 
-## Optional optimization adapters
+* **scope** — what belongs to this milestone;
+* **decisions** — milestone-specific choices;
+* **progress** — current state and next work;
+* **verification** — what has actually been checked.
 
-The tested contract is graceful degradation:
+Milestone documents are project state, not agent transcripts.
 
-| Component | Pinned baseline | Purpose | Native fallback |
-|---|---:|---|---|
-| [Serena](https://github.com/oraios/serena) | 1.7.0 | Symbol, declaration, reference, and impact navigation | `rg`, source inspection, compiler/tests |
-| [cachebro](https://github.com/glommer/cachebro) | 0.2.2 | Cache unchanged reads and return deltas | Normal full-file reads |
-| [agentmemory](https://github.com/rohitg00/agentmemory) | 0.9.29 | Explicit episodic recall and handoff | Repo memory, source, and Git |
+---
 
-Serena has an explicit Codex setup path (`serena setup codex`). cachebro is a standard stdio MCP server, but its upstream documentation does not currently claim a Codex-specific setup; treat Codex compatibility as provisional until `context doctor` and an actual read/delta call pass. agentmemory is manual-recall-only here: automatic context injection and automatic LLM compression are rejected by project configuration.
+## Managed `AGENTS.md`
 
-Add these MCP servers through normal Codex configuration, then enable the matching names in `.context/config.json` if desired. `codex-context` describes policy and awareness for these tools; it does not invoke MCP servers to assemble a context pack or orchestrate their lifecycle. `context doctor` reports executable installation independently from the observed version and whether that version matches the tested baseline. Probes disabled or unavailable remain `UNKNOWN`; version mismatch is not reported as uninstalled. Adapter output never upgrades a fact on its own.
+`context init` maintains a small marked block inside the repository's existing `AGENTS.md`.
 
-## Delta reads and stale facts
+It is deliberately short.
 
-Use cachebro for a file already read in a previous session; an unchanged hash permits reuse, while a changed hash should return a delta. If cachebro is absent or unhealthy, read the file normally. This project does not reimplement cachebro's database or replace Codex's native read tool.
+The managed block acts as a router for:
 
-Use Serena positives as strong navigation evidence. A zero-reference result is not proof of absence in dynamic Python/JavaScript, reflection, registries, or string-driven calls; escalate with lexical search, source inspection, type checking, or a targeted runtime test when risk warrants it.
+* Controller ownership;
+* role isolation;
+* investigation/curation;
+* Decision Context promotion;
+* default sequential delegation;
+* microtask fast path;
+* native correctness fallbacks.
 
-agentmemory records are historical claims until current repository evidence verifies them. Promote durable decisions and lessons into `.agent-memory/`; do not inject an entire episodic history into every task.
+Existing user content outside the managed markers is preserved.
 
-## Migration, rollback, and uninstall
+---
+
+## Optional tools
+
+`codex-context` can coexist with optimization tools such as:
+
+| Tool        | Intended use                      |
+| ----------- | --------------------------------- |
+| Serena      | symbol and reference navigation   |
+| cachebro    | unchanged-read caching and deltas |
+| agentmemory | explicit episodic recall          |
+
+These tools are optional.
+
+`codex-context` does not replace their databases or orchestrate their lifecycle.
+
+If they are unavailable, use native source inspection, Git, search, compilers, tests, and runtime behavior.
+
+---
+
+## Diagnostics
+
+Run:
+
+```bash
+context doctor --pretty
+```
+
+Diagnostics intentionally distinguish states such as:
+
+```text
+configured
+enabled
+installed
+version observed
+version validated
+```
+
+Authorization, health, runtime state, or subagent state remain `UNKNOWN` when the tool cannot actually prove them.
+
+The diagnostic layer should not manufacture confidence.
+
+---
+
+## Recovery and uninstall
+
+Initialization and managed mutations use:
+
+* cross-process locking;
+* atomic file replacement;
+* local backups;
+* hash-guarded rollback.
+
+Rollback:
+
+```bash
+context rollback <backup-id>
+```
+
+Migration:
 
 ```bash
 context migrate
-context rollback <backup-id>
+```
+
+Uninstall:
+
+```bash
 context uninstall
 ```
 
-Rollback is hash-guarded: if a file changed after the recorded operation, it is retained and reported instead of overwritten. Initialization adds a marked `.gitignore` block only when the transient state, lock, and backup paths are not already ignored. Uninstall removes the managed `AGENTS.md` and `.gitignore` blocks and unchanged generated templates only. Modified memory and milestone files are kept. Local backups remain available for recovery and may be deleted manually after review.
+User-modified project memory is preserved rather than silently overwritten.
 
-## Limits of the MVP
+---
 
-- No Web UI, scheduler, agent runtime, workflow engine, database, graph store, embeddings, or automatic whole-repository summary.
-- Ordinary task routing is lexical and conservative; explicitly classified, fresh project-wide hard constraints are routed independently of lexical hits.
-- The MVP stores one current transient task snapshot; it is not a task database, event log, or transcript store.
-- Raw findings remain bounded by the existing 256 KiB task-state cap and global list limits; the tool does not provide unlimited investigation history.
-- cachebro's Codex-specific compatibility is not established by upstream documentation.
-- Codex Desktop currently exposes agentmemory MCP tools, while plugin-local lifecycle hooks may not dispatch; this project does not depend on those hooks.
-- `doctor` leaves authorization, runtime health, and subagent state `UNKNOWN` when they are not directly observable.
+## What this project is not
 
-See [DESIGN.md](DESIGN.md) for the architectural decisions.
+`codex-context` is intentionally **not**:
+
+* an agent runtime;
+* a workflow engine;
+* a recursive agent scheduler;
+* a database-backed memory platform;
+* a graph store;
+* an embeddings-first RAG system;
+* a Web UI;
+* an automatic whole-repository summarizer;
+* a replacement for source inspection or tests.
+
+The project should remain small enough that deleting it does not make the underlying development workflow incorrect.
+
+---
+
+## Research hypothesis
+
+The strongest claim behind this project is still a hypothesis:
+
+> Protecting the task purity of a strong reasoning model may improve coding performance even when total available context or compute is unchanged.
+
+In other words, two workflows with the same approximate amount of computation may behave differently:
+
+```text
+Workflow A
+
+Sol:
+search
+→ inspect
+→ reason
+→ implement
+→ debug
+→ reread logs
+→ verify
+→ self-review
+→ revise
+```
+
+versus:
+
+```text
+Workflow B
+
+Luna:
+investigate
+→ structured evidence
+
+Sol:
+focused reasoning
+→ decision
+
+Terra:
+implementation
+
+Luna:
+verification
+
+Terra:
+fresh review when required
+```
+
+The second workflow deliberately terminates disposable contexts instead of allowing every intermediate task to remain inside the strongest model's reasoning trajectory.
+
+This project is an attempt to make that boundary explicit and testable.
+
+It does **not** assume that more agents are always better.
+
+It does **not** assume that less context is always better.
+
+The intended principle is narrower:
+
+> **Give each reasoning context the information it needs, and avoid giving it unrelated objectives merely because that information exists.**
+
+---
+
+## Current limitations
+
+The project is still early.
+
+Current limitations include:
+
+* routing is intentionally conservative;
+* task state is local and single-task rather than a task database;
+* evidence freshness cannot prove undeclared dependencies;
+* role execution is still performed by Codex rather than by this package;
+* external adapter health cannot always be observed directly;
+* the benefits of cognitive isolation still require controlled evaluation on real coding workloads.
+
+Complexity will only be added when real tasks demonstrate that it improves downstream quality or reliability.
+
+---
+
+## Development
+
+Run the test suite:
+
+```bash
+uv run --extra test pytest
+```
+
+CI currently covers supported Python versions used by the project.
+
+Changes should preserve the central invariants:
+
+1. correctness does not depend on optional optimization tools;
+2. raw exploration does not automatically propagate downstream;
+3. evidence cannot become stronger merely through summarization;
+4. high-reasoning contexts stay focused;
+5. failure should degrade efficiency before it degrades correctness;
+6. the project remains a thin layer around Codex rather than becoming another agent framework.
+
+---
+
+## License
+
+MIT License. See [`LICENSE`](LICENSE).
+
+---
+
+## Contributing
+
+The project is experimental, so small and evidence-backed changes are preferred.
+
+Useful contributions include:
+
+* reproducible routing failures;
+* provenance or freshness bugs;
+* migration and recovery failures;
+* role-isolation leaks;
+* real-world benchmark results;
+* simplifications that preserve behavior.
+
+Large framework additions should be justified by a concrete failure mode that cannot be solved by the existing small architecture.

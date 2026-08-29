@@ -407,7 +407,7 @@ uv run context version
 
 ---
 
-##Agent 自动接入
+## Agent 自动接入
 
 如果 Codex 已加载相应的 AGENTS.md 规则，通常不需要手动为每个项目执行初始化。
 

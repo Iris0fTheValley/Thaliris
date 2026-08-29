@@ -26,7 +26,7 @@ def _parser() -> argparse.ArgumentParser:
         sub.add_parser(name)
     q = sub.add_parser("prepare")
     q.add_argument("task", nargs="?")
-    q.add_argument("--role", required=True, choices=("sol-high", "luna", "luna-investigator", "luna-curator", "terra-implementer", "terra-reviewer"))
+    q.add_argument("--role", required=True, choices=("controller", "sol-high", "luna", "luna-investigator", "luna-curator", "terra-implementer", "terra-reviewer"))
     q = sub.add_parser("task-start")
     q.add_argument("goal")
     q.add_argument("--milestone")

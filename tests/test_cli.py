@@ -76,7 +76,7 @@ def test_rollback_accepts_unapplied_planned_files_after_crash(tmp_path, capsys):
 def test_migrate_and_uninstall_preserve_changed_facts(tmp_path, capsys):
     root = repo(tmp_path)
     code, first = run(capsys, root, "migrate")
-    assert code == 0 and first["migration"] == "v1"
+    assert code == 0 and first["migration"] == "v2"
     fact = root / ".agent-memory" / "operator.md"; fact.write_text(fact.read_text() + "User fact.\n", encoding="utf-8")
     code, removed = run(capsys, root, "uninstall")
     assert code == 0 and ".agent-memory/operator.md" in removed["kept"] and fact.is_file()
@@ -141,7 +141,7 @@ def test_init_recovers_an_interrupted_multi_file_write(tmp_path, capsys, monkeyp
 def test_role_specific_projection_and_native_fallback(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     expected = {
-        "sol-high": {"Goal", "Confirmed Facts", "Supported Evidence", "Hard Constraints", "Decisions", "Unknowns", "Contradictions", "Evidence refs"},
+        "sol-high": {"Goal", "Confirmed Facts", "Supported Evidence", "Hard Constraints", "Decisions", "Unknowns", "Contradictions", "Evidence refs", "Investigation Readiness", "Review Readiness"},
         "luna": {"Goal", "Relevant Files", "Relevant Symbols", "Hard Constraints", "Unknowns", "Contradictions", "Evidence refs", "Investigation Target", "Investigation Snapshot", "Verification Target"},
         "terra-implementer": {"Goal", "Confirmed Facts", "Supported Evidence", "Relevant Files", "Hard Constraints", "Decisions", "Modification Boundary", "Required Verification", "Evidence refs"},
         "terra-reviewer": {"Review Goal", "Architectural Intent", "Hard Constraints", "Durable Decisions", "Changed Surface", "Evidence refs"},
@@ -381,7 +381,7 @@ def test_non_controller_evidence_updates_are_append_only(tmp_path, capsys):
     code, failed = task_input(root, capsys, {"evidence_refs": [rebound]}, "task-update", "--role", "luna", "--base-revision", "1")
     assert code == 2 and "append-only" in failed["error"]
     added = {"id": "extra", "kind": "file", "locator": original["locator"], "summary": "additional", "confidence": "SUPPORTED"}
-    code, updated = task_input(root, capsys, {"evidence_refs": [original, added]}, "task-update", "--role", "luna", "--base-revision", "1")
+    code, updated = task_input(root, capsys, {"evidence_refs": [added]}, "task-update", "--role", "luna", "--base-revision", "1")
     assert code == 0 and updated["state"]["evidence_refs"] == [original, added]
 
 
@@ -389,17 +389,17 @@ def test_v1_task_state_without_findings_is_loaded_compatibly(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "legacy")
     path = root / ".context/state.json"
     legacy = json.loads(path.read_text(encoding="utf-8"))
-    legacy.pop("investigation_findings"); legacy.pop("investigation_snapshot"); legacy.pop("review_findings")
+    legacy.pop("investigation_findings"); legacy.pop("investigation_snapshot"); legacy.pop("review_findings"); legacy.pop("investigation_covered_through"); legacy.pop("review_handled_through")
     path.write_text(json.dumps(legacy), encoding="utf-8")
     code, shown = run(capsys, root, "task-show")
-    assert code == 0 and shown["state"]["investigation_findings"] == [] and shown["state"]["investigation_snapshot"] == [] and shown["state"]["review_findings"] == []
+    assert code == 0 and shown["state"]["investigation_findings"] == [] and shown["state"]["investigation_snapshot"] == [] and shown["state"]["review_findings"] == [] and shown["state"]["investigation_covered_through"] == shown["state"]["review_handled_through"] == 0
 
 
 def test_v1_unbound_test_evidence_loads_stale_until_reverified(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "legacy test")
     path = root / ".context/state.json"
     legacy = json.loads(path.read_text(encoding="utf-8"))
-    legacy.pop("investigation_findings"); legacy.pop("investigation_snapshot"); legacy.pop("review_findings")
+    legacy.pop("investigation_findings"); legacy.pop("investigation_snapshot"); legacy.pop("review_findings"); legacy.pop("investigation_covered_through"); legacy.pop("review_handled_through")
     legacy_ref = {"id": "oldtest", "kind": "test", "locator": "pytest", "summary": "passed before source binding", "confidence": "SUPPORTED"}
     legacy["evidence_refs"] = [legacy_ref]
     legacy["supported_evidence"] = [{"text": "legacy test passed", "evidence_refs": ["oldtest"]}]
@@ -615,7 +615,7 @@ def test_investigation_curation_is_bounded_traceable_and_isolated_from_sol(tmp_p
     assert code == 0
 
     _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
-    assert curator["Investigation Findings"] == [supported, unknown]
+    assert curator["Uncovered Investigation Findings"] == [supported, unknown]
     assert curator["Current Investigation Snapshot"] == []
     snapshot = [{"id": "S1", "kind": "SUPPORTED", "text": "compact behavior", "derived_from": [0], "supersedes": [], "evidence_refs": ["src"]}]
     code, curated = task_input(root, capsys, {"investigation_snapshot": snapshot}, "task-update", "--role", "luna-curator", "--base-revision", "2")
@@ -685,3 +685,149 @@ def test_new_confirmed_finding_requires_fresh_native_confirmed_evidence(tmp_path
     finding = {"kind": "CONFIRMED", "text": "overstated", "evidence_refs": ["src"]}
     code, failed = task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [finding]}, "task-update", "--role", "luna-investigator", "--base-revision", "1")
     assert code == 2 and "CONFIRMED" in failed["error"]
+
+
+def test_controller_projection_is_bounded_and_curator_receives_only_uncovered_suffix(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "investigate")
+    source = root / "src.txt"; source.write_text("one", encoding="utf-8")
+    ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "source", "confidence": "SUPPORTED"}
+    first = {"kind": "SUPPORTED", "text": "first", "evidence_refs": ["src"]}
+    second = {"kind": "UNKNOWN", "text": "second", "evidence_refs": []}
+    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [first, second]}, "task-update", "--role", "luna", "--base-revision", "1")
+    snapshot = [{"id": "S1", "kind": "SUPPORTED", "text": "compact", "derived_from": [0], "supersedes": [], "evidence_refs": ["src"]}]
+    task_input(root, capsys, {"investigation_snapshot": snapshot, "investigation_covered_through": 1}, "task-update", "--role", "luna-curator", "--base-revision", "2")
+    _, controller = run(capsys, root, "prepare", "--role", "controller")
+    assert controller["Investigation Readiness"] == {"raw_finding_count": 2, "covered_through": 1, "pending_findings": 1, "status": "PENDING"}
+    assert controller["Investigation Snapshot"][0]["text"] == "compact"
+    assert "Investigation Findings" not in controller and "first" not in json.dumps(controller)
+    _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
+    assert curator["Uncovered Investigation Findings"] == [second]
+    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
+    assert sol["Investigation Readiness"]["status"] == "PENDING"
+    assert "compact" not in json.dumps(sol) and "second" not in json.dumps(sol)
+    review = {"issue": "review gap", "impact": "needs decision", "evidence_refs": ["src"]}
+    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "3")
+    _, controller = run(capsys, root, "prepare", "--role", "controller")
+    assert controller["Review Readiness"] == {"finding_count": 1, "handled_through": 0, "pending_findings": 1, "status": "PENDING"}
+    code, _ = task_input(root, capsys, {"review_handled_through": 1}, "task-update", "--role", "controller", "--base-revision", "4")
+    assert code == 0
+
+
+def test_raw_provenance_and_evidence_identity_are_immutable_for_controller(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "control")
+    source = root / "src.txt"; source.write_text("one", encoding="utf-8")
+    ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "source", "confidence": "SUPPORTED"}
+    finding = {"kind": "SUPPORTED", "text": "raw", "evidence_refs": ["src"]}
+    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [finding]}, "task-update", "--role", "luna", "--base-revision", "1")
+    code, bad = task_input(root, capsys, {"investigation_findings": [finding]}, "task-update", "--role", "controller", "--base-revision", "2")
+    assert code == 2 and "append-only" in bad["error"]
+    rebound = ref | {"summary": "different"}
+    code, bad = task_input(root, capsys, {"evidence_refs": [rebound]}, "task-update", "--role", "controller", "--base-revision", "2")
+    assert code == 2 and "append-only" in bad["error"]
+    review = {"issue": "issue", "impact": "impact", "evidence_refs": ["src"]}
+    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "2")
+    code, bad = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "controller", "--base-revision", "3")
+    assert code == 2 and "append-only" in bad["error"]
+
+
+def test_migrate_exact_legacy_template_is_safe_and_idempotent(tmp_path, capsys):
+    root = repo(tmp_path)
+    legacy = "---\nEvidence: NONE\nRevision: 1\nStatus: DRAFT\nApplicability: PROJECT\nConfidence: UNVERIFIED\n---\n\n# Operator notes\n\nUnknown. Record only confirmed operating constraints.\n"
+    path = root / ".agent-memory/operator.md"; path.parent.mkdir(); path.write_text(legacy, encoding="utf-8")
+    code, migrated = run(capsys, root, "migrate")
+    assert code == 0 and ".agent-memory/operator.md" in migrated["migrated"] and not migrated["manual_migration_required"]
+    assert "Audience:" in path.read_text(encoding="utf-8") and "Kind:" in path.read_text(encoding="utf-8")
+    code, repeat = run(capsys, root, "migrate")
+    assert code == 0 and not repeat["migrated"]
+    path.write_text(legacy + "User change.\n", encoding="utf-8")
+    _, unsafe = run(capsys, root, "migrate")
+    assert ".agent-memory/operator.md" in unsafe["manual_migration_required"]
+
+
+def test_memory_index_failure_fails_closed_and_stale_snapshot_is_unknown(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "inspect")
+    source = root / "src.txt"; source.write_text("one", encoding="utf-8")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{digest}", "summary": "source", "confidence": "CONFIRMED"}
+    finding = {"kind": "CONFIRMED", "text": "confirmed", "evidence_refs": ["src"]}
+    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [finding]}, "task-update", "--role", "luna", "--base-revision", "1")
+    snapshot = [{"id": "S1", "kind": "CONFIRMED", "text": "compact", "derived_from": [0], "supersedes": [], "evidence_refs": ["src"]}]
+    task_input(root, capsys, {"investigation_snapshot": snapshot}, "task-update", "--role", "luna-curator", "--base-revision", "2")
+    source.write_text("changed", encoding="utf-8")
+    _, investigator = run(capsys, root, "prepare", "--role", "luna-investigator")
+    assert investigator["Investigation Snapshot"][0]["kind"] == "UNKNOWN"
+    assert investigator["Investigation Snapshot"][0]["recorded_kind"] == "CONFIRMED"
+    (root / ".agent-memory/INDEX.md").write_text("not markdown", encoding="utf-8")
+    _, pack = run(capsys, root, "prepare", "--role", "controller")
+    assert any("memory routing unavailable" in item["text"] for item in pack["Unknowns"])
+
+
+def test_effective_stale_projections_cover_contradictions_snapshot_derivation_review_cursor_and_changed_surface(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "inspect")
+    stale_file = root / "stale.txt"; stale_file.write_text("one", encoding="utf-8")
+    fresh_file = root / "fresh.txt"; fresh_file.write_text("one", encoding="utf-8")
+    stale_ref = {"id": "stale", "kind": "file", "locator": f"file:stale.txt#{hashlib.sha256(stale_file.read_bytes()).hexdigest()}", "summary": "old", "confidence": "SUPPORTED"}
+    fresh_ref = {"id": "fresh", "kind": "file", "locator": f"file:fresh.txt#{hashlib.sha256(fresh_file.read_bytes()).hexdigest()}", "summary": "fresh", "confidence": "SUPPORTED"}
+    raw = [
+        {"kind": "SUPPORTED", "text": "old supported", "evidence_refs": ["stale"]},
+        {"kind": "SUPPORTED", "text": "fresh supported", "evidence_refs": ["fresh"]},
+        {"kind": "CONTRADICTION", "text": "old contradiction", "evidence_refs": ["stale"]},
+    ]
+    task_input(root, capsys, {"evidence_refs": [stale_ref, fresh_ref], "investigation_findings": raw}, "task-update", "--role", "luna", "--base-revision", "1")
+    snapshot = [{"id": "S1", "kind": "SUPPORTED", "text": "mixed compact", "derived_from": [0, 1], "supersedes": [], "evidence_refs": ["fresh"]}]
+    task_input(root, capsys, {"investigation_snapshot": snapshot, "investigation_covered_through": 0}, "task-update", "--role", "luna-curator", "--base-revision", "2")
+    review = {"issue": "review gap", "impact": "needs handling", "evidence_refs": ["fresh"]}
+    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "3")
+    stale_file.write_text("two", encoding="utf-8")
+    _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
+    assert curator["Current Investigation Snapshot"][0]["kind"] == "UNKNOWN"
+    assert curator["Current Investigation Snapshot"][0]["recorded_kind"] == "SUPPORTED"
+    assert curator["Uncovered Investigation Findings"][2]["kind"] == "UNKNOWN"
+    assert curator["Uncovered Investigation Findings"][2]["recorded_kind"] == "CONTRADICTION"
+    (root / "dirty.txt").write_text("dirty", encoding="utf-8")
+    task_input(root, capsys, {"review_handled_through": 1, "changed_surface": ["manual.txt"]}, "task-update", "--role", "controller", "--base-revision", "4")
+    _, controller = run(capsys, root, "prepare", "--role", "controller")
+    assert controller["Review Findings"] == []
+    assert {"manual.txt", "dirty.txt"} <= set(controller["Changed Surface"])
+    assert controller["Investigation Snapshot"][0]["kind"] == "UNKNOWN"
+
+
+def test_memory_index_nested_traversal_and_fail_closed_missing_cycle_and_unindexed(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    source = root / "src.txt"; source.write_text("one", encoding="utf-8")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    front = f'---\nEvidence: file:src.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: MEMORY\nAudience: ["sol-high"]\nTopics: ["needle"]\nSymbols: []\n---\n\n'
+    nested = root / ".agent-memory/nested"; nested.mkdir()
+    (nested / "INDEX.md").write_text(front + "# Nested index\n\n- [Nested fact](fact.md)\n", encoding="utf-8")
+    (nested / "fact.md").write_text(front + "# Nested fact\n\nNested recall.\n", encoding="utf-8")
+    root_index = root / ".agent-memory/INDEX.md"
+    root_index.write_text(root_index.read_text(encoding="utf-8") + "\n- [Nested](nested/INDEX.md)\n", encoding="utf-8")
+    _, nested_pack = run(capsys, root, "prepare", "needle", "--role", "sol-high")
+    assert any(item.get("source", "").endswith("nested/fact.md") for item in nested_pack["Supported Evidence"])
+    (root / ".agent-memory/unindexed.md").write_text(front + "# Unindexed\n\nneedle hidden.\n", encoding="utf-8")
+    _, unindexed = run(capsys, root, "prepare", "needle hidden", "--role", "sol-high")
+    assert not any(item.get("source", "").endswith("unindexed.md") for item in unindexed["Supported Evidence"])
+    root_index.write_text(root_index.read_text(encoding="utf-8") + "\n- [Missing](missing.md)\n", encoding="utf-8")
+    _, missing = run(capsys, root, "prepare", "needle", "--role", "sol-high")
+    assert any("link missing" in item["text"] for item in missing["Unknowns"])
+    root_index.write_text(root_index.read_text(encoding="utf-8").replace("\n- [Missing](missing.md)\n", ""), encoding="utf-8")
+    (nested / "INDEX.md").write_text(front + "# Nested index\n\n- [Self](INDEX.md)\n", encoding="utf-8")
+    _, cycle = run(capsys, root, "prepare", "needle", "--role", "sol-high")
+    assert any("cycle" in item["text"] for item in cycle["Unknowns"])
+
+
+def test_task_input_evidence_is_supported_without_being_misclassified_as_stale(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    task_ref = {"id": "request", "kind": "task-input", "locator": "user request", "summary": "stated requirement", "confidence": "SUPPORTED"}
+    task_input(root, capsys, {"evidence_refs": [task_ref]}, "task-start", "inspect")
+    raw = {"kind": "SUPPORTED", "text": "request requires guard", "evidence_refs": ["request"]}
+    task_input(root, capsys, {"investigation_findings": [raw]}, "task-update", "--role", "luna", "--base-revision", "1")
+    snapshot = [{"id": "S1", "kind": "SUPPORTED", "text": "compact guard", "derived_from": [0], "supersedes": [], "evidence_refs": ["request"]}]
+    task_input(root, capsys, {"investigation_snapshot": snapshot, "investigation_covered_through": 0}, "task-update", "--role", "luna-curator", "--base-revision", "2")
+    review = {"issue": "missing guard", "impact": "request can fail", "evidence_refs": ["request"]}
+    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "3")
+    _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
+    assert curator["Uncovered Investigation Findings"][0]["kind"] == "SUPPORTED"
+    assert curator["Current Investigation Snapshot"][0]["kind"] == "SUPPORTED"
+    _, controller = run(capsys, root, "prepare", "--role", "controller")
+    assert controller["Review Findings"][0]["effective_state"] == "SUPPORTED"

@@ -1,388 +1,390 @@
 # codex-context
 
-A lightweight, Git-native context and orchestration layer for Codex.
+[English](README.en.md)
 
-`codex-context` helps multi-agent coding workflows keep the right information in the right reasoning context without turning the repository into an agent framework.
+一个轻量、Git 原生的 Codex 上下文与编排层。
 
-It provides:
+`codex-context` 帮助多代理编码工作流把正确的信息放入正确的推理上下文，同时避免把仓库变成 Agent Framework。
 
-* role-specific context packs;
-* evidence-backed project memory;
-* transient task state;
-* investigation and review handoffs;
-* freshness tracking;
-* milestone state;
-* conservative routing;
-* deterministic validation and recovery.
+它提供：
 
-Codex remains the runtime and controller. Source code, Git, tests, compilers, and runtime behavior remain the correctness core.
+* 按角色划分的上下文包；
+* 由证据支撑的项目记忆；
+* 瞬态任务状态；
+* 调查与审查交接；
+* freshness 跟踪；
+* 里程碑状态；
+* 保守路由；
+* 确定性的验证与恢复。
 
-> **Status:** Alpha. The current implementation is intentionally small and is still being evaluated on real coding workloads.
+Codex 仍然是 runtime 和 Controller。源代码、Git、测试、编译器和运行时行为仍然是 correctness core。
 
----
-
-## Why this project exists
-
-Long coding tasks tend to accumulate context.
-
-A single agent may eventually carry:
-
-* repository exploration;
-* failed search paths;
-* implementation details;
-* test output;
-* debugging traces;
-* architectural reasoning;
-* reviewer criteria;
-* old decisions;
-* unrelated historical context.
-
-More context is not automatically better context.
-
-For strong reasoning models, the larger risk is often not the raw number of tokens but the number of competing objectives inside the same reasoning trajectory.
-
-An agent asked to simultaneously:
-
-* investigate,
-* design,
-* implement,
-* verify,
-* review its own design,
-* remember previous failures,
-* and satisfy a large procedural checklist
-
-is solving a different problem from an agent given a focused reasoning question with the necessary evidence.
-
-`codex-context` is built around a simple idea:
-
-> **Preserve useful information without forcing every role to carry every piece of information.**
-
-The project therefore treats context boundaries as part of the engineering architecture.
+> **状态：** Alpha。当前实现有意保持小巧，仍在真实编码工作负载上进行评估。
 
 ---
 
-## Design philosophy
+## 为什么要做这个项目
 
-### One dominant objective per reasoning context
+长时间的编码任务往往会不断积累上下文。
 
-Strong models already contain substantial learned engineering knowledge.
+单个代理最终可能同时携带：
 
-The goal is not to tell them every reasoning procedure they should execute. The goal is to give them:
+* 仓库探索；
+* 失败的搜索路径；
+* 实现细节；
+* 测试输出；
+* 调试轨迹；
+* 架构推理；
+* 审查标准；
+* 旧决策；
+* 无关的历史上下文。
 
-* the problem;
-* confirmed facts;
-* relevant evidence;
-* hard constraints;
-* unresolved questions.
+更多上下文并不自动意味着更好的上下文。
 
-Then let the model reason.
+对于强推理模型，更大的风险往往不是 token 的绝对数量，而是同一条推理轨迹中相互竞争的目标数量。
 
-The system tries to avoid explicitly combining unrelated cognitive roles inside the same context.
+如果要求一个代理同时：
 
-For example:
+* 调查，
+* 设计，
+* 实现，
+* 验证，
+* 审查自己的设计，
+* 记住此前的失败，
+* 并满足一份庞大的流程检查清单，
+
+那么它所解决的问题，已经不同于让代理根据必要证据专注回答一个推理问题。
+
+`codex-context` 建立在一个简单理念之上：
+
+> **保留有用信息，但不强迫每个角色携带每一条信息。**
+
+因此，本项目把上下文边界视为工程架构的一部分。
+
+---
+
+## 设计理念
+
+### 每个推理上下文只保留一个主导目标
+
+强模型已经具备大量从训练中获得的工程知识。
+
+目标不是告诉它们应当执行每一个推理步骤，而是向它们提供：
+
+* 问题；
+* 已确认事实；
+* 相关证据；
+* 硬约束；
+* 未解决的问题。
+
+然后让模型自行推理。
+
+系统会尽量避免在同一个上下文中明确组合互不相关的认知角色。
+
+例如，更推荐：
 
 ```text
-investigate → summarize evidence → reason → implement → verify
+调查 → 汇总证据 → 推理 → 实现 → 验证
 ```
 
-is preferred over:
+而不是：
 
 ```text
-one agent investigates
-        + designs
-        + implements
-        + judges its own design
-        + verifies everything
-        + rereads all previous logs
+一个代理负责调查
+        + 设计
+        + 实现
+        + 评判自己的设计
+        + 验证一切
+        + 重读此前的全部日志
 ```
 
 ---
 
-### Weak models need procedure; strong models need evidence
+### 弱模型需要流程，强模型需要证据
 
-Different capabilities benefit from different amounts of scaffolding.
+不同能力的模型适合不同程度的脚手架。
 
-A useful approximation is:
+可以近似理解为：
 
 ```text
-weaker model
-    → WHAT + HOW + CHECKLIST
+较弱模型
+    → 做什么 + 怎么做 + 检查清单
 
-mid-level model
-    → WHAT + BOUNDARY + SOME HOW
+中等能力模型
+    → 做什么 + 边界 + 部分方法
 
-strong reasoning model
-    → WHAT + FACTS + HARD CONSTRAINTS
+强推理模型
+    → 做什么 + 事实 + 硬约束
 ```
 
-`codex-context` therefore does not try to give every agent the same prompt.
+因此，`codex-context` 不会尝试给每个代理提供相同的提示词。
 
-Investigation and mechanical verification can use explicit schemas and procedures.
+调查和机械验证可以使用明确的 schema 与流程。
 
-High-reasoning roles receive a much smaller evidence-oriented context.
+高推理角色会收到小得多、以证据为核心的上下文。
 
 ---
 
-### Working set is not handoff set
+### 工作集不等于交接集
 
-An investigator may need to inspect hundreds of files, searches, symbols, and intermediate hypotheses.
+调查者可能需要检查数百个文件、搜索结果、符号和中间假设。
 
-That does not mean the next agent should receive all of them.
+这并不意味着下一个代理应该收到全部内容。
 
-The intended flow is:
+预期流程是：
 
 ```text
-large investigation working set
+大型调查工作集
             ↓
-structured raw findings
+结构化原始 findings
             ↓
-bounded curated snapshot
+有界的 curated snapshot
             ↓
-Controller selection
+Controller 选择
             ↓
-small Decision Context
+小型 Decision Context
             ↓
-high-reasoning agent
+高推理代理
 ```
 
-Raw exploration remains available for traceability, but it does not automatically gain the right to enter every downstream context.
+原始探索内容仍可用于追溯，但它不会自动获得进入每个下游上下文的权限。
 
 ---
 
-### Evidence over memory
+### 证据优先于记忆
 
-Project memory is useful, but memory is not truth.
+项目记忆很有用，但记忆不等于事实。
 
-The effective precedence is:
+实际优先级是：
 
 ```text
-current source / Git / tests / runtime
+当前源代码 / Git / 测试 / runtime
                 ↓
-fresh verified project memory
+新鲜且已验证的项目记忆
                 ↓
-milestone state
+里程碑状态
                 ↓
-historical memory
+历史记忆
 ```
 
-A stored interpretation can become stale when its supporting evidence changes.
+当支撑证据发生变化时，已保存的解释可能会变得 stale。
 
-An unchanged hash proves that the referenced evidence did not change. It does **not** prove that the previous interpretation was correct.
-
----
-
-### Optimization must not become a correctness dependency
-
-Optional tools may reduce repeated reads or accelerate navigation.
-
-They must never be required for correctness.
-
-If Serena, cachebro, agentmemory, or another optimization layer fails, the workflow should become slower—not less correct.
+hash 未变化只能证明被引用的证据没有变化，**不能**证明此前的解释是正确的。
 
 ---
 
-## Architecture
+### 优化不能成为正确性依赖
 
-The default roles are intentionally narrow.
+可选工具可以减少重复读取或加快导航。
+
+它们绝不能成为保证正确性的必要条件。
+
+如果 Serena、cachebro、agentmemory 或其他优化层失效，工作流应该只是变慢，而不是变得不正确。
+
+---
+
+## 架构
+
+默认角色有意保持职责狭窄。
 
 ### Controller — Sol mid
 
-The parent Controller owns:
+父级 Controller 负责：
 
-* task routing;
-* task state;
-* context promotion;
-* phase transitions;
-* integration;
-* final acceptance.
+* 任务路由；
+* 任务状态；
+* 上下文 promotion；
+* 阶段转换；
+* 集成；
+* 最终验收。
 
-Only the Controller delegates work.
+只有 Controller 可以委派工作。
 
-The Controller should operate on bounded task views rather than raw investigation transcripts.
+Controller 应基于有界任务视图工作，而不是读取原始调查 transcript。
 
 ---
 
 ### Luna investigator
 
-Used for focused investigation and mechanical evidence gathering:
+用于聚焦调查和机械式证据收集：
 
-* repository search;
-* symbol discovery;
-* reference lookup;
-* Git inspection;
-* targeted verification;
-* structured extraction;
-* test execution;
-* residual-reference checks.
+* 仓库搜索；
+* 符号发现；
+* 引用查找；
+* Git 检查；
+* 定向验证；
+* 结构化提取；
+* 测试执行；
+* 残留引用检查。
 
-Luna may have a large working set.
+Luna 可以拥有较大的工作集。
 
-Its durable output is structured findings and evidence references, not its transcript.
+它的持久输出是结构化 findings 和 evidence refs，而不是 transcript。
 
 ---
 
 ### Luna curator
 
-A fresh Luna invocation may compact accumulated investigation findings.
+一个 fresh Luna invocation 可以压缩累积的 investigation findings。
 
-It can:
+它可以：
 
-* merge duplicates;
-* remove resolved unknowns from the active snapshot;
-* consolidate related evidence;
-* replace obsolete snapshot entries;
-* keep the current investigation state bounded.
+* 合并重复项；
+* 从活跃 snapshot 中移除已解决的 unknown；
+* 整合相关证据；
+* 替换过时的 snapshot 条目；
+* 让当前调查状态保持有界。
 
-It cannot manufacture stronger certainty than its source findings support.
+它不能凭空制造比来源 findings 更强的确定性。
 
-Curation changes representation, not evidence.
+Curation 改变的是表达形式，而不是证据。
 
 ---
 
 ### Sol high
 
-Reserved for reasoning that genuinely benefits from a stronger reasoning context:
+仅用于真正受益于更强推理上下文的问题：
 
-* architecture;
-* lifecycle behavior;
-* concurrency;
-* cross-module semantics;
-* ambiguous root causes;
-* difficult migration semantics;
-* provenance or security reasoning;
-* hard trade-offs.
+* 架构；
+* 生命周期行为；
+* 并发；
+* 跨模块语义；
+* 模糊的根因；
+* 困难的 migration 语义；
+* provenance 或安全推理；
+* 艰难的取舍。
 
-Sol high does not maintain task state and does not perform routine evidence bookkeeping.
+Sol high 不维护任务状态，也不执行常规的证据 bookkeeping。
 
-Its ideal trajectory is:
+它的理想轨迹是：
 
 ```text
-facts → reasoning → decision → exit
+事实 → 推理 → 决策 → 退出
 ```
 
 ---
 
 ### Terra implementer
 
-Receives an explicit implementation boundary and the facts necessary to perform the change.
+接收明确的实现边界，以及完成修改所必需的事实。
 
-Its job is implementation, not architectural scope expansion.
+它的职责是实现，而不是扩大架构范围。
 
-When assumptions fail or the required scope expands materially, control returns to the Controller.
+当假设不成立或所需范围发生实质性扩大时，控制权返回 Controller。
 
 ---
 
 ### Terra reviewer
 
-High-risk changes may receive a fresh independent review.
+高风险修改可以接受一次 fresh independent review。
 
-The reviewer is deliberately isolated from:
+Reviewer 会被刻意隔离于：
 
-* previous reviewer findings;
-* implementer self-justification;
-* raw investigation history;
-* scoring rubrics;
-* unnecessary debugging history.
+* 此前的 reviewer findings；
+* implementer 的自我辩护；
+* 原始调查历史；
+* 评分 rubric；
+* 不必要的调试历史。
 
-It returns structured issues with impact and evidence.
+它返回包含影响和证据的结构化问题。
 
-The Controller decides whether those findings should affect Decision Context.
+Controller 决定这些 findings 是否应影响 Decision Context。
 
 ---
 
-## Typical workflows
+## 典型工作流
 
 ### Microtask
 
-For an obvious, local, low-risk change:
+对于明显、局部且低风险的修改：
 
 ```text
 Controller
     ↓
-direct edit
+直接编辑
     ↓
-deterministic check
+确定性检查
     ↓
-done
+完成
 ```
 
-No subagent is required.
+无需子代理。
 
 ---
 
-### Normal implementation
+### 常规实现
 
 ```text
 Controller
     ↓
 Terra implementer
     ↓
-deterministic checks
+确定性检查
     ↓
-Luna verification when useful
+需要时由 Luna 验证
 ```
 
 ---
 
-### Investigation
+### 调查
 
 ```text
 Controller
     ↓
 Luna investigator
     ↓
-curated findings when needed
+需要时生成 curated findings
     ↓
 Controller
 
-        ├─ obvious solution → Terra
-        └─ difficult reasoning → Sol high
+        ├─ 解决方案明确 → Terra
+        └─ 推理困难 → Sol high
 ```
 
 ---
 
-### Complex change
+### 复杂修改
 
 ```text
-Luna investigation
+Luna 调查
         ↓
-bounded evidence
+有界证据
         ↓
-Sol high reasoning
+Sol high 推理
         ↓
-Terra implementation
+Terra 实现
         ↓
-deterministic checks
+确定性检查
         ↓
-Luna verification
+Luna 验证
 ```
 
-For sufficiently risky changes:
+对于风险足够高的修改：
 
 ```text
         ↓
 fresh Terra review
         ↓
-Controller decision
+Controller 决策
 ```
 
-Default concurrency is one.
+默认并发数为一。
 
-Parallelism is reserved for clearly independent work.
+只对明确独立的工作使用并行。
 
 ---
 
-## Installation
+## 安装
 
-Python 3.11 or newer and Git are required.
+需要 Python 3.11 或更高版本，以及 Git。
 
-Install directly from the repository:
+直接从仓库安装：
 
 ```bash
 uv tool install git+https://github.com/Iris0fTheValley/codex-context
 ```
 
-Attach it to an existing Git repository:
+接入现有 Git 仓库：
 
 ```bash
 cd your-repository
@@ -390,7 +392,7 @@ context init
 context doctor --pretty
 ```
 
-For local development:
+用于本地开发：
 
 ```bash
 git clone https://github.com/Iris0fTheValley/codex-context
@@ -402,51 +404,51 @@ uv run context version
 
 ---
 
-## Quick start
+## 快速开始
 
-Start a task:
+启动一个任务：
 
 ```bash
 context task-start "fix request cancellation"
 ```
 
-Inspect the Controller view:
+查看 Controller 视图：
 
 ```bash
 context prepare --role controller --pretty
 ```
 
-Prepare an investigation:
+准备调查上下文：
 
 ```bash
 context prepare --role luna-investigator --pretty
 ```
 
-Prepare a curator when investigation findings need compaction:
+当 investigation findings 需要压缩时准备 curator：
 
 ```bash
 context prepare --role luna-curator --pretty
 ```
 
-Prepare deep reasoning context:
+准备深度推理上下文：
 
 ```bash
 context prepare --role sol-high --pretty
 ```
 
-Prepare implementation:
+准备实现上下文：
 
 ```bash
 context prepare --role terra-implementer --pretty
 ```
 
-Prepare an independent review:
+准备独立审查上下文：
 
 ```bash
 context prepare --role terra-reviewer --pretty
 ```
 
-Inspect diagnostic state:
+检查诊断状态：
 
 ```bash
 context doctor --pretty
@@ -454,7 +456,7 @@ context stale --pretty
 context milestone-check --pretty
 ```
 
-Close the current task using its current revision:
+使用当前 revision 关闭当前任务：
 
 ```bash
 context task-close --base-revision <revision>
@@ -462,9 +464,9 @@ context task-close --base-revision <revision>
 
 ---
 
-## Repository layout
+## 仓库布局
 
-After initialization, a repository may contain:
+初始化后，仓库中可能包含：
 
 ```text
 AGENTS.md
@@ -496,87 +498,87 @@ AGENTS.md
 └── backups/
 ```
 
-`.context/state.json` is transient and ignored by Git.
+`.context/state.json` 是瞬态文件，Git 会忽略它。
 
-Project memory and milestone documents are Git-owned.
+项目记忆和里程碑文档由 Git 管理。
 
 ---
 
-## Task state
+## 任务状态
 
-A task keeps structured state rather than conversation transcripts.
+任务保存的是结构化状态，而不是对话 transcript。
 
-Conceptually it separates:
+从概念上看，它分为：
 
 ```text
-Investigation history
+调查历史
     ↓
-Curated investigation state
+Curated 调查状态
     ↓
-Controller-promoted Decision Context
+由 Controller promotion 的 Decision Context
 
 Review findings
     ↓
-Controller promotion when relevant
+相关时由 Controller promotion
 ```
 
-Typical Decision Context contains:
+典型的 Decision Context 包含：
 
-* confirmed facts;
-* supported evidence;
-* unknowns;
-* contradictions;
-* constraints;
-* decisions;
-* relevant files and symbols;
-* modification boundary;
-* verification target;
-* architectural intent.
+* 已确认事实；
+* 有支撑的证据；
+* unknowns；
+* contradictions；
+* constraints；
+* decisions；
+* 相关文件与符号；
+* 修改边界；
+* verification target；
+* architectural intent。
 
-Task state rejects raw transcript and tool-log fields.
+任务状态拒绝原始 transcript 和 tool-log 字段。
 
-The intent is to preserve traceability without converting `.context/state.json` into a second conversation history.
+其目标是保留可追溯性，同时避免把 `.context/state.json` 变成第二份对话历史。
 
 ---
 
-## Evidence model
+## 证据模型
 
-The project uses four effective evidence states:
+本项目使用四种有效证据状态：
 
-| State        | Meaning                                                      |
-| ------------ | ------------------------------------------------------------ |
-| `CONFIRMED`  | Supported by sufficiently strong current native evidence     |
-| `SUPPORTED`  | Evidence exists, but it is weaker or indirect                |
-| `UNVERIFIED` | Not yet established                                          |
-| `STALE`      | Previously recorded evidence no longer matches current state |
+| 状态         | 含义                                             |
+| ------------ | ------------------------------------------------ |
+| `CONFIRMED`  | 有足够强且当前有效的原生证据支撑                 |
+| `SUPPORTED`  | 存在证据，但证据较弱或间接                       |
+| `UNVERIFIED` | 尚未建立                                         |
+| `STALE`      | 此前记录的证据不再与当前状态匹配                 |
 
-Native evidence can include:
+原生证据可以包括：
 
 ```text
 file:path/to/file#sha256
 git:path/to/file#blob-id
 ```
 
-Test and runtime observations may reference the source snapshots they observed.
+测试和 runtime observation 可以引用它们观察时对应的 source snapshot。
 
-Their freshness proves only that those explicitly declared sources have not changed.
+其 freshness 只能证明那些明确声明的 source 尚未变化。
 
-It does not prove that every possible dependency remains unchanged.
+它不能证明每一个可能的依赖项都保持不变。
 
 ---
 
-## Project memory
+## 项目记忆
 
-`.agent-memory/` stores durable project knowledge.
+`.agent-memory/` 保存持久的项目知识。
 
-Examples include:
+例如：
 
-* project conventions;
-* operator constraints;
-* adopted decisions;
-* verified recurring failure modes.
+* 项目约定；
+* operator constraints；
+* 已采纳决策；
+* 经验证的重复性 failure mode。
 
-Memory entries use metadata such as:
+Memory entry 使用如下 metadata：
 
 ```yaml
 Evidence: file:src/example.py#...
@@ -590,19 +592,19 @@ Topics: ["request cancellation"]
 Symbols: ["Request.cancel"]
 ```
 
-The INDEX files are routers, not summary documents.
+INDEX 文件是 router，而不是总结文档。
 
-Normal routing is conservative and lexical.
+正常路由是保守的 lexical routing。
 
-Fresh project-wide `HARD_CONSTRAINT` entries may bypass lexical matching when their audience and evidence permit it.
+当 audience 和 evidence 允许时，新鲜且作用于整个项目的 `HARD_CONSTRAINT` 条目可以绕过 lexical matching。
 
 ---
 
-## Milestones
+## 里程碑
 
-`.milestones/` keeps persistent project progress separate from transient task context.
+`.milestones/` 将持久的项目进度与瞬态任务上下文分开保存。
 
-A milestone contains:
+一个里程碑包含：
 
 ```text
 scope.md
@@ -611,64 +613,64 @@ progress.md
 verification.md
 ```
 
-These files answer different questions:
+这些文件分别回答不同问题：
 
-* **scope** — what belongs to this milestone;
-* **decisions** — milestone-specific choices;
-* **progress** — current state and next work;
-* **verification** — what has actually been checked.
+* **scope** — 哪些内容属于这个里程碑；
+* **decisions** — 里程碑特定的选择；
+* **progress** — 当前状态和下一步工作；
+* **verification** — 实际检查过哪些内容。
 
-Milestone documents are project state, not agent transcripts.
-
----
-
-## Managed `AGENTS.md`
-
-`context init` maintains a small marked block inside the repository's existing `AGENTS.md`.
-
-It is deliberately short.
-
-The managed block acts as a router for:
-
-* Controller ownership;
-* role isolation;
-* investigation/curation;
-* Decision Context promotion;
-* default sequential delegation;
-* microtask fast path;
-* native correctness fallbacks.
-
-Existing user content outside the managed markers is preserved.
+里程碑文档是项目状态，而不是代理 transcript。
 
 ---
 
-## Optional tools
+## 托管的 `AGENTS.md`
 
-`codex-context` can coexist with optimization tools such as:
+`context init` 会在仓库现有的 `AGENTS.md` 中维护一个带标记的小型区块。
 
-| Tool        | Intended use                      |
-| ----------- | --------------------------------- |
-| Serena      | symbol and reference navigation   |
-| cachebro    | unchanged-read caching and deltas |
-| agentmemory | explicit episodic recall          |
+它被有意保持简短。
 
-These tools are optional.
+托管区块作为以下内容的 router：
 
-`codex-context` does not replace their databases or orchestrate their lifecycle.
+* Controller ownership；
+* 角色隔离；
+* 调查/curation；
+* Decision Context promotion；
+* 默认顺序委派；
+* microtask fast path；
+* 原生 correctness fallback。
 
-If they are unavailable, use native source inspection, Git, search, compilers, tests, and runtime behavior.
+托管标记以外的现有用户内容会被保留。
 
 ---
 
-## Diagnostics
+## 可选工具
 
-Run:
+`codex-context` 可以与下列优化工具共存：
+
+| 工具        | 预期用途                       |
+| ----------- | ------------------------------ |
+| Serena      | 符号与引用导航                 |
+| cachebro    | 未变化读取的缓存与 delta       |
+| agentmemory | 显式 episodic recall           |
+
+这些工具都是可选的。
+
+`codex-context` 不会替代它们的数据库，也不会编排它们的生命周期。
+
+如果它们不可用，请使用原生的源代码检查、Git、搜索、编译器、测试和运行时行为。
+
+---
+
+## 诊断
+
+运行：
 
 ```bash
 context doctor --pretty
 ```
 
-Diagnostics intentionally distinguish states such as:
+诊断会刻意区分以下状态：
 
 ```text
 configured
@@ -678,176 +680,176 @@ version observed
 version validated
 ```
 
-Authorization, health, runtime state, or subagent state remain `UNKNOWN` when the tool cannot actually prove them.
+当工具无法实际证明 authorization、health、runtime state 或 subagent state 时，这些状态会保持为 `UNKNOWN`。
 
-The diagnostic layer should not manufacture confidence.
+诊断层不应凭空制造信心。
 
 ---
 
-## Recovery and uninstall
+## 恢复与卸载
 
-Initialization and managed mutations use:
+初始化和托管修改使用：
 
-* cross-process locking;
-* atomic file replacement;
-* local backups;
-* hash-guarded rollback.
+* 跨进程锁；
+* 原子文件替换；
+* 本地备份；
+* hash guard rollback。
 
-Rollback:
+回滚：
 
 ```bash
 context rollback <backup-id>
 ```
 
-Migration:
+迁移：
 
 ```bash
 context migrate
 ```
 
-Uninstall:
+卸载：
 
 ```bash
 context uninstall
 ```
 
-User-modified project memory is preserved rather than silently overwritten.
+用户修改过的项目记忆会被保留，而不会被静默覆盖。
 
 ---
 
-## What this project is not
+## 本项目不是什么
 
-`codex-context` is intentionally **not**:
+`codex-context` 有意**不做**：
 
-* an agent runtime;
-* a workflow engine;
-* a recursive agent scheduler;
-* a database-backed memory platform;
-* a graph store;
-* an embeddings-first RAG system;
-* a Web UI;
-* an automatic whole-repository summarizer;
-* a replacement for source inspection or tests.
+* Agent runtime；
+* 工作流引擎；
+* 递归代理 scheduler；
+* 数据库支持的记忆平台；
+* 图存储；
+* embeddings-first RAG 系统；
+* Web UI；
+* 自动的全仓库总结器；
+* 源代码检查或测试的替代品。
 
-The project should remain small enough that deleting it does not make the underlying development workflow incorrect.
+本项目应保持足够小巧，即使删除它，底层开发工作流也不会因此变得不正确。
 
 ---
 
-## Research hypothesis
+## 研究假设
 
-The strongest claim behind this project is still a hypothesis:
+本项目背后最核心的主张仍然只是一项假设：
 
-> Protecting the task purity of a strong reasoning model may improve coding performance even when total available context or compute is unchanged.
+> 即使可用上下文总量或算力不变，保护强推理模型的任务纯度也可能提升编码表现。
 
-In other words, two workflows with the same approximate amount of computation may behave differently:
+换句话说，计算量大致相同的两个工作流可能呈现不同表现：
 
 ```text
-Workflow A
+工作流 A
 
-Sol:
-search
-→ inspect
-→ reason
-→ implement
-→ debug
-→ reread logs
-→ verify
-→ self-review
-→ revise
+Sol：
+搜索
+→ 检查
+→ 推理
+→ 实现
+→ 调试
+→ 重读日志
+→ 验证
+→ 自我审查
+→ 修订
 ```
 
-versus:
+与：
 
 ```text
-Workflow B
+工作流 B
 
-Luna:
-investigate
-→ structured evidence
+Luna：
+调查
+→ 结构化证据
 
-Sol:
-focused reasoning
-→ decision
+Sol：
+聚焦推理
+→ 决策
 
-Terra:
-implementation
+Terra：
+实现
 
-Luna:
-verification
+Luna：
+验证
 
-Terra:
-fresh review when required
+Terra：
+需要时进行 fresh review
 ```
 
-The second workflow deliberately terminates disposable contexts instead of allowing every intermediate task to remain inside the strongest model's reasoning trajectory.
+第二种工作流会主动终止可丢弃的上下文，而不是让每个中间任务都留在最强模型的推理轨迹中。
 
-This project is an attempt to make that boundary explicit and testable.
+本项目试图让这条边界变得明确且可测试。
 
-It does **not** assume that more agents are always better.
+它**不**假定代理越多越好。
 
-It does **not** assume that less context is always better.
+它**不**假定上下文越少越好。
 
-The intended principle is narrower:
+其原则更为克制：
 
-> **Give each reasoning context the information it needs, and avoid giving it unrelated objectives merely because that information exists.**
-
----
-
-## Current limitations
-
-The project is still early.
-
-Current limitations include:
-
-* routing is intentionally conservative;
-* task state is local and single-task rather than a task database;
-* evidence freshness cannot prove undeclared dependencies;
-* role execution is still performed by Codex rather than by this package;
-* external adapter health cannot always be observed directly;
-* the benefits of cognitive isolation still require controlled evaluation on real coding workloads.
-
-Complexity will only be added when real tasks demonstrate that it improves downstream quality or reliability.
+> **为每个推理上下文提供其所需的信息，不要仅仅因为其他信息存在，就同时赋予它无关目标。**
 
 ---
 
-## Development
+## 当前限制
 
-Run the test suite:
+本项目仍处于早期阶段。
+
+当前限制包括：
+
+* 路由有意保持保守；
+* 任务状态是本地的单任务状态，而不是任务数据库；
+* evidence freshness 无法证明未声明的依赖；
+* 角色执行仍由 Codex 完成，而不是由本 package 完成；
+* 外部 adapter 的健康状态并非总能被直接观察；
+* cognitive isolation 的收益仍需在真实编码工作负载上进行受控评估。
+
+只有当真实任务证明增加复杂度能改善下游质量或可靠性时，才会增加复杂度。
+
+---
+
+## 开发
+
+运行测试套件：
 
 ```bash
 uv run --extra test pytest
 ```
 
-CI currently covers supported Python versions used by the project.
+CI 当前覆盖项目支持的 Python 版本。
 
-Changes should preserve the central invariants:
+修改应维持以下核心 invariant：
 
-1. correctness does not depend on optional optimization tools;
-2. raw exploration does not automatically propagate downstream;
-3. evidence cannot become stronger merely through summarization;
-4. high-reasoning contexts stay focused;
-5. failure should degrade efficiency before it degrades correctness;
-6. the project remains a thin layer around Codex rather than becoming another agent framework.
-
----
-
-## License
-
-MIT License. See [`LICENSE`](LICENSE).
+1. 正确性不依赖可选优化工具；
+2. 原始探索内容不会自动向下游传播；
+3. 证据不能仅因被总结就变得更强；
+4. 高推理上下文保持聚焦；
+5. 失败应先降低效率，而不是降低正确性；
+6. 本项目仍是 Codex 周围的薄层，而不会变成另一个 Agent Framework。
 
 ---
 
-## Contributing
+## 许可证
 
-The project is experimental, so small and evidence-backed changes are preferred.
+MIT License。参见 [`LICENSE`](LICENSE)。
 
-Useful contributions include:
+---
 
-* reproducible routing failures;
-* provenance or freshness bugs;
-* migration and recovery failures;
-* role-isolation leaks;
-* real-world benchmark results;
-* simplifications that preserve behavior.
+## 贡献
 
-Large framework additions should be justified by a concrete failure mode that cannot be solved by the existing small architecture.
+本项目仍处于实验阶段，因此更倾向于小型、由证据支撑的修改。
+
+有价值的贡献包括：
+
+* 可复现的路由失败；
+* provenance 或 freshness bug；
+* migration 与恢复失败；
+* 角色隔离泄漏；
+* 真实世界的 benchmark 结果；
+* 保持行为不变的简化。
+
+大型框架扩展应由一个无法通过现有小型架构解决的具体 failure mode 来证明其必要性。

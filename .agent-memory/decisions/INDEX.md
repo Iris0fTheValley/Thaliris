@@ -12,4 +12,4 @@ Symbols: []
 
 # Decision index
 
-Link each project decision entry here.
+- [PD-001 decision template](PD-001.md)

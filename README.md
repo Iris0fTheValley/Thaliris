@@ -43,7 +43,8 @@ uv run context version
 ```bash
 context task-start "fix request cancellation" --milestone M001-name
 context task-update --role controller --base-revision 1 --input update.json
-context prepare --role luna --pretty
+context prepare --role luna-investigator --pretty
+context prepare --role luna-curator --pretty
 context prepare --role sol-high --pretty
 context prepare --role terra-implementer --pretty
 context prepare --role terra-reviewer --pretty
@@ -89,9 +90,13 @@ Symbols: ["Request.cancel"]
 
 A Task Context Pack is transient output. It never replaces source inspection and is not committed as project truth.
 
-`task-start`, `task-update`, and `task-close` maintain one current task in the ignored `.context/state.json`. Updates use an expected revision so two roles cannot silently overwrite each other. Luna writes `investigation_findings` (`kind`, `text`, and evidence refs), while a fresh reviewer writes only `review_findings` (`issue`, `impact`, and evidence refs). Neither collection is projected into Sol high. The controller explicitly promotes selected findings into the separate decision-context fields: confirmed facts, supported evidence, unknowns, contradictions, hard constraints, and decisions. The state also carries the goal, current milestone, relevant files and symbols, modification boundary, changed surface, and evidence references. It rejects transcript, raw-log, stdout, and stderr fields: a handoff carries claims and addressable evidence, not exploratory history.
+`task-start`, `task-update`, and `task-close` maintain one current task in the ignored `.context/state.json`. Updates use an expected revision so two roles cannot silently overwrite each other. The state rejects transcript, raw-log, stdout, and stderr fields: a handoff carries claims and addressable evidence, not exploratory history.
 
-`Confirmed Facts` require currently fresh file-hash or Git-blob evidence. `Supported Evidence` remains explicitly weaker and may cite tests, runtime observations, task input, or memory. Test and runtime references must declare non-empty `source_refs` to fresh file/Git evidence; when a bound source changes, preparation demotes the affected supported claim until it is reverified. Unbound files are not claimed as part of that freshness proof. Memory `Applicability` helps route relevant files only; it never expands the task's `Modification Boundary`.
+Investigation has two layers. A Luna investigator (`luna` remains a compatibility alias) appends raw `investigation_findings` (`kind`, `text`, and evidence refs); an update supplies additions, never a replacement. A fresh `luna-curator` invocation may fully rewrite `investigation_snapshot` at a phase boundary, before high-reasoning work, or when the snapshot budget is reached. Each snapshot item has an `id`, `kind`, compact `text`, raw list indexes in `derived_from`, optional prior snapshot IDs in `supersedes`, and evidence refs inherited from those raw findings. The snapshot is deterministically limited to 64 items and 32 KiB. Curation may deduplicate, merge, remove resolved unknowns, and compress evidence, but cannot promote epistemic status—for example, a merely `SUPPORTED` source cannot become `CONFIRMED` through summarization.
+
+A fresh reviewer appends only `review_findings` (`issue`, `impact`, and evidence refs); earlier reviewer findings are never rewritten. The curator cannot modify raw findings, evidence, verification targets, or Sol-facing fields. Sol high has no task-state write permission: it returns reasoning to the controller instead of maintaining evidence or verification state. Only the controller selects and promotes material from the curated snapshot or reviewer output into the Decision Context: confirmed facts, supported evidence, unknowns, contradictions, hard constraints, decisions, verification target, and architectural intent. Neither raw findings, the curated snapshot, nor reviewer findings are projected into Sol high.
+
+`Confirmed Facts` require currently fresh file-hash or Git-blob evidence. `Supported Evidence` remains explicitly weaker and may cite tests, runtime observations, task input, or memory. Test and runtime references must declare non-empty `source_refs` to fresh file/Git evidence; when a bound source changes, preparation demotes the affected supported claim until it is reverified. This freshness proves only that the explicitly bound `source_refs` have not changed. It does not prove that every file capable of affecting the test or runtime observation is unchanged, and unbound source is outside the freshness proof. Memory `Applicability` helps route relevant files only; it never expands the task's `Modification Boundary`.
 
 Each memory entry also declares `Kind`, `Audience`, `Topics`, and `Symbols`; entries without `Audience` remain readable for migration and stale checks but are not projected to any role. Ordinary `MEMORY` entries use Unicode-safe lexical routing. A `HARD_CONSTRAINT` bypasses lexical matching only when it is project-wide, ACTIVE, audience-allowed, backed by fresh evidence, and captured as CONFIRMED or SUPPORTED. There is no embedding index. Milestone scope, decisions, and verification are projected with source, status, and confidence metadata. A fresh reviewer receives only intent, hard constraints, durable decisions, the actual changed surface/diff, and evidence necessary for those fields, not earlier findings, implementation explanations, known-risk framing, or a scoring rubric.
 
@@ -134,6 +139,7 @@ Rollback is hash-guarded: if a file changed after the recorded operation, it is 
 - No Web UI, scheduler, agent runtime, workflow engine, database, graph store, embeddings, or automatic whole-repository summary.
 - Ordinary task routing is lexical and conservative; explicitly classified, fresh project-wide hard constraints are routed independently of lexical hits.
 - The MVP stores one current transient task snapshot; it is not a task database, event log, or transcript store.
+- Raw findings remain bounded by the existing 256 KiB task-state cap and global list limits; the tool does not provide unlimited investigation history.
 - cachebro's Codex-specific compatibility is not established by upstream documentation.
 - Codex Desktop currently exposes agentmemory MCP tools, while plugin-local lifecycle hooks may not dispatch; this project does not depend on those hooks.
 - `doctor` leaves authorization, runtime health, and subagent state `UNKNOWN` when they are not directly observable.

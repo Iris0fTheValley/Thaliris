@@ -142,7 +142,7 @@ def test_role_specific_projection_and_native_fallback(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     expected = {
         "sol-high": {"Goal", "Confirmed Facts", "Supported Evidence", "Hard Constraints", "Decisions", "Unknowns", "Contradictions", "Evidence refs"},
-        "luna": {"Goal", "Relevant Files", "Relevant Symbols", "Hard Constraints", "Unknowns", "Contradictions", "Evidence refs", "Investigation Target", "Verification Target"},
+        "luna": {"Goal", "Relevant Files", "Relevant Symbols", "Hard Constraints", "Unknowns", "Contradictions", "Evidence refs", "Investigation Target", "Investigation Snapshot", "Verification Target"},
         "terra-implementer": {"Goal", "Confirmed Facts", "Supported Evidence", "Relevant Files", "Hard Constraints", "Decisions", "Modification Boundary", "Required Verification", "Evidence refs"},
         "terra-reviewer": {"Review Goal", "Architectural Intent", "Hard Constraints", "Durable Decisions", "Changed Surface", "Evidence refs"},
     }
@@ -357,7 +357,7 @@ def test_luna_to_sol_handoff_split_and_fresh_reviewer(tmp_path, capsys):
     code, denied = task_input(root, capsys, {"evidence_refs": [e], "supported_evidence": [{"text": "not promoted", "evidence_refs": ["s"]}]}, "task-update", "--role", "luna", "--base-revision", "1")
     assert code == 2 and "not allowed" in denied["error"]
     finding = {"kind": "SUPPORTED", "text": "likely behavior", "evidence_refs": ["s"]}
-    code, updated = task_input(root, capsys, {"evidence_refs": [e], "investigation_findings": [finding], "verification_target": "pytest"}, "task-update", "--role", "luna", "--base-revision", "1")
+    code, updated = task_input(root, capsys, {"evidence_refs": [e], "investigation_findings": [finding]}, "task-update", "--role", "luna", "--base-revision", "1")
     assert code == 0
     _, sol = run(capsys, root, "prepare", "--role", "sol-high")
     assert "Confirmed Facts" in sol and sol["Confirmed Facts"] == [] and sol["Supported Evidence"] == []
@@ -389,17 +389,17 @@ def test_v1_task_state_without_findings_is_loaded_compatibly(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "legacy")
     path = root / ".context/state.json"
     legacy = json.loads(path.read_text(encoding="utf-8"))
-    legacy.pop("investigation_findings"); legacy.pop("review_findings")
+    legacy.pop("investigation_findings"); legacy.pop("investigation_snapshot"); legacy.pop("review_findings")
     path.write_text(json.dumps(legacy), encoding="utf-8")
     code, shown = run(capsys, root, "task-show")
-    assert code == 0 and shown["state"]["investigation_findings"] == [] and shown["state"]["review_findings"] == []
+    assert code == 0 and shown["state"]["investigation_findings"] == [] and shown["state"]["investigation_snapshot"] == [] and shown["state"]["review_findings"] == []
 
 
 def test_v1_unbound_test_evidence_loads_stale_until_reverified(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "legacy test")
     path = root / ".context/state.json"
     legacy = json.loads(path.read_text(encoding="utf-8"))
-    legacy.pop("investigation_findings"); legacy.pop("review_findings")
+    legacy.pop("investigation_findings"); legacy.pop("investigation_snapshot"); legacy.pop("review_findings")
     legacy_ref = {"id": "oldtest", "kind": "test", "locator": "pytest", "summary": "passed before source binding", "confidence": "SUPPORTED"}
     legacy["evidence_refs"] = [legacy_ref]
     legacy["supported_evidence"] = [{"text": "legacy test passed", "evidence_refs": ["oldtest"]}]
@@ -603,3 +603,85 @@ def test_task_state_rejects_newline_and_non_native_confirmed(tmp_path, capsys):
     bad = {"id": "run1", "kind": "runtime", "locator": "run", "summary": "run", "confidence": "CONFIRMED"}
     code, result = task_input(root, capsys, {"evidence_refs": [bad], "confirmed_facts": [{"text": "x", "evidence_refs": ["run1"]}]}, "task-start", "line\nbreak")
     assert code == 2 and ("control" in result["error"] or "non-native" in result["error"])
+
+
+def test_investigation_curation_is_bounded_traceable_and_isolated_from_sol(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "investigate")
+    source = root / "src.txt"; source.write_text("observed", encoding="utf-8")
+    ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "inspection", "confidence": "SUPPORTED"}
+    supported = {"kind": "SUPPORTED", "text": "likely behavior", "evidence_refs": ["src"]}
+    unknown = {"kind": "UNKNOWN", "text": "remaining edge case", "evidence_refs": []}
+    code, _ = task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [supported, unknown]}, "task-update", "--role", "luna-investigator", "--base-revision", "1")
+    assert code == 0
+
+    _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
+    assert curator["Investigation Findings"] == [supported, unknown]
+    assert curator["Current Investigation Snapshot"] == []
+    snapshot = [{"id": "S1", "kind": "SUPPORTED", "text": "compact behavior", "derived_from": [0], "supersedes": [], "evidence_refs": ["src"]}]
+    code, curated = task_input(root, capsys, {"investigation_snapshot": snapshot}, "task-update", "--role", "luna-curator", "--base-revision", "2")
+    assert code == 0 and curated["state"]["investigation_findings"] == [supported, unknown]
+
+    _, investigator = run(capsys, root, "prepare", "--role", "luna-investigator")
+    assert investigator["Investigation Snapshot"] == snapshot
+    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
+    assert "Investigation Findings" not in sol and "Investigation Snapshot" not in sol
+    assert "compact behavior" not in json.dumps(sol)
+
+    replacement = [{"id": "S2", "kind": "SUPPORTED", "text": "deduplicated behavior", "derived_from": [0], "supersedes": ["S1"], "evidence_refs": ["src"]}]
+    code, rewritten = task_input(root, capsys, {"investigation_snapshot": replacement}, "task-update", "--role", "luna-curator", "--base-revision", "3")
+    assert code == 0 and rewritten["state"]["investigation_snapshot"] == replacement
+    promoted = [{"id": "S3", "kind": "CONFIRMED", "text": "not proven", "derived_from": [0], "supersedes": ["S2"], "evidence_refs": ["src"]}]
+    code, failed = task_input(root, capsys, {"investigation_snapshot": promoted}, "task-update", "--role", "luna-curator", "--base-revision", "4")
+    assert code == 2 and ("cannot promote" in failed["error"] or "fresh native" in failed["error"])
+
+    oversized = [{"id": f"B{index}", "kind": "UNKNOWN", "text": "x" * 1000, "derived_from": [1], "supersedes": [], "evidence_refs": []} for index in range(40)]
+    code, failed = task_input(root, capsys, {"investigation_snapshot": oversized}, "task-update", "--role", "luna-curator", "--base-revision", "4")
+    assert code == 2 and "32768 bytes" in failed["error"]
+    too_many = [{"id": f"C{index}", "kind": "UNKNOWN", "text": "x", "derived_from": [1], "supersedes": [], "evidence_refs": []} for index in range(65)]
+    code, failed = task_input(root, capsys, {"investigation_snapshot": too_many}, "task-update", "--role", "luna-curator", "--base-revision", "4")
+    assert code == 2 and "64 items" in failed["error"]
+
+
+def test_investigator_and_reviewer_updates_append_without_rewriting_history(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "inspect")
+    source = root / "src.txt"; source.write_text("one", encoding="utf-8")
+    ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "source", "confidence": "SUPPORTED"}
+    first = {"kind": "SUPPORTED", "text": "first finding", "evidence_refs": ["src"]}
+    second = {"kind": "UNKNOWN", "text": "second finding", "evidence_refs": []}
+    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [first]}, "task-update", "--role", "luna", "--base-revision", "1")
+    code, appended = task_input(root, capsys, {"investigation_findings": [second]}, "task-update", "--role", "luna", "--base-revision", "2")
+    assert code == 0 and appended["state"]["investigation_findings"] == [first, second]
+    state_path = root / ".context/state.json"; before = state_path.read_bytes()
+    code, failed = task_input(root, capsys, {"investigation_findings": [first]}, "task-update", "--role", "luna", "--base-revision", "3")
+    assert code == 2 and "append-only" in failed["error"] and state_path.read_bytes() == before
+
+    review = {"issue": "missing guard", "impact": "behavior can escape scope", "evidence_refs": ["src"]}
+    code, reviewed = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "3")
+    assert code == 0 and reviewed["state"]["review_findings"] == [review]
+    before = state_path.read_bytes()
+    code, failed = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "4")
+    assert code == 2 and "append-only" in failed["error"] and state_path.read_bytes() == before
+
+
+def test_curator_and_sol_high_cannot_write_control_or_decision_state(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "reason")
+    forbidden = (
+        ("sol-high", {"verification_target": "pytest"}),
+        ("sol-high", {"evidence_refs": []}),
+        ("sol-high", {"architectural_intent": "new design"}),
+        ("luna-curator", {"decisions": []}),
+        ("luna-curator", {"investigation_findings": []}),
+    )
+    state_path = root / ".context/state.json"; original = state_path.read_bytes()
+    for role, update in forbidden:
+        code, failed = task_input(root, capsys, update, "task-update", "--role", role, "--base-revision", "1")
+        assert code == 2 and "not allowed" in failed["error"] and state_path.read_bytes() == original
+
+
+def test_new_confirmed_finding_requires_fresh_native_confirmed_evidence(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "confirm")
+    source = root / "src.txt"; source.write_text("observed", encoding="utf-8")
+    ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "inspection", "confidence": "SUPPORTED"}
+    finding = {"kind": "CONFIRMED", "text": "overstated", "evidence_refs": ["src"]}
+    code, failed = task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [finding]}, "task-update", "--role", "luna-investigator", "--base-revision", "1")
+    assert code == 2 and "CONFIRMED" in failed["error"]

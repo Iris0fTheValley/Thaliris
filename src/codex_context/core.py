@@ -310,17 +310,21 @@ _STATE_FIELDS = {
     "confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints",
     "decisions", "relevant_files", "relevant_symbols", "modification_boundary",
     "changed_surface", "evidence_refs", "verification_target", "architectural_intent",
-    "investigation_findings", "review_findings",
+    "investigation_findings", "investigation_snapshot", "review_findings",
 }
 _LIST_STATEMENTS = {"confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints", "decisions"}
+_SNAPSHOT_MAX_ITEMS = 64
+_SNAPSHOT_MAX_BYTES = 32 * 1024
 _ROLE_FIELDS = {
     "controller": _STATE_FIELDS - {"schema_version", "revision", "task_id", "status", "goal"},
-    "luna": {"investigation_findings", "relevant_files", "relevant_symbols", "evidence_refs", "verification_target"},
-    "sol-high": {"relevant_files", "relevant_symbols", "evidence_refs", "verification_target", "architectural_intent"},
+    "luna": {"investigation_findings", "evidence_refs"},
+    "luna-investigator": {"investigation_findings", "evidence_refs"},
+    "luna-curator": {"investigation_snapshot"},
+    "sol-high": set(),
     "terra-implementer": {"changed_surface", "evidence_refs"},
     "terra-reviewer": {"review_findings", "evidence_refs"},
 }
-_PACK_ROLES = {"sol-high", "luna", "terra-implementer", "terra-reviewer"}
+_PACK_ROLES = {"sol-high", "luna", "luna-investigator", "luna-curator", "terra-implementer", "terra-reviewer"}
 
 
 def _state_path(root: Path) -> Path:
@@ -369,6 +373,31 @@ def _review_finding(value: object, ids: set[str]) -> None:
         raise ValueError("invalid review finding")
 
 
+def _snapshot_item(value: object, ids: set[str], findings: list[dict[str, object]]) -> None:
+    keys = {"id", "kind", "text", "derived_from", "supersedes", "evidence_refs"}
+    if not isinstance(value, dict) or set(value) != keys or not isinstance(value.get("id"), str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", value["id"]) or value.get("kind") not in {"CONFIRMED", "SUPPORTED", "UNKNOWN", "CONTRADICTION"}:
+        raise ValueError("invalid investigation snapshot item")
+    _statement({"text": value.get("text"), "evidence_refs": value.get("evidence_refs")}, ids)
+    derived = value.get("derived_from")
+    supersedes = value.get("supersedes")
+    if not isinstance(derived, list) or not derived or len(set(derived)) != len(derived) or not all(type(index) is int and 0 <= index < len(findings) for index in derived):
+        raise ValueError("snapshot derived_from must reference raw finding indexes")
+    if not isinstance(supersedes, list) or len(set(supersedes)) != len(supersedes) or not all(isinstance(item, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", item) for item in supersedes):
+        raise ValueError("invalid snapshot supersedes")
+    source_kinds = {findings[index]["kind"] for index in derived}
+    source_evidence = {ref for index in derived for ref in findings[index]["evidence_refs"]}
+    if not set(value["evidence_refs"]) <= source_evidence:
+        raise ValueError("snapshot evidence must come from derived raw findings")
+    if value["kind"] != "UNKNOWN" and not value["evidence_refs"]:
+        raise ValueError("non-unknown snapshot item requires evidence refs")
+    if value["kind"] == "CONFIRMED" and source_kinds != {"CONFIRMED"}:
+        raise ValueError("snapshot cannot promote epistemic status")
+    if value["kind"] == "SUPPORTED" and not source_kinds & {"SUPPORTED", "CONFIRMED"}:
+        raise ValueError("snapshot cannot promote epistemic status")
+    if value["kind"] == "CONTRADICTION" and "CONTRADICTION" not in source_kinds:
+        raise ValueError("snapshot cannot promote epistemic status")
+
+
 def _valid_relative(root: Path, value: object) -> None:
     if not isinstance(value, str) or "\\" in value or not value or value.startswith("/") or any(part in {"", ".", ".."} for part in value.split("/")):
         raise ValueError("path must be normalized POSIX repo-relative")
@@ -402,11 +431,18 @@ def _evidence_fresh(root: Path, ref: dict[str, object], registry: dict[str, dict
     return False
 
 
+def _require_fresh_confirmed_items(root: Path, refs: list[dict[str, object]], items: list[dict[str, object]]) -> None:
+    fresh = {ref["id"] for ref in refs if ref["kind"] in {"file", "git"} and ref["confidence"] == "CONFIRMED" and _evidence_fresh(root, ref)}
+    if any(item["kind"] == "CONFIRMED" and not set(item["evidence_refs"]) & fresh for item in items):
+        raise ValueError("new CONFIRMED investigation material requires fresh native CONFIRMED evidence")
+
+
 def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -> dict[str, object]:
     _check_json(state)
     # Schema v1 snapshots predate the two append-only finding collections.
     if isinstance(state, dict) and state.get("schema_version") == 1:
         state.setdefault("investigation_findings", [])
+        state.setdefault("investigation_snapshot", [])
         state.setdefault("review_findings", [])
         for ref in state.get("evidence_refs", []):
             if isinstance(ref, dict) and ref.get("kind") in {"test", "runtime"} and "source_refs" not in ref:
@@ -450,6 +486,21 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
         raise ValueError("contradictions require evidence refs")
     if not isinstance(state["investigation_findings"], list): raise ValueError("invalid investigation_findings")
     for item in state["investigation_findings"]: _finding(item, ids)
+    declared_confirmed_ids = {ref["id"] for ref in refs if ref["kind"] in {"file", "git"} and ref["confidence"] == "CONFIRMED"}
+    if any(item["kind"] == "CONFIRMED" and not set(item["evidence_refs"]) & declared_confirmed_ids for item in state["investigation_findings"]):
+        raise ValueError("CONFIRMED investigation findings require native CONFIRMED evidence")
+    snapshot = state["investigation_snapshot"]
+    if not isinstance(snapshot, list) or len(snapshot) > _SNAPSHOT_MAX_ITEMS:
+        raise ValueError(f"investigation_snapshot exceeds {_SNAPSHOT_MAX_ITEMS} items")
+    if len(json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()) > _SNAPSHOT_MAX_BYTES:
+        raise ValueError(f"investigation_snapshot exceeds {_SNAPSHOT_MAX_BYTES} bytes")
+    snapshot_ids: set[str] = set()
+    for item in snapshot:
+        _snapshot_item(item, ids, state["investigation_findings"])
+        if item["kind"] == "CONFIRMED" and not set(item["evidence_refs"]) & declared_confirmed_ids:
+            raise ValueError("CONFIRMED snapshot items require native CONFIRMED evidence")
+        if item["id"] in snapshot_ids: raise ValueError("duplicate investigation snapshot id")
+        snapshot_ids.add(item["id"])
     if not isinstance(state["review_findings"], list): raise ValueError("invalid review_findings")
     for item in state["review_findings"]: _review_finding(item, ids)
     confirmed = state["confirmed_facts"]
@@ -487,7 +538,7 @@ def _milestone_exists(root: Path, milestone: str) -> bool:
 def _blank_state(root: Path, goal: str, milestone: str | None) -> dict[str, object]:
     if milestone is not None and not _milestone_exists(root, milestone): raise ValueError("milestone is not linked by the top-level milestone index")
     return {"schema_version": 1, "revision": 1, "task_id": str(uuid.uuid4()), "status": "ACTIVE", "goal": goal,
-            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "investigation_findings": [], "review_findings": [], "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "architectural_intent": None}
+            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "investigation_findings": [], "investigation_snapshot": [], "review_findings": [], "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "architectural_intent": None}
 
 
 def _read_input(value: str | None) -> dict[str, object]:
@@ -521,7 +572,11 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
         if not _state_ignored(root): raise ValueError("task state is not ignored; run context init first")
         path = _state_path(root)
         if path.is_file() and _load_state(root)["status"] == "ACTIVE": raise ValueError("an ACTIVE task already exists")
-        state = _blank_state(root, goal, milestone); state.update(partial); _write_state(root, state)
+        state = _blank_state(root, goal, milestone); state.update(partial)
+        if any(item.get("supersedes") for item in state["investigation_snapshot"] if isinstance(item, dict)):
+            raise ValueError("initial snapshot cannot supersede prior entries")
+        _require_fresh_confirmed_items(root, state["evidence_refs"], state["investigation_findings"] + state["investigation_snapshot"])
+        _write_state(root, state)
     return {"ok": True, "state": state}
 
 
@@ -533,12 +588,32 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
     with _lock(root):
         state = _load_state(root, active=True)
         if state["revision"] != base_revision: raise ValueError("task revision conflict")
+        new_investigation: list[dict[str, object]] = []
+        if role in {"luna", "luna-investigator"} and "investigation_findings" in partial:
+            additions = partial["investigation_findings"]
+            if not isinstance(additions, list) or not additions or any(item in state["investigation_findings"] for item in additions):
+                raise ValueError("Luna investigation_findings must contain new append-only additions")
+            new_investigation = additions
+            partial = partial | {"investigation_findings": state["investigation_findings"] + additions}
+        if role == "terra-reviewer" and "review_findings" in partial:
+            additions = partial["review_findings"]
+            if not isinstance(additions, list) or not additions or any(item in state["review_findings"] for item in additions):
+                raise ValueError("review_findings must contain new append-only additions")
+            partial = partial | {"review_findings": state["review_findings"] + additions}
+        if "investigation_snapshot" in partial:
+            previous_ids = {item["id"] for item in state["investigation_snapshot"]}
+            proposed = partial["investigation_snapshot"]
+            if not isinstance(proposed, list) or any(not set(item.get("supersedes", [])) <= previous_ids for item in proposed if isinstance(item, dict)):
+                raise ValueError("snapshot supersedes must reference the previous snapshot")
         if role != "controller" and "evidence_refs" in partial:
             existing = {ref["id"]: ref for ref in state["evidence_refs"]}
             proposed = {ref["id"]: ref for ref in partial["evidence_refs"] if isinstance(ref, dict) and isinstance(ref.get("id"), str)}
             if any(ref_id not in proposed or proposed[ref_id] != ref for ref_id, ref in existing.items()):
                 raise ValueError("non-controller evidence_refs are append-only")
         state.update(partial); state["revision"] = base_revision + 1
+        if role == "controller" and "investigation_findings" in partial: new_investigation = state["investigation_findings"]
+        new_snapshot = state["investigation_snapshot"] if "investigation_snapshot" in partial else []
+        _require_fresh_confirmed_items(root, state["evidence_refs"], new_investigation + new_snapshot)
         _write_state(root, state, enforce_fresh=bool({"evidence_refs", "confirmed_facts"} & set(partial)))
     return {"ok": True, "state": state}
 
@@ -673,7 +748,8 @@ def _memory_context(root: Path, task: str, role: str) -> dict[str, object]:
 def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, object]:
     milestone = _milestone_slice(root, state["current_milestone"])
     query = " ".join([state["goal"], *state["relevant_symbols"], *state["relevant_files"]])
-    memory = _memory_context(root, query, role)
+    memory_role = "luna" if role == "luna-investigator" else role
+    memory = _memory_context(root, query, memory_role) if role != "luna-curator" else {"confirmed": [], "supported": [], "constraints": [], "decisions": [], "unknowns": [], "evidence": [], "files": [], "symbols": []}
     registry = {ref["id"]: ref for ref in state["evidence_refs"]}
     fresh_ids = {ref["id"] for ref in state["evidence_refs"] if ref["kind"] in {"file", "git"} and ref["confidence"] == "CONFIRMED" and _evidence_fresh(root, ref)}
     confirmed = [item for item in state["confirmed_facts"] if set(item["evidence_refs"]) & fresh_ids]
@@ -705,16 +781,19 @@ def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, ob
                         used.add(source); pending.append(source)
         return [ref for ref in registry if ref["id"] in used]
     meta = {"ok": True, "schema_version": state["schema_version"], "task_id": state["task_id"], "state_revision": state["revision"], "role": role}
+    if role == "luna-curator":
+        payload = {"Goal": state["goal"], "Investigation Findings": state["investigation_findings"], "Current Investigation Snapshot": state["investigation_snapshot"]}
+        return meta | payload | {"Evidence refs": refs_for(state["investigation_findings"], state["investigation_snapshot"])}
     if role == "sol-high":
         facts, supported = confirmed + memory["confirmed"], supported + memory["supported"]
         constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"]
         payload = {"Goal": state["goal"], "Confirmed Facts": facts, "Supported Evidence": supported, "Hard Constraints": constraints, "Decisions": decisions, "Unknowns": state["unknowns"] + demoted + demoted_supported + memory["unknowns"], "Contradictions": state["contradictions"], "Milestone Scope": milestone.get("Scope"), "Milestone Decisions": milestone.get("Decisions")}
         return meta | payload | {"Evidence refs": refs_for(facts, supported, constraints, decisions, payload["Unknowns"], payload["Contradictions"])}
-    if role == "luna":
+    if role in {"luna", "luna-investigator"}:
         unknowns = state["unknowns"] + demoted + demoted_supported + memory["unknowns"]
         constraints = state["constraints"] + memory["constraints"]
-        payload = {"Goal": state["goal"], "Investigation Target": state["verification_target"] or state["goal"], "Relevant Files": list(dict.fromkeys(state["relevant_files"] + memory["files"])), "Relevant Symbols": list(dict.fromkeys(state["relevant_symbols"] + memory["symbols"])), "Hard Constraints": constraints, "Unknowns": unknowns, "Contradictions": state["contradictions"], "Verification Target": state["verification_target"] or milestone.get("Verification"), "Milestone Verification": milestone.get("Verification")}
-        return meta | payload | {"Evidence refs": refs_for(constraints, unknowns, state["contradictions"])}
+        payload = {"Goal": state["goal"], "Investigation Target": state["verification_target"] or state["goal"], "Investigation Snapshot": state["investigation_snapshot"], "Relevant Files": list(dict.fromkeys(state["relevant_files"] + memory["files"])), "Relevant Symbols": list(dict.fromkeys(state["relevant_symbols"] + memory["symbols"])), "Hard Constraints": constraints, "Unknowns": unknowns, "Contradictions": state["contradictions"], "Verification Target": state["verification_target"] or milestone.get("Verification"), "Milestone Verification": milestone.get("Verification")}
+        return meta | payload | {"Evidence refs": refs_for(constraints, unknowns, state["contradictions"], state["investigation_snapshot"])}
     if role == "terra-implementer":
         facts, supported = confirmed + memory["confirmed"], supported + memory["supported"]
         constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"]
@@ -741,10 +820,12 @@ def prepare(root: Path, task: str | None, role: str) -> dict[str, object]:
     if task is None:
         root = _repo_root(root)
         return _state_pack(root, _load_state(root, active=True), role)
-    memory = _memory_context(root, task, role)
+    if role == "luna-curator": raise ValueError("luna-curator requires current task state")
+    memory_role = "luna" if role == "luna-investigator" else role
+    memory = _memory_context(root, task, memory_role)
     common = {"ok": True, "schema_version": 1, "task_id": None, "state_revision": None, "role": role, "Goal": task, "Evidence refs": memory["evidence"]}
     if role == "sol-high": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Unknowns": memory["unknowns"], "Contradictions": []}
-    if role == "luna": return common | {"Investigation Target": task, "Relevant Files": memory["files"], "Relevant Symbols": memory["symbols"], "Hard Constraints": memory["constraints"], "Unknowns": memory["unknowns"], "Contradictions": [], "Verification Target": task}
+    if role in {"luna", "luna-investigator"}: return common | {"Investigation Target": task, "Investigation Snapshot": [], "Relevant Files": memory["files"], "Relevant Symbols": memory["symbols"], "Hard Constraints": memory["constraints"], "Unknowns": memory["unknowns"], "Contradictions": [], "Verification Target": task}
     if role == "terra-implementer": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Relevant Files": memory["files"], "Modification Boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "Required Verification": None}
     visible = memory["constraints"] + memory["decisions"]
     used = {ref_id for item in visible for ref_id in item["evidence_refs"]}

@@ -10,6 +10,7 @@ import subprocess
 
 REQUIRED = ("Evidence", "Revision", "Status", "Applicability", "Confidence")
 OPTIONAL_LISTS = ("Audience", "Topics", "Symbols")
+KINDS = {"MEMORY", "HARD_CONSTRAINT"}
 # STALE is an effective runtime state, never a captured historical value.
 CONFIDENCE = {"CONFIRMED", "SUPPORTED", "UNVERIFIED"}
 STATUS = {"DRAFT", "ACTIVE", "SUPERSEDED", "DONE"}
@@ -51,6 +52,8 @@ def parse(path: Path) -> Entry:
             raise ValueError(f"{path}: {key} must be a JSON string list")
     if "Audience" in meta and not set(meta["Audience"]) <= {"all", "controller", "sol-high", "luna", "terra-implementer", "terra-reviewer"}:
         raise ValueError(f"{path}: Audience contains an unknown role")
+    if "Kind" in meta and meta["Kind"] not in KINDS:
+        raise ValueError(f"{path}: Kind must be MEMORY or HARD_CONSTRAINT")
     return Entry(path, meta, text[end + 5:])
 
 

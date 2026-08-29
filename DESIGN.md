@@ -24,11 +24,11 @@ The four states are `CONFIRMED`, `SUPPORTED`, `UNVERIFIED`, and `STALE`. `STALE`
 
 ### Role projections do not merge responsibilities
 
-Sol high receives architectural intent and reasoning inputs, Luna receives unknowns and investigation targets, and Terra implementers receive the explicit modification boundary and changed surface. Fresh reviewers receive only intent, hard constraints, durable decisions, changed surface/diff, and the evidence necessary to inspect them; they do not receive known-risk framing, implementation explanations, or a rubric. Sol mid retains the complete routing view. Microtasks avoid delegation altogether.
+Sol high receives only controller-promoted decision context plus routed durable constraints and decisions. Luna records investigation findings separately and cannot write the Sol-facing fact collections. Terra implementers receive the explicit modification boundary and changed surface. Fresh reviewers receive only intent, hard constraints, durable decisions, changed surface/diff, and the evidence necessary to inspect them; their structured findings remain outside both their input pack and Sol high until the controller promotes one. Sol mid retains the complete routing view. Microtasks avoid delegation altogether.
 
 ### Claims remain evidence-addressable
 
-Task state separates `Confirmed Facts` from `Supported Evidence`. A confirmed claim needs fresh native file-hash or Git-blob evidence at mutation time and is rechecked when a pack is prepared. Weaker test, runtime, task-input, or memory evidence remains supported. Stale native evidence demotes a claim instead of silently preserving its authority. Prohibited transcript and raw-log fields keep handoffs compact and auditable.
+Task state separates investigation findings, reviewer findings, and controller-promoted decision context. A confirmed claim needs fresh native file-hash or Git-blob evidence at mutation time and is rechecked when a pack is prepared. Weaker test, runtime, task-input, or memory evidence remains supported. Test/runtime evidence names the file/Git snapshots it observed; a changed bound source demotes the claim, while unbound source state remains explicitly unproven. Prohibited transcript and raw-log fields keep handoffs compact and auditable.
 
 ### Applicability is not authorization
 
@@ -36,7 +36,7 @@ Memory `Applicability`, `Topics`, and `Symbols` are routing hints. They may add 
 
 ### Routing is explicit and Unicode-safe
 
-Memory declares an `Audience` and is filtered per role; legacy entries without one are not projected. Lexical routing normalizes Unicode and indexes ordinary words plus CJK characters and bigrams, along with explicit topics and symbols. The MVP intentionally has no embedding dependency. Milestone scope, decisions, and verification retain source, status, and confidence metadata in projections.
+Memory declares a `Kind` and `Audience` and is filtered per role; legacy entries without an audience are not projected. Lexical routing normalizes Unicode and indexes ordinary words plus CJK characters and bigrams, along with explicit topics and symbols. Only an ACTIVE, trusted, fresh, audience-allowed, project-wide `HARD_CONSTRAINT` bypasses lexical matching. Ordinary decisions and lessons remain on-demand. The MVP intentionally has no embedding dependency. Milestone scope, decisions, and verification retain source, status, and confidence metadata in projections.
 
 ### External tools remain optional
 

@@ -138,7 +138,7 @@ def _apply_with_backup(root: Path, writes: dict[str, bytes], deletes: list[str],
     return backup_id
 
 
-def _entry(title: str, body: str, *, status: str = "DRAFT", evidence: str = "NONE", confidence: str = "UNVERIFIED", applicability: str = "PROJECT", audience: list[str] | None = None, topics: list[str] | None = None, symbols: list[str] | None = None) -> bytes:
+def _entry(title: str, body: str, *, status: str = "DRAFT", evidence: str = "NONE", confidence: str = "UNVERIFIED", applicability: str = "PROJECT", audience: list[str] | None = None, topics: list[str] | None = None, symbols: list[str] | None = None, kind: str | None = None) -> bytes:
     audience = ["all"] if audience is None else audience
     topics = [] if topics is None else topics
     symbols = [] if symbols is None else symbols
@@ -146,19 +146,20 @@ def _entry(title: str, body: str, *, status: str = "DRAFT", evidence: str = "NON
     for key, value in (("Audience", audience), ("Topics", topics), ("Symbols", symbols)):
         if value is not None:
             optional += f"{key}: {json.dumps(value, ensure_ascii=False)}\n"
-    return (f"---\nEvidence: {evidence}\nRevision: 1\nStatus: {status}\nApplicability: {applicability}\nConfidence: {confidence}\n{optional}---\n\n# {title}\n\n{body}\n").encode()
+    kind_line = f"Kind: {kind}\n" if kind is not None else ""
+    return (f"---\nEvidence: {evidence}\nRevision: 1\nStatus: {status}\nApplicability: {applicability}\nConfidence: {confidence}\n{kind_line}{optional}---\n\n# {title}\n\n{body}\n").encode()
 
 
 def _template_files() -> dict[str, bytes]:
     return {
-        ".agent-memory/INDEX.md": _entry("Memory index", "- [Operator](operator.md)\n- [Prompt policy](prompt-policy.md)\n- [Project conventions](project-conventions.md)\n- [Decisions](decisions/INDEX.md)\n- [Lessons](lessons/INDEX.md)", audience=["all"]),
-        ".agent-memory/operator.md": _entry("Operator notes", "Unknown. Record only confirmed operating constraints."),
-        ".agent-memory/prompt-policy.md": _entry("Prompt policy", "Use manual recall only. Automatic injection and compression are disabled.", audience=["controller"]),
-        ".agent-memory/project-conventions.md": _entry("Project conventions", "Unknown. Add conventions only with evidence."),
-        ".agent-memory/decisions/INDEX.md": _entry("Decision index", "Link each project decision entry here."),
-        ".agent-memory/decisions/PD-001.md": _entry("PD-001: decision template", "This is an unadopted template, not a project fact.\n\n## Decision\n\nUnknown.\n\n## Rationale\n\nUnknown."),
-        ".agent-memory/lessons/INDEX.md": _entry("Lessons index", "- [L-001 lesson template](L-001.md)"),
-        ".agent-memory/lessons/L-001.md": _entry("L-001: lesson template", "This is an unadopted template, not a historical claim.\n\n## Failure mode\n\nUnknown.\n\n## Prevention\n\nUnknown."),
+        ".agent-memory/INDEX.md": _entry("Memory index", "- [Operator](operator.md)\n- [Prompt policy](prompt-policy.md)\n- [Project conventions](project-conventions.md)\n- [Decisions](decisions/INDEX.md)\n- [Lessons](lessons/INDEX.md)", audience=["all"], kind="MEMORY"),
+        ".agent-memory/operator.md": _entry("Operator notes", "Unknown. Record only confirmed operating constraints.", kind="HARD_CONSTRAINT"),
+        ".agent-memory/prompt-policy.md": _entry("Prompt policy", "Use manual recall only. Automatic injection and compression are disabled.", audience=["controller"], kind="HARD_CONSTRAINT"),
+        ".agent-memory/project-conventions.md": _entry("Project conventions", "Unknown. Add conventions only with evidence.", kind="HARD_CONSTRAINT"),
+        ".agent-memory/decisions/INDEX.md": _entry("Decision index", "Link each project decision entry here.", kind="MEMORY"),
+        ".agent-memory/decisions/PD-001.md": _entry("PD-001: decision template", "This is an unadopted template, not a project fact.\n\n## Decision\n\nUnknown.\n\n## Rationale\n\nUnknown.", kind="MEMORY"),
+        ".agent-memory/lessons/INDEX.md": _entry("Lessons index", "- [L-001 lesson template](L-001.md)", kind="MEMORY"),
+        ".agent-memory/lessons/L-001.md": _entry("L-001: lesson template", "This is an unadopted template, not a historical claim.\n\n## Failure mode\n\nUnknown.\n\n## Prevention\n\nUnknown.", kind="MEMORY"),
         ".milestones/INDEX.md": _entry("Milestone index", "- [M001-name](M001-name/INDEX.md)"),
         ".milestones/M001-name/INDEX.md": _entry("M001-name", "- [Scope](scope.md)\n- [Decisions](decisions.md)\n- [Progress](progress.md)\n- [Verification](verification.md)"),
         ".milestones/M001-name/scope.md": _entry("Scope", "Unknown."),
@@ -309,14 +310,15 @@ _STATE_FIELDS = {
     "confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints",
     "decisions", "relevant_files", "relevant_symbols", "modification_boundary",
     "changed_surface", "evidence_refs", "verification_target", "architectural_intent",
+    "investigation_findings", "review_findings",
 }
 _LIST_STATEMENTS = {"confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints", "decisions"}
 _ROLE_FIELDS = {
     "controller": _STATE_FIELDS - {"schema_version", "revision", "task_id", "status", "goal"},
-    "luna": {"confirmed_facts", "supported_evidence", "unknowns", "contradictions", "relevant_files", "relevant_symbols", "evidence_refs", "verification_target"},
-    "sol-high": {"confirmed_facts", "supported_evidence", "unknowns", "contradictions", "relevant_files", "relevant_symbols", "evidence_refs", "verification_target", "constraints", "decisions", "architectural_intent"},
-    "terra-implementer": {"confirmed_facts", "supported_evidence", "changed_surface", "evidence_refs"},
-    "terra-reviewer": {"evidence_refs"},
+    "luna": {"investigation_findings", "relevant_files", "relevant_symbols", "evidence_refs", "verification_target"},
+    "sol-high": {"relevant_files", "relevant_symbols", "evidence_refs", "verification_target", "architectural_intent"},
+    "terra-implementer": {"changed_surface", "evidence_refs"},
+    "terra-reviewer": {"review_findings", "evidence_refs"},
 }
 _PACK_ROLES = {"sol-high", "luna", "terra-implementer", "terra-reviewer"}
 
@@ -354,13 +356,26 @@ def _statement(value: object, ids: set[str]) -> None:
         raise ValueError("invalid statement")
 
 
+def _finding(value: object, ids: set[str]) -> None:
+    if not isinstance(value, dict) or set(value) != {"kind", "text", "evidence_refs"} or value.get("kind") not in {"CONFIRMED", "SUPPORTED", "UNKNOWN", "CONTRADICTION"}:
+        raise ValueError("invalid investigation finding")
+    _statement({"text": value.get("text"), "evidence_refs": value.get("evidence_refs")}, ids)
+    if value["kind"] != "UNKNOWN" and not value["evidence_refs"]:
+        raise ValueError("non-unknown investigation finding requires evidence refs")
+
+
+def _review_finding(value: object, ids: set[str]) -> None:
+    if not isinstance(value, dict) or set(value) != {"issue", "impact", "evidence_refs"} or not isinstance(value.get("issue"), str) or not value["issue"] or len(value["issue"]) > 1000 or not isinstance(value.get("impact"), str) or not value["impact"] or len(value["impact"]) > 1000 or not isinstance(value.get("evidence_refs"), list) or not value["evidence_refs"] or not all(isinstance(ref, str) and ref in ids for ref in value["evidence_refs"]):
+        raise ValueError("invalid review finding")
+
+
 def _valid_relative(root: Path, value: object) -> None:
     if not isinstance(value, str) or "\\" in value or not value or value.startswith("/") or any(part in {"", ".", ".."} for part in value.split("/")):
         raise ValueError("path must be normalized POSIX repo-relative")
     _safe(root, value)
 
 
-def _evidence_fresh(root: Path, ref: dict[str, object]) -> bool:
+def _evidence_fresh(root: Path, ref: dict[str, object], registry: dict[str, dict[str, object]] | None = None) -> bool:
     kind, locator = ref["kind"], ref["locator"]
     if kind in {"file", "git"}:
         match = re.fullmatch(r"(file|git):([^#]+)#([0-9a-fA-F]{40,64})", str(locator))
@@ -378,11 +393,24 @@ def _evidence_fresh(root: Path, ref: dict[str, object]) -> bool:
             _valid_relative(root, locator); entry = parse(_safe(root, locator))
         except (ValueError, OSError): return False
         return entry.meta["Status"] == "ACTIVE" and entry.meta["Confidence"] in {"CONFIRMED", "SUPPORTED"} and evidence_status(entry, root)[0] == "FRESH"
+    if kind in {"test", "runtime"} and registry is not None:
+        source_refs = ref.get("source_refs")
+        return isinstance(source_refs, list) and bool(source_refs) and all(
+            source in registry and registry[source]["kind"] in {"file", "git"} and _evidence_fresh(root, registry[source])
+            for source in source_refs
+        )
     return False
 
 
 def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -> dict[str, object]:
     _check_json(state)
+    # Schema v1 snapshots predate the two append-only finding collections.
+    if isinstance(state, dict) and state.get("schema_version") == 1:
+        state.setdefault("investigation_findings", [])
+        state.setdefault("review_findings", [])
+        for ref in state.get("evidence_refs", []):
+            if isinstance(ref, dict) and ref.get("kind") in {"test", "runtime"} and "source_refs" not in ref:
+                ref["source_refs"] = []
     if not isinstance(state, dict) or set(state) != _STATE_FIELDS:
         raise ValueError("invalid task state schema")
     if state["schema_version"] != 1 or type(state["revision"]) is not int or state["revision"] < 1:
@@ -398,11 +426,21 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
     refs = state["evidence_refs"]
     if not isinstance(refs, list): raise ValueError("invalid evidence_refs")
     ids: set[str] = set()
+    registry: dict[str, dict[str, object]] = {}
     for ref in refs:
-        if not isinstance(ref, dict) or set(ref) != {"id", "kind", "locator", "summary", "confidence"} or not all(isinstance(ref.get(k), str) and ref[k] for k in ("id", "kind", "locator", "summary")) or len(ref["summary"]) > 2000 or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", ref["id"]) or ref["id"].startswith("memory:") or ref.get("kind") not in {"file", "git", "memory", "test", "runtime", "task-input"} or ref.get("confidence") not in {"CONFIRMED", "SUPPORTED"} or ref["id"] in ids:
+        kind = ref.get("kind") if isinstance(ref, dict) else None
+        expected_keys = {"id", "kind", "locator", "summary", "confidence", "source_refs"} if kind in {"test", "runtime"} else {"id", "kind", "locator", "summary", "confidence"}
+        if not isinstance(ref, dict) or set(ref) != expected_keys or not all(isinstance(ref.get(k), str) and ref[k] for k in ("id", "kind", "locator", "summary")) or len(ref["summary"]) > 2000 or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", ref["id"]) or ref["id"].startswith("memory:") or kind not in {"file", "git", "memory", "test", "runtime", "task-input"} or ref.get("confidence") not in {"CONFIRMED", "SUPPORTED"} or ref["id"] in ids:
             raise ValueError("invalid evidence reference")
         if ref["kind"] in {"memory", "test", "runtime", "task-input"} and ref["confidence"] != "SUPPORTED": raise ValueError("non-native evidence may only be SUPPORTED")
-        ids.add(ref["id"])
+        ids.add(ref["id"]); registry[ref["id"]] = ref
+    for ref in refs:
+        if ref["kind"] in {"test", "runtime"}:
+            source_refs = ref["source_refs"]
+            if not isinstance(source_refs, list) or not all(isinstance(source, str) and source in registry and registry[source]["kind"] in {"file", "git"} for source in source_refs):
+                raise ValueError("test/runtime evidence requires file or git source_refs")
+            if enforce_fresh and (not source_refs or not _evidence_fresh(root, ref, registry)):
+                raise ValueError("test/runtime evidence requires fresh source_refs")
     for key in _LIST_STATEMENTS:
         if not isinstance(state[key], list): raise ValueError(f"invalid {key}")
         for item in state[key]: _statement(item, ids)
@@ -410,6 +448,10 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
         raise ValueError("supported evidence requires evidence refs")
     if any(not item["evidence_refs"] for item in state["contradictions"]):
         raise ValueError("contradictions require evidence refs")
+    if not isinstance(state["investigation_findings"], list): raise ValueError("invalid investigation_findings")
+    for item in state["investigation_findings"]: _finding(item, ids)
+    if not isinstance(state["review_findings"], list): raise ValueError("invalid review_findings")
+    for item in state["review_findings"]: _review_finding(item, ids)
     confirmed = state["confirmed_facts"]
     confirmed_ids = {ref["id"] for ref in refs if ref["kind"] in {"file", "git"} and ref["confidence"] == "CONFIRMED" and _evidence_fresh(root, ref)}
     if any(not set(item["evidence_refs"]) & confirmed_ids for item in confirmed):
@@ -445,7 +487,7 @@ def _milestone_exists(root: Path, milestone: str) -> bool:
 def _blank_state(root: Path, goal: str, milestone: str | None) -> dict[str, object]:
     if milestone is not None and not _milestone_exists(root, milestone): raise ValueError("milestone is not linked by the top-level milestone index")
     return {"schema_version": 1, "revision": 1, "task_id": str(uuid.uuid4()), "status": "ACTIVE", "goal": goal,
-            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "architectural_intent": None}
+            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "investigation_findings": [], "review_findings": [], "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "architectural_intent": None}
 
 
 def _read_input(value: str | None) -> dict[str, object]:
@@ -491,7 +533,13 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
     with _lock(root):
         state = _load_state(root, active=True)
         if state["revision"] != base_revision: raise ValueError("task revision conflict")
-        state.update(partial); state["revision"] = base_revision + 1; _write_state(root, state)
+        if role != "controller" and "evidence_refs" in partial:
+            existing = {ref["id"]: ref for ref in state["evidence_refs"]}
+            proposed = {ref["id"]: ref for ref in partial["evidence_refs"] if isinstance(ref, dict) and isinstance(ref.get("id"), str)}
+            if any(ref_id not in proposed or proposed[ref_id] != ref for ref_id, ref in existing.items()):
+                raise ValueError("non-controller evidence_refs are append-only")
+        state.update(partial); state["revision"] = base_revision + 1
+        _write_state(root, state, enforce_fresh=bool({"evidence_refs", "confirmed_facts"} & set(partial)))
     return {"ok": True, "state": state}
 
 
@@ -545,7 +593,16 @@ def _route(root: Path, task: str, role: str) -> list[Entry]:
     for entry in candidates:
         explicit = entry.meta.get("Topics", []) + entry.meta.get("Symbols", [])
         haystack = " ".join(explicit) if explicit else f"{entry.path.name} {entry.body}"
-        if words & _tokens(haystack): matched.append(entry)
+        project_wide_constraint = (
+            entry.meta.get("Kind") == "HARD_CONSTRAINT"
+            and entry.meta["Applicability"] == "PROJECT"
+            and entry.meta["Status"] == "ACTIVE"
+            and entry.meta["Confidence"] in {"CONFIRMED", "SUPPORTED"}
+            and entry.meta["Evidence"] != "NONE"
+            and entry.meta["Evidence"] != []
+            and evidence_status(entry, root)[0] == "FRESH"
+        )
+        if project_wide_constraint or words & _tokens(haystack): matched.append(entry)
     return list({entry.path: entry for entry in matched}.values())
 
 
@@ -592,7 +649,7 @@ def _memory_context(root: Path, task: str, role: str) -> dict[str, object]:
             continue
         recorded_evidence = entry.meta["Evidence"]
         trusted = entry.meta["Confidence"] in {"CONFIRMED", "SUPPORTED"} and recorded_evidence != "NONE" and recorded_evidence != []
-        active = entry.meta["Status"] == "ACTIVE" and trusted and "unknown" not in text.lower()
+        active = entry.meta["Status"] == "ACTIVE" and trusted
         if active:
             applicability = entry.meta["Applicability"]
             scopes = applicability if isinstance(applicability, list) else [applicability]
@@ -605,9 +662,9 @@ def _memory_context(root: Path, task: str, role: str) -> dict[str, object]:
                     unknowns.append({"text": f"{rel}: invalid applicability {scope}", "evidence_refs": [ref_id]})
         statement = {"source": rel, "text": text, "evidence_refs": [ref_id]}
         if not active: unknowns.append({"text": f"{rel}: {text.splitlines()[0] if text else 'Unknown'}", "evidence_refs": [ref_id]})
+        elif entry.meta.get("Kind") == "HARD_CONSTRAINT": constraints.append(statement)
+        elif "/decisions/" in rel: decisions.append(statement)
         else: supported.append(statement)
-        if active and any(term in rel for term in ("policy", "convention", "operator")): constraints.append(statement)
-        if active and "/decisions/" in rel: decisions.append(statement)
         symbols.extend(entry.meta.get("Symbols", []))
     # Applicability is memory routing metadata, never a change authorization.
     return {"confirmed": confirmed, "supported": supported, "constraints": constraints, "decisions": decisions, "unknowns": unknowns, "evidence": evidence, "files": list(dict.fromkeys(files)), "symbols": list(dict.fromkeys(symbols))}
@@ -617,11 +674,16 @@ def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, ob
     milestone = _milestone_slice(root, state["current_milestone"])
     query = " ".join([state["goal"], *state["relevant_symbols"], *state["relevant_files"]])
     memory = _memory_context(root, query, role)
+    registry = {ref["id"]: ref for ref in state["evidence_refs"]}
     fresh_ids = {ref["id"] for ref in state["evidence_refs"] if ref["kind"] in {"file", "git"} and ref["confidence"] == "CONFIRMED" and _evidence_fresh(root, ref)}
     confirmed = [item for item in state["confirmed_facts"] if set(item["evidence_refs"]) & fresh_ids]
     demoted = [{"text": f"stale confirmed fact: {item['text']}", "evidence_refs": item["evidence_refs"]} for item in state["confirmed_facts"] if item not in confirmed]
-    native_stale = {ref["id"] for ref in state["evidence_refs"] if ref["kind"] in {"file", "git", "memory"} and not _evidence_fresh(root, ref)}
-    supported = [item for item in state["supported_evidence"] if not item["evidence_refs"] or not set(item["evidence_refs"]).issubset(native_stale)]
+    native_stale = {ref["id"] for ref in state["evidence_refs"] if ref["kind"] in {"file", "git", "memory", "test", "runtime"} and not _evidence_fresh(root, ref, registry)}
+    stale_test_runtime = {
+        ref["id"] for ref in state["evidence_refs"]
+        if ref["kind"] in {"test", "runtime"} and not _evidence_fresh(root, ref, registry)
+    }
+    supported = [item for item in state["supported_evidence"] if not item["evidence_refs"] or (not set(item["evidence_refs"]).issubset(native_stale) and not set(item["evidence_refs"]) & stale_test_runtime)]
     demoted_supported = [{"text": f"stale supported evidence: {item['text']}", "evidence_refs": item["evidence_refs"]} for item in state["supported_evidence"] if item not in supported]
     def refs_for(*groups: object) -> list[dict[str, object]]:
         used: set[str] = set()
@@ -633,6 +695,14 @@ def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, ob
                 for child in value: visit(child)
         for group in groups: visit(group)
         registry = state["evidence_refs"] + memory["evidence"]
+        by_id = {ref["id"]: ref for ref in registry}
+        pending = list(used)
+        while pending:
+            ref = by_id.get(pending.pop())
+            if ref and ref["kind"] in {"test", "runtime"}:
+                for source in ref["source_refs"]:
+                    if source not in used:
+                        used.add(source); pending.append(source)
         return [ref for ref in registry if ref["id"] in used]
     meta = {"ok": True, "schema_version": state["schema_version"], "task_id": state["task_id"], "state_revision": state["revision"], "role": role}
     if role == "sol-high":
@@ -642,8 +712,9 @@ def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, ob
         return meta | payload | {"Evidence refs": refs_for(facts, supported, constraints, decisions, payload["Unknowns"], payload["Contradictions"])}
     if role == "luna":
         unknowns = state["unknowns"] + demoted + demoted_supported + memory["unknowns"]
-        payload = {"Goal": state["goal"], "Investigation Target": state["verification_target"] or state["goal"], "Relevant Files": list(dict.fromkeys(state["relevant_files"] + memory["files"])), "Relevant Symbols": list(dict.fromkeys(state["relevant_symbols"] + memory["symbols"])), "Unknowns": unknowns, "Contradictions": state["contradictions"], "Verification Target": state["verification_target"] or milestone.get("Verification"), "Milestone Verification": milestone.get("Verification")}
-        return meta | payload | {"Evidence refs": refs_for(unknowns, state["contradictions"])}
+        constraints = state["constraints"] + memory["constraints"]
+        payload = {"Goal": state["goal"], "Investigation Target": state["verification_target"] or state["goal"], "Relevant Files": list(dict.fromkeys(state["relevant_files"] + memory["files"])), "Relevant Symbols": list(dict.fromkeys(state["relevant_symbols"] + memory["symbols"])), "Hard Constraints": constraints, "Unknowns": unknowns, "Contradictions": state["contradictions"], "Verification Target": state["verification_target"] or milestone.get("Verification"), "Milestone Verification": milestone.get("Verification")}
+        return meta | payload | {"Evidence refs": refs_for(constraints, unknowns, state["contradictions"])}
     if role == "terra-implementer":
         facts, supported = confirmed + memory["confirmed"], supported + memory["supported"]
         constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"]
@@ -673,7 +744,7 @@ def prepare(root: Path, task: str | None, role: str) -> dict[str, object]:
     memory = _memory_context(root, task, role)
     common = {"ok": True, "schema_version": 1, "task_id": None, "state_revision": None, "role": role, "Goal": task, "Evidence refs": memory["evidence"]}
     if role == "sol-high": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Unknowns": memory["unknowns"], "Contradictions": []}
-    if role == "luna": return common | {"Investigation Target": task, "Relevant Files": memory["files"], "Relevant Symbols": memory["symbols"], "Unknowns": memory["unknowns"], "Contradictions": [], "Verification Target": task}
+    if role == "luna": return common | {"Investigation Target": task, "Relevant Files": memory["files"], "Relevant Symbols": memory["symbols"], "Hard Constraints": memory["constraints"], "Unknowns": memory["unknowns"], "Contradictions": [], "Verification Target": task}
     if role == "terra-implementer": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Relevant Files": memory["files"], "Modification Boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "Required Verification": None}
     visible = memory["constraints"] + memory["decisions"]
     used = {ref_id for item in visible for ref_id in item["evidence_refs"]}

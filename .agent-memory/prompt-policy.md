@@ -4,6 +4,7 @@ Revision: 1
 Status: DRAFT
 Applicability: PROJECT
 Confidence: UNVERIFIED
+Kind: HARD_CONSTRAINT
 Audience: ["controller"]
 Topics: []
 Symbols: []

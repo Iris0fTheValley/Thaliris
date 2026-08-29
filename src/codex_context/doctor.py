@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tomllib
@@ -38,8 +39,11 @@ def _version(command: str) -> str:
 
 def _adapter(name: str, expected: str, entry: object | None, project_enabled: bool | None, probe: bool) -> dict[str, str]:
     result = _states("YES" if entry is not None else "NO", "UNKNOWN" if project_enabled is None else ("YES" if project_enabled else "NO"))
+    result["installed"] = "YES" if shutil.which(name) else "NO"
     result["version"] = _version(name) if probe else UNKNOWN
-    result["installed"] = "YES" if expected in result["version"] else ("NO" if result["version"] != UNKNOWN else UNKNOWN)
+    result["expected_version"] = expected
+    matches_expected = re.search(rf"(?<![0-9.]){re.escape(expected)}(?![0-9.])", result["version"]) is not None
+    result["version_validated"] = "UNKNOWN" if result["version"] == UNKNOWN else ("YES" if matches_expected else "NO")
     return result
 
 

@@ -76,6 +76,7 @@ Revision: 1
 Status: ACTIVE
 Applicability: src/example.py
 Confidence: CONFIRMED
+Kind: MEMORY
 Audience: ["sol-high", "terra-implementer"]
 Topics: ["request cancellation"]
 Symbols: ["Request.cancel"]
@@ -88,11 +89,11 @@ Symbols: ["Request.cancel"]
 
 A Task Context Pack is transient output. It never replaces source inspection and is not committed as project truth.
 
-`task-start`, `task-update`, and `task-close` maintain one current task in the ignored `.context/state.json`. Updates use an expected revision so two roles cannot silently overwrite each other. The state carries the goal, current milestone, confirmed facts, supported evidence, unknowns, constraints, decisions, relevant files and symbols, modification boundary, changed surface, and evidence references. It rejects transcript, raw-log, stdout, and stderr fields: a handoff carries claims and addressable evidence, not exploratory history.
+`task-start`, `task-update`, and `task-close` maintain one current task in the ignored `.context/state.json`. Updates use an expected revision so two roles cannot silently overwrite each other. Luna writes `investigation_findings` (`kind`, `text`, and evidence refs), while a fresh reviewer writes only `review_findings` (`issue`, `impact`, and evidence refs). Neither collection is projected into Sol high. The controller explicitly promotes selected findings into the separate decision-context fields: confirmed facts, supported evidence, unknowns, contradictions, hard constraints, and decisions. The state also carries the goal, current milestone, relevant files and symbols, modification boundary, changed surface, and evidence references. It rejects transcript, raw-log, stdout, and stderr fields: a handoff carries claims and addressable evidence, not exploratory history.
 
-`Confirmed Facts` require currently fresh file-hash or Git-blob evidence. `Supported Evidence` remains explicitly weaker and may cite tests, runtime observations, task input, or memory. If native evidence changes, preparation demotes the affected claim rather than presenting it as confirmed. Memory `Applicability` helps route relevant files only; it never expands the task's `Modification Boundary`.
+`Confirmed Facts` require currently fresh file-hash or Git-blob evidence. `Supported Evidence` remains explicitly weaker and may cite tests, runtime observations, task input, or memory. Test and runtime references must declare non-empty `source_refs` to fresh file/Git evidence; when a bound source changes, preparation demotes the affected supported claim until it is reverified. Unbound files are not claimed as part of that freshness proof. Memory `Applicability` helps route relevant files only; it never expands the task's `Modification Boundary`.
 
-Each memory entry also declares `Audience`, `Topics`, and `Symbols`; entries without `Audience` remain readable for migration and stale checks but are not projected to any role. Routing normalizes Unicode and uses lexical words plus CJK characters/bigrams; there is no embedding index. Milestone scope, decisions, and verification are projected with source, status, and confidence metadata. A fresh reviewer receives only intent, hard constraints, durable decisions, the actual changed surface/diff, and evidence necessary for those fields—not implementation explanations, known-risk framing, or a scoring rubric.
+Each memory entry also declares `Kind`, `Audience`, `Topics`, and `Symbols`; entries without `Audience` remain readable for migration and stale checks but are not projected to any role. Ordinary `MEMORY` entries use Unicode-safe lexical routing. A `HARD_CONSTRAINT` bypasses lexical matching only when it is project-wide, ACTIVE, audience-allowed, backed by fresh evidence, and captured as CONFIRMED or SUPPORTED. There is no embedding index. Milestone scope, decisions, and verification are projected with source, status, and confidence metadata. A fresh reviewer receives only intent, hard constraints, durable decisions, the actual changed surface/diff, and evidence necessary for those fields, not earlier findings, implementation explanations, known-risk framing, or a scoring rubric.
 
 Passing a task string to `context prepare` remains a stateless compatibility path. Omitting it prepares the current task snapshot.
 
@@ -108,7 +109,7 @@ The tested contract is graceful degradation:
 
 Serena has an explicit Codex setup path (`serena setup codex`). cachebro is a standard stdio MCP server, but its upstream documentation does not currently claim a Codex-specific setup; treat Codex compatibility as provisional until `context doctor` and an actual read/delta call pass. agentmemory is manual-recall-only here: automatic context injection and automatic LLM compression are rejected by project configuration.
 
-Add these MCP servers through normal Codex configuration, then enable the matching names in `.context/config.json` if desired. `codex-context` describes policy and awareness for these tools; it does not invoke MCP servers to assemble a context pack or orchestrate their lifecycle. `context doctor` reports only directly observable configuration, enablement, installation/version, and limited Serena activation/cache evidence. Anything it cannot prove remains `UNKNOWN`. Adapter output never upgrades a fact on its own.
+Add these MCP servers through normal Codex configuration, then enable the matching names in `.context/config.json` if desired. `codex-context` describes policy and awareness for these tools; it does not invoke MCP servers to assemble a context pack or orchestrate their lifecycle. `context doctor` reports executable installation independently from the observed version and whether that version matches the tested baseline. Probes disabled or unavailable remain `UNKNOWN`; version mismatch is not reported as uninstalled. Adapter output never upgrades a fact on its own.
 
 ## Delta reads and stale facts
 
@@ -131,7 +132,7 @@ Rollback is hash-guarded: if a file changed after the recorded operation, it is 
 ## Limits of the MVP
 
 - No Web UI, scheduler, agent runtime, workflow engine, database, graph store, embeddings, or automatic whole-repository summary.
-- Task routing is lexical and conservative; it may over-include rather than silently omit authoritative constraints.
+- Ordinary task routing is lexical and conservative; explicitly classified, fresh project-wide hard constraints are routed independently of lexical hits.
 - The MVP stores one current transient task snapshot; it is not a task database, event log, or transcript store.
 - cachebro's Codex-specific compatibility is not established by upstream documentation.
 - Codex Desktop currently exposes agentmemory MCP tools, while plugin-local lifecycle hooks may not dispatch; this project does not depend on those hooks.

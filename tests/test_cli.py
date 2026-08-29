@@ -142,7 +142,7 @@ def test_role_specific_projection_and_native_fallback(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     expected = {
         "sol-high": {"Goal", "Confirmed Facts", "Supported Evidence", "Hard Constraints", "Decisions", "Unknowns", "Contradictions", "Evidence refs"},
-        "luna": {"Goal", "Relevant Files", "Relevant Symbols", "Unknowns", "Contradictions", "Evidence refs", "Investigation Target", "Verification Target"},
+        "luna": {"Goal", "Relevant Files", "Relevant Symbols", "Hard Constraints", "Unknowns", "Contradictions", "Evidence refs", "Investigation Target", "Verification Target"},
         "terra-implementer": {"Goal", "Confirmed Facts", "Supported Evidence", "Relevant Files", "Hard Constraints", "Decisions", "Modification Boundary", "Required Verification", "Evidence refs"},
         "terra-reviewer": {"Review Goal", "Architectural Intent", "Hard Constraints", "Durable Decisions", "Changed Surface", "Evidence refs"},
     }
@@ -203,8 +203,23 @@ def test_config_rejects_unknown_adapter_name(tmp_path, capsys):
 
 def test_adapter_version_does_not_claim_health(monkeypatch):
     monkeypatch.setattr(doctor, "_version", lambda name: "cachebro 0.2.2")
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: "cachebro")
     result = doctor._adapter("cachebro", "0.2.2", {"command": "cachebro"}, True, True)
-    assert result["installed"] == "YES" and "healthy" not in result
+    assert result["installed"] == "YES" and result["version_validated"] == "YES" and "healthy" not in result
+
+
+def test_adapter_version_mismatch_is_installed_but_not_validated(monkeypatch):
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: "cachebro")
+    monkeypatch.setattr(doctor, "_version", lambda name: "cachebro 0.3.0")
+    result = doctor._adapter("cachebro", "0.2.2", None, None, True)
+    assert result["installed"] == "YES"
+    assert result["version"] == "cachebro 0.3.0"
+    assert result["expected_version"] == "0.2.2"
+    assert result["version_validated"] == "NO"
+    result = doctor._adapter("cachebro", "0.2.2", None, None, False)
+    assert result["installed"] == "YES" and result["version"] == "UNKNOWN" and result["version_validated"] == "UNKNOWN"
+    monkeypatch.setattr(doctor, "_version", lambda name: "cachebro 0.2.20")
+    assert doctor._adapter("cachebro", "0.2.2", None, None, True)["version_validated"] == "NO"
 
 
 def test_git_blob_evidence_and_pretty_after_command(tmp_path, capsys):
@@ -281,9 +296,9 @@ def test_task_state_cas_atomic_and_cross_reference_validation(tmp_path, capsys):
     code, failed = task_input(root, capsys, {"modification_boundary": boundary}, "task-update", "--role", "sol-high", "--base-revision", "2")
     assert code == 2 and "not allowed" in failed["error"] and state.read_bytes() == original
     code, failed = task_input(root, capsys, {"unknowns": [{"text": "later", "evidence_refs": []}]}, "task-update", "--role", "luna", "--base-revision", "1")
-    assert code == 2 and "conflict" in failed["error"] and state.read_bytes() == original
+    assert code == 2 and "not allowed" in failed["error"] and state.read_bytes() == original
     code, failed = task_input(root, capsys, {"confirmed_facts": [{"text": "bad", "evidence_refs": ["missing"]}]}, "task-update", "--role", "terra-implementer", "--base-revision", "2")
-    assert code == 2 and "statement" in failed["error"]
+    assert code == 2 and "not allowed" in failed["error"]
     state.write_text('{"raw":"tool output"}', encoding="utf-8")
     code, failed = run(capsys, root, "task-show")
     assert code == 2 and "prohibited" in failed["error"]
@@ -339,12 +354,64 @@ def test_luna_to_sol_handoff_split_and_fresh_reviewer(tmp_path, capsys):
     source = root / "src.txt"; source.write_text("inspection", encoding="utf-8")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     e = {"id": "s", "kind": "file", "locator": f"file:src.txt#{digest}", "summary": "inspection", "confidence": "SUPPORTED"}
-    code, updated = task_input(root, capsys, {"evidence_refs": [e], "supported_evidence": [{"text": "likely behavior", "evidence_refs": ["s"]}], "verification_target": "pytest"}, "task-update", "--role", "luna", "--base-revision", "1")
+    code, denied = task_input(root, capsys, {"evidence_refs": [e], "supported_evidence": [{"text": "not promoted", "evidence_refs": ["s"]}]}, "task-update", "--role", "luna", "--base-revision", "1")
+    assert code == 2 and "not allowed" in denied["error"]
+    finding = {"kind": "SUPPORTED", "text": "likely behavior", "evidence_refs": ["s"]}
+    code, updated = task_input(root, capsys, {"evidence_refs": [e], "investigation_findings": [finding], "verification_target": "pytest"}, "task-update", "--role", "luna", "--base-revision", "1")
     assert code == 0
     _, sol = run(capsys, root, "prepare", "--role", "sol-high")
-    assert "Confirmed Facts" in sol and sol["Confirmed Facts"] == [] and sol["Supported Evidence"][0]["text"] == "likely behavior"
+    assert "Confirmed Facts" in sol and sol["Confirmed Facts"] == [] and sol["Supported Evidence"] == []
+    _, shown = run(capsys, root, "task-show")
+    assert shown["state"]["investigation_findings"] == [finding]
+    promoted = {"text": "likely behavior", "evidence_refs": ["s"]}
+    code, _ = task_input(root, capsys, {"supported_evidence": [promoted]}, "task-update", "--role", "controller", "--base-revision", "2")
+    assert code == 0
+    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
+    assert sol["Supported Evidence"] == [promoted]
     _, review = run(capsys, root, "prepare", "--role", "terra-reviewer")
     assert "Unknowns" not in review and "Known Risks" not in review and "check" not in " ".join(review)
+
+
+def test_non_controller_evidence_updates_are_append_only(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    source = root / "src.txt"; source.write_text("one", encoding="utf-8")
+    original = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "original", "confidence": "SUPPORTED"}
+    task_input(root, capsys, {"evidence_refs": [original]}, "task-start", "inspect")
+    rebound = original | {"summary": "rebound"}
+    code, failed = task_input(root, capsys, {"evidence_refs": [rebound]}, "task-update", "--role", "luna", "--base-revision", "1")
+    assert code == 2 and "append-only" in failed["error"]
+    added = {"id": "extra", "kind": "file", "locator": original["locator"], "summary": "additional", "confidence": "SUPPORTED"}
+    code, updated = task_input(root, capsys, {"evidence_refs": [original, added]}, "task-update", "--role", "luna", "--base-revision", "1")
+    assert code == 0 and updated["state"]["evidence_refs"] == [original, added]
+
+
+def test_v1_task_state_without_findings_is_loaded_compatibly(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "legacy")
+    path = root / ".context/state.json"
+    legacy = json.loads(path.read_text(encoding="utf-8"))
+    legacy.pop("investigation_findings"); legacy.pop("review_findings")
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+    code, shown = run(capsys, root, "task-show")
+    assert code == 0 and shown["state"]["investigation_findings"] == [] and shown["state"]["review_findings"] == []
+
+
+def test_v1_unbound_test_evidence_loads_stale_until_reverified(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "legacy test")
+    path = root / ".context/state.json"
+    legacy = json.loads(path.read_text(encoding="utf-8"))
+    legacy.pop("investigation_findings"); legacy.pop("review_findings")
+    legacy_ref = {"id": "oldtest", "kind": "test", "locator": "pytest", "summary": "passed before source binding", "confidence": "SUPPORTED"}
+    legacy["evidence_refs"] = [legacy_ref]
+    legacy["supported_evidence"] = [{"text": "legacy test passed", "evidence_refs": ["oldtest"]}]
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+    code, shown = run(capsys, root, "task-show")
+    assert code == 0 and shown["state"]["evidence_refs"][0]["source_refs"] == []
+    _, pack = run(capsys, root, "prepare", "--role", "sol-high")
+    assert pack["Supported Evidence"] == [] and pack["Unknowns"][0]["text"].startswith("stale supported evidence")
+    code, updated = task_input(root, capsys, {"changed_surface": ["src"]}, "task-update", "--role", "terra-implementer", "--base-revision", "1")
+    assert code == 0 and updated["state"]["revision"] == 2
+    code, closed = run(capsys, root, "task-close", "--base-revision", "2")
+    assert code == 0 and closed["state"]["status"] == "DONE"
 
 
 def test_memory_audience_and_unicode_topics_symbols(tmp_path, capsys):
@@ -408,11 +475,11 @@ def test_reviewer_excludes_memory_unrelated_to_visible_fields(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     source = root / "source.txt"; source.write_text("stable", encoding="utf-8")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    front_matter = f'---\nEvidence: file:source.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nAudience: ["terra-reviewer"]\nTopics: ["review-memory"]\nSymbols: []\n---\n\n'
+    front_matter = f'---\nEvidence: file:source.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: HARD_CONSTRAINT\nAudience: ["terra-reviewer"]\nTopics: ["review-memory"]\nSymbols: []\n---\n\n'
     policy = root / ".agent-memory/policy-reviewer.md"
     policy.write_text(front_matter + "# Review policy\n\nPreserve the public contract.\n", encoding="utf-8")
     unrelated = root / ".agent-memory/fact-reviewer.md"
-    unrelated.write_text(front_matter + "# Unrelated fact\n\nAn implementation observation.\n", encoding="utf-8")
+    unrelated.write_text(front_matter.replace("Kind: HARD_CONSTRAINT\n", "Kind: MEMORY\n") + "# Unrelated fact\n\nAn implementation observation.\n", encoding="utf-8")
     index = root / ".agent-memory/INDEX.md"
     index.write_text(index.read_text(encoding="utf-8") + "\n- [review policy](policy-reviewer.md)\n- [unrelated fact](fact-reviewer.md)\n", encoding="utf-8")
     _, stateless = run(capsys, root, "prepare", "review-memory", "--role", "terra-reviewer")
@@ -425,6 +492,83 @@ def test_reviewer_excludes_memory_unrelated_to_visible_fields(tmp_path, capsys):
     ids = {ref["id"] for ref in review["Evidence refs"]}
     assert "memory:.agent-memory/policy-reviewer.md" in ids
     assert "memory:.agent-memory/fact-reviewer.md" not in ids
+
+
+def test_test_runtime_evidence_requires_fresh_bound_sources(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    source = root / "src.txt"; source.write_text("one", encoding="utf-8")
+    other = root / "other.txt"; other.write_text("unchanged", encoding="utf-8")
+    source_ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "source snapshot", "confidence": "SUPPORTED"}
+    test_ref = {"id": "test", "kind": "test", "locator": "pytest tests/test_src.py", "summary": "passed", "confidence": "SUPPORTED", "source_refs": ["src"]}
+    claim = {"text": "targeted test passed", "evidence_refs": ["test"]}
+    code, made = task_input(root, capsys, {"evidence_refs": [source_ref, test_ref], "supported_evidence": [claim]}, "task-start", "verify")
+    assert code == 0
+    _, fresh = run(capsys, root, "prepare", "--role", "sol-high")
+    assert fresh["Supported Evidence"] == [claim]
+    assert {ref["id"] for ref in fresh["Evidence refs"]} == {"src", "test"}
+    other.write_text("still unrelated", encoding="utf-8")
+    _, unrelated = run(capsys, root, "prepare", "--role", "sol-high")
+    assert unrelated["Supported Evidence"] == [claim]
+    source.write_text("two", encoding="utf-8")
+    _, stale = run(capsys, root, "prepare", "--role", "sol-high")
+    assert stale["Supported Evidence"] == []
+    assert stale["Unknowns"][0]["text"].startswith("stale supported evidence")
+    code, updated = task_input(root, capsys, {"changed_surface": ["src.txt"]}, "task-update", "--role", "terra-implementer", "--base-revision", "1")
+    assert code == 0 and updated["state"]["revision"] == 2
+
+    bad = {"id": "run", "kind": "runtime", "locator": "manual", "summary": "observed", "confidence": "SUPPORTED", "source_refs": []}
+    code, failed = task_input(root, capsys, {"evidence_refs": [bad]}, "task-update", "--role", "controller", "--base-revision", "2")
+    assert code == 2 and "source_refs" in failed["error"]
+
+
+def test_stale_test_ref_demotes_claim_even_with_another_fresh_ref(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    source = root / "src.txt"; source.write_text("one", encoding="utf-8")
+    stable = root / "stable.txt"; stable.write_text("stable", encoding="utf-8")
+    source_ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "source", "confidence": "SUPPORTED"}
+    stable_ref = {"id": "stable", "kind": "file", "locator": f"file:stable.txt#{hashlib.sha256(stable.read_bytes()).hexdigest()}", "summary": "stable", "confidence": "SUPPORTED"}
+    test_ref = {"id": "test", "kind": "test", "locator": "pytest", "summary": "passed", "confidence": "SUPPORTED", "source_refs": ["src"]}
+    claim = {"text": "test passed for this source", "evidence_refs": ["test", "stable"]}
+    task_input(root, capsys, {"evidence_refs": [source_ref, stable_ref, test_ref], "supported_evidence": [claim]}, "task-start", "verify")
+    source.write_text("two", encoding="utf-8")
+    _, pack = run(capsys, root, "prepare", "--role", "sol-high")
+    assert claim not in pack["Supported Evidence"] and any(item["text"].startswith("stale supported evidence") for item in pack["Unknowns"])
+
+
+def test_project_hard_constraint_bypasses_lexical_routing_but_audience_and_memory_do_not(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    source = root / "policy.txt"; source.write_text("stable", encoding="utf-8")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    constraint = root / ".agent-memory/global.md"
+    constraint.write_text(f'---\nEvidence: file:policy.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: HARD_CONSTRAINT\nAudience: ["sol-high"]\nTopics: ["python compatibility"]\nSymbols: []\n---\n\n# Compatibility\n\nSupport Python 3.11; unknown future versions require review.\n', encoding="utf-8")
+    ordinary = root / ".agent-memory/ordinary.md"
+    ordinary.write_text(f'---\nEvidence: file:policy.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: MEMORY\nAudience: ["sol-high"]\nTopics: ["python compatibility"]\nSymbols: []\n---\n\n# Ordinary\n\nOnly lexical recall.\n', encoding="utf-8")
+    index = root / ".agent-memory/INDEX.md"
+    index.write_text(index.read_text(encoding="utf-8") + "\n- [global](global.md)\n- [ordinary](ordinary.md)\n", encoding="utf-8")
+    _, sol = run(capsys, root, "prepare", "rename the checkout flow", "--role", "sol-high")
+    assert any(item["source"].endswith("global.md") for item in sol["Hard Constraints"])
+    assert not any(item.get("source", "").endswith("ordinary.md") for item in sol["Supported Evidence"])
+    _, luna = run(capsys, root, "prepare", "rename the checkout flow", "--role", "luna")
+    assert not any(ref["locator"].endswith("global.md") for ref in luna["Evidence refs"])
+
+    constraint.write_text(constraint.read_text(encoding="utf-8").replace('Audience: ["sol-high"]', 'Audience: ["luna"]'), encoding="utf-8")
+    _, luna = run(capsys, root, "prepare", "rename the checkout flow", "--role", "luna")
+    assert any(item["source"].endswith("global.md") for item in luna["Hard Constraints"])
+
+
+def test_reviewer_findings_are_structured_and_never_projected(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    source = root / "src.txt"; source.write_text("inspection", encoding="utf-8")
+    ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "inspection", "confidence": "SUPPORTED"}
+    run(capsys, root, "task-start", "review")
+    finding = {"issue": "missing boundary check", "impact": "can change public behavior", "evidence_refs": ["src"]}
+    code, _ = task_input(root, capsys, {"evidence_refs": [ref], "review_findings": [finding]}, "task-update", "--role", "terra-reviewer", "--base-revision", "1")
+    assert code == 0
+    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
+    _, review = run(capsys, root, "prepare", "--role", "terra-reviewer")
+    assert "missing boundary check" not in json.dumps(sol) and "missing boundary check" not in json.dumps(review)
+    code, bad = task_input(root, capsys, {"review_findings": [{"issue": "bad", "impact": "bad", "evidence_refs": []}]}, "task-update", "--role", "terra-reviewer", "--base-revision", "2")
+    assert code == 2 and "review finding" in bad["error"]
 
 
 def test_doctor_is_narrow_and_ci_exists(tmp_path, capsys):

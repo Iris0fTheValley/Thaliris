@@ -1,3 +1,11 @@
+## Repository bootstrap
+
+- Before substantial work in a Git repository, check whether the current repository has an initialized codex-context control layer.
+- If codex-context is not initialized, run `context init` from the repository root before investigation, planning, delegation, or substantial edits, then verify it with `context doctor --pretty`.
+- If an existing repository contains an older codex-context layout, run `context migrate` instead and handle any reported manual migration requirements before relying on routed memory or task state.
+- After bootstrap, use the repository's managed `AGENTS.md`, task state, memory, and milestone routing normally.
+- Do not run `git init` merely to satisfy this rule. If the workspace is not already a Git repository, initialize Git only when the user explicitly requests it or the task clearly establishes that the workspace is intended to become a repository.
+
 <!-- codex-context:begin -->
 ## Codex context
 

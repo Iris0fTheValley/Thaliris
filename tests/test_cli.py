@@ -138,7 +138,8 @@ def test_migrate_and_uninstall_preserve_changed_facts(tmp_path, capsys):
     code, removed = run(capsys, root, "uninstall")
     assert code == 0 and ".agent-memory/operator.md" in removed["kept"] and fact.is_file()
     assert not (root / "AGENTS.md").exists()
-    assert not (root / ".gitignore").exists()
+    assert (root / ".gitignore").is_file()
+    assert ".context/backups/" in (root / ".gitignore").read_text(encoding="utf-8")
 
 
 def test_stale_effective_confidence_uses_real_file_hash(tmp_path, capsys):

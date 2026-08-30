@@ -825,13 +825,13 @@ Terra：
 
 ## Intent Audit / Capture Plane
 
-`context init` 会保守地把 Thaliris 的 `SessionStart`、`UserPromptSubmit`、`PostToolUse` 和 `Stop` command hooks 合并到 `.codex/hooks.json`。在 Git ignored 的 `.context/audit/` 中，session 级 `intent.json` 保留 root 人类原始输入链，每个 partition 的 capture 只记录 `spawn_agent` / `Agent` / `followup_task` 的实际 delegation instruction 和有界审核状态。它不会捕获 child transcript、worker output、Controller reasoning、repo 内容或工具日志，也不会把 audit 数据放入 task state、memory、milestone 或普通 role pack。缺少 `turn_id` 时使用确定性单调 `unknown-turn-N` 或 `orphan-N` 分区，不会共用一个永久 final guard。
+`context init` 会保守地把 Thaliris 的 `SessionStart`、`UserPromptSubmit`、`PostToolUse` 和 `Stop` command hooks 合并到 `.codex/hooks.json`。在 Git ignored 的 `.context/audit/` 中，task-scoped `intent.json` 只保留当前 task 的 root 人类原始输入窗口，每个 partition 的 capture 只记录 `spawn_agent` / `Agent` / `followup_task`（含 namespaced 形式）的实际 delegation instruction、最小角色/child identity 和有界审核状态。它不会捕获 child transcript、worker output、Controller reasoning、repo 内容或工具日志，也不会把 audit 数据放入 task state、memory、milestone 或普通 role pack。缺少 `turn_id` 时不伪造 turn 身份，直接标记 coverage 为 `UNKNOWN`。
 
-每累计五次新增且未明确拒绝的 delegation 会启动低频 fresh Sol checkpoint audit；root Stop 只审核剩余 suffix。Auditor 仅获得必要的 session raw intent anchor，以及 partition 排他 cursor 之后的 delegation；已消费的 `PASS`、`UNKNOWN` 或 `DRIFT` 批次不会重发。它刻意独立于未来的 Luna Controller，以减少共因 framing failure。明确失败的 tool response 不进入批次，明确成功标为 `ACCEPTED`，无法判断则标为 `UNKNOWN` 并禁止产生 `PASS`。`PASS` 与 `UNKNOWN` 完全不向 Controller 输出，只有 `DRIFT` 才产生一条很短的 hook finding。Cursor 和 Stop guard 都会在 auditor 启动前持久化，自动 continuation prompt 用 one-shot hash 精确忽略。任何 capture、配置或 runner 故障均 fail open：原有工作流继续，仅失去额外审计保护。
+每累计五次新增且未明确拒绝的 delegation 会启动低频 fresh Sol checkpoint audit；checkpoint 和 Stop 只审核当前未消费 suffix 的 framing drift。`requirement_omission` 只在已有 `task-close` 生命周期的完整 delegation history 中判断，Stop 不代表 task 完成。Auditor 仅获得当前 task raw intent window 和必要 delegation evidence；已消费批次不会重发。固定审核 rubric 通过独立的初始 exec 指令传递，stdin 仅是不可信 evidence；结构化 finding 经 Python 校验后才生成固定短 hook finding。明确失败的 tool response 不进入批次，明确成功标为 `ACCEPTED`，无法判断则标为 `UNKNOWN` 并禁止产生 `PASS`。任何 capture、配置或 runner 故障均 fail open：原有工作流继续，仅失去额外审计保护。
 
 每个 turn 会保留最多 32 条规范化 `audit_results`（mode、attempt、status、短 finding、freshness，以及失败类别），不保存 runner stdout、错误正文或 tool response 正文。结果只供审计追溯，永不投影给 Controller 或其他 role pack。
 
-该集成信任 Codex 官方 `/hooks` 所展示的 hook schema 和 root topology。生产路径只允许内建的 fresh `codex exec --ephemeral --model gpt-5.6-sol` auditor，并从临时非 repo 目录运行；不提供环境变量或 CLI runner override。旧 v1 capture 可读，但没有新 raw anchor 时 coverage 保持 `UNKNOWN`。捕获到的字符串只标记为 `AVAILABLE_UNVERIFIED`，不是 plaintext fidelity 证明；特殊执行路径、加密或非字符串 payload、以及未经过 live probe 的 root classification/payload fidelity 都保持 `UNKNOWN`。测试 fake 的成功也不能证明 fresh native session。可用 `context doctor --pretty` 查看 `intent_audit` 的分项状态。
+该集成信任 Codex 官方 `/hooks` 所展示的 hook schema 和 root topology。生产路径使用 fresh `codex exec --ephemeral --ignore-user-config --ignore-rules --model gpt-5.6-sol` auditor，并从临时非 repo 目录运行；可通过未跟踪的本机环境变量指定已验证 executable，否则回退 PATH。旧 capture 可读，但没有新 task raw anchor、turn identity、runner 或 payload fidelity 时 coverage 保持 `UNKNOWN`。捕获到的字符串只标记为 `AVAILABLE_UNVERIFIED`，不是 plaintext fidelity 证明；测试 fake 的成功也不能证明 fresh native session。可用 `context doctor --pretty` 查看 `intent_audit` 的分项状态。
 
 ---
 

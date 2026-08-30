@@ -17,7 +17,7 @@ import uuid
 
 from .markdown import Entry, evidence_status, parse
 from .models import ContextConfig
-from .intent_audit import MANAGED_HOOKS_DESCRIPTION, merge_hooks, remove_hooks
+from .intent_audit import MANAGED_HOOKS_DESCRIPTION, cleanup_task_audit, merge_hooks, remove_hooks, task_close_audit
 
 MANAGED_START = "<!-- thaliris:begin -->"
 MANAGED_END = "<!-- thaliris:end -->"
@@ -37,7 +37,7 @@ The parent Controller: only Controller delegates, promotes findings, and maintai
 
 Controller is the control plane, not an investigator. Except for minimal state reads required for routing and task control, Controller MUST NOT perform repository investigation, code search, documentation research, Git inspection, runtime probing, exploratory testing, or other fact-gathering work itself. When unknown facts are required, Controller MUST delegate the investigation to a Luna investigator and consume only its structured findings and evidence references. Controller should own the questions, routing, promotion, integration, and escalation decisions—not the investigation working set. If a required capability is genuinely unavailable to native children, Controller may perform only the minimum necessary operation and should treat this as a capability limitation rather than reclaiming the investigation role.
 
-Luna investigator appends raw findings; before high reasoning or when findings accumulate, a fresh Luna curator maintains the bounded snapshot. Terra implements and independently reviews. Raw investigation/review history never enters Sol high. Sol high reasons only; it does not maintain task state. Use the Microtask fast path. Route memory and milestones through INDEX files. Use `context task-*` for concise, evidence-referenced handoffs—never transcripts or raw tool/test output. Current source/Git/tests are the correctness core; adapters MUST fall back to native behavior.
+Luna investigator appends raw findings; before high reasoning or when findings accumulate, a fresh Luna curator maintains the bounded snapshot. Terra implements and independently reviews. A persistent Luna Controller MUST NOT directly edit source files, even for a microtask; route every implementation change through a Terra implementer. The Controller owns routing, task state, promotion, integration decisions, and final acceptance only. Raw investigation/review history never enters Sol high. Sol high reasons only; it does not maintain task state. Use the Microtask fast path. Route memory and milestones through INDEX files. Use `context task-*` for concise, evidence-referenced handoffs—never transcripts or raw tool/test output. Current source/Git/tests are the correctness core; adapters MUST fall back to native behavior.
 {MANAGED_END}
 """
 
@@ -335,6 +335,10 @@ def uninstall(root: Path) -> dict[str, object]:
     if pre_ignore.is_file():
         current = pre_ignore.read_bytes().decode("utf-8")
         _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
+    private_state_present = any(
+        (_safe(root, relative).is_file() or _safe(root, relative).is_dir())
+        for relative in (".context/audit", ".context/backups", ".context/state.json", ".context/context.lock")
+    )
     with _lock(root):
         writes: dict[str, bytes] = {}; deletes: list[str] = []; kept: list[str] = []; manual: list[str] = []
         agents = _safe(root, "AGENTS.md")
@@ -350,7 +354,10 @@ def uninstall(root: Path) -> dict[str, object]:
                 if stripped: writes["AGENTS.md"] = stripped.encode()
                 else: deletes.append("AGENTS.md")
         ignore = _safe(root, ".gitignore")
-        if ignore.is_file():
+        # Never remove the private-state protection while any audit/state or
+        # backup data remains.  Uninstall is not permission to expose it in
+        # git status; a later explicit cleanup can remove the data safely.
+        if ignore.is_file() and not private_state_present:
             current = ignore.read_bytes().decode("utf-8")
             span = _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
             if span is not None:
@@ -415,8 +422,12 @@ _STATE_FIELDS = {
 _LIST_STATEMENTS = {"confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints", "decisions"}
 _SNAPSHOT_MAX_ITEMS = 64
 _SNAPSHOT_MAX_BYTES = 32 * 1024
+_CONTROLLER_FIELDS = _STATE_FIELDS - {
+    "schema_version", "revision", "task_id", "status", "goal",
+    "investigation_findings", "investigation_snapshot", "review_findings",
+}
 _ROLE_FIELDS = {
-    "controller": _STATE_FIELDS - {"schema_version", "revision", "task_id", "status", "goal"},
+    "controller": _CONTROLLER_FIELDS,
     "luna": {"investigation_findings", "evidence_refs"},
     "luna-investigator": {"investigation_findings", "evidence_refs"},
     "luna-curator": {"investigation_snapshot", "investigation_covered_through"},
@@ -691,14 +702,19 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
     root = _repo_root(root)
     if role not in _ROLE_FIELDS or type(base_revision) is not int: raise ValueError("invalid task update")
     partial = _read_input(input_file)
-    if not partial or set(partial) - _ROLE_FIELDS[role]: raise ValueError("role is not allowed to update these fields")
+    forbidden = set(partial) - _ROLE_FIELDS[role]
+    if forbidden:
+        if role == "controller" and forbidden & {"investigation_findings", "investigation_snapshot", "review_findings"}:
+            raise ValueError("append-only findings and snapshots are not controller-writable")
+        raise ValueError("role is not allowed to update these fields")
+    if not partial: raise ValueError("role is not allowed to update these fields")
     with _lock(root):
         state = _load_state(root, active=True)
         if state["revision"] != base_revision: raise ValueError("task revision conflict")
         new_investigation: list[dict[str, object]] = []
         # Raw provenance is immutable for every role, including Controller.
         # Inputs are additions rather than a replacement of the stored prefix.
-        for key, additions_role in (("investigation_findings", {"controller", "luna", "luna-investigator"}), ("review_findings", {"controller", "terra-reviewer"})):
+        for key, additions_role in (("investigation_findings", {"luna", "luna-investigator"}), ("review_findings", {"terra-reviewer"})):
             if key not in partial:
                 continue
             if role not in additions_role:
@@ -745,8 +761,26 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
     with _lock(root):
         state = _load_state(root, active=True)
         if state["revision"] != base_revision: raise ValueError("task revision conflict")
+        task_id = str(state["task_id"])
+    try:
+        # Do not hold the core task lock across the external auditor. A task
+        # update racing this snapshot is detected below and remains ACTIVE.
+        audit = task_close_audit(root, task_id, cleanup=False)
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
+        # Audit is supplemental; task-close remains available when its
+        # private capture plane is damaged or unavailable.
+        audit = {"status": "UNKNOWN", "findings": [], "reason": "audit_capture_failure"}
+    with _lock(root):
+        current = _load_state(root, active=True)
+        if current["revision"] != base_revision or current["task_id"] != task_id:
+            raise ValueError("task revision conflict")
+        try:
+            cleanup_task_audit(root, task_id, audit.get("status"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            audit = audit | {"status": "UNKNOWN", "findings": [], "reason": "audit_cleanup_failure"}
+        state = current
         state["status"] = "DONE"; state["revision"] = base_revision + 1; _write_state(root, state, enforce_fresh=False)
-    return {"ok": True, "state": state}
+    return {"ok": True, "state": state, "intent_audit": audit}
 
 
 def _linked_entries(root: Path) -> tuple[list[Entry], list[str]]:

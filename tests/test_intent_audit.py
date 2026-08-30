@@ -29,6 +29,12 @@ def captures(root: Path) -> dict[str, object]:
     return json.loads(paths[0].read_text(encoding="utf-8"))
 
 
+def intent(root: Path) -> dict[str, object]:
+    paths = list((root / ".context" / "audit").glob("*/intent.json"))
+    assert len(paths) == 1
+    return json.loads(paths[0].read_text(encoding="utf-8"))
+
+
 def fake_runner(monkeypatch, result: dict[str, object]) -> None:
     monkeypatch.setattr(
         audit_module,
@@ -42,10 +48,11 @@ def test_root_prompt_and_child_prompt_are_not_mixed(tmp_path):
     raw = "  用户原文\n保持空白  "
     assert handle_hook(root, "UserPromptSubmit", payload(prompt=raw)) == ""
     assert handle_hook(root, "UserPromptSubmit", payload(agent_id="child-1", prompt="child secret")) == ""
-    state = captures(root)
-    assert [item["text"] for item in state["prompts"]] == [raw]
-    assert state["prompts"][0]["sha256"] == hashlib.sha256(raw.encode()).hexdigest()
-    assert state["prompts"][0]["text_status"] == "AVAILABLE_UNVERIFIED"
+    anchor = intent(root)
+    assert [item["text"] for item in anchor["prompts"]] == [raw]
+    assert anchor["prompts"][0]["sha256"] == hashlib.sha256(raw.encode()).hexdigest()
+    assert anchor["prompts"][0]["text_status"] == "AVAILABLE_UNVERIFIED"
+    assert captures(root)["prompts"] == []
 
 
 def test_cli_hook_decodes_utf8_bytes_verbatim_and_ignores_child(tmp_path):
@@ -68,9 +75,9 @@ def test_cli_hook_decodes_utf8_bytes_verbatim_and_ignores_child(tmp_path):
         check=False,
     )
     assert child.returncode == 0 and child.stdout == b"" and child.stderr == b""
-    state = captures(root)
-    assert [item["text"] for item in state["prompts"]] == [raw]
-    assert state["prompts"][0]["sha256"] == hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    anchor = intent(root)
+    assert [item["text"] for item in anchor["prompts"]] == [raw]
+    assert anchor["prompts"][0]["sha256"] == hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     invalid = subprocess.run(command, input=b"\xff", cwd=root, capture_output=True, check=False)
     assert invalid.returncode == 0 and invalid.stdout == b"" and invalid.stderr == b""
@@ -92,6 +99,7 @@ def test_spawn_and_followup_instructions_are_captured_verbatim(tmp_path):
 def test_fifth_delegation_runs_checkpoint_and_pass_is_invisible(tmp_path, monkeypatch):
     root = repo(tmp_path)
     fake_runner(monkeypatch, {"status": "PASS", "findings": []})
+    handle_hook(root, "UserPromptSubmit", payload(prompt="perform exactly the delegated work"))
     for index in range(4):
         assert handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"message": f"work {index}"}, tool_response={"isError": False})) == ""
     assert captures(root)["audit_runs"] == 0
@@ -99,11 +107,11 @@ def test_fifth_delegation_runs_checkpoint_and_pass_is_invisible(tmp_path, monkey
     state = captures(root)
     assert state["audit_runs"] == 1
     assert state["audit_attempts"] == 1
-    assert state["audit"]["checkpoint_through"] == 5
+    assert state["audit"]["through"] == 5
     assert state["audit_results"] == [{"mode": "checkpoint", "attempt": 1, "status": "PASS", "findings": [], "fresh_verified": False}]
 
 
-def test_drift_is_short_and_checkpoint_rejects_omission(tmp_path, monkeypatch):
+def test_drift_is_short_and_checkpoint_detects_omission(tmp_path, monkeypatch):
     root = repo(tmp_path)
     omission = {"status": "DRIFT", "findings": [{"kind": "requirement_omission", "summary": "遗漏不得删除约束"}]}
     fake_runner(monkeypatch, omission)
@@ -111,7 +119,7 @@ def test_drift_is_short_and_checkpoint_rejects_omission(tmp_path, monkeypatch):
     outputs = []
     for _ in range(5):
         outputs.append(handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"message": "实现功能"})))
-    assert outputs[-1] == ""  # incomplete checkpoints cannot claim omission
+    assert "requirement_omission" in outputs[-1]
 
     # A fresh session final audit may make the complete omission judgment.
     final_root = repo(tmp_path / "final")
@@ -149,7 +157,7 @@ def test_two_turns_in_one_session_have_independent_final_audits(tmp_path, monkey
     paths = sorted((root / ".context" / "audit").glob("*/*/capture.json"))
     assert len(paths) == 2
     states = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
-    assert sorted(state["prompts"][0]["text"] for state in states) == ["prompt turn-a", "prompt turn-b"]
+    assert [item["text"] for item in intent(root)["prompts"]] == ["prompt turn-a", "prompt turn-b"]
     assert sorted(state["delegations"][0]["text"] for state in states) == ["delegate turn-a", "delegate turn-b"]
     assert all(state["audit_runs"] == 1 and state["audit_attempts"] == 1 for state in states)
 
@@ -166,8 +174,7 @@ def test_stop_continuation_is_ignored_once_then_real_prompt_is_captured(tmp_path
     assert handle_hook(root, "UserPromptSubmit", payload(turn="turn-continuation", prompt=reason)) == ""
     assert not list((root / ".context" / "audit").glob("*/" + hashlib.sha256(b"turn-continuation").hexdigest()[:24] + "/capture.json"))
     assert handle_hook(root, "UserPromptSubmit", payload(turn="turn-after-guard", prompt=reason)) == ""
-    states = [json.loads(path.read_text(encoding="utf-8")) for path in (root / ".context" / "audit").glob("*/*/capture.json")]
-    assert sorted(item["text"] for state in states for item in state["prompts"]) == sorted(["user request", "real next request", reason])
+    assert sorted(item["text"] for item in intent(root)["prompts"]) == sorted(["user request", "real next request", reason])
 
 
 def test_session_start_clears_guard_only_for_startup_or_clear(tmp_path):
@@ -193,9 +200,10 @@ def test_dispatch_status_controls_capture_and_pass(tmp_path, monkeypatch):
         requests.append(json.loads(request))
         return json.dumps({"status": "PASS", "findings": []}), False
     monkeypatch.setattr(audit_module, "_invoke_fresh_auditor", inspect_request)
+    handle_hook(root, "UserPromptSubmit", payload(prompt="perform the accepted work"))
     rejected = payload(tool_name="spawn_agent", tool_input={"message": "rejected body"}, tool_response={"isError": True, "error": "large private response"})
     assert handle_hook(root, "PostToolUse", rejected) == ""
-    assert not list((root / ".context" / "audit").glob("*/*/capture.json"))
+    assert captures(root)["delegations"] == []
     for index in range(5):
         handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"message": f"accepted {index}", "target": "must-not-persist", "task_name": "also-private"}, tool_response={"status": "ok", "body": "must not persist"}))
     state = captures(root)
@@ -205,11 +213,148 @@ def test_dispatch_status_controls_capture_and_pass(tmp_path, monkeypatch):
     assert state["audit_results"][-1]["status"] == "PASS"
 
     unknown_root = repo(tmp_path / "unknown-dispatch")
+    handle_hook(unknown_root, "UserPromptSubmit", payload(prompt="perform the unknown-dispatch work"))
     for index in range(5):
         handle_hook(unknown_root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"message": f"unknown {index}"}))
     unknown = captures(unknown_root)
     assert unknown["audit_results"][-1]["status"] == "UNKNOWN"
     assert unknown["audit_results"][-1]["reason"] == "dispatch_unverified"
+
+
+def test_session_anchor_survives_turns_and_only_new_suffix_is_reaudited(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    requests = []
+
+    def inspect_request(request, mode):
+        requests.append(json.loads(request))
+        return json.dumps({"status": "PASS", "findings": []}), False
+
+    monkeypatch.setattr(audit_module, "_invoke_fresh_auditor", inspect_request)
+    handle_hook(root, "UserPromptSubmit", payload(turn="turn-a", prompt="Keep all user files; implement the feature."))
+    handle_hook(root, "PostToolUse", payload(turn="turn-a", tool_name="spawn_agent", tool_input={"message": "Implement without deleting user files."}, tool_response={"success": True}))
+    assert handle_hook(root, "Stop", payload(turn="turn-a", stop_hook_active=False)) == ""
+
+    handle_hook(root, "UserPromptSubmit", payload(turn="turn-b", prompt="继续"))
+    handle_hook(root, "PostToolUse", payload(turn="turn-b", tool_name="spawn_agent", tool_input={"message": "Continue the implementation and preserve user files."}, tool_response={"success": True}))
+    assert handle_hook(root, "Stop", payload(turn="turn-b", stop_hook_active=False)) == ""
+
+    assert [[item["text"] for item in request["root_prompts"]] for request in requests] == [
+        ["Keep all user files; implement the feature."],
+        ["Keep all user files; implement the feature.", "继续"],
+    ]
+    assert [[item["text"] for item in request["delegations"]] for request in requests] == [
+        ["Implement without deleting user files."],
+        ["Continue the implementation and preserve user files."],
+    ]
+    intent_files = list((root / ".context" / "audit").glob("*/intent.json"))
+    assert len(intent_files) == 1
+    anchor = json.loads(intent_files[0].read_text(encoding="utf-8"))
+    assert anchor["version"] == 2 and [item["seq"] for item in anchor["prompts"]] == [1, 2]
+
+
+def test_checkpoint_cursor_sends_two_disjoint_suffixes_and_stop_has_no_replay(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    requests = []
+
+    def inspect_request(request, mode):
+        requests.append(json.loads(request))
+        return json.dumps({"status": "PASS", "findings": []}), False
+
+    monkeypatch.setattr(audit_module, "_invoke_fresh_auditor", inspect_request)
+    handle_hook(root, "UserPromptSubmit", payload(prompt="Run ten scoped delegations."))
+    for index in range(10):
+        assert handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"message": f"delegation-{index}"}, tool_response={"success": True})) == ""
+    assert [[item["text"] for item in request["delegations"]] for request in requests] == [
+        [f"delegation-{index}" for index in range(5)],
+        [f"delegation-{index}" for index in range(5, 10)],
+    ]
+    assert captures(root)["audit"]["through"] == 10
+    assert handle_hook(root, "Stop", payload(stop_hook_active=False)) == ""
+    assert len(requests) == 2
+
+
+def test_missing_turn_ids_get_new_partition_and_final_guard_each_turn(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    requests = []
+
+    def inspect_request(request, mode):
+        requests.append(json.loads(request))
+        return json.dumps({"status": "PASS", "findings": []}), False
+
+    monkeypatch.setattr(audit_module, "_invoke_fresh_auditor", inspect_request)
+    for index in (1, 2):
+        base = {"session_id": "missing-turn-session"}
+        handle_hook(root, "UserPromptSubmit", {**base, "prompt": f"prompt-{index}"})
+        handle_hook(root, "PostToolUse", {**base, "tool_name": "spawn_agent", "tool_input": {"message": f"delegation-{index}"}, "tool_response": {"success": True}})
+        assert handle_hook(root, "Stop", {**base, "stop_hook_active": False}) == ""
+        assert handle_hook(root, "Stop", {**base, "stop_hook_active": False}) == ""
+    paths = list((root / ".context" / "audit").glob("*/*/capture.json"))
+    states = [json.loads(path.read_text(encoding="utf-8")) for path in paths]
+    assert len(states) == 2 and len(requests) == 2
+    assert all(state["turn_status"] == "UNKNOWN" and state["audit"]["final_attempted"] for state in states)
+    assert [[item["text"] for item in request["delegations"]] for request in requests] == [["delegation-1"], ["delegation-2"]]
+    runtime_path = next((root / ".context" / "audit").glob("*/runtime.json"))
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    assert runtime["missing_turn_counter"] == 2 and "active_missing_partition" not in runtime
+
+
+def test_missing_turn_orphans_do_not_share_a_permanent_final_guard(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    requests = []
+
+    def inspect_request(request, mode):
+        requests.append(json.loads(request))
+        return json.dumps({"status": "PASS", "findings": []}), False
+
+    monkeypatch.setattr(audit_module, "_invoke_fresh_auditor", inspect_request)
+    base = {"session_id": "orphan-session"}
+    for index in (1, 2):
+        handle_hook(root, "PostToolUse", {**base, "tool_name": "spawn_agent", "tool_input": {"message": f"orphan-{index}"}, "tool_response": {"success": True}})
+        assert handle_hook(root, "Stop", {**base, "stop_hook_active": False}) == ""
+    states = [json.loads(path.read_text(encoding="utf-8")) for path in (root / ".context" / "audit").glob("*/*/capture.json")]
+    assert len(states) == 2 and len(requests) == 2
+    assert all(state["turn_status"] == "UNKNOWN" and state["audit_results"][-1]["status"] == "UNKNOWN" for state in states)
+
+
+def test_v1_capture_maps_cursor_but_cannot_claim_anchor_coverage(tmp_path):
+    root = repo(tmp_path)
+    state_path = root / ".context" / "audit" / "session" / "turn" / "capture.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "version": 1,
+        "prompts": [{"seq": 1, "text": "legacy", "text_status": "AVAILABLE_UNVERIFIED", "sha256": "x"}],
+        "delegations": [],
+        "audit": {"checkpoint_through": 3, "final_attempted": False},
+    }), encoding="utf-8")
+    loaded = audit_module._load_capture(state_path, payload())
+    assert loaded["version"] == 2
+    assert loaded["audit"]["through"] == 3 and "checkpoint_through" not in loaded["audit"]
+    assert loaded["intent_coverage"] == "UNKNOWN"
+
+
+def test_fresh_auditor_command_uses_independent_sol_model(tmp_path, monkeypatch):
+    captured = {}
+    monkeypatch.setattr(audit_module.shutil, "which", lambda name: "codex-test")
+
+    class Result:
+        returncode = 0
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["cwd"] = kwargs["cwd"]
+        captured["env"] = kwargs["env"]
+        output = Path(command[command.index("--output-last-message") + 1])
+        output.write_text(json.dumps({"status": "PASS", "findings": []}), encoding="utf-8")
+        return Result()
+
+    monkeypatch.setattr(audit_module.subprocess, "run", fake_run)
+    result = audit_module._invoke_fresh_auditor("{}", "checkpoint")
+    assert result is not None
+    assert "--ephemeral" in captured["command"]
+    assert captured["command"][captured["command"].index("--model") + 1] == audit_module.INTENT_AUDITOR_MODEL == "gpt-5.6-sol"
+    assert all("luna" not in item for item in captured["command"])
+    assert captured["env"][audit_module.AUDIT_ENV] == "1"
+    assert not (captured["cwd"] / ".git").exists()
 
 
 def test_capture_and_runner_failures_do_not_affect_core(tmp_path, monkeypatch):
@@ -226,7 +371,7 @@ def test_capture_and_runner_failures_do_not_affect_core(tmp_path, monkeypatch):
     for _ in range(5):
         assert handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"message": "work"})) == ""
     failed = captures(root)
-    assert failed["audit"]["checkpoint_through"] == 5
+    assert failed["audit"]["through"] == 5
     assert failed["audit_attempts"] == 1 and failed["audit_runs"] == 0
     assert failed["audit_results"][-1]["status"] == "UNKNOWN"
     assert failed["audit_results"][-1]["reason"] == "runner_unavailable_or_invalid"
@@ -238,14 +383,14 @@ def test_capture_and_runner_failures_do_not_affect_core(tmp_path, monkeypatch):
     monkeypatch.setattr(audit_module, "_invoke_fresh_auditor", lambda request, mode: ("invalid", False))
     for _ in range(5):
         assert handle_hook(invalid_root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"message": "work"})) == ""
-    assert captures(invalid_root)["audit"]["checkpoint_through"] == 5
+    assert captures(invalid_root)["audit"]["through"] == 5
     assert captures(invalid_root)["audit_attempts"] == 1
 
     missing_root = repo(tmp_path / "missing")
     monkeypatch.setattr(audit_module, "_invoke_fresh_auditor", lambda request, mode: None)
     for _ in range(5):
         assert handle_hook(missing_root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"message": "work"})) == ""
-    assert captures(missing_root)["audit"]["checkpoint_through"] == 5
+    assert captures(missing_root)["audit"]["through"] == 5
     assert captures(missing_root)["audit_attempts"] == 1
     # The normal deterministic workflow remains usable without audit files.
     import shutil

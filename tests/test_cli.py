@@ -27,7 +27,7 @@ def test_init_idempotent_preserves_agents_and_required_block(tmp_path, capsys):
     code, first = run(capsys, root, "init")
     assert code == 0 and first["changed"]
     text = (root / "AGENTS.md").read_text(encoding="utf-8")
-    assert "Keep this rule." in text and all(term in text for term in ("Sol mid", "Sol high", "Luna", "Terra", "Microtask", "concurrency: 1", "MUST fall back"))
+    assert "Keep this rule." in text and all(term in text for term in ("control plane, not an investigator", "repository investigation", "code search", "documentation research", "Git inspection", "runtime probing", "exploratory testing", "Luna investigator", "Sol high", "Terra", "Microtask", "concurrency: 1", "MUST fall back"))
     code, second = run(capsys, root, "init")
     assert code == 0 and not second["changed"]
 
@@ -73,6 +73,8 @@ def test_init_and_migrate_upgrade_legacy_markers_without_duplicates(tmp_path, ca
         agents = (root / "AGENTS.md").read_text(encoding="utf-8")
         ignored = (root / ".gitignore").read_text(encoding="utf-8")
         assert "Keep." in agents and "keep.me" in ignored
+        assert "Controller is the control plane, not an investigator" in agents
+        assert "MUST delegate the investigation to a Luna investigator" in agents
         assert agents.count("<!-- thaliris:begin -->") == agents.count("<!-- thaliris:end -->") == 1
         assert ignored.count("# thaliris:begin") == ignored.count("# thaliris:end") == 1
         assert "codex-context:" not in agents and "codex-context:" not in ignored

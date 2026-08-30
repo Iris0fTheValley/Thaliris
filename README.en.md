@@ -539,6 +539,29 @@ Task state rejects raw transcript and tool-log fields.
 
 The intent is to preserve traceability without converting `.context/state.json` into a second conversation history.
 
+### Bounded durable promotion
+
+The task-end order is `task-local state -> Controller retention decision -> minimal durable promotion -> task-close`. This is explicit persistence, not automatic summarization; if there is no durable knowledge, no memory is written. Only the Controller may run `task-promote`, and it may submit only explicit `decision`, `invariant`, `failure_mode`, or `constraint` records, or explicit `progress`/`verification` fields for the current milestone. Inputs must use only evidence refs already in the ACTIVE task and must pass fresh native file/git evidence or fresh test/runtime evidence with native `source_refs`; a CONFIRMED promotion must also directly reference fresh CONFIRMED file/git evidence. Raw findings, transcripts, logs, and unknown fields are rejected. Promotion uses a base-revision CAS and does not change the task revision. Each task may consume at most 16 promotion units (one per memory record and per milestone progress/verification field); the counter is bounded task-local bookkeeping, not long-term memory or a framework.
+
+Minimal order and JSON example:
+
+```bash
+context task-start "adopt request policy"
+# ...the Controller receives task-local evidence and decides retention...
+context task-promote --role controller --base-revision <revision> --input promote.json
+context task-close --base-revision <revision>
+```
+
+```json
+{"records":[{"type":"decision","id":"D-001","title":"Use X","text":"Adopt X.","evidence_refs":["e1"],"confidence":"SUPPORTED"}]}
+```
+
+Memory only appends a new entry and one router link to the existing INDEX; milestone updates touch only explicitly supplied fields and use the atomic backup path. History-heavy recall, deduplication, stale cleanup, conflict judgment, INDEX restructuring, and bulk milestone maintenance must be narrowed and delegated to a fresh child.
+
+### Child lifecycle epistemic/control policy
+
+No result observed yet does not mean failed; timeout, slow, or incomplete observation does not mean capability limitation. Without explicit evidence, a child state remains `UNKNOWN`. `RUNNING` means wait/re-observe; `UNKNOWN` means keep `UNKNOWN`/re-observe. A single wait-window expiry must not close, replace, or take over the child. Only explicit `FAILED`, `CANCELLED`, `UNAVAILABLE`, or deterministic spawn failure permits narrower fresh delegation. A minimal capability fallback is allowed only when the objective capability is unavailable, and it must not become an excuse for Controller investigation or implementation. After child failure, first narrow the scope and delegate a fresh child. Thaliris adds no runtime, scheduler, retry state machine, or agent framework.
+
 ---
 
 ## Evidence model

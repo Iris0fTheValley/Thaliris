@@ -35,9 +35,9 @@ MANAGED = f"""{MANAGED_START}
 
 The parent Controller: only Controller delegates, promotes findings, and maintains task control state; children MUST NOT delegate (default concurrency: 1).
 
-Controller is the control plane, not an investigator. Except for minimal state reads required for routing and task control, Controller MUST NOT perform repository investigation, code search, documentation research, Git inspection, runtime probing, exploratory testing, or other fact-gathering work itself. When unknown facts are required, Controller MUST delegate the investigation to a Luna investigator and consume only its structured findings and evidence references. Controller should own the questions, routing, promotion, integration, and escalation decisions—not the investigation working set. If a required capability is genuinely unavailable to native children, Controller may perform only the minimum necessary operation and should treat this as a capability limitation rather than reclaiming the investigation role.
+Controller is the control plane, not an investigator. Except for minimal state reads required for routing and task control, Controller MUST NOT perform repository investigation, code search, documentation research, Git inspection, runtime probing, exploratory testing, or other fact-gathering work itself. When unknown facts are required, Controller MUST delegate the investigation to a Luna investigator and consume only its structured findings and evidence references. Controller should own the questions, routing, promotion, integration, and escalation decisions—not the investigation working set. If a required capability is genuinely unavailable to native children, Controller may perform only the minimum capability fallback and must not use that exception to investigate or implement.
 
-Luna investigator appends raw findings; before high reasoning or when findings accumulate, a fresh Luna curator maintains the bounded snapshot. Terra implements and independently reviews. A persistent Luna Controller MUST NOT directly edit source files, even for a microtask; route every implementation change through a Terra implementer. The Controller owns routing, task state, promotion, integration decisions, and final acceptance only. Raw investigation/review history never enters Sol high. Sol high reasons only; it does not maintain task state. Use the Microtask fast path. Route memory and milestones through INDEX files. Use `context task-*` for concise, evidence-referenced handoffs—never transcripts or raw tool/test output. Current source/Git/tests are the correctness core; adapters MUST fall back to native behavior.
+Luna investigator appends raw findings; before high reasoning or when findings accumulate, a fresh Luna curator maintains the bounded snapshot. Terra implements and independently reviews. A persistent Luna Controller MUST NOT directly edit source files, even for a microtask; route every implementation change through a Terra implementer. The Controller owns routing, task state, promotion, integration decisions, and final acceptance only. Small bounded durable promotion is allowed only after the Controller decides an explicit semantic record is worth retaining and has current task evidence; it is never automatic summarization. Task-end order is task-local state -> Controller retention decision -> minimal durable promotion -> task-close; no durable knowledge means no memory write. Raw investigation/review history never enters Sol high. Sol high reasons only; it does not maintain task state. Use the Microtask fast path. Route memory and milestones through INDEX files. Use `context task-*` for concise, evidence-referenced handoffs—never transcripts or raw tool output. Large maintenance (history-heavy recall, deduplication, stale cleanup, conflict/merge judgment, INDEX restructuring, or bulk milestone maintenance) goes to a fresh child. Child state is UNKNOWN without explicit evidence: no result observed is not failure, and timeout/slow/incomplete observation is not capability limitation. RUNNING waits and re-observes; UNKNOWN stays UNKNOWN and is re-observed, never closed/replaced/taken over after one wait window. Only explicit FAILED/CANCELLED/UNAVAILABLE or deterministic spawn failure permits narrower fresh delegation, with capability fallback limited to genuinely unavailable native capability. Current source/Git/tests are the correctness core; adapters MUST fall back to native behavior.
 {MANAGED_END}
 """
 
@@ -409,7 +409,9 @@ def stale(root: Path) -> dict[str, object]:
 
 
 # The current task is intentionally a small, private operational snapshot.  It
-# is not a second memory store and is never included in the backup mechanism.
+# is not a second memory store; durable_promotion_count is task-local
+# bookkeeping, but task-promote includes it with durable writes in its existing
+# backup mutation.
 _STATE_NAME = ".context/state.json"
 _STATE_FIELDS = {
     "schema_version", "revision", "task_id", "status", "goal", "current_milestone",
@@ -417,13 +419,14 @@ _STATE_FIELDS = {
     "decisions", "relevant_files", "relevant_symbols", "modification_boundary",
     "changed_surface", "evidence_refs", "verification_target", "architectural_intent",
     "investigation_findings", "investigation_snapshot", "review_findings",
-    "investigation_covered_through", "review_handled_through",
+    "investigation_covered_through", "review_handled_through", "durable_promotion_count",
 }
 _LIST_STATEMENTS = {"confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints", "decisions"}
 _SNAPSHOT_MAX_ITEMS = 64
 _SNAPSHOT_MAX_BYTES = 32 * 1024
+_PROMOTION_BUDGET = 16
 _CONTROLLER_FIELDS = _STATE_FIELDS - {
-    "schema_version", "revision", "task_id", "status", "goal",
+    "schema_version", "revision", "task_id", "status", "goal", "durable_promotion_count",
     "investigation_findings", "investigation_snapshot", "review_findings",
 }
 _ROLE_FIELDS = {
@@ -552,13 +555,15 @@ def _require_fresh_confirmed_items(root: Path, refs: list[dict[str, object]], it
 
 def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -> dict[str, object]:
     _check_json(state)
-    # Schema v1 snapshots predate append-only finding collections and cursors.
+    # Schema v1 snapshots predate append-only finding collections, cursors,
+    # and bounded task-local durable-promotion bookkeeping.
     if isinstance(state, dict) and state.get("schema_version") == 1:
         state.setdefault("investigation_findings", [])
         state.setdefault("investigation_snapshot", [])
         state.setdefault("review_findings", [])
         state.setdefault("investigation_covered_through", 0)
         state.setdefault("review_handled_through", 0)
+        state.setdefault("durable_promotion_count", 0)
         for ref in state.get("evidence_refs", []):
             if isinstance(ref, dict) and ref.get("kind") in {"test", "runtime"} and "source_refs" not in ref:
                 ref["source_refs"] = []
@@ -566,6 +571,8 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
         raise ValueError("invalid task state schema")
     if state["schema_version"] != 1 or type(state["revision"]) is not int or state["revision"] < 1:
         raise ValueError("invalid task state revision")
+    if type(state["durable_promotion_count"]) is not int or not 0 <= state["durable_promotion_count"] <= _PROMOTION_BUDGET:
+        raise ValueError("invalid durable_promotion_count")
     if not isinstance(state["task_id"], str): raise ValueError("invalid task id")
     try: uuid.UUID(state["task_id"])
     except (ValueError, AttributeError) as exc: raise ValueError("invalid task id") from exc
@@ -638,11 +645,15 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
     return state
 
 
-def _write_state(root: Path, state: dict[str, object], *, enforce_fresh: bool = True) -> None:
+def _state_payload(root: Path, state: dict[str, object], *, enforce_fresh: bool = True) -> bytes:
     _validate_state(root, state, enforce_fresh=enforce_fresh)
     payload = (json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
     if len(payload) > 256 * 1024: raise ValueError("task state exceeds 256 KiB")
-    _atomic_write(_state_path(root), payload)
+    return payload
+
+
+def _write_state(root: Path, state: dict[str, object], *, enforce_fresh: bool = True) -> None:
+    _atomic_write(_state_path(root), _state_payload(root, state, enforce_fresh=enforce_fresh))
 
 
 def _milestone_exists(root: Path, milestone: str) -> bool:
@@ -656,7 +667,7 @@ def _milestone_exists(root: Path, milestone: str) -> bool:
 def _blank_state(root: Path, goal: str, milestone: str | None) -> dict[str, object]:
     if milestone is not None and not _milestone_exists(root, milestone): raise ValueError("milestone is not linked by the top-level milestone index")
     return {"schema_version": 1, "revision": 1, "task_id": str(uuid.uuid4()), "status": "ACTIVE", "goal": goal,
-            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "investigation_findings": [], "investigation_snapshot": [], "review_findings": [], "investigation_covered_through": 0, "review_handled_through": 0, "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "architectural_intent": None}
+            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "investigation_findings": [], "investigation_snapshot": [], "review_findings": [], "investigation_covered_through": 0, "review_handled_through": 0, "durable_promotion_count": 0, "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "architectural_intent": None}
 
 
 def _read_input(value: str | None) -> dict[str, object]:
@@ -684,7 +695,7 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
     if not _state_ignored(root): raise ValueError("task state is not ignored; run context init first")
     if not goal.strip(): raise ValueError("goal must not be empty")
     partial = _read_input(input_file)
-    allowed = _STATE_FIELDS - {"schema_version", "revision", "task_id", "status", "goal", "current_milestone"}
+    allowed = _STATE_FIELDS - {"schema_version", "revision", "task_id", "status", "goal", "current_milestone", "durable_promotion_count"}
     if set(partial) - allowed: raise ValueError("task-start input has forbidden fields")
     with _lock(root):
         if not _state_ignored(root): raise ValueError("task state is not ignored; run context init first")
@@ -798,6 +809,196 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
         state["status"] = "DONE"; state["revision"] = base_revision + 1; _write_state(root, state, enforce_fresh=False)
     # PASS and UNKNOWN intentionally stay entirely in the private audit plane.
     return {"ok": True, "state": state}
+
+
+_PROMOTION_TYPES = {"decision", "invariant", "failure_mode", "constraint"}
+_PROMOTION_RECORD_KEYS = {"type", "id", "title", "text", "evidence_refs", "confidence", "audience", "topics", "symbols", "applicability"}
+_PROMOTION_MILESTONE_KEYS = {"id", "progress", "verification", "evidence_refs", "confidence"}
+_PROMOTION_ID = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")
+_PROMOTION_AUDIENCE = {"all", "controller", "sol-high", "luna", "terra-implementer", "terra-reviewer"}
+
+
+def _promotion_text(value: object, field: str, *, maximum: int = 2000) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum or any(ord(char) < 32 or char in "\r\n" for char in value):
+        raise ValueError(f"promotion {field} must be bounded single-line text")
+    return value
+
+
+def _promotion_list(value: object, field: str, *, maximum: int = 16) -> list[str]:
+    if not isinstance(value, list) or not value or len(value) > maximum or not all(isinstance(item, str) and item and len(item) <= 200 and not any(ord(char) < 32 or char in "\r\n" for char in item) for item in value):
+        raise ValueError(f"promotion {field} must be a bounded string list")
+    return value
+
+
+def _promotion_optional_list(value: object, field: str) -> list[str]:
+    if value is None: return []
+    if not isinstance(value, list) or len(value) > 16 or not all(isinstance(item, str) and item and len(item) <= 200 and not any(ord(char) < 32 or char in "\r\n" for char in item) for item in value):
+        raise ValueError(f"promotion {field} must be a bounded string list")
+    return value
+
+
+def _promotion_applicability(value: object) -> str | list[str]:
+    if isinstance(value, str): return _promotion_text(value, "applicability", maximum=200)
+    if isinstance(value, list): return _promotion_optional_list(value, "applicability")
+    raise ValueError("promotion applicability must be text or a string list")
+
+
+def _promotion_evidence(root: Path, state: dict[str, object], evidence_ids: object, confidence: str) -> list[str]:
+    ids = _promotion_list(evidence_ids, "evidence_refs")
+    registry = {ref["id"]: ref for ref in state["evidence_refs"]}
+    locators: list[str] = []
+    directly_confirmed = False
+    for evidence_id in ids:
+        ref = registry.get(evidence_id)
+        if ref is None:
+            raise ValueError("promotion evidence_refs must use current task evidence")
+        kind = ref["kind"]
+        if kind in {"file", "git"}:
+            if not _evidence_fresh(root, ref):
+                raise ValueError("promotion requires fresh native evidence")
+            locators.append(str(ref["locator"]))
+            directly_confirmed = directly_confirmed or ref["confidence"] == "CONFIRMED"
+        elif kind in {"test", "runtime"}:
+            source_refs = ref.get("source_refs")
+            if not isinstance(source_refs, list) or not source_refs or not _evidence_fresh(root, ref, registry):
+                raise ValueError("promotion test/runtime evidence requires fresh native source_refs")
+            for source_id in source_refs:
+                source = registry[source_id]
+                locators.append(str(source["locator"]))
+        else:
+            raise ValueError("promotion accepts only fresh native file/git or test/runtime evidence; memory/task-input/NONE is rejected")
+    locators = list(dict.fromkeys(locators))
+    if not locators:
+        raise ValueError("promotion requires usable native evidence")
+    if confidence == "CONFIRMED" and not directly_confirmed:
+        raise ValueError("CONFIRMED promotion requires directly referenced fresh native CONFIRMED evidence")
+    return locators
+
+
+def _promotion_evidence_value(locators: list[str]) -> str:
+    return locators[0] if len(locators) == 1 else json.dumps(locators, ensure_ascii=False)
+
+
+def _promoted_milestone_entry(path: Path, text: str, locators: list[str], confidence: str) -> bytes:
+    try:
+        entry = parse(path)
+    except (ValueError, OSError) as exc:
+        raise ValueError(f"milestone file is invalid: {exc}") from exc
+    heading = next((line for line in entry.body.splitlines() if line.startswith("# ")), None)
+    if heading is None:
+        raise ValueError(f"milestone file missing required heading: {path.name}")
+    raw = path.read_text(encoding="utf-8")
+    end = raw.find("\n---\n", 4)
+    front = raw[:end]
+    lines = front.splitlines()
+    replacements = {"Evidence": _promotion_evidence_value(locators), "Revision": str(int(entry.meta["Revision"]) + 1), "Confidence": confidence}
+    rendered = []
+    for line in lines:
+        key = line.split(":", 1)[0]
+        rendered.append(f"{key}: {replacements[key]}" if key in replacements else line)
+    newline = "\r\n" if "\r\n" in raw else "\n"
+    return (newline.join(rendered) + newline + "---" + newline + newline + heading + newline + newline + text + newline).encode("utf-8")
+
+
+def task_promote(root: Path, role: str, base_revision: int, input_file: str | None) -> dict[str, object]:
+    root = _repo_root(root)
+    if role != "controller":
+        raise ValueError("only the Controller may promote durable records")
+    if type(base_revision) is not int:
+        raise ValueError("invalid task promotion revision")
+    payload = _read_input(input_file)
+    if set(payload) - {"records", "milestone"}:
+        raise ValueError("task-promote accepts only records and milestone; raw findings/logs/transcripts are not durable records; large maintenance routes to a fresh child")
+    records = payload.get("records", [])
+    milestone = payload.get("milestone")
+    if not isinstance(records, list) or len(records) > 16:
+        raise ValueError("promotion records must be a bounded list; large maintenance routes to a fresh child")
+    if milestone is None and not records:
+        raise ValueError("task-promote requires explicit records or milestone fields")
+    if milestone is not None and not isinstance(milestone, dict):
+        raise ValueError("promotion milestone must be an object")
+    with _lock(root):
+        state = _load_state(root, active=True)
+        if state["revision"] != base_revision:
+            raise ValueError("task revision conflict")
+        budget_units = len(records)
+        if milestone is not None:
+            budget_units += sum(field in milestone for field in ("progress", "verification"))
+        if state["durable_promotion_count"] + budget_units > _PROMOTION_BUDGET:
+            raise ValueError(f"promotion budget exceeds {_PROMOTION_BUDGET} task-local units")
+        writes: dict[str, bytes] = {}
+        index_additions: dict[str, list[tuple[str, str]]] = {}
+        seen_targets: set[str] = set()
+        for record in records:
+            required_record_keys = {"type", "id", "title", "text", "evidence_refs", "confidence"}
+            if not isinstance(record, dict) or set(record) - _PROMOTION_RECORD_KEYS or not required_record_keys <= set(record):
+                raise ValueError("promotion records require only bounded semantic fields: type/id/title/text/evidence_refs/confidence and routing hints")
+            record_type = record.get("type")
+            if not isinstance(record_type, str) or record_type not in _PROMOTION_TYPES:
+                raise ValueError("promotion type must be decision, invariant, failure_mode, or constraint; raw findings are rejected")
+            record_id = record.get("id")
+            if not isinstance(record_id, str) or not _PROMOTION_ID.fullmatch(record_id) or record_id == "INDEX":
+                raise ValueError("promotion id is not a safe durable filename")
+            title = _promotion_text(record.get("title"), "title", maximum=200)
+            if any(char in title for char in "[]()"):
+                raise ValueError("promotion title contains Markdown link characters")
+            body = _promotion_text(record.get("text"), "text")
+            refs = record.get("evidence_refs")
+            confidence = record.get("confidence")
+            if not isinstance(confidence, str) or confidence not in {"CONFIRMED", "SUPPORTED"}:
+                raise ValueError("promotion confidence must be explicitly CONFIRMED or SUPPORTED")
+            locators = _promotion_evidence(root, state, refs, confidence)
+            audience = _promotion_list(record.get("audience", ["all"]), "audience")
+            if not set(audience) <= _PROMOTION_AUDIENCE:
+                raise ValueError("promotion audience contains an unknown role")
+            topics = _promotion_optional_list(record.get("topics"), "topics")
+            symbols = _promotion_optional_list(record.get("symbols"), "symbols")
+            applicability = _promotion_applicability(record.get("applicability", "PROJECT"))
+            if record_type == "decision": directory, index = "decisions", ".agent-memory/decisions/INDEX.md"
+            elif record_type == "failure_mode": directory, index = "lessons", ".agent-memory/lessons/INDEX.md"
+            else: directory, index = "", ".agent-memory/INDEX.md"
+            relative = f".agent-memory/{directory + '/' if directory else ''}{record_id}.md"
+            if relative in seen_targets or _safe(root, relative).exists():
+                raise ValueError("promotion refuses to overwrite an existing durable target")
+            seen_targets.add(relative)
+            writes[relative] = _entry(title, body, status="ACTIVE", evidence=_promotion_evidence_value(locators), confidence=confidence, applicability=json.dumps(applicability, ensure_ascii=False) if isinstance(applicability, list) else applicability, audience=audience, topics=topics, symbols=symbols, kind="HARD_CONSTRAINT" if record_type == "constraint" else "MEMORY")
+            index_additions.setdefault(index, []).append((title, f"{record_id}.md"))
+        for index, additions in index_additions.items():
+            index_path = _safe(root, index)
+            try:
+                parse(index_path)
+            except (ValueError, OSError) as exc:
+                raise ValueError(f"promotion INDEX is invalid: {exc}") from exc
+            updated = index_path.read_text(encoding="utf-8")
+            newline = "\r\n" if "\r\n" in updated else "\n"
+            for title, filename in additions:
+                if re.search(rf"\]\({re.escape(filename)}\)", updated):
+                    raise ValueError("promotion target is already routed by INDEX")
+                updated = updated.rstrip("\r\n") + f"{newline}- [{title}]({filename}){newline}"
+            writes[index] = updated.encode("utf-8")
+        if milestone is not None:
+            if set(milestone) - _PROMOTION_MILESTONE_KEYS:
+                raise ValueError("promotion milestone accepts only id/progress/verification/evidence_refs/confidence")
+            milestone_id = milestone.get("id")
+            if milestone_id != state["current_milestone"] or not isinstance(milestone_id, str) or not _milestone_exists(root, milestone_id):
+                raise ValueError("promotion milestone must be the current linked milestone")
+            fields = [field for field in ("progress", "verification") if field in milestone]
+            if not fields:
+                raise ValueError("promotion milestone must explicitly provide progress or verification")
+            confidence = milestone.get("confidence")
+            if not isinstance(confidence, str) or confidence not in {"CONFIRMED", "SUPPORTED"}:
+                raise ValueError("promotion milestone confidence must be explicit")
+            locators = _promotion_evidence(root, state, milestone.get("evidence_refs"), confidence)
+            for field in fields:
+                text = _promotion_text(milestone[field], f"milestone {field}")
+                relative = f".milestones/{milestone_id}/{field}.md"
+                if relative in writes or not _safe(root, relative).is_file():
+                    raise ValueError("promotion milestone path is unknown")
+                writes[relative] = _promoted_milestone_entry(_safe(root, relative), text, locators, confidence)
+        state["durable_promotion_count"] += budget_units
+        writes[_STATE_NAME] = _state_payload(root, state)
+        backup = _apply_with_backup(root, writes, [], "task-promote")
+    return {"ok": True, "task_id": state["task_id"], "state_revision": state["revision"], "promoted": sorted(path for path in writes if path != _STATE_NAME), "backup": backup}
 
 
 def _linked_entries(root: Path) -> tuple[list[Entry], list[str]]:

@@ -567,6 +567,29 @@ Review findings
 
 其目标是保留可追溯性，同时避免把 `.context/state.json` 变成第二份对话历史。
 
+### 有界 durable promotion
+
+task-end 的顺序是：`task-local state -> Controller 判断是否值得长期保留 -> 最小 durable promotion -> task-close`。这不是自动总结；没有 durable knowledge 就不写 memory。只有 Controller 可以运行 `task-promote`，且只能提交显式的 `decision`、`invariant`、`failure_mode`、`constraint`，或当前 milestone 的 `progress`/`verification`。输入只能使用当前 ACTIVE task 的 evidence refs，并且必须通过 fresh native file/git evidence，或带 fresh native `source_refs` 的 test/runtime evidence；CONFIRMED promotion 还必须直接引用 fresh CONFIRMED file/git evidence。raw findings、transcript、log 和未知字段都会被拒绝。Promotion 使用 base revision 的 CAS，但不修改 task revision。每个 task 最多消耗 16 个 promotion units（每个 memory record 及每个 milestone progress/verification 字段各 1）；计数器只是有界 task-local bookkeeping，不是长期 memory 或 framework。
+
+最小顺序和 JSON 示例：
+
+```bash
+context task-start "adopt request policy"
+# ...Controller receives task-local evidence and decides retention...
+context task-promote --role controller --base-revision <revision> --input promote.json
+context task-close --base-revision <revision>
+```
+
+```json
+{"records":[{"type":"decision","id":"D-001","title":"Use X","text":"Adopt X.","evidence_refs":["e1"],"confidence":"SUPPORTED"}]}
+```
+
+Memory 只追加新 entry，并在现有 INDEX 中追加单条 router link；milestone 只更新显式提供的字段并使用 atomic backup。大型历史读取、去重、stale cleanup、冲突判断、INDEX 重构或批量 milestone 整理必须缩小范围后交给 fresh child。
+
+### Child lifecycle epistemic/control policy
+
+尚未观察到结果不等于失败；timeout、slow 或 incomplete observation 也不等于 capability limitation。没有明确证据时 child 状态保持 `UNKNOWN`。`RUNNING` 只能 wait/re-observe；`UNKNOWN` 只能 keep `UNKNOWN`/re-observe，不能因为一次等待窗口结束就关闭、替换或 takeover。只有明确的 `FAILED`、`CANCELLED`、`UNAVAILABLE` 或 deterministic spawn failure 才能 narrower fresh delegation。只有 objective capability unavailable 才允许最小 capability fallback，且不能借机由 Controller 自行调查或实现；child failure 后优先缩小范围重新委派 fresh child。Thaliris 不新增 runtime、scheduler、retry state machine 或 agent framework。
+
 ---
 
 ## 证据模型

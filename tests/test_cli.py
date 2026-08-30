@@ -27,7 +27,7 @@ def test_init_idempotent_preserves_agents_and_required_block(tmp_path, capsys):
     code, first = run(capsys, root, "init")
     assert code == 0 and first["changed"]
     text = (root / "AGENTS.md").read_text(encoding="utf-8")
-    assert "Keep this rule." in text and all(term in text for term in ("control plane, not an investigator", "repository investigation", "code search", "documentation research", "Git inspection", "runtime probing", "exploratory testing", "Luna investigator", "Sol high", "Terra", "Microtask", "concurrency: 1", "MUST fall back"))
+    assert "Keep this rule." in text and all(term in text for term in ("control plane, not an investigator", "repository investigation", "code search", "documentation research", "Git inspection", "runtime probing", "exploratory testing", "Luna investigator", "Sol high", "Terra", "Microtask", "concurrency: 1", "MUST fall back", "no result observed is not failure", "RUNNING waits and re-observes", "fresh child", "durable promotion"))
     code, second = run(capsys, root, "init")
     assert code == 0 and not second["changed"]
 
@@ -339,6 +339,136 @@ def test_milestone_directory_contract_and_path_escape(tmp_path, capsys):
     (root / ".milestones/INDEX.md").write_text("---\nEvidence: NONE\nRevision: 1\nStatus: DRAFT\nApplicability: PROJECT\nConfidence: UNVERIFIED\n---\n\n# Index\n\n- [escape](../../outside/INDEX.md)\n", encoding="utf-8")
     code, result = run(capsys, root, "milestone-check")
     assert code == 3 and any("escapes" in error for error in result["errors"])
+
+
+def _promotion_evidence(root: Path, summary: str = "current source", evidence_id: str = "e1") -> dict[str, object]:
+    source = root / "src.txt"
+    source.write_text(summary, encoding="utf-8")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    return {"id": evidence_id, "kind": "file", "locator": f"file:src.txt#{digest}", "summary": summary, "confidence": "SUPPORTED"}
+
+
+def test_task_promote_is_bounded_controller_only_and_does_not_investigate(tmp_path, capsys, monkeypatch):
+    root = repo(tmp_path); run(capsys, root, "init")
+    evidence = _promotion_evidence(root)
+    task_input(root, capsys, {"evidence_refs": [evidence]}, "task-start", "retain policy")
+    monkeypatch.setattr(core, "_linked_entries", lambda *_args: (_ for _ in ()).throw(AssertionError("promotion must not route memory")))
+    record = {"type": "decision", "id": "D-001", "title": "Use X", "text": "Adopt X.", "evidence_refs": ["e1"], "confidence": "SUPPORTED"}
+    code, result = task_input(root, capsys, {"records": [record]}, "task-promote", "--role", "controller", "--base-revision", "1")
+    assert code == 0 and result["state_revision"] == 1 and result["backup"]
+    assert (root / ".agent-memory/decisions/D-001.md").is_file()
+    assert "D-001.md" in (root / ".agent-memory/decisions/INDEX.md").read_text(encoding="utf-8")
+    assert '"revision": 1' in (root / ".context/state.json").read_text(encoding="utf-8")
+    assert parse(root / ".agent-memory/decisions/D-001.md").meta["Evidence"].startswith("file:src.txt#")
+
+
+def test_task_promote_confirmed_requires_direct_fresh_native_evidence(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    source = _promotion_evidence(root, evidence_id="e1"); source["confidence"] = "CONFIRMED"
+    test_ref = {"id": "t1", "kind": "test", "locator": "test:focused", "summary": "focused test passed", "confidence": "SUPPORTED", "source_refs": ["e1"]}
+    task_input(root, capsys, {"evidence_refs": [source, test_ref]}, "task-start", "retain verified policy")
+    confirmed = {"type": "decision", "id": "D-TEST", "title": "Verified only by test", "text": "The focused test passed.", "evidence_refs": ["t1"], "confidence": "CONFIRMED"}
+    code, failed = task_input(root, capsys, {"records": [confirmed]}, "task-promote", "--role", "controller", "--base-revision", "1")
+    assert code == 2 and "directly referenced fresh native CONFIRMED evidence" in failed["error"]
+    assert not (root / ".agent-memory/decisions/D-TEST.md").exists()
+    supported = confirmed | {"id": "D-SUPPORTED", "title": "Supported by test", "confidence": "SUPPORTED"}
+    code, result = task_input(root, capsys, {"records": [supported]}, "task-promote", "--role", "controller", "--base-revision", "1")
+    assert code == 0 and result["state_revision"] == 1
+
+
+def test_task_promote_rejects_unhashable_structured_fields(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); evidence = _promotion_evidence(root)
+    task_input(root, capsys, {"evidence_refs": [evidence]}, "task-start", "retain policy", "--milestone", "M001-name")
+    record = {"type": "decision", "id": "D-001", "title": "Use X", "text": "Adopt X.", "evidence_refs": ["e1"], "confidence": "SUPPORTED"}
+    malformed = [
+        ({"records": [record | {"type": []}]}, "promotion type"),
+        ({"records": [record | {"confidence": {}}]}, "promotion confidence"),
+        ({"records": [record | {"audience": [{}]}]}, "promotion audience"),
+        ({"milestone": {"id": "M001-name", "progress": "Checked.", "evidence_refs": ["e1"], "confidence": []}}, "promotion milestone confidence"),
+    ]
+    for payload, error in malformed:
+        code, failed = task_input(root, capsys, payload, "task-promote", "--role", "controller", "--base-revision", "1")
+        assert code == 2 and error in failed["error"]
+
+
+def test_task_promote_uses_task_local_budget_without_blocking_close(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); evidence = _promotion_evidence(root)
+    code, failed = task_input(root, capsys, {"durable_promotion_count": 16}, "task-start", "forged budget")
+    assert code == 2 and "forbidden" in failed["error"]
+    task_input(root, capsys, {"evidence_refs": [evidence]}, "task-start", "bounded retention")
+    state_path = root / ".context/state.json"
+    legacy_state = json.loads(state_path.read_text(encoding="utf-8")); del legacy_state["durable_promotion_count"]
+    state_path.write_text(json.dumps(legacy_state), encoding="utf-8")
+    code, shown = run(capsys, root, "task-show")
+    assert code == 0 and shown["state"]["durable_promotion_count"] == 0
+    records = [
+        {"type": "decision", "id": f"D-{index:02d}", "title": f"Decision {index}", "text": f"Keep decision {index}.", "evidence_refs": ["e1"], "confidence": "SUPPORTED"}
+        for index in range(1, 17)
+    ]
+    code, promoted = task_input(root, capsys, {"records": records}, "task-promote", "--role", "controller", "--base-revision", "1")
+    assert code == 0 and len(promoted["promoted"]) == 17
+    before_state = state_path.read_bytes()
+    before_memory = {str(path.relative_to(root)): path.read_bytes() for path in (root / ".agent-memory").rglob("*.md")}
+    code, failed = task_input(root, capsys, {"durable_promotion_count": 0}, "task-update", "--role", "controller", "--base-revision", "1")
+    assert code == 2 and "not allowed" in failed["error"] and state_path.read_bytes() == before_state
+    excess = {"type": "decision", "id": "D-17", "title": "Excess decision", "text": "This cannot persist.", "evidence_refs": ["e1"], "confidence": "SUPPORTED"}
+    code, failed = task_input(root, capsys, {"records": [excess]}, "task-promote", "--role", "controller", "--base-revision", "1")
+    assert code == 2 and "budget exceeds 16" in failed["error"]
+    after_memory = {str(path.relative_to(root)): path.read_bytes() for path in (root / ".agent-memory").rglob("*.md")}
+    assert after_memory == before_memory and not (root / ".agent-memory/decisions/D-17.md").exists()
+    assert json.loads(state_path.read_text(encoding="utf-8"))["durable_promotion_count"] == 16
+    code, closed = run(capsys, root, "task-close", "--base-revision", "1")
+    assert code == 0 and closed["state"]["status"] == "DONE"
+
+
+def test_task_promote_rejects_large_maintenance_and_non_controller(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); evidence = _promotion_evidence(root)
+    task_input(root, capsys, {"evidence_refs": [evidence]}, "task-start", "retain policy")
+    code, failed = task_input(root, capsys, {"maintenance": {"deduplicate": True}}, "task-promote", "--role", "controller", "--base-revision", "1")
+    assert code == 2 and "fresh child" in failed["error"]
+    record = {"type": "decision", "id": "D-002", "title": "Use Y", "text": "Adopt Y.", "evidence_refs": ["e1"], "confidence": "SUPPORTED"}
+    code, failed = task_input(root, capsys, {"records": [record]}, "task-promote", "--role", "terra-implementer", "--base-revision", "1")
+    assert code == 2 and "only the Controller" in failed["error"]
+
+
+def test_task_close_does_not_promote_memory_and_raw_records_never_persist(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    before = {str(path.relative_to(root)): path.read_bytes() for path in (root / ".agent-memory").rglob("*.md")}
+    run(capsys, root, "task-start", "ordinary task")
+    code, closed = run(capsys, root, "task-close", "--base-revision", "1")
+    assert code == 0 and closed["state"]["status"] == "DONE"
+    after = {str(path.relative_to(root)): path.read_bytes() for path in (root / ".agent-memory").rglob("*.md")}
+    assert after == before
+
+    root = repo(tmp_path / "raw"); run(capsys, root, "init"); evidence = _promotion_evidence(root)
+    task_input(root, capsys, {"evidence_refs": [evidence]}, "task-start", "raw rejection")
+    raw = {"type": "finding", "id": "F-001", "title": "Raw", "text": "Do not store", "evidence_refs": ["e1"], "confidence": "SUPPORTED"}
+    code, failed = task_input(root, capsys, {"records": [raw]}, "task-promote", "--role", "controller", "--base-revision", "1")
+    assert code == 2 and "raw findings" in failed["error"]
+    assert not (root / ".agent-memory/F-001.md").exists()
+
+
+def test_task_promote_freshness_cas_and_milestone_contract(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); evidence = _promotion_evidence(root, "before")
+    task_input(root, capsys, {"evidence_refs": [evidence]}, "task-start", "milestone work", "--milestone", "M001-name")
+    (root / "src.txt").write_text("after", encoding="utf-8")
+    record = {"type": "invariant", "id": "I-001", "title": "Stable", "text": "Must remain stable.", "evidence_refs": ["e1"], "confidence": "SUPPORTED"}
+    code, failed = task_input(root, capsys, {"records": [record]}, "task-promote", "--role", "controller", "--base-revision", "1")
+    assert code == 2 and "fresh native evidence" in failed["error"]
+    evidence = _promotion_evidence(root, "fresh", "e2")
+    # Evidence identity is immutable; add a fresh task ref through the normal CAS path.
+    task_input(root, capsys, {"evidence_refs": [evidence]}, "task-update", "--role", "controller", "--base-revision", "1")
+    milestone = {"id": "M001-name", "progress": "50% complete.", "verification": "Focused checks passed.", "evidence_refs": ["e2"], "confidence": "SUPPORTED"}
+    code, result = task_input(root, capsys, {"milestone": milestone}, "task-promote", "--role", "controller", "--base-revision", "2")
+    assert code == 0 and result["state_revision"] == 2 and len(result["promoted"]) == 2
+    assert "Revision: 2" in (root / ".milestones/M001-name/progress.md").read_text(encoding="utf-8")
+    assert "50% complete." in (root / ".milestones/M001-name/progress.md").read_text(encoding="utf-8")
+    assert "Focused checks passed." in (root / ".milestones/M001-name/verification.md").read_text(encoding="utf-8")
+    code, checked = run(capsys, root, "milestone-check")
+    assert code == 0 and checked["ok"] and result["backup"]
+    task_input(root, capsys, {"changed_surface": ["src.txt"]}, "task-update", "--role", "controller", "--base-revision", "2")
+    code, failed = task_input(root, capsys, {"milestone": milestone}, "task-promote", "--role", "controller", "--base-revision", "2")
+    assert code == 2 and "revision conflict" in failed["error"]
 
 
 def task_input(root: Path, capsys, data: dict, *args: str):

@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from .core import init, migrate, milestone_check, prepare, rollback, stale, uninstall, task_close, task_show, task_start, task_update
+from .core import init, migrate, milestone_check, prepare, rollback, stale, uninstall, task_close, task_promote, task_show, task_start, task_update
 from .doctor import report
 from .intent_audit import handle_hook
 
@@ -40,6 +40,15 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("task-show")
     q = sub.add_parser("task-close")
     q.add_argument("--base-revision", required=True, type=int)
+    q = sub.add_parser(
+        "task-promote",
+        help="Controller-only bounded durable promotion",
+        description="Promote explicit semantic records using the ACTIVE task evidence only.",
+        epilog='Order: task-start -> task updates/review -> Controller decision -> task-promote -> task-close. Minimal JSON: {"records":[{"type":"decision","id":"D-001","title":"Use X","text":"Adopt X.","evidence_refs":["e1"],"confidence":"SUPPORTED"}]}',
+    )
+    q.add_argument("--role", required=True, choices=("controller", "sol-high", "luna", "luna-investigator", "luna-curator", "terra-implementer", "terra-reviewer"))
+    q.add_argument("--base-revision", required=True, type=int)
+    q.add_argument("--input", required=True)
     q = sub.add_parser("rollback")
     q.add_argument("backup")
     sub.add_parser("version")
@@ -79,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "task-update": out = task_update(root, args.role, args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
         elif args.command == "task-close": out = task_close(root, args.base_revision)
+        elif args.command == "task-promote": out = task_promote(root, args.role, args.base_revision, args.input)
         elif args.command == "rollback": out = rollback(root, args.backup)
         elif args.command == "uninstall": out = uninstall(root)
         else: out = {"ok": True, "version": __version__}

@@ -17,7 +17,7 @@ import uuid
 
 from .markdown import Entry, evidence_status, parse
 from .models import ContextConfig
-from .intent_audit import MANAGED_HOOKS_DESCRIPTION, cleanup_task_audit, merge_hooks, remove_hooks, task_close_audit
+from .intent_audit import MANAGED_HOOKS_DESCRIPTION, bind_unbound_intent, cleanup_task_audit, merge_hooks, remove_hooks, task_close_audit
 
 MANAGED_START = "<!-- thaliris:begin -->"
 MANAGED_END = "<!-- thaliris:end -->"
@@ -679,7 +679,7 @@ def _load_state(root: Path, *, active: bool = False) -> dict[str, object]:
     return state
 
 
-def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None) -> dict[str, object]:
+def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None, intent_capture_id: str | None = None) -> dict[str, object]:
     root = _repo_root(root)
     if not _state_ignored(root): raise ValueError("task state is not ignored; run context init first")
     if not goal.strip(): raise ValueError("goal must not be empty")
@@ -695,6 +695,12 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
             raise ValueError("initial snapshot cannot supersede prior entries")
         _require_fresh_confirmed_items(root, state["evidence_refs"], state["investigation_findings"] + state["investigation_snapshot"])
         _write_state(root, state)
+        try:
+            # UserPromptSubmit precedes Controller's task-start. Only its
+            # opaque one-time capability may bind the raw root turn.
+            bind_unbound_intent(root, str(state["task_id"]), intent_capture_id)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            pass
     return {"ok": True, "state": state}
 
 
@@ -774,13 +780,24 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
         current = _load_state(root, active=True)
         if current["revision"] != base_revision or current["task_id"] != task_id:
             raise ValueError("task revision conflict")
+        state = current
+        if audit.get("status") == "DRIFT":
+            # Preserve raw evidence and ACTIVE state so Controller can correct
+            # the delegation and retry task-close. Never expose model text.
+            return {
+                "ok": False,
+                "state": state,
+                "intent_audit": {"status": "DRIFT", "finding": "Correct delegation scope before closing this task."},
+            }
         try:
             cleanup_task_audit(root, task_id, audit.get("status"))
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
-            audit = audit | {"status": "UNKNOWN", "findings": [], "reason": "audit_cleanup_failure"}
-        state = current
+            # Fail open: a cleanup failure cannot turn normal task-close into
+            # a Controller-visible audit result.
+            audit = {"status": "UNKNOWN", "findings": [], "reason": "audit_cleanup_failure"}
         state["status"] = "DONE"; state["revision"] = base_revision + 1; _write_state(root, state, enforce_fresh=False)
-    return {"ok": True, "state": state, "intent_audit": audit}
+    # PASS and UNKNOWN intentionally stay entirely in the private audit plane.
+    return {"ok": True, "state": state}
 
 
 def _linked_entries(root: Path) -> tuple[list[Entry], list[str]]:

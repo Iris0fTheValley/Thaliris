@@ -9,9 +9,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import Any
 
 HOOK_COMMAND_PREFIX = "context audit-hook"
@@ -21,6 +23,8 @@ AUDIT_INTERVAL = 5
 MAX_AUDIT_RESULTS = 32
 MAX_RAW_RECORDS = 64
 MAX_RAW_BYTES = 64 * 1024
+CAPTURE_ID_TTL_SECONDS = 60
+MAX_CAPTURE_CAPABILITIES = MAX_RAW_RECORDS
 AUDIT_ENV = "THALIRIS_INTENT_AUDIT_ACTIVE"
 AUDIT_RUNNER_ENV = "THALIRIS_CODEX_EXECUTABLE"
 AUDIT_AUTH_FILE_ENV = "THALIRIS_INTENT_AUDIT_AUTH_FILE"
@@ -277,9 +281,11 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             state["events_observed"][event] = True
             prompt = _append_intent(root, payload, partition, task_id)
             state["last_prompt_seq"] = prompt["seq"]
+            if task_id is None:
+                capture_id = _mint_unbound_capture(root, payload, state_path, state, prompt)
             state["intent_coverage"] = "UNKNOWN" if partition == "unknown-turn" else prompt["coverage"]
             _write_capture(state_path, state)
-            return ""
+            return _unbound_capture_output(capture_id) if task_id is None and capture_id else ""
         if event == "PostToolUse":
             result = _capture_delegation(state, payload)
             if not result:
@@ -564,6 +570,165 @@ def _append_intent(root: Path, payload: dict[str, Any], partition: str, task_id:
     return item | {"coverage": anchor["coverage"]}
 
 
+def _capture_capability_path(root: Path, capture_id_hash: str) -> Path:
+    return root / ".context" / "audit" / "capture-capabilities" / f"{capture_id_hash}.json"
+
+
+def _prune_capture_capabilities(root: Path, now: float | None = None) -> None:
+    """Bound private one-time capability records without touching task evidence."""
+    directory = root / ".context" / "audit" / "capture-capabilities"
+    if not directory.is_dir():
+        return
+    moment = time.time() if now is None else now
+    retained: list[tuple[float, Path]] = []
+    for path in directory.glob("*.json"):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            captured_at = value.get("captured_at") if isinstance(value, dict) else None
+            if type(captured_at) not in {int, float} or captured_at > moment or moment - captured_at > CAPTURE_ID_TTL_SECONDS:
+                path.unlink(missing_ok=True)
+                continue
+            retained.append((captured_at, path))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+    for _, path in sorted(retained)[:-MAX_CAPTURE_CAPABILITIES]:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _mint_unbound_capture(root: Path, payload: dict[str, Any], state_path: Path, state: dict[str, Any], prompt: dict[str, Any]) -> str | None:
+    """Persist a one-time opaque link from this root turn to task-start."""
+    if state.get("turn_status") != "IDENTIFIED" or prompt.get("text_status") != "AVAILABLE_UNVERIFIED":
+        return None
+    capture_id = secrets.token_urlsafe(32)
+    capture_id_hash = _identity_hash(capture_id)
+    prompt_hash = prompt.get("sha256")
+    if capture_id_hash is None or not isinstance(prompt_hash, str):
+        return None
+    try:
+        base = root / ".context" / "audit"
+        _prune_capture_capabilities(root)
+        relative_state = state_path.relative_to(base).as_posix()
+        state["unbound_capture_id_hash"] = capture_id_hash
+        state["unbound_prompt_captured_at"] = time.time()
+        capability = {
+            "version": 1,
+            "capture_id_hash": capture_id_hash,
+            "status": "PENDING",
+            "state_path": relative_state,
+            "session_hash": state.get("session_hash"),
+            "turn_hash": state.get("turn_hash"),
+            "cwd_hash": _identity_hash(str(root.resolve())),
+            "prompt_sha256": prompt_hash,
+            "prompt_seq": prompt.get("seq"),
+            "captured_at": state["unbound_prompt_captured_at"],
+        }
+        _write_capture(_capture_capability_path(root, capture_id_hash), capability)
+        _prune_capture_capabilities(root)
+    except (OSError, ValueError, TypeError):
+        state.pop("unbound_capture_id_hash", None)
+        state.pop("unbound_prompt_captured_at", None)
+        return None
+    return capture_id
+
+
+def _unbound_capture_output(capture_id: str) -> str:
+    context = (
+        "For this root turn only, start its task with the opaque capture token: "
+        f"context task-start <goal> --intent-capture-id {capture_id}. "
+        "Carry this token unchanged; do not repeat or summarize the user prompt."
+    )
+    return json.dumps(
+        {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def bind_unbound_intent(root: Path, task_id: str, capture_id: str | None) -> None:
+    """Claim and bind exactly the opaque root-turn capability supplied to task-start."""
+    task_hash = _identity_hash(task_id)
+    capture_id_hash = _identity_hash(capture_id)
+    if task_hash is None or capture_id_hash is None:
+        return
+    try:
+        capability_path = _capture_capability_path(root, capture_id_hash)
+        capability = json.loads(capability_path.read_text(encoding="utf-8"))
+        now = time.time()
+        if (
+            not isinstance(capability, dict)
+            or capability.get("capture_id_hash") != capture_id_hash
+            or capability.get("status") != "PENDING"
+            or capability.get("cwd_hash") != _identity_hash(str(root.resolve()))
+            or type(capability.get("captured_at")) not in {int, float}
+            or capability["captured_at"] > now
+            or now - capability["captured_at"] > CAPTURE_ID_TTL_SECONDS
+            or not isinstance(capability.get("state_path"), str)
+        ):
+            return
+        base = (root / ".context" / "audit").resolve()
+        state_path = (base / capability["state_path"]).resolve()
+        if base not in state_path.parents or state_path.name != "capture.json":
+            return
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(state, dict)
+            or state.get("task_id_hash") != "unbound"
+            or state.get("unbound_capture_id_hash") != capture_id_hash
+            or state.get("session_hash") != capability.get("session_hash")
+            or state.get("turn_hash") != capability.get("turn_hash")
+            or state.get("last_prompt_seq") != capability.get("prompt_seq")
+        ):
+            return
+        source_path = state_path.parent.parent / "intent.json"
+        source = _load_intent(source_path, "unbound")
+        matches = [
+            index for index, prompt in enumerate(source.get("prompts", []))
+            if isinstance(prompt, dict)
+            and prompt.get("seq") == capability.get("prompt_seq")
+            and prompt.get("sha256") == capability.get("prompt_sha256")
+            and _identity_hash(prompt.get("partition")) == capability.get("turn_hash")
+        ]
+        if len(matches) != 1:
+            return
+        prompt = source["prompts"][matches[0]]
+        target_path = _intent_path(root, {}, task_hash)
+        target = _load_intent(target_path, task_hash)
+        adopted = dict(prompt)
+        adopted["seq"] = int(target["next_seq"])
+        if not _raw_within_bounds(target.get("prompts", []), adopted):
+            return
+
+        # Core holds the task lock. Claim before modifying raw prompt storage so
+        # a reused token can never bind another task.
+        capability["status"] = "CLAIMED"
+        _write_capture(capability_path, capability)
+        target["next_seq"] = adopted["seq"] + 1
+        target["prompts"].append(adopted)
+        if target.get("coverage") != "UNKNOWN":
+            target["coverage"] = "AVAILABLE_UNVERIFIED"
+        _write_capture(target_path, target)
+        source["prompts"].pop(matches[0])
+        if source["prompts"]:
+            _write_capture(source_path, source)
+        else:
+            source_path.unlink(missing_ok=True)
+        state["task_id_hash"] = task_hash
+        state["last_prompt_seq"] = adopted["seq"]
+        state["intent_coverage"] = target["coverage"]
+        state["capture_coverage"] = "AVAILABLE_UNVERIFIED"
+        _write_capture(state_path, state)
+        capability_path.unlink(missing_ok=True)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        # This private adapter must never interfere with task-start.
+        return
+
+
 def _raw_within_bounds(items: list[object], candidate: dict[str, Any]) -> bool:
     if len(items) >= MAX_RAW_RECORDS:
         return False
@@ -765,10 +930,11 @@ def _invoke_fresh_auditor(request: str, mode: str) -> tuple[str, bool] | None:
         command = [
             executable, "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules",
             "--model", INTENT_AUDITOR_MODEL, "-c", f'model_reasoning_effort="{INTENT_AUDITOR_REASONING}"',
+            "-c", f"developer_instructions={json.dumps(AUDITOR_INSTRUCTION)}",
             "-c", "features.multi_agent=false", "-c", "features.multi_agent_v2.enabled=false",
             "-c", "features.plugins=false", "-c", "features.memories=false",
             "--sandbox", "read-only", "--skip-git-repo-check", "--output-schema", str(schema),
-            "--output-last-message", str(output), AUDITOR_INSTRUCTION,
+            "--output-last-message", str(output),
         ]
         proc = subprocess.run(command, input=request, capture_output=True, text=True, cwd=cwd, env=env, timeout=55, check=False)
         if proc.returncode != 0 or not output.is_file():
@@ -784,6 +950,13 @@ def _audit_attempt(root: Path, payload: dict[str, Any], state: dict[str, Any], m
     except (OSError, ValueError, json.JSONDecodeError):
         anchor = None
         anchor_available = False
+    suffix = state["delegations"][low:high]
+    # These conditions are deterministic. Do not spend an isolated Sol run
+    # on evidence that the fixed rubric must classify as UNKNOWN.
+    if state.get("intent_coverage") == "UNKNOWN" or state.get("capture_coverage") == "UNKNOWN" or not anchor_available:
+        return {"status": "UNKNOWN", "findings": []}, False, "intent_or_capture_incomplete", False
+    if any(item.get("dispatch_status") == "UNKNOWN" for item in suffix):
+        return {"status": "UNKNOWN", "findings": []}, False, "dispatch_unverified", False
     try:
         execution = _run_audit(root, payload, state, mode, low, high)
     except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
@@ -791,11 +964,6 @@ def _audit_attempt(root: Path, payload: dict[str, Any], state: dict[str, Any], m
     if execution is None:
         return {"status": "UNKNOWN", "findings": []}, False, "runner_unavailable_or_invalid", False
     outcome, fresh_verified = execution
-    suffix = state["delegations"][low:high]
-    if state.get("intent_coverage") == "UNKNOWN" or state.get("capture_coverage") == "UNKNOWN" or not anchor_available:
-        return {"status": "UNKNOWN", "findings": []}, fresh_verified, "intent_or_capture_incomplete", True
-    if any(item.get("dispatch_status") == "UNKNOWN" for item in suffix):
-        return {"status": "UNKNOWN", "findings": []}, fresh_verified, "dispatch_unverified", True
     return outcome, fresh_verified, None, True
 
 
@@ -834,8 +1002,8 @@ def task_close_audit(root: Path, task_id: str, *, cleanup: bool = True) -> dict[
 
     The hook Stop event is intentionally not used as a task boundary.  This
     small adapter is called by the existing task-close lifecycle instead.
-    Raw evidence is cleared after the attempt; only the bounded audit result
-    remains in the private capture file.
+    PASS and fail-open UNKNOWN clear raw evidence after the attempt; DRIFT
+    preserves it so the ACTIVE task can be corrected and retried.
     """
     task_hash = _identity_hash(task_id)
     captures: list[tuple[Path, dict[str, Any]]] = []
@@ -897,6 +1065,8 @@ def task_close_audit(root: Path, task_id: str, *, cleanup: bool = True) -> dict[
         "intent_coverage": coverage,
         "capture_coverage": coverage,
     }
+    if any(item.get("dispatch_status") == "UNKNOWN" for item in delegations):
+        coverage = "UNKNOWN"
     if coverage == "UNKNOWN":
         outcome, reason, fresh_verified = {"status": "UNKNOWN", "findings": []}, "task_history_incomplete", False
     else:
@@ -910,7 +1080,7 @@ def task_close_audit(root: Path, task_id: str, *, cleanup: bool = True) -> dict[
                 outcome, reason = (result or {"status": "UNKNOWN", "findings": []}), (None if result is not None else "auditor_result_invalid")
         except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
             outcome, reason, fresh_verified = {"status": "UNKNOWN", "findings": []}, "runner_unavailable_or_invalid", False
-    if cleanup:
+    if cleanup and outcome["status"] != "DRIFT":
         _clear_task_raw(root, task_hash, outcome["status"])
     result: dict[str, Any] = {"status": outcome["status"], "findings": [{"kind": item["kind"], "root_prompt_seq": item.get("root_prompt_seq"), "delegation_seq": item.get("delegation_seq")} for item in outcome.get("findings", [])]}
     if reason is not None:

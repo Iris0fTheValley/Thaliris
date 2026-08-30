@@ -32,6 +32,7 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("goal")
     q.add_argument("--milestone")
     q.add_argument("--input")
+    q.add_argument("--intent-capture-id")
     q = sub.add_parser("task-update")
     q.add_argument("--role", required=True, choices=("controller", "sol-high", "luna", "luna-investigator", "luna-curator", "terra-implementer", "terra-reviewer"))
     q.add_argument("--base-revision", required=True, type=int)
@@ -74,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
             data = stale(root); out = {"ok": data["ok"], "entries": len(data["entries"]), "stale": data["stale"]}
         elif args.command == "milestone-check": out = milestone_check(root)
         elif args.command == "prepare": out = prepare(root, args.task, args.role)
-        elif args.command == "task-start": out = task_start(root, args.goal, args.milestone, args.input)
+        elif args.command == "task-start": out = task_start(root, args.goal, args.milestone, args.input, args.intent_capture_id)
         elif args.command == "task-update": out = task_update(root, args.role, args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
         elif args.command == "task-close": out = task_close(root, args.base_revision)

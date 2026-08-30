@@ -27,7 +27,7 @@ def test_init_idempotent_preserves_agents_and_required_block(tmp_path, capsys):
     code, first = run(capsys, root, "init")
     assert code == 0 and first["changed"]
     text = (root / "AGENTS.md").read_text(encoding="utf-8")
-    assert "Keep this rule." in text and all(term in text for term in ("control plane, not an investigator", "repository investigation", "code search", "documentation research", "Git inspection", "runtime probing", "exploratory testing", "Luna investigator", "Sol high", "Terra", "Microtask", "concurrency: 1", "MUST fall back", "no result observed is not failure", "RUNNING waits and re-observes", "fresh child", "durable promotion"))
+    assert "Keep this rule." in text and all(term in text for term in ("control plane, not an investigator", "repository investigation", "code search", "documentation research", "Git inspection", "runtime probing", "exploratory testing", "Investigator", "Reasoning Specialist", "GPT-5.6 Terra", "Microtask", "concurrency: 1", "MUST fall back", "no result observed is not failure", "RUNNING waits and re-observes", "fresh child", "durable promotion", "Codex-native observations"))
     code, second = run(capsys, root, "init")
     assert code == 0 and not second["changed"]
 
@@ -74,7 +74,7 @@ def test_init_and_migrate_upgrade_legacy_markers_without_duplicates(tmp_path, ca
         ignored = (root / ".gitignore").read_text(encoding="utf-8")
         assert "Keep." in agents and "keep.me" in ignored
         assert "Controller is the control plane, not an investigator" in agents
-        assert "MUST delegate the investigation to a Luna investigator" in agents
+        assert "MUST delegate the investigation to an Investigator" in agents
         assert agents.count("<!-- thaliris:begin -->") == agents.count("<!-- thaliris:end -->") == 1
         assert ignored.count("# thaliris:begin") == ignored.count("# thaliris:end") == 1
         assert "codex-context:" not in agents and "codex-context:" not in ignored
@@ -645,6 +645,21 @@ def test_milestone_slice_and_memory_applicability_is_not_boundary(tmp_path, caps
     assert implementer["Milestone Scope"]["source"].endswith("scope.md")
     assert implementer["Implementation Constraints"]["confidence"] == "UNVERIFIED"
     assert implementer["Modification Boundary"]["includes"] == []
+
+
+def test_milestone_progress_is_projected_only_to_controller(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    evidence = _promotion_evidence(root)
+    task_input(root, capsys, {"evidence_refs": [evidence]}, "task-start", "report progress", "--milestone", "M001-name")
+    milestone = {"id": "M001-name", "progress": "50% complete.", "evidence_refs": ["e1"], "confidence": "SUPPORTED"}
+    code, _ = task_input(root, capsys, {"milestone": milestone}, "task-promote", "--role", "controller", "--base-revision", "1")
+    assert code == 0
+    _, controller = run(capsys, root, "prepare", "--role", "controller")
+    assert controller["Milestone Progress"]["source"].endswith("progress.md")
+    assert "50% complete." in controller["Milestone Progress"]["text"]
+    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
+    _, reviewer = run(capsys, root, "prepare", "--role", "terra-reviewer")
+    assert "Milestone Progress" not in sol and "Milestone Progress" not in reviewer
 
 
 def test_state_pack_keeps_memory_provenance_and_changed_path_evidence(tmp_path, capsys):

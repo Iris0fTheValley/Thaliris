@@ -192,7 +192,9 @@ hash 未变化只能证明被引用的证据没有变化，**不能**证明此�
 
 默认角色有意保持职责狭窄。
 
-### Controller — Sol mid
+### Controller / Control Plane
+
+当前推荐模型：GPT-5.6 Luna。
 
 父级 Controller 负责：
 
@@ -209,7 +211,9 @@ Controller 应基于有界任务视图工作，而不是读取原始调查 trans
 
 ---
 
-### Luna investigator
+### Investigator
+
+当前推荐模型：GPT-5.6 Luna。
 
 用于聚焦调查和机械式证据收集：
 
@@ -222,15 +226,17 @@ Controller 应基于有界任务视图工作，而不是读取原始调查 trans
 * 测试执行；
 * 残留引用检查。
 
-Luna 可以拥有较大的工作集。
+Investigator 可以拥有较大的工作集。
 
-它的持久输出是结构化 findings 和 evidence refs，而不是 transcript。
+其输出是 task-local 的结构化 findings 和 evidence refs，而不是 transcript。只有 Controller 作出显式 retention 决定并运行 `task-promote` 后，内容才可能进入 `.agent-memory/` 或 `.milestones/`。
 
 ---
 
-### Luna curator
+### Curator
 
-一个 fresh Luna invocation 可以压缩累积的 investigation findings。
+当前推荐模型：GPT-5.6 Luna。
+
+一个 fresh Curator invocation 可以压缩累积的 investigation findings。
 
 它可以：
 
@@ -246,7 +252,9 @@ Curation 改变的是表达形式，而不是证据。
 
 ---
 
-### Sol high
+### Reasoning Specialist
+
+当前推荐模型：GPT-5.6 Sol。
 
 仅用于真正受益于更强推理上下文的问题：
 
@@ -259,7 +267,7 @@ Curation 改变的是表达形式，而不是证据。
 * provenance 或安全推理；
 * 艰难的取舍。
 
-Sol high 不维护任务状态，也不执行常规的证据 bookkeeping。
+Reasoning Specialist 不维护任务状态，也不执行常规的证据 bookkeeping。
 
 它的理想轨迹是：
 
@@ -269,7 +277,9 @@ Sol high 不维护任务状态，也不执行常规的证据 bookkeeping。
 
 ---
 
-### Terra implementer
+### Implementer
+
+当前推荐模型：GPT-5.6 Terra。
 
 接收明确的实现边界，以及完成修改所必需的事实。
 
@@ -279,7 +289,9 @@ Sol high 不维护任务状态，也不执行常规的证据 bookkeeping。
 
 ---
 
-### Terra reviewer
+### Independent Reviewer
+
+当前推荐模型：GPT-5.6 Terra。
 
 高风险修改可以接受一次 fresh independent review。
 
@@ -306,14 +318,14 @@ Controller 决定这些 findings 是否应影响 Decision Context。
 ```text
 Controller
     ↓
-直接编辑
+Implementer
     ↓
-确定性检查
+deterministic verification
     ↓
-完成
+done
 ```
 
-无需子代理。
+即使是 microtask，persistent Controller 也不直接编辑源文件。
 
 ---
 
@@ -322,11 +334,11 @@ Controller
 ```text
 Controller
     ↓
-Terra implementer
+Implementer
     ↓
 确定性检查
     ↓
-需要时由 Luna 验证
+需要时由 Investigator 验证
 ```
 
 ---
@@ -336,14 +348,14 @@ Terra implementer
 ```text
 Controller
     ↓
-Luna investigator
+Investigator
     ↓
 需要时生成 curated findings
     ↓
 Controller
 
-        ├─ 解决方案明确 → Terra
-        └─ 推理困难 → Sol high
+        ├─ 解决方案明确 → Implementer
+        └─ 推理困难 → Reasoning Specialist
 ```
 
 ---
@@ -351,24 +363,24 @@ Controller
 ### 复杂修改
 
 ```text
-Luna 调查
+Investigator 调查
         ↓
 有界证据
         ↓
-Sol high 推理
+Reasoning Specialist 推理
         ↓
-Terra 实现
+Implementer 实现
         ↓
 确定性检查
         ↓
-Luna 验证
+Investigator 验证
 ```
 
 对于风险足够高的修改：
 
 ```text
         ↓
-fresh Terra review
+fresh Independent Review
         ↓
 Controller 决策
 ```
@@ -588,7 +600,7 @@ Memory 只追加新 entry，并在现有 INDEX 中追加单条 router link；mil
 
 ### Child lifecycle epistemic/control policy
 
-尚未观察到结果不等于失败；timeout、slow 或 incomplete observation 也不等于 capability limitation。没有明确证据时 child 状态保持 `UNKNOWN`。`RUNNING` 只能 wait/re-observe；`UNKNOWN` 只能 keep `UNKNOWN`/re-observe，不能因为一次等待窗口结束就关闭、替换或 takeover。只有明确的 `FAILED`、`CANCELLED`、`UNAVAILABLE` 或 deterministic spawn failure 才能 narrower fresh delegation。只有 objective capability unavailable 才允许最小 capability fallback，且不能借机由 Controller 自行调查或实现；child failure 后优先缩小范围重新委派 fresh child。Thaliris 不新增 runtime、scheduler、retry state machine 或 agent framework。
+尚未观察到结果不等于失败；timeout、slow 或 incomplete observation 也不等于 capability limitation。没有明确证据时 child 状态保持 `UNKNOWN`。`RUNNING` 只能 wait/re-observe；`UNKNOWN` 只能 keep `UNKNOWN`/re-observe，不能因为一次等待窗口结束就关闭、替换或 takeover。只有明确的 `FAILED`、`CANCELLED`、`UNAVAILABLE` 或 deterministic spawn failure 才能 narrower fresh delegation。只有 objective capability unavailable 才允许最小 capability fallback，且不能借机由 Controller 自行调查或实现；child failure 后优先缩小范围重新委派 fresh child。这是针对 Codex-native observations 的 managed Controller policy，不是 Thaliris runtime、scheduler、heartbeat、retry state machine 或 agent framework；Thaliris 只确定性执行自身的字段校验、evidence/freshness、CAS、role projection 和 capture filtering。
 
 ---
 
@@ -848,13 +860,13 @@ Terra：
 
 ## Intent Audit / Capture Plane
 
-`context init` 会保守地把 Thaliris 的 `SessionStart`、`UserPromptSubmit`、`PostToolUse` 和 `Stop` command hooks 合并到 `.codex/hooks.json`。在 Git ignored 的 `.context/audit/` 中，task-scoped `intent.json` 只保留当前 task 的 root 人类原始输入窗口，每个 partition 的 capture 只记录 `spawn_agent` / `Agent` / `followup_task`（含 namespaced 形式）的实际 delegation instruction、最小角色/child identity 和有界审核状态。它不会捕获 child transcript、worker output、Controller reasoning、repo 内容或工具日志，也不会把 audit 数据放入 task state、memory、milestone 或普通 role pack。缺少 `turn_id` 时不伪造 turn 身份，直接标记 coverage 为 `UNKNOWN`。
+`context init` 会保守地把 Thaliris 的 `SessionStart`、`UserPromptSubmit`、`PostToolUse` 和 `Stop` command hooks 合并到 `.codex/hooks.json`。实际 root-intent binding 是：`UserPromptSubmit` 先写入 unbound capture，产生短生命周期、一次性 opaque capability；随后 `task-start --intent-capture-id` 才把该 capture 绑定到 task。绑定失败只会让 audit coverage 保持 `UNKNOWN`，不会阻断正常 task。在 Git ignored 的 `.context/audit/` 中，capture 只记录 `spawn_agent`、`Agent`、`followup_task`、`send_input` 或 `send_message`（包括 namespaced 形式）的实际 instruction text、最小角色/hashed child identity 和有界审核状态。它不会捕获 child transcript、worker output、Controller reasoning、repo 内容或工具日志，也不会把 audit 数据放入 task state、memory、milestone 或普通 role pack。
 
 每累计五次新增且未明确拒绝的 delegation 会启动低频 fresh Sol checkpoint audit；checkpoint 和 Stop 只审核当前未消费 suffix 的 framing drift。`requirement_omission` 只在已有 `task-close` 生命周期的完整 delegation history 中判断，Stop 不代表 task 完成。Auditor 仅获得当前 task raw intent window 和必要 delegation evidence；已消费批次不会重发。固定审核 rubric 通过独立的初始 exec 指令传递，stdin 仅是不可信 evidence；结构化 finding 经 Python 校验后才生成固定短 hook finding。明确失败的 tool response 不进入批次，明确成功标为 `ACCEPTED`，无法判断则标为 `UNKNOWN` 并禁止产生 `PASS`。任何 capture、配置或 runner 故障均 fail open：原有工作流继续，仅失去额外审计保护。
 
 每个 turn 会保留最多 32 条规范化 `audit_results`（mode、attempt、status、短 finding、freshness，以及失败类别），不保存 runner stdout、错误正文或 tool response 正文。结果只供审计追溯，永不投影给 Controller 或其他 role pack。
 
-该集成信任 Codex 官方 `/hooks` 所展示的 hook schema 和 root topology。生产路径使用 fresh `codex exec --ephemeral --ignore-user-config --ignore-rules --model gpt-5.6-sol` auditor，并从临时非 repo 目录运行；可通过未跟踪的本机环境变量指定已验证 executable，否则回退 PATH。旧 capture 可读，但没有新 task raw anchor、turn identity、runner 或 payload fidelity 时 coverage 保持 `UNKNOWN`。捕获到的字符串只标记为 `AVAILABLE_UNVERIFIED`，不是 plaintext fidelity 证明；测试 fake 的成功也不能证明 fresh native session。可用 `context doctor --pretty` 查看 `intent_audit` 的分项状态。
+该集成信任 Codex 官方 `/hooks` 所展示的 hook schema 和 root topology。生产路径使用 fresh `codex exec --ephemeral --ignore-user-config --ignore-rules --model gpt-5.6-sol` auditor，并从临时非 repo 目录运行；可通过未跟踪的本机环境变量指定已验证 executable，否则回退 PATH。旧 capture 可读，但没有新 task raw anchor、turn identity、runner 或 payload fidelity 时 coverage 保持 `UNKNOWN`。捕获到的字符串只标记为 `AVAILABLE_UNVERIFIED`，不是 plaintext fidelity 证明；测试 fake 的成功也不能证明 fresh native session。当前 live probe 只证明 hooks configured 且 PATH runner 不可用：`payload_fidelity`、`root_classification`、`runtime_observed` 和总体 status 为 `UNKNOWN`，`runner_available` 为 `NO`，`runner_resolution` 为 `PATH_UNUSABLE`；不得声称 HEALTHY。可用 `context doctor --pretty` 查看 `intent_audit` 的分项状态。
 
 ---
 

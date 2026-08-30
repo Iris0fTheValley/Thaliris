@@ -30,7 +30,7 @@ AUDIT_RUNNER_ENV = "THALIRIS_CODEX_EXECUTABLE"
 AUDIT_AUTH_FILE_ENV = "THALIRIS_INTENT_AUDIT_AUTH_FILE"
 INTENT_AUDITOR_MODEL = "gpt-5.6-sol"
 INTENT_AUDITOR_REASONING = "medium"
-POST_TOOL_MATCHER = r"^(?:spawn_agent|Agent|followup_task|(?:[A-Za-z0-9_]+\.)+(?:spawn_agent|Agent|followup_task))$"
+POST_TOOL_MATCHER = r"^(?:spawn_agent|Agent|followup_task|send_input|send_message|(?:[A-Za-z0-9_]+\.)+(?:spawn_agent|Agent|followup_task|send_input|send_message))$"
 ALLOWED_FINDINGS = {
     "requirement_omission",
     "constraint_weakening",
@@ -805,21 +805,47 @@ def _normalized_agent_role(tool_input: dict[str, Any], payload: dict[str, Any]) 
 
 
 def _child_identity_hash(tool: str, tool_input: dict[str, Any]) -> str | None:
-    if tool.rsplit(".", 1)[-1] != "followup_task":
+    if tool.rsplit(".", 1)[-1] not in {"followup_task", "send_input", "send_message"}:
         return None
-    for key in ("task_id", "child_id", "target", "task_name", "agent_id"):
+    for key in ("task_id", "child_id", "target", "task_name", "agent_id", "id"):
         value = tool_input.get(key)
         if isinstance(value, (str, int)) and str(value):
             return _identity_hash(f"{key}:{value}")
     return None
 
 
+def _delegation_input(payload: dict[str, Any]) -> dict[str, Any]:
+    """Read the native tool input without retaining unrelated payload fields.
+
+    V2 uses ``tool_input``.  Older V1 ``send_input`` events can expose only
+    an ``input`` object (or, in minimal payloads, the message fields directly).
+    The fallback is deliberately narrow and only supplies fields needed for
+    text, role normalization, and a hashed child identity.
+    """
+    value = payload.get("tool_input")
+    if isinstance(value, dict) and value:
+        return value
+    value = payload.get("input")
+    if isinstance(value, dict):
+        return value
+    if isinstance(payload.get("tool_input"), dict):
+        return payload["tool_input"]
+    return {key: payload[key] for key in ("message", "input", "text", "agent_type", "agentType", "role", "agent_role", "task_id", "child_id", "target", "task_name", "agent_id", "id") if key in payload}
+
+
+def _delegation_text(tool_input: dict[str, Any]) -> object:
+    for key in ("message", "input", "text"):
+        value = tool_input.get(key)
+        if isinstance(value, str):
+            return value
+    return None
+
+
 def _capture_delegation(state: dict[str, Any], payload: dict[str, Any]) -> bool:
     tool = payload.get("tool_name") or payload.get("tool")
-    if not isinstance(tool, str) or tool.rsplit(".", 1)[-1] not in {"spawn_agent", "Agent", "followup_task"}:
+    if not isinstance(tool, str) or tool.rsplit(".", 1)[-1] not in {"spawn_agent", "Agent", "followup_task", "send_input", "send_message"}:
         return False
-    tool_input = payload.get("tool_input")
-    tool_input = tool_input if isinstance(tool_input, dict) else {}
+    tool_input = _delegation_input(payload)
     dispatch_status = _dispatch_status(payload.get("tool_response"))
     if dispatch_status == "REJECTED":
         return False
@@ -833,7 +859,7 @@ def _capture_delegation(state: dict[str, Any], payload: dict[str, Any]) -> bool:
         "dispatch_status": dispatch_status,
         "prompt_seq": state.get("last_prompt_seq"),
         "agent_type": _normalized_agent_role(tool_input, payload),
-        **_record_text(tool_input.get("message")),
+        **_record_text(_delegation_text(tool_input)),
     }
     child_hash = _child_identity_hash(tool, tool_input)
     if child_hash is not None:
@@ -1173,15 +1199,7 @@ def _short_finding(outcome: dict[str, Any]) -> str | None:
     if outcome.get("status") != "DRIFT" or not outcome.get("findings"):
         return None
     finding = outcome["findings"][0]
-    root_seq = finding.get("root_prompt_seq")
-    delegation_seq = finding.get("delegation_seq")
-    location = []
-    if root_seq is not None:
-        location.append(f"root prompt {root_seq}")
-    if delegation_seq is not None:
-        location.append(f"delegation {delegation_seq}")
-    suffix = f" ({', '.join(location)})" if location else ""
-    return f"Intent audit detected {finding['kind']}{suffix}; review delegation framing."
+    return "Intent audit found delegation drift; review the delegation framing."
 
 
 def _post_tool_output(outcome: dict[str, Any]) -> str:

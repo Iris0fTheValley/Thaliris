@@ -187,7 +187,9 @@ If Serena, cachebro, agentmemory, or another optimization layer fails, the workf
 
 The default roles are intentionally narrow.
 
-### Controller — Sol mid
+### Controller / Control Plane
+
+Current recommended model: GPT-5.6 Luna.
 
 The parent Controller owns:
 
@@ -204,7 +206,9 @@ The Controller should operate on bounded task views rather than raw investigatio
 
 ---
 
-### Luna investigator
+### Investigator
+
+Current recommended model: GPT-5.6 Luna.
 
 Used for focused investigation and mechanical evidence gathering:
 
@@ -217,15 +221,17 @@ Used for focused investigation and mechanical evidence gathering:
 * test execution;
 * residual-reference checks.
 
-Luna may have a large working set.
+An Investigator may have a large working set.
 
-Its durable output is structured findings and evidence references, not its transcript.
+Its output is a task-local structured handoff of findings and evidence references, not its transcript. Only an explicit Controller retention decision followed by `task-promote` can write `.agent-memory/` or `.milestones/`.
 
 ---
 
-### Luna curator
+### Curator
 
-A fresh Luna invocation may compact accumulated investigation findings.
+Current recommended model: GPT-5.6 Luna.
+
+A fresh Curator invocation may compact accumulated investigation findings.
 
 It can:
 
@@ -241,7 +247,9 @@ Curation changes representation, not evidence.
 
 ---
 
-### Sol high
+### Reasoning Specialist
+
+Current recommended model: GPT-5.6 Sol.
 
 Reserved for reasoning that genuinely benefits from a stronger reasoning context:
 
@@ -254,7 +262,7 @@ Reserved for reasoning that genuinely benefits from a stronger reasoning context
 * provenance or security reasoning;
 * hard trade-offs.
 
-Sol high does not maintain task state and does not perform routine evidence bookkeeping.
+The Reasoning Specialist does not maintain task state and does not perform routine evidence bookkeeping.
 
 Its ideal trajectory is:
 
@@ -264,7 +272,9 @@ facts → reasoning → decision → exit
 
 ---
 
-### Terra implementer
+### Implementer
+
+Current recommended model: GPT-5.6 Terra.
 
 Receives an explicit implementation boundary and the facts necessary to perform the change.
 
@@ -274,7 +284,9 @@ When assumptions fail or the required scope expands materially, control returns 
 
 ---
 
-### Terra reviewer
+### Independent Reviewer
+
+Current recommended model: GPT-5.6 Terra.
 
 High-risk changes may receive a fresh independent review.
 
@@ -301,14 +313,14 @@ For an obvious, local, low-risk change:
 ```text
 Controller
     ↓
-direct edit
+Implementer
     ↓
-deterministic check
+deterministic verification
     ↓
 done
 ```
 
-No subagent is required.
+Even a microtask does not permit a persistent Controller to edit source files directly.
 
 ---
 
@@ -317,11 +329,11 @@ No subagent is required.
 ```text
 Controller
     ↓
-Terra implementer
+Implementer
     ↓
 deterministic checks
     ↓
-Luna verification when useful
+Investigator verification when useful
 ```
 
 ---
@@ -331,14 +343,14 @@ Luna verification when useful
 ```text
 Controller
     ↓
-Luna investigator
+Investigator
     ↓
 curated findings when needed
     ↓
 Controller
 
-        ├─ obvious solution → Terra
-        └─ difficult reasoning → Sol high
+        ├─ obvious solution → Implementer
+        └─ difficult reasoning → Reasoning Specialist
 ```
 
 ---
@@ -346,24 +358,24 @@ Controller
 ### Complex change
 
 ```text
-Luna investigation
+Investigator investigation
         ↓
 bounded evidence
         ↓
-Sol high reasoning
+Reasoning Specialist reasoning
         ↓
-Terra implementation
+Implementer implementation
         ↓
 deterministic checks
         ↓
-Luna verification
+Investigator verification
 ```
 
 For sufficiently risky changes:
 
 ```text
         ↓
-fresh Terra review
+fresh Independent Review
         ↓
 Controller decision
 ```
@@ -560,7 +572,7 @@ Memory only appends a new entry and one router link to the existing INDEX; miles
 
 ### Child lifecycle epistemic/control policy
 
-No result observed yet does not mean failed; timeout, slow, or incomplete observation does not mean capability limitation. Without explicit evidence, a child state remains `UNKNOWN`. `RUNNING` means wait/re-observe; `UNKNOWN` means keep `UNKNOWN`/re-observe. A single wait-window expiry must not close, replace, or take over the child. Only explicit `FAILED`, `CANCELLED`, `UNAVAILABLE`, or deterministic spawn failure permits narrower fresh delegation. A minimal capability fallback is allowed only when the objective capability is unavailable, and it must not become an excuse for Controller investigation or implementation. After child failure, first narrow the scope and delegate a fresh child. Thaliris adds no runtime, scheduler, retry state machine, or agent framework.
+No result observed yet does not mean failed; timeout, slow, or incomplete observation does not mean capability limitation. Without explicit evidence, a child state remains `UNKNOWN`. `RUNNING` means wait/re-observe; `UNKNOWN` means keep `UNKNOWN`/re-observe. A single wait-window expiry must not close, replace, or take over the child. Only explicit `FAILED`, `CANCELLED`, `UNAVAILABLE`, or deterministic spawn failure permits narrower fresh delegation. A minimal capability fallback is allowed only when the objective capability is unavailable, and it must not become an excuse for Controller investigation or implementation. After child failure, first narrow the scope and delegate a fresh child. This is managed Controller policy over Codex-native observations, not a Thaliris runtime, scheduler, heartbeat, retry state machine, or agent framework; Thaliris deterministically enforces only its fields, evidence/freshness, CAS, role projection, and capture filtering.
 
 ---
 
@@ -820,13 +832,13 @@ The intended principle is narrower:
 
 ## Intent Audit / Capture Plane
 
-`context init` conservatively merges Thaliris command hooks for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, and `Stop` into `.codex/hooks.json`. Under the Git-ignored `.context/audit/`, one session-level `intent.json` preserves the raw root human input chain while per-partition captures record only the actual delegation instruction supplied to `spawn_agent`, `Agent`, or `followup_task` and bounded audit state. It never captures child transcripts, worker output, Controller reasoning, repository content, or tool logs, and audit data never enters task state, memory, milestones, or ordinary role packs. Missing `turn_id` values receive deterministic monotonic `unknown-turn-N` or `orphan-N` partitions rather than sharing a permanent final guard.
+`context init` conservatively merges Thaliris command hooks for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, and `Stop` into `.codex/hooks.json`. Root intent binding is explicit: `UserPromptSubmit` first creates an unbound capture and a short-lived, one-time opaque capability; `task-start --intent-capture-id` then binds it to the task. A binding failure makes audit coverage `UNKNOWN` only and never blocks the normal task. Under the Git-ignored `.context/audit/`, captures record only the actual instruction text sent to `spawn_agent`, `Agent`, `followup_task`, `send_input`, or `send_message` (including namespaced forms), minimal role/hashed child identity, and bounded audit state. It never captures child transcripts, worker output, Controller reasoning, repository content, or tool logs, and audit data never enters task state, memory, milestones, or ordinary role packs.
 
 Every five new delegations not explicitly rejected starts a low-frequency fresh Sol checkpoint audit; root Stop audits only the remaining suffix. The auditor receives the necessary raw session intent anchor plus only delegations after the partition's exclusive cursor, so a consumed `PASS`, `UNKNOWN`, or `DRIFT` batch is never resent. This auditor is deliberately independent from the future Luna Controller to reduce common-mode framing failure. An explicitly failed tool response is excluded, explicit success is `ACCEPTED`, and an indeterminate response is `UNKNOWN` and cannot yield `PASS`. `PASS` and `UNKNOWN` are completely invisible to the Controller. Only `DRIFT` emits a very short hook finding. The cursor and Stop guard are persisted before the auditor runs, and the generated continuation prompt is ignored by an exact one-shot hash so it cannot loop or be mistaken for user input. Capture, configuration, and runner failures all fail open: the original workflow continues and only the supplemental audit protection is lost.
 
 Each turn retains at most 32 normalized `audit_results` containing mode, attempt, status, short findings, freshness, and a failure category. Runner stdout, error bodies, and tool-response bodies are never stored. These results exist only for audit traceability and are never projected to the Controller or another role pack.
 
-The integration trusts the Codex hook schema and root topology documented by the official `/hooks` surface. Production permits only the built-in fresh `codex exec --ephemeral --model gpt-5.6-sol` auditor from a temporary non-repository directory; there is no environment or CLI runner override. Existing v1 captures are readable, but without the new raw anchor their coverage remains `UNKNOWN`. Captured strings are only `AVAILABLE_UNVERIFIED`, not proof of plaintext fidelity. Specialized execution paths, encrypted or non-string payloads, and root classification or payload fidelity without a live probe remain `UNKNOWN`; a test fake does not prove a fresh native session. Use `context doctor --pretty` to inspect the separate `intent_audit` health dimensions.
+The integration trusts the Codex hook schema and root topology documented by the official `/hooks` surface. Production starts a fresh `codex exec --ephemeral --ignore-user-config --ignore-rules --model gpt-5.6-sol` auditor from a temporary non-repository directory, with `--sandbox read-only`, `--skip-git-repo-check`, a fixed developer instruction/schema, and multi-agent, plugins, and memories disabled. `THALIRIS_CODEX_EXECUTABLE` may select only a validated local executable and is never repository configuration; otherwise the runner falls back to `PATH`. Existing v1 captures are readable, but without the new raw anchor their coverage remains `UNKNOWN`. Captured strings are only `AVAILABLE_UNVERIFIED`, not proof of plaintext fidelity. Specialized execution paths, encrypted or non-string payloads, and root classification or payload fidelity without a live probe remain `UNKNOWN`; a test fake does not prove a fresh native session. The current live probe proves configured hooks and an unusable PATH runner only: `payload_fidelity`, `root_classification`, `runtime_observed`, and overall status are `UNKNOWN`; `runner_available` is `NO`; and `runner_resolution` is `PATH_UNUSABLE`, never HEALTHY. Use `context doctor --pretty` to inspect the separate `intent_audit` health dimensions.
 
 ---
 

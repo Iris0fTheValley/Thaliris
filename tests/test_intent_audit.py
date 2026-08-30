@@ -118,6 +118,37 @@ def test_spawn_and_followup_instructions_are_captured_verbatim(tmp_path):
     assert all("target" not in item and "task_name" not in item for item in state["delegations"])
 
 
+def test_v1_v2_and_namespaced_messages_capture_instruction_text_only(tmp_path):
+    root = repo(tmp_path)
+    handle_hook(root, "PostToolUse", payload(tool_name="collaboration.send_message", tool_input={"message": "v2 instruction", "target": "private-child"}, tool_response={"success": True}))
+    # V1 can expose only an input object rather than tool_input.
+    handle_hook(root, "PostToolUse", payload(tool_name="legacy.send_input", input={"input": "v1 instruction", "id": "private-child"}, tool_response={"success": True}))
+    state = captures(root)
+    assert [item["text"] for item in state["delegations"]] == ["v2 instruction", "v1 instruction"]
+    assert all("child_identity_hash" in item for item in state["delegations"])
+    encoded = json.dumps(state)
+    assert "private-child" not in encoded and all("target" not in item and "id" not in item for item in state["delegations"])
+
+
+def test_non_delegation_lifecycle_tools_are_not_captured(tmp_path):
+    root = repo(tmp_path)
+    handle_hook(root, "PostToolUse", payload(tool_name="send_message", tool_input={"message": "delegate"}, tool_response={"success": True}))
+    for tool in ("wait_agent", "list_agents", "status", "task_close", "interrupt_agent"):
+        handle_hook(root, "PostToolUse", payload(tool_name=f"collaboration.{tool}", tool_input={"message": "private"}, tool_response={"success": True}))
+    assert [item["tool"] for item in captures(root)["delegations"]] == ["send_message"]
+
+
+def test_send_message_drift_emits_only_fixed_short_correction(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    init(root); task_start(root, "audit message", None, None)
+    fake_runner(monkeypatch, {"status": "DRIFT", "findings": [{"kind": "constraint_weakening", "summary": "untrusted long explanation"}]})
+    handle_hook(root, "UserPromptSubmit", payload(prompt="preserve every constraint"))
+    handle_hook(root, "PostToolUse", payload(tool_name="send_message", tool_input={"message": "implement it"}, tool_response={"success": True}))
+    result = json.loads(handle_hook(root, "Stop", payload(stop_hook_active=False)))
+    assert result["decision"] == "block" and result["reason"] == "Intent audit found delegation drift; review the delegation framing."
+    assert "untrusted long explanation" not in json.dumps(result)
+
+
 def test_fifth_delegation_runs_checkpoint_and_pass_is_invisible(tmp_path, monkeypatch):
     root = repo(tmp_path)
     init(root)
@@ -532,7 +563,7 @@ def test_post_tool_matcher_uses_regex_for_namespaced_multiagent_tools(tmp_path):
             return value in matcher.split("|")
         return re.fullmatch(matcher, value) is not None
 
-    assert all(codex_match(value) for value in ("spawn_agent", "Agent", "followup_task", "collaboration.spawn_agent", "collaboration.followup_task"))
+    assert all(codex_match(value) for value in ("spawn_agent", "Agent", "followup_task", "send_input", "send_message", "collaboration.spawn_agent", "collaboration.followup_task", "collaboration.send_input", "collaboration.send_message"))
     assert not codex_match("collaboration.not_a_delegation")
     root = repo(tmp_path)
     old = {"hooks": {"PostToolUse": [{"hooks": [{"type": "command", "command": "context audit-hook PostToolUse", "timeout": 60}], "matcher": "spawn_agent|Agent|followup_task"}]}}

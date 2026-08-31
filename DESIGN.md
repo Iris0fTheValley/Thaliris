@@ -14,6 +14,36 @@ An independent, optional **Intent Audit / Capture Plane** sits beside these laye
 
 Deleting every optimization cache or losing every adapter must leave a correct native workflow. The acceptable degradation is additional reads and tokens, never weaker validation.
 
+## Compact router and isolation
+
+The former generated router repeated detailed role and lifecycle policy in every
+Controller context. That made a file-level instruction block an avoidable token
+cost, and it did not make Codex's native `spawn_agent` default of
+`fork_turns="all"` visible at the routing boundary. The managed block is now a
+small router in `core.py:MANAGED`; the detailed policy is on demand in
+`docs/thaliris-role-packs.md`.
+
+The capture adapter in `intent_audit.py:_capture_delegation` classifies completed
+`spawn_agent` calls for isolation-required roles. `fork_turns="none"` is PASS;
+missing or `all` is FAIL; a positive fork of one or two turns is an EXCEPTION
+only with an `Isolation reason:` line in the native message. This is intentionally post-dispatch evidence, not
+a native interception point: it cannot prevent, cancel, or rewrite the child.
+Codex remains the runtime and native completion/mailbox mechanisms remain the
+only lifecycle mechanisms.
+
+`core.py:_controller_packet` emits the normal Controller control plane: task
+identity/status, active work, pending results, unresolved questions, external
+artifact pointers, and accepted constraints/decisions. It does not calculate or
+return raw investigation/review material, evidence records, Git status, or
+memory/milestone bodies. Raw state is diagnostic-only through `task-show`.
+`task-artifact` appends a bounded normalized repo-relative pointer; its contents
+are external to the packet.
+
+`doctor.py:report` reports routing readiness independently from command success.
+The A/B fixture and reporter (`tests/fixtures/workflow_ab.json` and
+`tools/workflow_ab.py`) specify the comparison protocol but report native
+measurements as `UNAVAILABLE` until a real native run is deliberately supplied.
+
 ## Decisions
 
 ### Git-owned Markdown over a database

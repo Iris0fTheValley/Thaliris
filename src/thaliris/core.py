@@ -30,98 +30,48 @@ LEGACY_MANAGED_END = "<!-- codex-context:end -->"
 LEGACY_IGNORE_START = "# codex-context:begin"
 LEGACY_IGNORE_END = "# codex-context:end"
 IGNORE_RULES = (".context/backups/", ".context/state.json", ".context/context.lock", ".context/audit/")
+# Keep the generated instruction surface small. Detailed policy lives in the
+# role-pack document and is loaded only when a task needs it.
 MANAGED = f"""{MANAGED_START}
-## Thaliris
+## Thaliris Router
 
-The parent Controller: only Controller delegates, promotes findings, and maintains task control state; children MUST NOT delegate (default concurrency: 1). Roles name responsibilities, not models: current recommendations are Controller/Control Plane, Investigator, and Curator -> GPT-5.6 Luna; Reasoning Specialist -> GPT-5.6 Sol; Implementer and Independent Reviewer -> GPT-5.6 Terra.
+Codex remains the runtime. Thaliris stores bounded task control and pointers; it has no worker, scheduler, polling loop, or authority to decide correctness.
 
-Controller is the control plane, not an investigator. Except for minimal state reads required for routing and task control, Controller MUST NOT perform repository investigation, code search, documentation research, Git inspection, runtime probing, exploratory testing, or other fact-gathering work itself. When unknown facts are required, Controller MUST delegate the investigation to an Investigator and consume only its task-local structured findings and evidence references. Controller should own the questions, routing, promotion, integration, and escalation decisions—not the investigation working set. If a required capability is genuinely unavailable to native children, Controller may perform only the minimum capability fallback and must not use that exception to investigate or implement.
+Controller owns delegation and final acceptance, but does not investigate or edit. Use `context prepare --role controller` for a bounded status packet and `context task-show` only for explicit raw diagnostics. Register external handoffs with `context task-artifact`; keep their contents outside controller packets.
 
-An Investigator appends raw findings. Curator is conditional: bounded, structured findings from one Investigator with no evident duplication, conflict, or staleness go directly to Controller; use a fresh Curator only for oversized, repetitive, conflicting, or stale findings, or when high reasoning genuinely needs working-set compression. A Curator maintains only the task-local bounded snapshot. Investigator, Curator, Reasoning Specialist, and Independent Reviewer are all invoked when needed; retain fresh independent review for high-risk changes. Independent review findings are independent evidence, not an automatic repair loop: P0/P1 or a finding directly violating requested completion criteria must be resolved; the Controller sends P2/lower findings back for implementation only when material to correctness, requested behavior, regression safety, or the accepted Modification Boundary. An Implementer implements. A persistent Controller MUST NOT directly edit source files, even for a microtask; route every implementation change through an Implementer, then deterministic verification, then done. User-requested real runtime verification still runs. The Controller owns routing, task state, promotion, integration decisions, and final acceptance only. Small bounded durable promotion is allowed only after the Controller decides an explicit semantic record is worth retaining and has current task evidence; it is never automatic summarization. Task-end order is task-local state -> Controller retention decision -> minimal durable promotion -> task-close; no durable knowledge means no durable write. Investigator findings and evidence refs are task-local structured handoffs; only explicit `task-promote` writes `.agent-memory/` or `.milestones/`. Repository tasks do not proactively read or write personal/global Codex memory (such as `~/.codex/memories` or `MEMORY.md`) unless the user explicitly requests it; project continuity uses `.agent-memory/`, `.milestones/`, `task-promote`, and tracked-document maintenance. For continuous feature work with a current milestone, retain material progress/verification there first; `.agent-memory/` is only for reusable decisions, constraints, invariants, or failure modes. Raw investigation/review history never enters the Reasoning Specialist. The Reasoning Specialist reasons only; it does not maintain task state. Use the Microtask fast path. Route memory and milestones through INDEX files. Use `context task-*` for concise, evidence-referenced handoffs—never transcripts or raw tool output. Large maintenance (history-heavy recall, deduplication, stale cleanup, conflict/merge judgment, INDEX restructuring, or bulk milestone maintenance) goes to a fresh child. Child state is UNKNOWN without explicit evidence: no result observed is not failure, and timeout/slow/incomplete observation is not capability limitation. RUNNING waits and re-observes; UNKNOWN stays UNKNOWN and is re-observed, never closed/replaced/taken over after one wait window. Only explicit FAILED/CANCELLED/UNAVAILABLE or deterministic spawn failure permits narrower fresh delegation, with capability fallback limited to genuinely unavailable native capability. These are managed Controller policy over Codex-native observations, not a Thaliris child runtime, scheduler, heartbeat, or state machine. Deterministic Thaliris enforcement is limited to its own fields, evidence/freshness, CAS, role projection, and capture filtering. Current source/Git/tests are the correctness core; adapters MUST fall back to native behavior.
+For Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer dispatches, start a fresh isolated child: `fork_turns="none"`. A positive small fork is allowed only with an `Isolation reason:` line in its message. Missing or `all` is a routing failure reported after native dispatch; Codex has already created that child and remains authoritative.
 
-Verification is layered by changed surface, risk, and fresh evidence: run the smallest targeted checks during development, combine related fixes before related regression, and run one complete relevant validation at the end. Documentation-only changes, low-risk P2 fixes, and merges/conflicts that do not change already-verified behavior do not automatically repeat expensive checks; this never lowers completion criteria or replaces user-requested runtime or visible-behavior verification.
+Use one fresh Implementer for an obvious local microtask, then deterministic verification. For larger work, load `docs/thaliris-role-packs.md`. Use native completion/mailbox observation; do not invent task polling or a lifecycle runtime.
 
-Thaliris state and durable knowledge
-
-Keep the three state layers distinct:
-
-.context/state.json — transient task-local control, findings, evidence, and Decision Context.
-.agent-memory/ — selectively retained project knowledge reusable across tasks.
-.milestones/ — durable state for an ongoing bounded workstream.
-
-None of them is a transcript, activity log, or automatic task summary.
-
-Ownership
-Investigator appends task-local findings and evidence.
-Curator only compresses accumulated investigation into the bounded task-local snapshot; it does not maintain durable memory.
-Implementer performs scoped source or tracked-document modifications.
-Independent Reviewer records fresh review findings.
-Reasoning Specialist reasons only and does not maintain state.
-Controller owns routing, Decision Context, retention decisions, durable promotion, integration, and final acceptance.
-Durable retention
-
-Before closing substantial work, the Controller decides whether the task produced knowledge worth retaining.
-
-Retain only durable information with clear future value, such as:
-
-adopted decisions;
-verified reusable invariants;
-durable constraints;
-reusable failure modes;
-meaningful milestone progress;
-milestone verification actually performed.
-
-Do not retain raw findings, transcripts, tool output, debug history, temporary observations, speculative hypotheses, or routine task summaries.
-
-If nothing is worth retaining, write nothing durable.
-
-For normal incremental retention, use context task-promote. Only the Controller invokes it. Preserve evidence, confidence, applicability, audience, and routing semantics; never promote uncertainty into certainty.
-
-task-promote is intentionally bounded:
-
-project memory: new decision, invariant, failure_mode, or constraint records;
-current milestone: explicit progress and/or verification.
-
-It does not perform existing-entry rewrites, history cleanup, deduplication, conflict reconciliation, INDEX restructuring, or broad milestone maintenance.
-
-Memory and milestone routing
-
-Treat .agent-memory/INDEX.md and nested INDEX files as routing authority, not summaries. Do not bypass normal routing with broad directory scans, and do not treat initialized DRAFT/UNVERIFIED templates as project facts.
-
-Milestone documents have distinct purposes:
-
-scope.md — stable workstream boundary and outcome;
-decisions.md — adopted milestone-specific decisions;
-progress.md — meaningful current state, blockers, and next resumable step;
-verification.md — checks and observations actually completed.
-
-Update milestone progress only when work materially advances, blocks, redirects, or completes the milestone. Do not turn it into a per-action log.
-
-Structural durable-document maintenance
-
-When maintenance cannot be expressed by task-promote—for example stale cleanup, conflict reconciliation, existing-entry changes, INDEX restructuring, or milestone scope.md / decisions.md changes—use normal role isolation:
-
-Controller defines the maintenance question
-→ fresh Investigator gathers relevant history, routing, freshness, and native evidence
-→ Reasoning Specialist only if difficult reconciliation or provenance reasoning is required
-→ Controller defines the accepted result and Modification Boundary
-→ Implementer performs the bounded tracked-document changes
-→ deterministic validation
-→ fresh Reviewer only for high-impact durable semantic changes.
-
-Do not use the task-local Curator for durable-history maintenance, and do not let the persistent Controller perform history-heavy investigation or tracked-document editing.
-
-Task completion
-
-Before task-close on substantial work, the Controller should ensure:
-
-requested behavior and verification criteria are satisfied;
-relevant findings have been integrated or remain explicitly unresolved;
-worthwhile durable knowledge has been selectively promoted;
-the current milestone, when materially affected, has appropriate progress or verification recorded.
-
-The goal is resumable, evidence-backed project knowledge with minimal durable noise.
+Project continuity is `.agent-memory/` and `.milestones/` through their INDEX files. Promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress/verification. Raw findings, reviews, transcripts, and tool output stay out of controller packets and durable memory.
 {MANAGED_END}
+"""
+
+ROLE_PACKS = """# Thaliris Role Packs
+
+Load this document when the compact managed router is insufficient.
+
+## Controller
+
+Use `context task-status` for task identity/status, active work, pending results,
+unresolved questions, artifact pointers, and accepted constraints/decisions. Raw
+findings, reviews, evidence records, Git state, and broad memory/milestone bodies
+do not belong in normal Controller routing. `context task-show` is diagnostic-only.
+
+Dispatch Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer as
+fresh native children with `fork_turns="none"`. A one- or two-turn fork needs an
+`Isolation reason:` line in its message. The hook observes only after dispatch, so
+it cannot alter the child. Use native completion/mailbox observation; there is no
+Thaliris worker, scheduler, polling loop, or retry runtime.
+
+## Work And Retention
+
+For a local microtask, use one fresh Implementer then deterministic verification.
+Investigators append bounded findings; Curators compact a snapshot; Reasoning
+Specialists receive accepted decisions rather than raw history; Implementers receive
+the modification boundary; reviewers return independent findings. Promote only
+reusable decisions, constraints, invariants, failure modes, or material milestone
+progress/verification. `task-artifact` records a bounded normalized external pointer.
 """
 
 
@@ -251,6 +201,7 @@ def _template_files(*, include_routing: bool = True, include_kind: bool = True, 
         kind = kwargs.pop("kind")
         return _entry(title, body, include_routing=include_routing, kind=kind if include_kind else None, **kwargs)
     return {
+        "docs/thaliris-role-packs.md": ROLE_PACKS.encode(),
         ".agent-memory/INDEX.md": template("Memory index", "- [Operator](operator.md)\n- [Prompt policy](prompt-policy.md)\n- [Project conventions](project-conventions.md)\n- [Decisions](decisions/INDEX.md)\n- [Lessons](lessons/INDEX.md)", audience=["all"], kind="MEMORY"),
         ".agent-memory/operator.md": template("Operator notes", "Unknown. Record only confirmed operating constraints.", kind="HARD_CONSTRAINT"),
         ".agent-memory/prompt-policy.md": template("Prompt policy", "Use manual recall only. Automatic injection and compression are disabled.", audience=["controller"], kind="HARD_CONSTRAINT"),
@@ -503,6 +454,7 @@ _STATE_FIELDS = {
     "changed_surface", "evidence_refs", "verification_target", "architectural_intent",
     "investigation_findings", "investigation_snapshot", "review_findings",
     "investigation_covered_through", "review_handled_through", "durable_promotion_count",
+    "active_work", "pending_results", "artifact_refs",
 }
 _LIST_STATEMENTS = {"confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints", "decisions"}
 _SNAPSHOT_MAX_ITEMS = 64
@@ -603,6 +555,25 @@ def _valid_relative(root: Path, value: object) -> None:
     _safe(root, value)
 
 
+def _bounded_lines(value: object, field: str) -> None:
+    if not isinstance(value, list) or len(value) > 16 or not all(
+        isinstance(item, str) and item.strip() and len(item) <= 300 and not _bad_text(item)
+        for item in value
+    ):
+        raise ValueError(f"invalid {field}")
+
+
+def _artifact_ref(root: Path, value: object) -> None:
+    if not isinstance(value, dict) or set(value) != {"id", "path", "summary"}:
+        raise ValueError("invalid artifact reference")
+    identifier, path, summary = value["id"], value["path"], value["summary"]
+    if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", identifier):
+        raise ValueError("invalid artifact reference")
+    _valid_relative(root, path)
+    if not isinstance(summary, str) or not summary.strip() or _bad_text(summary) or len(summary) > 300:
+        raise ValueError("invalid artifact reference")
+
+
 def _evidence_fresh(root: Path, ref: dict[str, object], registry: dict[str, dict[str, object]] | None = None) -> bool:
     kind, locator = ref["kind"], ref["locator"]
     if kind in {"file", "git"}:
@@ -647,6 +618,9 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
         state.setdefault("investigation_covered_through", 0)
         state.setdefault("review_handled_through", 0)
         state.setdefault("durable_promotion_count", 0)
+        state.setdefault("active_work", [])
+        state.setdefault("pending_results", [])
+        state.setdefault("artifact_refs", [])
         for ref in state.get("evidence_refs", []):
             if isinstance(ref, dict) and ref.get("kind") in {"test", "runtime"} and "source_refs" not in ref:
                 ref["source_refs"] = []
@@ -661,6 +635,16 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
     except (ValueError, AttributeError) as exc: raise ValueError("invalid task id") from exc
     if state["status"] not in {"ACTIVE", "DONE"} or not isinstance(state["goal"], str) or not state["goal"].strip() or len(state["goal"]) > 2000:
         raise ValueError("invalid task status or goal")
+    _bounded_lines(state["active_work"], "active_work")
+    _bounded_lines(state["pending_results"], "pending_results")
+    if not isinstance(state["artifact_refs"], list) or len(state["artifact_refs"]) > 32:
+        raise ValueError("invalid artifact_refs")
+    artifact_ids: set[str] = set()
+    for artifact in state["artifact_refs"]:
+        _artifact_ref(root, artifact)
+        if artifact["id"] in artifact_ids:
+            raise ValueError("duplicate artifact reference id")
+        artifact_ids.add(artifact["id"])
     milestone = state["current_milestone"]
     if milestone is not None and (not isinstance(milestone, str) or not _milestone_exists(root, milestone)):
         raise ValueError("current_milestone must be linked by the top-level milestone index")
@@ -750,7 +734,7 @@ def _milestone_exists(root: Path, milestone: str) -> bool:
 def _blank_state(root: Path, goal: str, milestone: str | None) -> dict[str, object]:
     if milestone is not None and not _milestone_exists(root, milestone): raise ValueError("milestone is not linked by the top-level milestone index")
     return {"schema_version": 1, "revision": 1, "task_id": str(uuid.uuid4()), "status": "ACTIVE", "goal": goal,
-            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "investigation_findings": [], "investigation_snapshot": [], "review_findings": [], "investigation_covered_through": 0, "review_handled_through": 0, "durable_promotion_count": 0, "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "architectural_intent": None}
+            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "investigation_findings": [], "investigation_snapshot": [], "review_findings": [], "investigation_covered_through": 0, "review_handled_through": 0, "durable_promotion_count": 0, "active_work": [], "pending_results": [], "artifact_refs": [], "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "architectural_intent": None}
 
 
 def _read_input(value: str | None) -> dict[str, object]:
@@ -844,6 +828,14 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
                 raise ValueError("evidence_refs must be append-only additions with new immutable IDs")
             # State validation checks every complete entry after this merge.
             partial = partial | {"evidence_refs": state["evidence_refs"] + additions}
+        if "artifact_refs" in partial:
+            additions = partial["artifact_refs"]
+            existing_ids = {item["id"] for item in state["artifact_refs"]}
+            if not isinstance(additions, list) or not additions or any(
+                not isinstance(item, dict) or item.get("id") in existing_ids for item in additions
+            ):
+                raise ValueError("artifact_refs must be append-only additions with new immutable IDs")
+            partial = partial | {"artifact_refs": state["artifact_refs"] + additions}
         state.update(partial); state["revision"] = base_revision + 1
         new_snapshot = state["investigation_snapshot"] if "investigation_snapshot" in partial else []
         _require_fresh_confirmed_items(root, state["evidence_refs"], new_investigation + new_snapshot)
@@ -854,6 +846,44 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
 def task_show(root: Path) -> dict[str, object]:
     root = _repo_root(root)
     return {"ok": True, "state": _load_state(root)}
+
+
+def _controller_packet(state: dict[str, object]) -> dict[str, object]:
+    """Return control metadata only; raw evidence remains task-show-only."""
+    statements = lambda items: [item["text"] for item in items]
+    return {
+        "ok": True,
+        "schema_version": state["schema_version"],
+        "role": "controller",
+        "Task": {"id": state["task_id"], "goal": state["goal"], "status": state["status"], "revision": state["revision"], "milestone": state["current_milestone"]},
+        "Active Work": state["active_work"],
+        "Pending Results": state["pending_results"],
+        "Unresolved Questions": statements(state["unknowns"]),
+        "Artifact Refs": state["artifact_refs"],
+        "Accepted Constraints": statements(state["constraints"]),
+        "Accepted Decisions": statements(state["decisions"]),
+    }
+
+
+def task_status(root: Path) -> dict[str, object]:
+    root = _repo_root(root)
+    return _controller_packet(_load_state(root))
+
+
+def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str) -> dict[str, object]:
+    root = _repo_root(root)
+    artifact = {"id": artifact_id, "path": path, "summary": summary}
+    _artifact_ref(root, artifact)
+    with _lock(root):
+        state = _load_state(root, active=True)
+        if state["revision"] != base_revision:
+            raise ValueError("task revision conflict")
+        if artifact_id in {item["id"] for item in state["artifact_refs"]}:
+            raise ValueError("artifact reference id already exists")
+        state["artifact_refs"].append(artifact)
+        state["revision"] = base_revision + 1
+        _write_state(root, state, enforce_fresh=False)
+    return {"ok": True, "state": state}
 
 
 def task_close(root: Path, base_revision: int) -> dict[str, object]:
@@ -1277,6 +1307,8 @@ def _effective_review_findings(root: Path, items: list[dict[str, object]], regis
 
 
 def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, object]:
+    if role == "controller":
+        return _controller_packet(state)
     milestone = _milestone_slice(root, state["current_milestone"])
     query = " ".join([state["goal"], *state["relevant_symbols"], *state["relevant_files"]])
     memory_role = "luna" if role == "luna-investigator" else role
@@ -1319,11 +1351,6 @@ def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, ob
     review_pending = len(state["review_findings"]) - state["review_handled_through"]
     readiness = {"raw_finding_count": len(state["investigation_findings"]), "covered_through": state["investigation_covered_through"], "pending_findings": investigation_pending, "status": "PENDING" if investigation_pending else "READY"}
     review_status = {"finding_count": len(state["review_findings"]), "handled_through": state["review_handled_through"], "pending_findings": review_pending, "status": "PENDING" if review_pending else "READY"}
-    if role == "controller":
-        facts, visible_supported = confirmed + memory["confirmed"], supported + memory["supported"]
-        constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"]
-        payload = {"Goal": state["goal"], "Confirmed Facts": facts, "Supported Evidence": visible_supported, "Unknowns": state["unknowns"] + demoted + demoted_supported + memory["unknowns"], "Contradictions": state["contradictions"], "Hard Constraints": constraints, "Decisions": decisions, "Investigation Snapshot": effective_snapshot, "Review Findings": effective_reviews[state["review_handled_through"]:], "Investigation Readiness": readiness, "Review Readiness": review_status, "Changed Surface": list(dict.fromkeys(state["changed_surface"] + _changed_files(root))), "Current Milestone": state["current_milestone"], "Milestone Scope": milestone.get("Scope"), "Milestone Decisions": milestone.get("Decisions"), "Milestone Progress": milestone.get("Progress"), "Verification Target": state["verification_target"]}
-        return meta | payload | {"Evidence refs": refs_for(facts, visible_supported, payload["Unknowns"], payload["Contradictions"], constraints, decisions, effective_snapshot, effective_reviews)}
     if role == "luna-curator":
         suffix = effective_raw[state["investigation_covered_through"]:]
         payload = {"Goal": state["goal"], "Current Investigation Snapshot": effective_snapshot, "Uncovered Investigation Findings": suffix, "Investigation Readiness": readiness}
@@ -1365,10 +1392,11 @@ def prepare(root: Path, task: str | None, role: str) -> dict[str, object]:
         root = _repo_root(root)
         return _state_pack(root, _load_state(root, active=True), role)
     if role == "luna-curator": raise ValueError("luna-curator requires current task state")
+    if role == "controller":
+        return {"ok": True, "schema_version": 1, "role": "controller", "Task": {"id": None, "goal": task, "status": "UNBOUND", "revision": None, "milestone": None}, "Active Work": [], "Pending Results": [], "Unresolved Questions": [], "Artifact Refs": [], "Accepted Constraints": [], "Accepted Decisions": []}
     memory_role = "luna" if role == "luna-investigator" else role
     memory = _memory_context(root, task, memory_role)
     common = {"ok": True, "schema_version": 1, "task_id": None, "state_revision": None, "role": role, "Goal": task, "Evidence refs": memory["evidence"]}
-    if role == "controller": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Unknowns": memory["unknowns"], "Contradictions": [], "Investigation Snapshot": [], "Review Findings": [], "Investigation Readiness": {"raw_finding_count": 0, "covered_through": 0, "pending_findings": 0, "status": "READY"}, "Review Readiness": {"finding_count": 0, "handled_through": 0, "pending_findings": 0, "status": "READY"}, "Changed Surface": _changed_files(root), "Current Milestone": None, "Verification Target": None}
     if role == "sol-high": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Unknowns": memory["unknowns"], "Contradictions": [], "Investigation Readiness": {"raw_finding_count": 0, "covered_through": 0, "pending_findings": 0, "status": "READY"}, "Review Readiness": {"finding_count": 0, "handled_through": 0, "pending_findings": 0, "status": "READY"}}
     if role in {"luna", "luna-investigator"}: return common | {"Investigation Target": task, "Investigation Snapshot": [], "Relevant Files": memory["files"], "Relevant Symbols": memory["symbols"], "Hard Constraints": memory["constraints"], "Unknowns": memory["unknowns"], "Contradictions": [], "Verification Target": task}
     if role == "terra-implementer": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Relevant Files": memory["files"], "Modification Boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "Required Verification": None}

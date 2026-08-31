@@ -40,7 +40,8 @@ def test_init_idempotent_preserves_agents_and_required_block(tmp_path, capsys):
     code, first = run(capsys, root, "init")
     assert code == 0 and first["changed"]
     text = (root / "AGENTS.md").read_text(encoding="utf-8")
-    assert "Keep this rule." in text and all(term in text for term in ("control plane, not an investigator", "repository investigation", "code search", "documentation research", "Git inspection", "runtime probing", "exploratory testing", "Investigator", "Reasoning Specialist", "GPT-5.6 Terra", "Microtask", "concurrency: 1", "MUST fall back", "no result observed is not failure", "RUNNING waits and re-observes", "fresh child", "durable promotion", "Codex-native observations"))
+    assert "Keep this rule." in text and all(term in text for term in ("Codex remains the runtime", "Controller owns delegation", "fork_turns=\"none\"", "task-artifact", "task-show", "microtask", "native completion/mailbox", "docs/thaliris-role-packs.md"))
+    assert "# Thaliris Role Packs" in (root / "docs/thaliris-role-packs.md").read_text(encoding="utf-8")
     code, second = run(capsys, root, "init")
     assert code == 0 and not second["changed"]
 
@@ -48,25 +49,8 @@ def test_init_idempotent_preserves_agents_and_required_block(tmp_path, capsys):
 def test_managed_policy_keeps_roles_conditional_and_project_memory_scoped(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     text = (root / "AGENTS.md").read_text(encoding="utf-8")
-    assert all(term in text for term in (
-        "Curator is conditional",
-        "go directly to Controller",
-        "working-set compression",
-        "all invoked when needed",
-        "fresh independent review for high-risk changes",
-        "Independent review findings are independent evidence, not an automatic repair loop",
-        "P0/P1",
-        "P2/lower",
-        "accepted Modification Boundary",
-        "User-requested real runtime verification still runs",
-        "do not proactively read or write personal/global Codex memory",
-        "~/.codex/memories",
-        "unless the user explicitly requests it",
-        "retain material progress/verification there first",
-        "no durable knowledge means no durable write",
-        "Verification is layered by changed surface, risk, and fresh evidence",
-        "do not automatically repeat expensive checks",
-    ))
+    assert len(text) < 2500
+    assert all(term in text for term in ("no worker, scheduler, polling loop", "Raw findings, reviews, transcripts", "durable decisions, constraints, invariants"))
 
 
 def test_single_bounded_investigator_finding_does_not_auto_curate(tmp_path, capsys):
@@ -127,8 +111,8 @@ def test_init_and_migrate_upgrade_legacy_markers_without_duplicates(tmp_path, ca
         agents = (root / "AGENTS.md").read_text(encoding="utf-8")
         ignored = (root / ".gitignore").read_text(encoding="utf-8")
         assert "Keep." in agents and "keep.me" in ignored
-        assert "Controller is the control plane, not an investigator" in agents
-        assert "MUST delegate the investigation to an Investigator" in agents
+        assert "## Thaliris Router" in agents
+        assert "For Investigator, Curator, Reasoning Specialist" in agents
         assert agents.count("<!-- thaliris:begin -->") == agents.count("<!-- thaliris:end -->") == 1
         assert ignored.count("# thaliris:begin") == ignored.count("# thaliris:end") == 1
         assert "codex-context:" not in agents and "codex-context:" not in ignored
@@ -709,8 +693,8 @@ def test_milestone_progress_is_projected_only_to_controller(tmp_path, capsys):
     code, _ = task_input(root, capsys, {"milestone": milestone}, "task-promote", "--role", "controller", "--base-revision", "1")
     assert code == 0
     _, controller = run(capsys, root, "prepare", "--role", "controller")
-    assert controller["Milestone Progress"]["source"].endswith("progress.md")
-    assert "50% complete." in controller["Milestone Progress"]["text"]
+    assert controller["Task"]["milestone"] == "M001-name"
+    assert "Milestone Progress" not in controller
     _, sol = run(capsys, root, "prepare", "--role", "sol-high")
     _, reviewer = run(capsys, root, "prepare", "--role", "terra-reviewer")
     assert "Milestone Progress" not in sol and "Milestone Progress" not in reviewer
@@ -972,9 +956,8 @@ def test_controller_projection_is_bounded_and_curator_receives_only_uncovered_su
     snapshot = [{"id": "S1", "kind": "SUPPORTED", "text": "compact", "derived_from": [0], "supersedes": [], "evidence_refs": ["src"]}]
     task_input(root, capsys, {"investigation_snapshot": snapshot, "investigation_covered_through": 1}, "task-update", "--role", "luna-curator", "--base-revision", "2")
     _, controller = run(capsys, root, "prepare", "--role", "controller")
-    assert controller["Investigation Readiness"] == {"raw_finding_count": 2, "covered_through": 1, "pending_findings": 1, "status": "PENDING"}
-    assert controller["Investigation Snapshot"][0]["text"] == "compact"
-    assert "Investigation Findings" not in controller and "first" not in json.dumps(controller)
+    assert controller["Task"]["goal"] == "investigate"
+    assert "Investigation Findings" not in controller and "Investigation Snapshot" not in controller and "first" not in json.dumps(controller)
     _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
     assert curator["Uncovered Investigation Findings"] == [second]
     _, sol = run(capsys, root, "prepare", "--role", "sol-high")
@@ -983,7 +966,7 @@ def test_controller_projection_is_bounded_and_curator_receives_only_uncovered_su
     review = {"issue": "review gap", "impact": "needs decision", "evidence_refs": ["src"]}
     task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "3")
     _, controller = run(capsys, root, "prepare", "--role", "controller")
-    assert controller["Review Readiness"] == {"finding_count": 1, "handled_through": 0, "pending_findings": 1, "status": "PENDING"}
+    assert "Review Readiness" not in controller
     code, _ = task_input(root, capsys, {"review_handled_through": 1}, "task-update", "--role", "controller", "--base-revision", "4")
     assert code == 0
 
@@ -1034,7 +1017,7 @@ def test_memory_index_failure_fails_closed_and_stale_snapshot_is_unknown(tmp_pat
     assert investigator["Investigation Snapshot"][0]["recorded_kind"] == "CONFIRMED"
     (root / ".agent-memory/INDEX.md").write_text("not markdown", encoding="utf-8")
     _, pack = run(capsys, root, "prepare", "--role", "controller")
-    assert any("memory routing unavailable" in item["text"] for item in pack["Unknowns"])
+    assert "Unknowns" not in pack and "Evidence refs" not in pack
 
 
 def test_effective_stale_projections_cover_contradictions_snapshot_derivation_review_cursor_and_changed_surface(tmp_path, capsys):
@@ -1062,9 +1045,8 @@ def test_effective_stale_projections_cover_contradictions_snapshot_derivation_re
     (root / "dirty.txt").write_text("dirty", encoding="utf-8")
     task_input(root, capsys, {"review_handled_through": 1, "changed_surface": ["manual.txt"]}, "task-update", "--role", "controller", "--base-revision", "4")
     _, controller = run(capsys, root, "prepare", "--role", "controller")
-    assert controller["Review Findings"] == []
-    assert {"manual.txt", "dirty.txt"} <= set(controller["Changed Surface"])
-    assert controller["Investigation Snapshot"][0]["kind"] == "UNKNOWN"
+    assert "Review Findings" not in controller and "Changed Surface" not in controller
+    assert controller["Task"]["revision"] == 5
 
 
 def test_memory_index_nested_traversal_and_fail_closed_missing_cycle_and_unindexed(tmp_path, capsys):
@@ -1105,4 +1087,40 @@ def test_task_input_evidence_is_supported_without_being_misclassified_as_stale(t
     assert curator["Uncovered Investigation Findings"][0]["kind"] == "SUPPORTED"
     assert curator["Current Investigation Snapshot"][0]["kind"] == "SUPPORTED"
     _, controller = run(capsys, root, "prepare", "--role", "controller")
-    assert controller["Review Findings"][0]["effective_state"] == "SUPPORTED"
+    assert "Review Findings" not in controller and "Evidence refs" not in controller
+
+
+def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    source = root / "src.txt"; source.write_text("one", encoding="utf-8")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    evidence = {"id": "src", "kind": "file", "locator": f"file:src.txt#{digest}", "summary": "private source evidence", "confidence": "SUPPORTED"}
+    raw = {"kind": "SUPPORTED", "text": "raw investigation must not reach controller", "evidence_refs": ["src"]}
+    payload = {"evidence_refs": [evidence], "unknowns": [{"text": "choose the narrow behavior", "evidence_refs": []}], "constraints": [{"text": "preserve public API", "evidence_refs": []}], "decisions": [{"text": "use a status packet", "evidence_refs": []}], "active_work": ["implement packet"], "pending_results": ["focused tests"], "investigation_findings": [raw]}
+    task_input(root, capsys, payload, "task-start", "isolate controller")
+    code, registered = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "handoff", "--path", "docs/handoff.md", "--summary", "worker handoff")
+    assert code == 0 and registered["state"]["artifact_refs"] == [{"id": "handoff", "path": "docs/handoff.md", "summary": "worker handoff"}]
+    _, packet = run(capsys, root, "task-status")
+    assert packet["Task"]["revision"] == 2 and packet["Active Work"] == ["implement packet"]
+    assert packet["Artifact Refs"][0]["path"] == "docs/handoff.md"
+    encoded = json.dumps(packet)
+    assert all(value not in encoded for value in ("private source evidence", "raw investigation", "Evidence refs", "Investigation Findings"))
+    code, failed = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "escape", "--path", "../outside.md", "--summary", "bad")
+    assert code == 2 and "path" in failed["error"]
+
+
+def test_doctor_reports_routing_readiness_separately_from_command_success(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    code, result = run(capsys, root, "doctor")
+    readiness = result["context"]["routing"]
+    assert code == 0 and result["ok"] is True and result["context"]["ready_for_routing"] == "YES"
+    assert readiness == {"command_executed": "YES", "configuration_valid": "YES", "managed_agents_present": "YES", "task_state_valid": "YES", "role_routing_ready": "YES"}
+    (root / ".context/state.json").write_text('{"invalid":true}', encoding="utf-8")
+    code, invalid = run(capsys, root, "doctor")
+    assert code == 0 and invalid["ok"] is True and invalid["context"]["ready_for_routing"] == "NO"
+
+
+def test_ab_fixture_reports_unavailable_native_metrics():
+    fixture = json.loads((Path(__file__).parent / "fixtures" / "workflow_ab.json").read_text(encoding="utf-8"))
+    assert fixture["schema_version"] == 1 and set(fixture["workflows"]) == {"A", "B"}
+    assert fixture["metrics"]["native_run"]["status"] == "UNAVAILABLE"

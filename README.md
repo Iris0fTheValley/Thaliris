@@ -28,6 +28,33 @@ Codex 仍然是 runtime 和 Controller。源代码、Git、测试、编译器和
 
 > **状态：** Beta。当前实现有意保持小巧，仍在真实编码工作负载上进行评估。
 
+## 紧凑路由与隔离
+
+此前托管的 `AGENTS.md` 会把完整 lifecycle policy 放进每个 Codex context；而原生
+`spawn_agent` 默认 `fork_turns="all"`。这既增加了控制指令成本，也会在调用方遗漏
+参数时让需要隔离的角色继承父上下文。
+
+现在 `context init` 生成紧凑 router。Investigator、Curator、Reasoning Specialist、
+Implementer 与 Reviewer 必须使用新的 `fork_turns="none"` child。PostToolUse hook
+只在原生 dispatch 完成后做确定性分类：`none` 为 PASS；缺失或 `all` 为 FAIL；只允许
+message 中带 `Isolation reason:` 行的一到两个 turn fork 作为 exception。它是事后观察，不能阻止
+或改写 Codex 已经创建的 child。详细 lifecycle、promotion 和 verification 规则只在需要时
+从 `docs/thaliris-role-packs.md` 加载。
+
+普通 Controller packet（`context task-status` 或 `prepare --role controller`）只包含 task
+identity/status、active work、pending results、unresolved questions、artifact pointers 和
+accepted constraints/decisions。它刻意不包含 raw findings、review bodies、evidence records、
+宽泛 Git state 或 memory/milestone bodies。`context task-show` 仍是显式 raw diagnostic；
+`context task-artifact` 只追加有界、path-safe artifact pointer，不内联 artifact 内容。
+
+`context doctor` 把 `ready_for_routing` 与 command execution 分开报告，并给出
+`command_executed`、`configuration_valid`、`managed_agents_present`、`task_state_valid` 和
+`role_routing_ready` 五个维度。
+
+可复现的 A/B protocol 在 `tests/fixtures/workflow_ab.json`，可用
+`python tools/workflow_ab.py --fixture tests/fixtures/workflow_ab.json` 报告。没有明确的
+live Codex run 时 native metrics 必须是 `UNAVAILABLE`；仓库不会伪造性能或质量数据。
+
 ---
 
 ## 为什么要做这个项目

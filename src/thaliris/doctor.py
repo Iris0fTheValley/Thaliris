@@ -106,4 +106,13 @@ def report(root: Path) -> dict[str, object]:
             task["valid"] = "NO"
         except OSError:
             pass
-    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "intent_audit": hooks_health(root), "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}
+    task_state_valid = task["valid"] if task["present"] == "YES" else "YES"
+    routing_ready = "YES" if all(value == "YES" for value in (context_config, agents_state, task_state_valid)) else "NO"
+    routing = {
+        "command_executed": "YES",
+        "configuration_valid": context_config,
+        "managed_agents_present": agents_state,
+        "task_state_valid": task_state_valid,
+        "role_routing_ready": routing_ready,
+    }
+    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "intent_audit": hooks_health(root), "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}

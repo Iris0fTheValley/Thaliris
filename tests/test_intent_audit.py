@@ -788,3 +788,20 @@ def test_incomplete_evidence_cannot_turn_auditor_drift_into_a_block(tmp_path, mo
     handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"message": "work"}))
     assert handle_hook(root, "Stop", payload(stop_hook_active=False)) == ""
     assert captures(root)["audit_results"][-1]["status"] == "UNKNOWN"
+
+
+def test_spawn_isolation_is_classified_after_native_dispatch(tmp_path):
+    root = repo(tmp_path)
+    for fork_turns, message in (("none", "work"), ("all", "work"), (None, "work"), (1, "Isolation reason: bounded compatibility need"), (2, "work")):
+        tool_input = {"message": message, "agent_type": "Terra Implementer"}
+        if fork_turns is not None:
+            tool_input["fork_turns"] = fork_turns
+        handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input=tool_input, tool_response={"success": True}))
+    items = captures(root)["delegations"]
+    assert [item["isolation"] for item in items] == [
+        {"required": "YES", "fork_turns": "NONE", "status": "PASS"},
+        {"required": "YES", "fork_turns": "ALL", "status": "FAIL"},
+        {"required": "YES", "fork_turns": "MISSING", "status": "FAIL"},
+        {"required": "YES", "fork_turns": "SMALL", "status": "EXCEPTION"},
+        {"required": "YES", "fork_turns": "SMALL", "status": "FAIL"},
+    ]

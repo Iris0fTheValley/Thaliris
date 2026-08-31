@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import subprocess
@@ -799,6 +800,8 @@ def _normalized_agent_role(tool_input: dict[str, Any], payload: dict[str, Any]) 
         "luna-curator": "curator",
         "terra-reviewer": "reviewer",
         "terra-implementer": "implementer",
+        "reasoning-specialist": "sol-high",
+        "reasoning-specialist-sol": "sol-high",
         "sol-high": "sol-high",
     }
     return aliases.get(normalized, normalized[:64])
@@ -830,7 +833,7 @@ def _delegation_input(payload: dict[str, Any]) -> dict[str, Any]:
         return value
     if isinstance(payload.get("tool_input"), dict):
         return payload["tool_input"]
-    return {key: payload[key] for key in ("message", "input", "text", "agent_type", "agentType", "role", "agent_role", "task_id", "child_id", "target", "task_name", "agent_id", "id") if key in payload}
+    return {key: payload[key] for key in ("message", "input", "text", "agent_type", "agentType", "role", "agent_role", "task_id", "child_id", "target", "task_name", "agent_id", "id", "fork_turns", "isolation_reason", "fork_turns_reason") if key in payload}
 
 
 def _delegation_text(tool_input: dict[str, Any]) -> object:
@@ -839,6 +842,33 @@ def _delegation_text(tool_input: dict[str, Any]) -> object:
         if isinstance(value, str):
             return value
     return None
+
+
+_ISOLATION_REQUIRED_ROLES = {"investigator", "curator", "sol-high", "implementer", "reviewer"}
+
+
+def _has_isolation_reason(tool_input: dict[str, Any]) -> bool:
+    value = tool_input.get("isolation_reason", tool_input.get("fork_turns_reason"))
+    if isinstance(value, str) and value.strip():
+        return True
+    message = _delegation_text(tool_input)
+    return isinstance(message, str) and re.search(r"(?im)^isolation reason:\s*\S", message) is not None
+
+
+def _isolation_classification(tool: str, tool_input: dict[str, Any], role: str) -> dict[str, str] | None:
+    """Classify a completed native spawn without attempting to control it."""
+    if tool.rsplit(".", 1)[-1] != "spawn_agent" or role not in _ISOLATION_REQUIRED_ROLES:
+        return None
+    fork = tool_input.get("fork_turns")
+    if fork == "none":
+        return {"required": "YES", "fork_turns": "NONE", "status": "PASS"}
+    if fork is None:
+        return {"required": "YES", "fork_turns": "MISSING", "status": "FAIL"}
+    if fork == "all":
+        return {"required": "YES", "fork_turns": "ALL", "status": "FAIL"}
+    if type(fork) is int and 1 <= fork <= 2:
+        return {"required": "YES", "fork_turns": "SMALL", "status": "EXCEPTION" if _has_isolation_reason(tool_input) else "FAIL"}
+    return {"required": "YES", "fork_turns": "OTHER", "status": "FAIL"}
 
 
 def _capture_delegation(state: dict[str, Any], payload: dict[str, Any]) -> bool:
@@ -853,14 +883,18 @@ def _capture_delegation(state: dict[str, Any], payload: dict[str, Any]) -> bool:
         state["capture_coverage"] = "UNKNOWN"
         state["events_observed"]["PostToolUse"] = True
         return True
+    role = _normalized_agent_role(tool_input, payload)
     item = {
         "seq": state["next_seq"],
         "tool": tool,
         "dispatch_status": dispatch_status,
         "prompt_seq": state.get("last_prompt_seq"),
-        "agent_type": _normalized_agent_role(tool_input, payload),
+        "agent_type": role,
         **_record_text(_delegation_text(tool_input)),
     }
+    isolation = _isolation_classification(tool, tool_input, role)
+    if isolation is not None:
+        item["isolation"] = isolation
     child_hash = _child_identity_hash(tool, tool_input)
     if child_hash is not None:
         item["child_identity_hash"] = child_hash

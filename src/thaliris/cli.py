@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from .core import init, migrate, milestone_check, prepare, rollback, stale, uninstall, task_close, task_promote, task_show, task_start, task_update
+from .core import init, migrate, milestone_check, prepare, rollback, stale, uninstall, task_artifact, task_close, task_promote, task_show, task_start, task_status, task_update
 from .doctor import report
 from .intent_audit import handle_hook
 
@@ -38,6 +38,12 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--base-revision", required=True, type=int)
     q.add_argument("--input", required=True)
     sub.add_parser("task-show")
+    sub.add_parser("task-status", help="bounded Controller routing packet")
+    q = sub.add_parser("task-artifact", help="register a bounded external task artifact pointer")
+    q.add_argument("--base-revision", required=True, type=int)
+    q.add_argument("--id", required=True)
+    q.add_argument("--path", required=True)
+    q.add_argument("--summary", required=True)
     q = sub.add_parser("task-close")
     q.add_argument("--base-revision", required=True, type=int)
     q = sub.add_parser(
@@ -87,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "task-start": out = task_start(root, args.goal, args.milestone, args.input, args.intent_capture_id)
         elif args.command == "task-update": out = task_update(root, args.role, args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
+        elif args.command == "task-status": out = task_status(root)
+        elif args.command == "task-artifact": out = task_artifact(root, args.base_revision, args.id, args.path, args.summary)
         elif args.command == "task-close": out = task_close(root, args.base_revision)
         elif args.command == "task-promote": out = task_promote(root, args.role, args.base_revision, args.input)
         elif args.command == "rollback": out = rollback(root, args.backup)

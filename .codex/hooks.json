@@ -32,7 +32,7 @@
             "timeout": 60
           }
         ],
-        "matcher": "^(?:spawn_agent|Agent|followup_task|(?:[A-Za-z0-9_]+\\.)+(?:spawn_agent|Agent|followup_task))$"
+        "matcher": "^(?:spawn_agent|Agent|followup_task|send_input|send_message|(?:[A-Za-z0-9_]+\\.)+(?:spawn_agent|Agent|followup_task|send_input|send_message))$"
       }
     ],
     "Stop": [

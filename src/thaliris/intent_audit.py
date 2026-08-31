@@ -28,8 +28,8 @@ MAX_CAPTURE_CAPABILITIES = MAX_RAW_RECORDS
 AUDIT_ENV = "THALIRIS_INTENT_AUDIT_ACTIVE"
 AUDIT_RUNNER_ENV = "THALIRIS_CODEX_EXECUTABLE"
 AUDIT_AUTH_FILE_ENV = "THALIRIS_INTENT_AUDIT_AUTH_FILE"
-INTENT_AUDITOR_MODEL = "gpt-5.6-sol"
-INTENT_AUDITOR_REASONING = "medium"
+INTENT_AUDITOR_MODEL = "gpt-5.6-luna"
+INTENT_AUDITOR_REASONING = "high"
 POST_TOOL_MATCHER = r"^(?:spawn_agent|Agent|followup_task|send_input|send_message|(?:[A-Za-z0-9_]+\.)+(?:spawn_agent|Agent|followup_task|send_input|send_message))$"
 ALLOWED_FINDINGS = {
     "requirement_omission",
@@ -977,7 +977,7 @@ def _audit_attempt(root: Path, payload: dict[str, Any], state: dict[str, Any], m
         anchor = None
         anchor_available = False
     suffix = state["delegations"][low:high]
-    # These conditions are deterministic. Do not spend an isolated Sol run
+    # These conditions are deterministic. Do not spend an isolated auditor run
     # on evidence that the fixed rubric must classify as UNKNOWN.
     if state.get("intent_coverage") == "UNKNOWN" or state.get("capture_coverage") == "UNKNOWN" or not anchor_available:
         return {"status": "UNKNOWN", "findings": []}, False, "intent_or_capture_incomplete", False

@@ -149,6 +149,19 @@ def test_send_message_drift_emits_only_fixed_short_correction(tmp_path, monkeypa
     assert "untrusted long explanation" not in json.dumps(result)
 
 
+def test_send_message_preservation_loss_emits_only_fixed_short_correction(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    init(root); task_start(root, "audit preservation", None, None)
+    fake_runner(monkeypatch, {"status": "DRIFT", "findings": [{"kind": "preservation_requirement_loss", "summary": "untrusted internal preservation finding"}]})
+    handle_hook(root, "UserPromptSubmit", payload(prompt="preserve the user-owned file"))
+    handle_hook(root, "PostToolUse", payload(tool_name="send_message", tool_input={"message": "implement it"}, tool_response={"success": True}))
+    result = json.loads(handle_hook(root, "Stop", payload(stop_hook_active=False)))
+    assert result["decision"] == "block" and result["reason"] == "Intent audit found delegation drift; review the delegation framing."
+    rendered = json.dumps(result)
+    assert "untrusted internal preservation finding" not in rendered
+    assert "preserve the user-owned file" not in rendered
+
+
 def test_fifth_delegation_runs_checkpoint_and_pass_is_invisible(tmp_path, monkeypatch):
     root = repo(tmp_path)
     init(root)
@@ -399,7 +412,7 @@ def test_v1_capture_maps_cursor_but_cannot_claim_anchor_coverage(tmp_path):
     assert loaded["intent_coverage"] == "UNKNOWN"
 
 
-def test_fresh_auditor_command_uses_independent_sol_model(tmp_path, monkeypatch):
+def test_fresh_auditor_command_uses_isolated_luna_model_with_high_reasoning(tmp_path, monkeypatch):
     captured = {}
     monkeypatch.setattr(audit_module.shutil, "which", lambda name: "codex-test")
 
@@ -420,8 +433,13 @@ def test_fresh_auditor_command_uses_independent_sol_model(tmp_path, monkeypatch)
     result = audit_module._invoke_fresh_auditor("{}", "checkpoint")
     assert result is not None
     assert "--ephemeral" in captured["command"]
-    assert captured["command"][captured["command"].index("--model") + 1] == audit_module.INTENT_AUDITOR_MODEL == "gpt-5.6-sol"
-    assert all("luna" not in item for item in captured["command"])
+    assert captured["command"][captured["command"].index("--model") + 1] == audit_module.INTENT_AUDITOR_MODEL == "gpt-5.6-luna"
+    assert audit_module.INTENT_AUDITOR_REASONING == "high"
+    assert f'model_reasoning_effort="{audit_module.INTENT_AUDITOR_REASONING}"' in captured["command"]
+    assert all(flag in captured["command"] for flag in ("--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--skip-git-repo-check"))
+    assert "features.multi_agent=false" in captured["command"]
+    assert "features.plugins=false" in captured["command"]
+    assert "features.memories=false" in captured["command"]
     assert captured["env"][audit_module.AUDIT_ENV] == "1"
     assert not (captured["cwd"] / ".git").exists()
 

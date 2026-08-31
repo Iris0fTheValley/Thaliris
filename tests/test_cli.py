@@ -41,12 +41,18 @@ def test_managed_policy_keeps_roles_conditional_and_project_memory_scoped(tmp_pa
         "working-set compression",
         "all invoked when needed",
         "fresh independent review for high-risk changes",
+        "Independent review findings are independent evidence, not an automatic repair loop",
+        "P0/P1",
+        "P2/lower",
+        "accepted Modification Boundary",
         "User-requested real runtime verification still runs",
         "do not proactively read or write personal/global Codex memory",
         "~/.codex/memories",
         "unless the user explicitly requests it",
         "retain material progress/verification there first",
         "no durable knowledge means no durable write",
+        "Verification is layered by changed surface, risk, and fresh evidence",
+        "do not automatically repeat expensive checks",
     ))
 
 

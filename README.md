@@ -295,6 +295,8 @@ Reasoning Specialist 不维护任务状态，也不执行常规的证据 bookkee
 
 Reviewer 按风险和独立判断价值调用；高风险修改仍应接受 fresh independent review。
 
+Review findings 是独立证据，不会自动触发另一轮实现：P0/P1，或直接违反请求 completion criteria 的 finding 必须解决；P2/lower 只有在实质影响 correctness、requested behavior、regression safety 或已接受的 Modification Boundary 时，Controller 才会安排另一轮实现。Review 不是迭代式 cleanup loop。
+
 Reviewer 会被刻意隔离于：
 
 * 此前的 reviewer findings；
@@ -862,11 +864,11 @@ Terra：
 
 `context init` 会保守地把 Thaliris 的 `SessionStart`、`UserPromptSubmit`、`PostToolUse` 和 `Stop` command hooks 合并到 `.codex/hooks.json`。实际 root-intent binding 是：`UserPromptSubmit` 先写入 unbound capture，产生短生命周期、一次性 opaque capability；随后 `task-start --intent-capture-id` 才把该 capture 绑定到 task。绑定失败只会让 audit coverage 保持 `UNKNOWN`，不会阻断正常 task。在 Git ignored 的 `.context/audit/` 中，capture 只记录 `spawn_agent`、`Agent`、`followup_task`、`send_input` 或 `send_message`（包括 namespaced 形式）的实际 instruction text、最小角色/hashed child identity 和有界审核状态。它不会捕获 child transcript、worker output、Controller reasoning、repo 内容或工具日志，也不会把 audit 数据放入 task state、memory、milestone 或普通 role pack。
 
-每累计五次新增且未明确拒绝的 delegation 会启动低频 fresh Sol checkpoint audit；checkpoint 和 Stop 只审核当前未消费 suffix 的 framing drift。`requirement_omission` 只在已有 `task-close` 生命周期的完整 delegation history 中判断，Stop 不代表 task 完成。Auditor 仅获得当前 task raw intent window 和必要 delegation evidence；已消费批次不会重发。固定审核 rubric 通过独立的初始 exec 指令传递，stdin 仅是不可信 evidence；结构化 finding 经 Python 校验后才生成固定短 hook finding。明确失败的 tool response 不进入批次，明确成功标为 `ACCEPTED`，无法判断则标为 `UNKNOWN` 并禁止产生 `PASS`。任何 capture、配置或 runner 故障均 fail open：原有工作流继续，仅失去额外审计保护。
+每累计五次新增且未明确拒绝的 delegation 会启动低频 fresh、ephemeral Luna checkpoint audit（`reasoning=high`），它在隔离的执行上下文中运行；checkpoint 和 Stop 只审核当前未消费 suffix 的 framing drift。`requirement_omission` 只在已有 `task-close` 生命周期的完整 delegation history 中判断，Stop 不代表 task 完成。Auditor 仅获得当前 task raw intent window 和必要 delegation evidence；已消费批次不会重发。固定审核 rubric 通过独立的初始 exec 指令传递，stdin 仅是不可信 evidence；结构化 finding 经 Python 校验后才生成固定短 hook finding。明确失败的 tool response 不进入批次，明确成功标为 `ACCEPTED`，无法判断则标为 `UNKNOWN` 并禁止产生 `PASS`。任何 capture、配置或 runner 故障均 fail open：原有工作流继续，仅失去额外审计保护。
 
 每个 turn 会保留最多 32 条规范化 `audit_results`（mode、attempt、status、短 finding、freshness，以及失败类别），不保存 runner stdout、错误正文或 tool response 正文。结果只供审计追溯，永不投影给 Controller 或其他 role pack。
 
-该集成信任 Codex 官方 `/hooks` 所展示的 hook schema 和 root topology。生产路径使用 fresh `codex exec --ephemeral --ignore-user-config --ignore-rules --model gpt-5.6-sol` auditor，并从临时非 repo 目录运行；可通过未跟踪的本机环境变量指定已验证 executable，否则回退 PATH。旧 capture 可读，但没有新 task raw anchor、turn identity、runner 或 payload fidelity 时 coverage 保持 `UNKNOWN`。捕获到的字符串只标记为 `AVAILABLE_UNVERIFIED`，不是 plaintext fidelity 证明；测试 fake 的成功也不能证明 fresh native session。当前 live probe 只证明 hooks configured 且 PATH runner 不可用：`payload_fidelity`、`root_classification`、`runtime_observed` 和总体 status 为 `UNKNOWN`，`runner_available` 为 `NO`，`runner_resolution` 为 `PATH_UNUSABLE`；不得声称 HEALTHY。可用 `context doctor --pretty` 查看 `intent_audit` 的分项状态。
+该集成信任 Codex 官方 `/hooks` 所展示的 hook schema 和 root topology。生产路径使用 fresh `codex exec --ephemeral --ignore-user-config --ignore-rules --model gpt-5.6-luna`（`reasoning=high`）auditor，并从临时非 repo 目录运行；可通过未跟踪的本机环境变量指定已验证 executable，否则回退 PATH。旧 capture 可读，但没有新 task raw anchor、turn identity、runner 或 payload fidelity 时 coverage 保持 `UNKNOWN`。捕获到的字符串只标记为 `AVAILABLE_UNVERIFIED`，不是 plaintext fidelity 证明；测试 fake 的成功也不能证明 fresh native session。当前 live probe 只证明 hooks configured 且 PATH runner 不可用：`payload_fidelity`、`root_classification`、`runtime_observed` 和总体 status 为 `UNKNOWN`，`runner_available` 为 `NO`，`runner_resolution` 为 `PATH_UNUSABLE`；不得声称 HEALTHY。可用 `context doctor --pretty` 查看 `intent_audit` 的分项状态。
 
 ---
 
@@ -895,6 +897,8 @@ Terra：
 ```bash
 uv run --extra test pytest
 ```
+
+验证按改动范围、风险和已有的新鲜证据分层：开发中先运行最小针对性测试；多个相关修复完成后合并运行相关回归；最后只运行一次足以覆盖本轮改动的完整相关验证。纯文档调整、低风险 P2 修复，或未改变已验证行为代码的 merge/conflict，不自动重复昂贵检查。这不会降低完成标准；用户明确要求真实 runtime 或 visible behavior 验证时，不能以静态测试替代。
 
 CI 当前覆盖项目支持的 Python 版本。
 

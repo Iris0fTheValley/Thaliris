@@ -19,7 +19,7 @@ It provides:
 
 Codex remains the runtime and controller. Source code, Git, tests, compilers, and runtime behavior remain the correctness core.
 
-> **Status:** Alpha. The current implementation is intentionally small and is still being evaluated on real coding workloads.
+> **Status:** Beta. The current implementation is intentionally small and is still being evaluated on real coding workloads.
 
 ---
 

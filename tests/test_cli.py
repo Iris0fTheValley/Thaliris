@@ -5,8 +5,10 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tomllib
 
 from thaliris.cli import main
+from thaliris import __version__
 from thaliris import core
 from thaliris.markdown import parse
 from thaliris import doctor
@@ -15,6 +17,17 @@ from thaliris import doctor
 def run(capsys, root: Path, *args: str):
     code = main(["--root", str(root), *args])
     return code, json.loads(capsys.readouterr().out)
+
+
+def test_release_metadata_is_beta_and_cli_reports_project_version(tmp_path, capsys):
+    code, result = run(capsys, tmp_path, "version")
+    metadata = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert code == 0 and result == {"ok": True, "version": "0.3.0"}
+    assert __version__ == metadata["version"] == "0.3.0"
+    assert "Development Status :: 4 - Beta" in metadata["classifiers"]
+    assert "Alpha" not in metadata["classifiers"]
+    assert "**状态：** Beta" in Path("README.md").read_text(encoding="utf-8")
+    assert "**Status:** Beta" in Path("README.en.md").read_text(encoding="utf-8")
 
 
 def repo(tmp_path: Path) -> Path:

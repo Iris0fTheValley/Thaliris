@@ -236,7 +236,7 @@ Investigator 可以拥有较大的工作集。
 
 当前推荐模型：GPT-5.6 Luna。
 
-一个 fresh Curator invocation 可以压缩累积的 investigation findings。
+Curator 按需调用：单个 Investigator 已返回有界、结构化且无明显重复、冲突或过时问题的 findings 时，直接交给 Controller。只有 findings 过大、重复、冲突、过时，或高推理确实需要压缩 working set 时，才调用 fresh Curator。
 
 它可以：
 
@@ -293,7 +293,7 @@ Reasoning Specialist 不维护任务状态，也不执行常规的证据 bookkee
 
 当前推荐模型：GPT-5.6 Terra。
 
-高风险修改可以接受一次 fresh independent review。
+Reviewer 按风险和独立判断价值调用；高风险修改仍应接受 fresh independent review。
 
 Reviewer 会被刻意隔离于：
 
@@ -350,7 +350,7 @@ Controller
     ↓
 Investigator
     ↓
-需要时生成 curated findings
+需要压缩时才由 Curator 生成 snapshot
     ↓
 Controller
 
@@ -363,17 +363,17 @@ Controller
 ### 复杂修改
 
 ```text
-Investigator 调查
+按需 Investigator 调查
         ↓
 有界证据
         ↓
-Reasoning Specialist 推理
+需要时 Reasoning Specialist 推理
         ↓
 Implementer 实现
         ↓
 确定性检查
         ↓
-Investigator 验证
+需要时 Investigator 验证
 ```
 
 对于风险足够高的修改：
@@ -581,7 +581,7 @@ Review findings
 
 ### 有界 durable promotion
 
-task-end 的顺序是：`task-local state -> Controller 判断是否值得长期保留 -> 最小 durable promotion -> task-close`。这不是自动总结；没有 durable knowledge 就不写 memory。只有 Controller 可以运行 `task-promote`，且只能提交显式的 `decision`、`invariant`、`failure_mode`、`constraint`，或当前 milestone 的 `progress`/`verification`。输入只能使用当前 ACTIVE task 的 evidence refs，并且必须通过 fresh native file/git evidence，或带 fresh native `source_refs` 的 test/runtime evidence；CONFIRMED promotion 还必须直接引用 fresh CONFIRMED file/git evidence。raw findings、transcript、log 和未知字段都会被拒绝。Promotion 使用 base revision 的 CAS，但不修改 task revision。每个 task 最多消耗 16 个 promotion units（每个 memory record 及每个 milestone progress/verification 字段各 1）；计数器只是有界 task-local bookkeeping，不是长期 memory 或 framework。
+task-end 的顺序是：`task-local state -> Controller 判断是否值得长期保留 -> 最小 durable promotion -> task-close`。这不是自动总结；没有 durable knowledge 就不写 durable 内容。只有 Controller 可以运行 `task-promote`，且只能提交显式的 `decision`、`invariant`、`failure_mode`、`constraint`，或当前 milestone 的 `progress`/`verification`。连续 feature 且有 current milestone 时，优先保留实际进度和验证到该 milestone；`.agent-memory/` 只保留跨任务可复用的 decision、constraint、invariant、failure mode。Repository task 除非用户明确要求，不主动读取或写入 `~/.codex/memories`、`MEMORY.md` 等个人/global Codex memory；项目连续性走 `.agent-memory/`、`.milestones/`、`task-promote` 和 tracked-document maintenance。输入只能使用当前 ACTIVE task 的 evidence refs，并且必须通过 fresh native file/git evidence，或带 fresh native `source_refs` 的 test/runtime evidence；CONFIRMED promotion 还必须直接引用 fresh CONFIRMED file/git evidence。raw findings、transcript、log 和未知字段都会被拒绝。Promotion 使用 base revision 的 CAS，但不修改 task revision。每个 task 最多消耗 16 个 promotion units（每个 memory record 及每个 milestone progress/verification 字段各 1）；计数器只是有界 task-local bookkeeping，不是长期 memory 或 framework。
 
 最小顺序和 JSON 示例：
 

@@ -32,6 +32,41 @@ def test_init_idempotent_preserves_agents_and_required_block(tmp_path, capsys):
     assert code == 0 and not second["changed"]
 
 
+def test_managed_policy_keeps_roles_conditional_and_project_memory_scoped(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    text = (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert all(term in text for term in (
+        "Curator is conditional",
+        "go directly to Controller",
+        "working-set compression",
+        "all invoked when needed",
+        "fresh independent review for high-risk changes",
+        "User-requested real runtime verification still runs",
+        "do not proactively read or write personal/global Codex memory",
+        "~/.codex/memories",
+        "unless the user explicitly requests it",
+        "retain material progress/verification there first",
+        "no durable knowledge means no durable write",
+    ))
+
+
+def test_single_bounded_investigator_finding_does_not_auto_curate(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    request = {"id": "request", "kind": "task-input", "locator": "user request", "summary": "bounded request", "confidence": "SUPPORTED"}
+    task_input(root, capsys, {"evidence_refs": [request]}, "task-start", "inspect one bounded finding")
+    finding = {"kind": "SUPPORTED", "text": "single bounded finding", "evidence_refs": ["request"]}
+    code, updated = task_input(root, capsys, {"investigation_findings": [finding]}, "task-update", "--role", "luna-investigator", "--base-revision", "1")
+    assert code == 0
+    assert updated["state"]["investigation_findings"] == [finding]
+    assert updated["state"]["investigation_snapshot"] == []
+    assert updated["state"]["investigation_covered_through"] == 0
+    state_path = root / ".context/state.json"; before_prepare = state_path.read_bytes()
+    _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
+    assert curator["Current Investigation Snapshot"] == []
+    assert curator["Uncovered Investigation Findings"] == [finding]
+    assert state_path.read_bytes() == before_prepare
+
+
 def test_init_preserves_crlf_outside_managed_block(tmp_path, capsys):
     root = repo(tmp_path); original = b"Keep this rule.\r\nKeep another.\r\n"
     (root / "AGENTS.md").write_bytes(original)
@@ -660,6 +695,17 @@ def test_milestone_progress_is_projected_only_to_controller(tmp_path, capsys):
     _, sol = run(capsys, root, "prepare", "--role", "sol-high")
     _, reviewer = run(capsys, root, "prepare", "--role", "terra-reviewer")
     assert "Milestone Progress" not in sol and "Milestone Progress" not in reviewer
+
+
+def test_task_close_without_retention_keeps_current_milestone_durable_files_unchanged(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    code, _ = run(capsys, root, "task-start", "ordinary current milestone work", "--milestone", "M001-name")
+    assert code == 0
+    before = {str(path.relative_to(root)): path.read_bytes() for directory in (root / ".agent-memory", root / ".milestones") for path in directory.rglob("*") if path.is_file()}
+    code, closed = run(capsys, root, "task-close", "--base-revision", "1")
+    assert code == 0 and closed["state"]["status"] == "DONE"
+    after = {str(path.relative_to(root)): path.read_bytes() for directory in (root / ".agent-memory", root / ".milestones") for path in directory.rglob("*") if path.is_file()}
+    assert after == before
 
 
 def test_state_pack_keeps_memory_provenance_and_changed_path_evidence(tmp_path, capsys):

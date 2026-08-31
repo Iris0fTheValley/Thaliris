@@ -231,7 +231,7 @@ Its output is a task-local structured handoff of findings and evidence reference
 
 Current recommended model: GPT-5.6 Luna.
 
-A fresh Curator invocation may compact accumulated investigation findings.
+Curator is invoked only when needed: bounded, structured findings from one Investigator with no evident duplication, conflict, or staleness go directly to the Controller. Use a fresh Curator only for oversized, repetitive, conflicting, or stale findings, or when high reasoning genuinely needs working-set compression.
 
 It can:
 
@@ -288,7 +288,7 @@ When assumptions fail or the required scope expands materially, control returns 
 
 Current recommended model: GPT-5.6 Terra.
 
-High-risk changes may receive a fresh independent review.
+Invoke a Reviewer according to risk and independent review value; high-risk changes still require a fresh independent review.
 
 The reviewer is deliberately isolated from:
 
@@ -358,17 +358,17 @@ Controller
 ### Complex change
 
 ```text
-Investigator investigation
+Investigator investigation when needed
         ↓
 bounded evidence
         ↓
-Reasoning Specialist reasoning
+Reasoning Specialist reasoning when needed
         ↓
 Implementer implementation
         ↓
 deterministic checks
         ↓
-Investigator verification
+Investigator verification when needed
 ```
 
 For sufficiently risky changes:
@@ -553,7 +553,7 @@ The intent is to preserve traceability without converting `.context/state.json` 
 
 ### Bounded durable promotion
 
-The task-end order is `task-local state -> Controller retention decision -> minimal durable promotion -> task-close`. This is explicit persistence, not automatic summarization; if there is no durable knowledge, no memory is written. Only the Controller may run `task-promote`, and it may submit only explicit `decision`, `invariant`, `failure_mode`, or `constraint` records, or explicit `progress`/`verification` fields for the current milestone. Inputs must use only evidence refs already in the ACTIVE task and must pass fresh native file/git evidence or fresh test/runtime evidence with native `source_refs`; a CONFIRMED promotion must also directly reference fresh CONFIRMED file/git evidence. Raw findings, transcripts, logs, and unknown fields are rejected. Promotion uses a base-revision CAS and does not change the task revision. Each task may consume at most 16 promotion units (one per memory record and per milestone progress/verification field); the counter is bounded task-local bookkeeping, not long-term memory or a framework.
+The task-end order is `task-local state -> Controller retention decision -> minimal durable promotion -> task-close`. This is explicit persistence, not automatic summarization; if there is no durable knowledge, no durable content is written. Only the Controller may run `task-promote`, and it may submit only explicit `decision`, `invariant`, `failure_mode`, or `constraint` records, or explicit `progress`/`verification` fields for the current milestone. For continuous feature work with a current milestone, retain actual progress and verification there first; `.agent-memory/` retains only cross-task reusable decisions, constraints, invariants, and failure modes. Unless the user explicitly asks, a repository task does not proactively read or write personal/global Codex memory such as `~/.codex/memories` or `MEMORY.md`; project continuity uses `.agent-memory/`, `.milestones/`, `task-promote`, and tracked-document maintenance. Inputs must use only evidence refs already in the ACTIVE task and must pass fresh native file/git evidence or fresh test/runtime evidence with native `source_refs`; a CONFIRMED promotion must also directly reference fresh CONFIRMED file/git evidence. Raw findings, transcripts, logs, and unknown fields are rejected. Promotion uses a base-revision CAS and does not change the task revision. Each task may consume at most 16 promotion units (one per memory record and per milestone progress/verification field); the counter is bounded task-local bookkeeping, not long-term memory or a framework.
 
 Minimal order and JSON example:
 

@@ -63,6 +63,14 @@ The project therefore treats context boundaries as part of the engineering archi
 
 ---
 
+## Why Thaliris
+
+Thaliris combines Thalamus and Iris.
+
+The thalamus filters and routes information toward cognition; the iris regulates what enters the eye. Thaliris follows the same metaphor for agent context: control what enters the reasoning path, preserve relevant evidence, and keep unrelated working sets isolated.
+
+---
+
 ## Design philosophy
 
 ### One dominant objective per reasoning context

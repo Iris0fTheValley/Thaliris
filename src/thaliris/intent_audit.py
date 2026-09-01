@@ -18,7 +18,7 @@ import time
 from typing import Any
 
 HOOK_COMMAND_PREFIX = "context audit-hook"
-HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse", "Stop")
+HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop")
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed intent-audit hooks"
 AUDIT_INTERVAL = 5
 MAX_AUDIT_RESULTS = 32
@@ -32,6 +32,9 @@ AUDIT_AUTH_FILE_ENV = "THALIRIS_INTENT_AUDIT_AUTH_FILE"
 INTENT_AUDITOR_MODEL = "gpt-5.6-luna"
 INTENT_AUDITOR_REASONING = "high"
 POST_TOOL_MATCHER = r"^(?:spawn_agent|Agent|followup_task|send_input|send_message|(?:[A-Za-z0-9_]+\.)+(?:spawn_agent|Agent|followup_task|send_input|send_message))$"
+# Pre-dispatch isolation only needs to see native spawn calls.  Keep the
+# matcher narrow so unrelated tools never receive a rewritten invocation.
+PRE_TOOL_MATCHER = r"^(?:spawn_agent|(?:[A-Za-z0-9_]+\.)+spawn_agent)$"
 ALLOWED_FINDINGS = {
     "requirement_omission",
     "constraint_weakening",
@@ -52,6 +55,8 @@ def hook_spec() -> dict[str, Any]:
             # an exact-name set.  Regex anchors and escaping deliberately opt
             # into regex semantics for the MultiAgentV2 namespaced tools.
             entry["matcher"] = POST_TOOL_MATCHER
+        elif event == "PreToolUse":
+            entry["matcher"] = PRE_TOOL_MATCHER
         hooks[event] = [entry]
     return {"hooks": hooks}
 
@@ -86,7 +91,7 @@ def merge_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
                 normalized_entries.append(entry)
                 continue
             present = True
-            if event == "PostToolUse":
+            if event in {"PostToolUse", "PreToolUse"}:
                 user_handlers = [item for item in entry["hooks"] if not is_managed_handler(item, event)]
                 if user_handlers:
                     # A matcher applies to every handler in one entry. Split
@@ -269,6 +274,8 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
         root = _hook_repository_root(root, payload)
         if payload.get("agent_id") is not None:
             return ""
+        if event == "PreToolUse":
+            return _pre_tool_output(payload)
         if event == "SessionStart":
             _record_session_start(root, payload)
             return ""
@@ -844,9 +851,6 @@ def _delegation_text(tool_input: dict[str, Any]) -> object:
     return None
 
 
-_ISOLATION_REQUIRED_ROLES = {"investigator", "curator", "sol-high", "implementer", "reviewer"}
-
-
 def _has_isolation_reason(tool_input: dict[str, Any]) -> bool:
     value = tool_input.get("isolation_reason", tool_input.get("fork_turns_reason"))
     if isinstance(value, str) and value.strip():
@@ -855,9 +859,9 @@ def _has_isolation_reason(tool_input: dict[str, Any]) -> bool:
     return isinstance(message, str) and re.search(r"(?im)^isolation reason:\s*\S", message) is not None
 
 
-def _isolation_classification(tool: str, tool_input: dict[str, Any], role: str) -> dict[str, str] | None:
-    """Classify a completed native spawn without attempting to control it."""
-    if tool.rsplit(".", 1)[-1] != "spawn_agent" or role not in _ISOLATION_REQUIRED_ROLES:
+def _isolation_classification(tool: str, tool_input: dict[str, Any], _role: str) -> dict[str, str] | None:
+    """Classify every completed native root spawn, independent of agent_type."""
+    if tool.rsplit(".", 1)[-1] != "spawn_agent":
         return None
     fork = tool_input.get("fork_turns")
     if fork == "none":
@@ -869,6 +873,46 @@ def _isolation_classification(tool: str, tool_input: dict[str, Any], role: str) 
     if type(fork) is int and 1 <= fork <= 2:
         return {"required": "YES", "fork_turns": "SMALL", "status": "EXCEPTION" if _has_isolation_reason(tool_input) else "FAIL"}
     return {"required": "YES", "fork_turns": "OTHER", "status": "FAIL"}
+
+
+def _pre_tool_output(payload: dict[str, Any]) -> str:
+    """Rewrite unsafe root spawn input before Codex dispatches it.
+
+    The response uses Codex's stable PreToolUse contract.  It deliberately
+    returns only a fixed reason and the updated invocation, never the prompt
+    or any other task evidence.
+    """
+    tool = payload.get("tool_name") or payload.get("tool")
+    if not isinstance(tool, str) or tool.rsplit(".", 1)[-1] != "spawn_agent":
+        return ""
+    tool_input = _delegation_input(payload)
+    if not isinstance(tool_input, dict):
+        return json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "THALIRIS_ISOLATION_INPUT_INVALID",
+            }
+        }, separators=(",", ":"))
+    fork = tool_input.get("fork_turns")
+    allowed_small = type(fork) is int and 1 <= fork <= 2 and _has_isolation_reason(tool_input)
+    if fork == "none" or allowed_small:
+        return json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+            }
+        }, separators=(",", ":"))
+    updated = dict(tool_input)
+    updated["fork_turns"] = "none"
+    return json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": "THALIRIS_ISOLATION_REWRITTEN",
+            "updatedInput": updated,
+        }
+    }, ensure_ascii=False, separators=(",", ":"))
 
 
 def _capture_delegation(state: dict[str, Any], payload: dict[str, Any]) -> bool:

@@ -11,11 +11,10 @@ findings, review bodies, evidence records, Git status, or broad memory/milestone
 bodies as part of normal routing. Use `context task-show` only for an explicit
 diagnostic need.
 
-Dispatch Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer
-as fresh native children with `fork_turns="none"`. A positive fork of one or two
-turns needs an `Isolation reason:` line in the native message; missing or `all` is a failed routing
-classification. The hook observes this only after Codex dispatches, so it cannot
-cancel or rewrite an already-created child.
+Dispatch every new root child as a fresh native child with `fork_turns="none"`. A
+positive fork of one or two turns needs an `Isolation reason:` line in the native
+message. The PreToolUse hook rewrites unsafe input before dispatch; PostToolUse
+keeps the native result auditable.
 
 For a local, obvious microtask, one fresh Implementer followed by deterministic
 verification is sufficient. Larger work uses only the roles needed by risk and

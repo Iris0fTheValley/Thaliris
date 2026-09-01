@@ -98,7 +98,7 @@ def test_cli_hook_decodes_utf8_bytes_verbatim_and_ignores_child(tmp_path):
         check=False,
     )
     assert started.returncode == 0
-    task_hash = hashlib.sha256(json.loads(started.stdout)["state"]["task_id"].encode("utf-8")).hexdigest()
+    task_hash = hashlib.sha256(json.loads(started.stdout)["task_id"].encode("utf-8")).hexdigest()
     assert (root / ".context" / "audit" / f"task-{task_hash[:24]}" / "intent.json").is_file()
 
     invalid = subprocess.run(command, input=b"\xff", cwd=root, capture_output=True, check=False)
@@ -198,7 +198,7 @@ def test_checkpoint_does_not_infer_requirement_omission_but_task_close_does(tmp_
     handle_hook(final_root, "UserPromptSubmit", payload(session="s2", prompt="实现功能；不得删除用户文件"))
     handle_hook(final_root, "PostToolUse", payload(session="s2", tool_name="spawn_agent", tool_input={"message": "实现功能"}, tool_response={"success": True}))
     closed = task_close(final_root, 1)
-    assert closed["state"]["status"] == "ACTIVE"
+    assert closed["status"] == "ACTIVE" and "state" not in closed
     assert closed["intent_audit"] == {"status": "DRIFT", "finding": "Correct delegation scope before closing this task."}
 
 
@@ -594,6 +594,32 @@ def test_post_tool_matcher_uses_regex_for_namespaced_multiagent_tools(tmp_path):
     assert any(any(handler.get("command") == "user-hook" for handler in entry["hooks"]) for entry in entries)
 
 
+def test_pre_tool_isolation_rewrites_before_dispatch_without_agent_type(tmp_path):
+    root = repo(tmp_path)
+    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"message": "work"})))
+    output = response["hookSpecificOutput"]
+    assert output["hookEventName"] == "PreToolUse" and output["permissionDecision"] == "allow"
+    assert output["updatedInput"]["fork_turns"] == "none"
+
+    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="collaboration.spawn_agent", tool_input={"fork_turns": "all", "message": "work"})))
+    assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
+
+    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": 1, "message": "Isolation reason: bounded compatibility"})))
+    output = response["hookSpecificOutput"]
+    assert output["permissionDecision"] == "allow" and "updatedInput" not in output
+
+    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": 2, "message": "work"})))
+    assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
+    assert handle_hook(root, "PreToolUse", payload(agent_id="child", tool_name="spawn_agent", tool_input={"fork_turns": "all"})) == ""
+
+
+def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
+    matcher = audit_module.hook_spec()["hooks"]["PreToolUse"][0]["matcher"]
+    assert re.fullmatch(matcher, "spawn_agent")
+    assert re.fullmatch(matcher, "collaboration.spawn_agent")
+    assert not re.fullmatch(matcher, "shell")
+
+
 def test_auditor_rubric_is_separate_from_untrusted_stdin_evidence(monkeypatch):
     captured = {}
     monkeypatch.setattr(audit_module, "_resolve_runner", lambda: "codex-test")
@@ -640,7 +666,7 @@ def test_task_start_binds_first_root_prompt_and_close_retries_drift(tmp_path, mo
     task_start(root, "complete history", None, None, token)
     handle_hook(root, "PostToolUse", payload(turn="a", tool_name="spawn_agent", tool_input={"message": "first delegation"}, tool_response={"success": True}))
     result = task_close(root, 1)
-    assert result["state"]["status"] == "ACTIVE"
+    assert result["status"] == "ACTIVE" and "state" not in result
     assert result["intent_audit"] == {"status": "DRIFT", "finding": "Correct delegation scope before closing this task."}
     assert len(requests) == 1 and requests[0][1] == "task-final"
     assert [item["text"] for item in requests[0][0]["delegations"]] == ["first delegation"]
@@ -650,7 +676,7 @@ def test_task_start_binds_first_root_prompt_and_close_retries_drift(tmp_path, mo
     # Controller corrects the delegation, then a retry may close the task.
     handle_hook(root, "PostToolUse", payload(turn="a", tool_name="spawn_agent", tool_input={"message": "first delegation; preserve all requirements"}, tool_response={"success": True}))
     passed = task_close(root, 1)
-    assert passed["state"]["status"] == "DONE" and "intent_audit" not in passed
+    assert passed["status"] == "DONE" and "state" not in passed and "intent_audit" not in passed
     assert len(requests) == 2 and requests[1][1] == "task-final"
 
 
@@ -661,7 +687,7 @@ def test_task_start_binds_only_the_matching_fresh_cross_session_capability(tmp_p
     current = capture_id(handle_hook(root, "UserPromptSubmit", payload(session="current-session", turn="current-turn", prompt="current request")))
     assert other != current
     started = task_start(root, "current task", None, None, current)
-    task_hash = hashlib.sha256(str(started["state"]["task_id"]).encode("utf-8")).hexdigest()
+    task_hash = hashlib.sha256(str(started["task_id"]).encode("utf-8")).hexdigest()
     anchor = json.loads((root / ".context" / "audit" / f"task-{task_hash[:24]}" / "intent.json").read_text(encoding="utf-8"))
     assert [item["text"] for item in anchor["prompts"]] == ["current request"]
     unbound = [json.loads(path.read_text(encoding="utf-8")) for path in (root / ".context" / "audit").glob("*/*/capture.json")]
@@ -673,7 +699,7 @@ def test_invalid_and_reused_capture_ids_fail_open(tmp_path):
     init(invalid_root)
     capture_id(handle_hook(invalid_root, "UserPromptSubmit", payload(prompt="do not bind invalid token")))
     invalid = task_start(invalid_root, "invalid token task", None, None, "not-a-capture-id")
-    invalid_hash = hashlib.sha256(str(invalid["state"]["task_id"]).encode("utf-8")).hexdigest()
+    invalid_hash = hashlib.sha256(str(invalid["task_id"]).encode("utf-8")).hexdigest()
     assert not (invalid_root / ".context" / "audit" / f"task-{invalid_hash[:24]}" / "intent.json").exists()
 
     root = repo(tmp_path / "reused")
@@ -682,9 +708,9 @@ def test_invalid_and_reused_capture_ids_fail_open(tmp_path):
     first = task_start(root, "first task", None, None, token)
     capability_dir = root / ".context" / "audit" / "capture-capabilities"
     assert not list(capability_dir.glob("*.json"))
-    assert task_close(root, 1)["state"]["status"] == "DONE"
+    assert task_close(root, 1)["status"] == "DONE"
     second = task_start(root, "second task", None, None, token)
-    second_hash = hashlib.sha256(str(second["state"]["task_id"]).encode("utf-8")).hexdigest()
+    second_hash = hashlib.sha256(str(second["task_id"]).encode("utf-8")).hexdigest()
     assert not (root / ".context" / "audit" / f"task-{second_hash[:24]}" / "intent.json").exists()
 
 
@@ -708,7 +734,7 @@ def test_task_close_hides_unknown_from_controller(tmp_path):
     init(root)
     task_start(root, "unknown audit", None, None)
     closed = task_close(root, 1)
-    assert closed["state"]["status"] == "DONE" and "intent_audit" not in closed
+    assert closed["status"] == "DONE" and "state" not in closed and "intent_audit" not in closed
 
 
 def test_task_scoped_intent_does_not_cross_task_boundaries(tmp_path, monkeypatch):

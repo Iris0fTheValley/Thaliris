@@ -37,13 +37,11 @@ MANAGED = f"""{MANAGED_START}
 
 Codex remains the runtime. Thaliris stores bounded task control and pointers; it has no worker, scheduler, polling loop, or authority to decide correctness.
 
-Controller owns delegation and final acceptance, but does not investigate or edit. Use `context prepare --role controller` for a bounded status packet and `context task-show` only for explicit raw diagnostics. Register external handoffs with `context task-artifact`; keep their contents outside controller packets.
+Controller uses `context task-status` or `context prepare --role controller` for bounded packets. `context task-show` is explicit raw diagnostics; `context task-artifact` passes pointers, not contents.
 
-For Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer dispatches, start a fresh isolated child: `fork_turns="none"`. A positive small fork is allowed only with an `Isolation reason:` line in its message. Missing or `all` is a routing failure reported after native dispatch; Codex has already created that child and remains authoritative.
+Every new root `spawn_agent` is fresh with `fork_turns="none"`; only `1` or `2` with an explicit `Isolation reason:` is allowed, and `all` is never a compatibility fallback. PreToolUse enforces this before dispatch; PostToolUse verifies the native result. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
 
-Use one fresh Implementer for an obvious local microtask, then deterministic verification. For larger work, load `docs/thaliris-role-packs.md`. Use native completion/mailbox observation; do not invent task polling or a lifecycle runtime.
-
-Project continuity is `.agent-memory/` and `.milestones/` through their INDEX files. Promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress/verification. Raw findings, reviews, transcripts, and tool output stay out of controller packets and durable memory.
+Read detailed role packs only when needed. Keep raw findings, evidence, transcripts, logs, and tool output outside Controller packets and durable memory; promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress.
 {MANAGED_END}
 """
 
@@ -58,11 +56,11 @@ unresolved questions, artifact pointers, and accepted constraints/decisions. Raw
 findings, reviews, evidence records, Git state, and broad memory/milestone bodies
 do not belong in normal Controller routing. `context task-show` is diagnostic-only.
 
-Dispatch Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer as
-fresh native children with `fork_turns="none"`. A one- or two-turn fork needs an
-`Isolation reason:` line in its message. The hook observes only after dispatch, so
-it cannot alter the child. Use native completion/mailbox observation; there is no
-Thaliris worker, scheduler, polling loop, or retry runtime.
+Dispatch every new root child as a fresh native child with `fork_turns="none"`.
+A one- or two-turn fork needs an `Isolation reason:` line in its message. The
+PreToolUse hook rewrites unsafe input before dispatch; PostToolUse verifies the
+native result. Use native completion/mailbox observation; there is no Thaliris
+worker, scheduler, polling loop, or retry runtime.
 
 ## Work And Retention
 
@@ -779,7 +777,7 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
             bind_unbound_intent(root, str(state["task_id"]), intent_capture_id)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
-    return {"ok": True, "state": state}
+    return _controller_ack(state, ["task"])
 
 
 def task_update(root: Path, role: str, base_revision: int, input_file: str | None) -> dict[str, object]:
@@ -840,7 +838,7 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
         new_snapshot = state["investigation_snapshot"] if "investigation_snapshot" in partial else []
         _require_fresh_confirmed_items(root, state["evidence_refs"], new_investigation + new_snapshot)
         _write_state(root, state, enforce_fresh=bool({"evidence_refs", "confirmed_facts"} & set(partial)))
-    return {"ok": True, "state": state}
+    return _controller_ack(state, sorted(partial))
 
 
 def task_show(root: Path) -> dict[str, object]:
@@ -865,6 +863,17 @@ def _controller_packet(state: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _controller_ack(state: dict[str, object], changed: list[str]) -> dict[str, object]:
+    """Return mutation metadata without exposing the internal task state."""
+    return {
+        "ok": True,
+        "task_id": state["task_id"],
+        "revision": state["revision"],
+        "status": state["status"],
+        "changed": sorted({value for value in changed if isinstance(value, str)}),
+    }
+
+
 def task_status(root: Path) -> dict[str, object]:
     root = _repo_root(root)
     return _controller_packet(_load_state(root))
@@ -883,7 +892,7 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
         state["artifact_refs"].append(artifact)
         state["revision"] = base_revision + 1
         _write_state(root, state, enforce_fresh=False)
-    return {"ok": True, "state": state}
+    return _controller_ack(state, ["artifact_refs"])
 
 
 def task_close(root: Path, base_revision: int) -> dict[str, object]:
@@ -910,7 +919,10 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
             # the delegation and retry task-close. Never expose model text.
             return {
                 "ok": False,
-                "state": state,
+                "task_id": state["task_id"],
+                "revision": state["revision"],
+                "status": state["status"],
+                "changed": [],
                 "intent_audit": {"status": "DRIFT", "finding": "Correct delegation scope before closing this task."},
             }
         try:
@@ -921,7 +933,7 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
             audit = {"status": "UNKNOWN", "findings": [], "reason": "audit_cleanup_failure"}
         state["status"] = "DONE"; state["revision"] = base_revision + 1; _write_state(root, state, enforce_fresh=False)
     # PASS and UNKNOWN intentionally stay entirely in the private audit plane.
-    return {"ok": True, "state": state}
+    return _controller_ack(state, ["status"])
 
 
 _PROMOTION_TYPES = {"decision", "invariant", "failure_mode", "constraint"}

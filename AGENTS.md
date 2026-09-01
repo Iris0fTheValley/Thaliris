@@ -11,11 +11,9 @@
 
 Codex remains the runtime. Thaliris stores bounded task control and pointers; it has no worker, scheduler, polling loop, or authority to decide correctness.
 
-Controller owns delegation and final acceptance, but does not investigate or edit. Use `context prepare --role controller` for a bounded status packet and `context task-show` only for explicit raw diagnostics. Register external handoffs with `context task-artifact`; keep their contents outside controller packets.
+Controller uses `context task-status` or `context prepare --role controller` for bounded packets. `context task-show` is explicit raw diagnostics; `context task-artifact` passes pointers, not contents.
 
-For Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer dispatches, start a fresh isolated child: `fork_turns="none"`. A positive small fork is allowed only with an `Isolation reason:` line in its message. Missing or `all` is a routing failure reported after native dispatch; Codex has already created that child and remains authoritative.
+Every new root `spawn_agent` is fresh with `fork_turns="none"`; only `1` or `2` with an explicit `Isolation reason:` is allowed, and `all` is never a compatibility fallback. PreToolUse enforces this before dispatch; PostToolUse verifies the native result. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
 
-Use one fresh Implementer for an obvious local microtask, then deterministic verification. For larger work, load `docs/thaliris-role-packs.md`. Use native completion/mailbox observation; do not invent task polling or a lifecycle runtime.
-
-Project continuity is `.agent-memory/` and `.milestones/` through their INDEX files. Promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress/verification. Raw findings, reviews, transcripts, and tool output stay out of controller packets and durable memory.
+Read detailed role packs only when needed. Keep raw findings, evidence, transcripts, logs, and tool output outside Controller packets and durable memory; promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress.
 <!-- thaliris:end -->

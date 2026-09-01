@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 import re
 import shutil
@@ -10,9 +11,50 @@ import tomllib
 
 from .models import ContextConfig
 from .core import LEGACY_MANAGED_END, LEGACY_MANAGED_START, MANAGED_END, MANAGED_START, entries, milestone_check, _load_state, _managed_span
-from .intent_audit import hooks_health
+from .intent_audit import hooks_health, is_managed_handler
 
 UNKNOWN = "UNKNOWN"
+
+
+def _context_isolation(root: Path) -> dict[str, str]:
+    """Report policy wiring separately from native runtime attestation.
+
+    A repository hook proves that the policy is installed, not that the
+    currently running Codex build honors PreToolUse or updatedInput.  Those
+    runtime capabilities therefore remain UNKNOWN until a live probe records
+    them; PostToolUse is a local observation surface when configured.
+    """
+    path = root / ".codex" / "hooks.json"
+    policy = post = "NO"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        hooks = value.get("hooks") if isinstance(value, dict) else None
+        if isinstance(hooks, dict):
+            for event, target in (("PreToolUse", "policy"), ("PostToolUse", "post")):
+                entries = hooks.get(event)
+                if not isinstance(entries, list):
+                    continue
+                managed = any(
+                    isinstance(entry, dict)
+                    and isinstance(entry.get("hooks"), list)
+                    and any(is_managed_handler(item, event) for item in entry["hooks"])
+                    for entry in entries
+                )
+                if managed:
+                    if target == "policy":
+                        policy = "YES"
+                    else:
+                        post = "YES"
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        policy = post = UNKNOWN
+    return {
+        "policy_present": policy,
+        "pre_dispatch_hook_supported": UNKNOWN,
+        "spawn_payload_supported": UNKNOWN,
+        "input_rewrite_supported": UNKNOWN,
+        "pre_dispatch_enforcement": UNKNOWN,
+        "post_dispatch_observation": post,
+    }
 
 
 def _codex_config() -> tuple[dict[str, object], bool]:
@@ -115,4 +157,4 @@ def report(root: Path) -> dict[str, object]:
         "task_state_valid": task_state_valid,
         "role_routing_ready": routing_ready,
     }
-    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "intent_audit": hooks_health(root), "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}
+    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "intent_audit": hooks_health(root), "context_isolation": _context_isolation(root), "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}

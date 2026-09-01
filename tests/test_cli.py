@@ -40,7 +40,7 @@ def test_init_idempotent_preserves_agents_and_required_block(tmp_path, capsys):
     code, first = run(capsys, root, "init")
     assert code == 0 and first["changed"]
     text = (root / "AGENTS.md").read_text(encoding="utf-8")
-    assert "Keep this rule." in text and all(term in text for term in ("Codex remains the runtime", "Controller owns delegation", "fork_turns=\"none\"", "task-artifact", "task-show", "microtask", "native completion/mailbox", "docs/thaliris-role-packs.md"))
+    assert "Keep this rule." in text and all(term in text for term in ("Codex remains the runtime", "Controller uses", "fork_turns=\"none\"", "task-artifact", "task-show", "PreToolUse", "PostToolUse"))
     assert "# Thaliris Role Packs" in (root / "docs/thaliris-role-packs.md").read_text(encoding="utf-8")
     code, second = run(capsys, root, "init")
     assert code == 0 and not second["changed"]
@@ -50,7 +50,7 @@ def test_managed_policy_keeps_roles_conditional_and_project_memory_scoped(tmp_pa
     root = repo(tmp_path); run(capsys, root, "init")
     text = (root / "AGENTS.md").read_text(encoding="utf-8")
     assert len(text) < 2500
-    assert all(term in text for term in ("no worker, scheduler, polling loop", "Raw findings, reviews, transcripts", "durable decisions, constraints, invariants"))
+    assert all(term in text for term in ("no worker, scheduler, polling loop", "raw findings, evidence, transcripts", "durable decisions, constraints, invariants"))
 
 
 def test_single_bounded_investigator_finding_does_not_auto_curate(tmp_path, capsys):
@@ -60,9 +60,11 @@ def test_single_bounded_investigator_finding_does_not_auto_curate(tmp_path, caps
     finding = {"kind": "SUPPORTED", "text": "single bounded finding", "evidence_refs": ["request"]}
     code, updated = task_input(root, capsys, {"investigation_findings": [finding]}, "task-update", "--role", "luna-investigator", "--base-revision", "1")
     assert code == 0
-    assert updated["state"]["investigation_findings"] == [finding]
-    assert updated["state"]["investigation_snapshot"] == []
-    assert updated["state"]["investigation_covered_through"] == 0
+    assert updated["revision"] == 2 and updated["changed"] == ["investigation_findings"]
+    current = state_of(root)
+    assert current["investigation_findings"] == [finding]
+    assert current["investigation_snapshot"] == []
+    assert current["investigation_covered_through"] == 0
     state_path = root / ".context/state.json"; before_prepare = state_path.read_bytes()
     _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
     assert curator["Current Investigation Snapshot"] == []
@@ -112,7 +114,7 @@ def test_init_and_migrate_upgrade_legacy_markers_without_duplicates(tmp_path, ca
         ignored = (root / ".gitignore").read_text(encoding="utf-8")
         assert "Keep." in agents and "keep.me" in ignored
         assert "## Thaliris Router" in agents
-        assert "For Investigator, Curator, Reasoning Specialist" in agents
+        assert "Every new root" in agents and "PreToolUse" in agents
         assert agents.count("<!-- thaliris:begin -->") == agents.count("<!-- thaliris:end -->") == 1
         assert ignored.count("# thaliris:begin") == ignored.count("# thaliris:end") == 1
         assert "codex-context:" not in agents and "codex-context:" not in ignored
@@ -456,7 +458,7 @@ def test_task_promote_uses_task_local_budget_without_blocking_close(tmp_path, ca
     assert after_memory == before_memory and not (root / ".agent-memory/decisions/D-17.md").exists()
     assert json.loads(state_path.read_text(encoding="utf-8"))["durable_promotion_count"] == 16
     code, closed = run(capsys, root, "task-close", "--base-revision", "1")
-    assert code == 0 and closed["state"]["status"] == "DONE"
+    assert code == 0 and closed["status"] == "DONE" and "state" not in closed
 
 
 def test_task_promote_rejects_large_maintenance_and_non_controller(tmp_path, capsys):
@@ -474,7 +476,7 @@ def test_task_close_does_not_promote_memory_and_raw_records_never_persist(tmp_pa
     before = {str(path.relative_to(root)): path.read_bytes() for path in (root / ".agent-memory").rglob("*.md")}
     run(capsys, root, "task-start", "ordinary task")
     code, closed = run(capsys, root, "task-close", "--base-revision", "1")
-    assert code == 0 and closed["state"]["status"] == "DONE"
+    assert code == 0 and closed["status"] == "DONE" and "state" not in closed
     after = {str(path.relative_to(root)): path.read_bytes() for path in (root / ".agent-memory").rglob("*.md")}
     assert after == before
 
@@ -514,6 +516,10 @@ def task_input(root: Path, capsys, data: dict, *args: str):
     return run(capsys, root, *args, "--input", str(path))
 
 
+def state_of(root: Path) -> dict:
+    return json.loads((root / ".context/state.json").read_text(encoding="utf-8"))
+
+
 def test_task_state_cas_atomic_and_cross_reference_validation(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     source = root / "src.txt"; source.write_text("observed", encoding="utf-8")
@@ -521,10 +527,10 @@ def test_task_state_cas_atomic_and_cross_reference_validation(tmp_path, capsys):
     evidence = {"id": "e1", "kind": "file", "locator": f"file:src.txt#{digest}", "summary": "observed", "confidence": "CONFIRMED"}
     statement = {"text": "x exists", "evidence_refs": ["e1"]}
     code, made = task_input(root, capsys, {"evidence_refs": [evidence], "confirmed_facts": [statement]}, "task-start", "repair")
-    assert code == 0 and made["state"]["revision"] == 1
+    assert code == 0 and made["revision"] == 1
     boundary = {"status": "SUPPORTED", "includes": ["src"], "excludes": [], "evidence_refs": []}
     code, controlled = task_input(root, capsys, {"modification_boundary": boundary}, "task-update", "--role", "controller", "--base-revision", "1")
-    assert code == 0 and controlled["state"]["modification_boundary"] == boundary
+    assert code == 0 and controlled["revision"] == 2 and state_of(root)["modification_boundary"] == boundary
     state = root / ".context/state.json"; original = state.read_bytes()
     code, failed = task_input(root, capsys, {"modification_boundary": boundary}, "task-update", "--role", "sol-high", "--base-revision", "2")
     assert code == 2 and "not allowed" in failed["error"] and state.read_bytes() == original
@@ -615,7 +621,7 @@ def test_non_controller_evidence_updates_are_append_only(tmp_path, capsys):
     assert code == 2 and "append-only" in failed["error"]
     added = {"id": "extra", "kind": "file", "locator": original["locator"], "summary": "additional", "confidence": "SUPPORTED"}
     code, updated = task_input(root, capsys, {"evidence_refs": [added]}, "task-update", "--role", "luna", "--base-revision", "1")
-    assert code == 0 and updated["state"]["evidence_refs"] == [original, added]
+    assert code == 0 and updated["revision"] == 2 and state_of(root)["evidence_refs"] == [original, added]
 
 
 def test_v1_task_state_without_findings_is_loaded_compatibly(tmp_path, capsys):
@@ -642,9 +648,9 @@ def test_v1_unbound_test_evidence_loads_stale_until_reverified(tmp_path, capsys)
     _, pack = run(capsys, root, "prepare", "--role", "sol-high")
     assert pack["Supported Evidence"] == [] and pack["Unknowns"][0]["text"].startswith("stale supported evidence")
     code, updated = task_input(root, capsys, {"changed_surface": ["src"]}, "task-update", "--role", "terra-implementer", "--base-revision", "1")
-    assert code == 0 and updated["state"]["revision"] == 2
+    assert code == 0 and updated["revision"] == 2
     code, closed = run(capsys, root, "task-close", "--base-revision", "2")
-    assert code == 0 and closed["state"]["status"] == "DONE"
+    assert code == 0 and closed["status"] == "DONE" and "state" not in closed
 
 
 def test_memory_audience_and_unicode_topics_symbols(tmp_path, capsys):
@@ -706,7 +712,7 @@ def test_task_close_without_retention_keeps_current_milestone_durable_files_unch
     assert code == 0
     before = {str(path.relative_to(root)): path.read_bytes() for directory in (root / ".agent-memory", root / ".milestones") for path in directory.rglob("*") if path.is_file()}
     code, closed = run(capsys, root, "task-close", "--base-revision", "1")
-    assert code == 0 and closed["state"]["status"] == "DONE"
+    assert code == 0 and closed["status"] == "DONE" and "state" not in closed
     after = {str(path.relative_to(root)): path.read_bytes() for directory in (root / ".agent-memory", root / ".milestones") for path in directory.rglob("*") if path.is_file()}
     assert after == before
 
@@ -773,7 +779,7 @@ def test_test_runtime_evidence_requires_fresh_bound_sources(tmp_path, capsys):
     assert stale["Supported Evidence"] == []
     assert stale["Unknowns"][0]["text"].startswith("stale supported evidence")
     code, updated = task_input(root, capsys, {"changed_surface": ["src.txt"]}, "task-update", "--role", "terra-implementer", "--base-revision", "1")
-    assert code == 0 and updated["state"]["revision"] == 2
+    assert code == 0 and updated["revision"] == 2
 
     bad = {"id": "run", "kind": "runtime", "locator": "manual", "summary": "observed", "confidence": "SUPPORTED", "source_refs": []}
     code, failed = task_input(root, capsys, {"evidence_refs": [bad]}, "task-update", "--role", "controller", "--base-revision", "2")
@@ -878,7 +884,7 @@ def test_investigation_curation_is_bounded_traceable_and_isolated_from_sol(tmp_p
     assert curator["Current Investigation Snapshot"] == []
     snapshot = [{"id": "S1", "kind": "SUPPORTED", "text": "compact behavior", "derived_from": [0], "supersedes": [], "evidence_refs": ["src"]}]
     code, curated = task_input(root, capsys, {"investigation_snapshot": snapshot}, "task-update", "--role", "luna-curator", "--base-revision", "2")
-    assert code == 0 and curated["state"]["investigation_findings"] == [supported, unknown]
+    assert code == 0 and curated["revision"] == 3 and state_of(root)["investigation_findings"] == [supported, unknown]
 
     _, investigator = run(capsys, root, "prepare", "--role", "luna-investigator")
     assert investigator["Investigation Snapshot"] == snapshot
@@ -888,7 +894,7 @@ def test_investigation_curation_is_bounded_traceable_and_isolated_from_sol(tmp_p
 
     replacement = [{"id": "S2", "kind": "SUPPORTED", "text": "deduplicated behavior", "derived_from": [0], "supersedes": ["S1"], "evidence_refs": ["src"]}]
     code, rewritten = task_input(root, capsys, {"investigation_snapshot": replacement}, "task-update", "--role", "luna-curator", "--base-revision", "3")
-    assert code == 0 and rewritten["state"]["investigation_snapshot"] == replacement
+    assert code == 0 and rewritten["revision"] == 4 and state_of(root)["investigation_snapshot"] == replacement
     promoted = [{"id": "S3", "kind": "CONFIRMED", "text": "not proven", "derived_from": [0], "supersedes": ["S2"], "evidence_refs": ["src"]}]
     code, failed = task_input(root, capsys, {"investigation_snapshot": promoted}, "task-update", "--role", "luna-curator", "--base-revision", "4")
     assert code == 2 and ("cannot promote" in failed["error"] or "fresh native" in failed["error"])
@@ -909,14 +915,14 @@ def test_investigator_and_reviewer_updates_append_without_rewriting_history(tmp_
     second = {"kind": "UNKNOWN", "text": "second finding", "evidence_refs": []}
     task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [first]}, "task-update", "--role", "luna", "--base-revision", "1")
     code, appended = task_input(root, capsys, {"investigation_findings": [second]}, "task-update", "--role", "luna", "--base-revision", "2")
-    assert code == 0 and appended["state"]["investigation_findings"] == [first, second]
+    assert code == 0 and appended["revision"] == 3 and state_of(root)["investigation_findings"] == [first, second]
     state_path = root / ".context/state.json"; before = state_path.read_bytes()
     code, failed = task_input(root, capsys, {"investigation_findings": [first]}, "task-update", "--role", "luna", "--base-revision", "3")
     assert code == 2 and "append-only" in failed["error"] and state_path.read_bytes() == before
 
     review = {"issue": "missing guard", "impact": "behavior can escape scope", "evidence_refs": ["src"]}
     code, reviewed = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "3")
-    assert code == 0 and reviewed["state"]["review_findings"] == [review]
+    assert code == 0 and reviewed["revision"] == 4 and state_of(root)["review_findings"] == [review]
     before = state_path.read_bytes()
     code, failed = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "4")
     assert code == 2 and "append-only" in failed["error"] and state_path.read_bytes() == before
@@ -1099,7 +1105,8 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     payload = {"evidence_refs": [evidence], "unknowns": [{"text": "choose the narrow behavior", "evidence_refs": []}], "constraints": [{"text": "preserve public API", "evidence_refs": []}], "decisions": [{"text": "use a status packet", "evidence_refs": []}], "active_work": ["implement packet"], "pending_results": ["focused tests"], "investigation_findings": [raw]}
     task_input(root, capsys, payload, "task-start", "isolate controller")
     code, registered = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "handoff", "--path", "docs/handoff.md", "--summary", "worker handoff")
-    assert code == 0 and registered["state"]["artifact_refs"] == [{"id": "handoff", "path": "docs/handoff.md", "summary": "worker handoff"}]
+    assert code == 0 and registered["revision"] == 2 and "state" not in registered
+    assert state_of(root)["artifact_refs"] == [{"id": "handoff", "path": "docs/handoff.md", "summary": "worker handoff"}]
     _, packet = run(capsys, root, "task-status")
     assert packet["Task"]["revision"] == 2 and packet["Active Work"] == ["implement packet"]
     assert packet["Artifact Refs"][0]["path"] == "docs/handoff.md"
@@ -1109,12 +1116,38 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     assert code == 2 and "path" in failed["error"]
 
 
+def test_controller_mutation_responses_never_leak_raw_working_set(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    source = root / "source.txt"; source.write_text("source", encoding="utf-8")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    marker = "RAW_CONTROLLER_MARKER"
+    evidence = {"id": "e1", "kind": "file", "locator": f"file:source.txt#{digest}", "summary": marker, "confidence": "SUPPORTED"}
+    finding = {"kind": "UNKNOWN", "text": marker, "evidence_refs": ["e1"]}
+    review = {"issue": marker, "impact": marker, "evidence_refs": ["e1"]}
+    responses = []
+    _, started = task_input(root, capsys, {"evidence_refs": [evidence]}, "task-start", "bounded lifecycle")
+    responses.append(started)
+    _, updated = task_input(root, capsys, {"investigation_findings": [finding]}, "task-update", "--role", "luna", "--base-revision", "1")
+    responses.append(updated)
+    _, reviewed = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "2")
+    responses.append(reviewed)
+    _, artifact = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "handoff", "--path", "source.txt", "--summary", marker)
+    responses.append(artifact)
+    _, closed = run(capsys, root, "task-close", "--base-revision", "4")
+    responses.append(closed)
+    encoded = json.dumps(responses, ensure_ascii=False)
+    assert all(marker not in encoded and "state" not in response for response in responses)
+
+
 def test_doctor_reports_routing_readiness_separately_from_command_success(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     code, result = run(capsys, root, "doctor")
     readiness = result["context"]["routing"]
     assert code == 0 and result["ok"] is True and result["context"]["ready_for_routing"] == "YES"
     assert readiness == {"command_executed": "YES", "configuration_valid": "YES", "managed_agents_present": "YES", "task_state_valid": "YES", "role_routing_ready": "YES"}
+    isolation = result["context_isolation"]
+    assert isolation["policy_present"] == "YES" and isolation["post_dispatch_observation"] == "YES"
+    assert all(isolation[key] == "UNKNOWN" for key in ("pre_dispatch_hook_supported", "spawn_payload_supported", "input_rewrite_supported", "pre_dispatch_enforcement"))
     (root / ".context/state.json").write_text('{"invalid":true}', encoding="utf-8")
     code, invalid = run(capsys, root, "doctor")
     assert code == 0 and invalid["ok"] is True and invalid["context"]["ready_for_routing"] == "NO"

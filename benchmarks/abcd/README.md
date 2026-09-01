@@ -37,8 +37,17 @@ The workload acceptance tests are checked in under `tests/test_abcd_workload_acc
 The sanitized run ledger is `results.json`. The benchmark-only
 `analyze_orchestration.py` reconstructs control-call classifications from
 exported session JSONL using `clean_run_manifest.json`; its baseline output is
-`orchestration_baseline.json`. Raw Codex session telemetry and external clone
-contents are not committed.
+`orchestration_baseline.json`. The benchmark-only `summarize_sessions.py` and
+`build_rerun_report.py` summarize the four orchestration-economy reruns listed
+in `clean_run_manifest_v7.json`, `orchestration_v7.json`,
+`session_metrics_v7.json`, and `rerun_v7_report.json`. Raw Codex session
+telemetry and external clone contents are not committed.
+
+The policy-only experiment is on `codex/abcd-benchmark-20260901` after
+`247abc4`. It changes only the managed instruction surface: use a realistic
+single blocking wait after spawn, avoid normal-path topology/status chatter,
+and reserve `send_message` for material updates. It does not change routing
+or isolation implementation.
 
 ## Result headline
 

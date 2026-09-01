@@ -1,0 +1,163 @@
+{
+  "classification": [
+    "PRODUCTIVE",
+    "TIMEOUT_POLL",
+    "DUPLICATE_QUERY",
+    "RECOVERY",
+    "UNKNOWN"
+  ],
+  "proxy_definition": "Sum of next root model-turn input_tokens for TIMEOUT_POLL and DUPLICATE_QUERY only; not a causal token-saving estimate.",
+  "runs": [
+    {
+      "avoidable_input_proxy": 0,
+      "classification_counts": {
+        "DUPLICATE_QUERY": 0,
+        "PRODUCTIVE": 1,
+        "RECOVERY": 0,
+        "TIMEOUT_POLL": 0,
+        "UNKNOWN": 0
+      },
+      "control_call_counts": {
+        "list_agents": 0,
+        "send_message": 0,
+        "task-status": 0,
+        "wait_agent": 1
+      },
+      "events": [
+        {
+          "avoidable_input_proxy": 0,
+          "child_task_state_after": "child=DONE;task=ACTIVE:r1",
+          "child_task_state_before": "child=ACTIVE;task=ACTIVE:r1",
+          "classification": "PRODUCTIVE",
+          "next_root_input_tokens": 23472,
+          "result": "completed",
+          "root_turn": 3,
+          "tool": "wait_agent"
+        }
+      ],
+      "root_file": "rollout-2026-09-01T19-27-04-01a05cb9-032c-7f80-ae81-965b2854e39e.jsonl",
+      "run": "C_T2"
+    },
+    {
+      "avoidable_input_proxy": 0,
+      "classification_counts": {
+        "DUPLICATE_QUERY": 0,
+        "PRODUCTIVE": 1,
+        "RECOVERY": 0,
+        "TIMEOUT_POLL": 0,
+        "UNKNOWN": 0
+      },
+      "control_call_counts": {
+        "list_agents": 0,
+        "send_message": 0,
+        "task-status": 0,
+        "wait_agent": 1
+      },
+      "events": [
+        {
+          "avoidable_input_proxy": 0,
+          "child_task_state_after": "child=DONE;task=ACTIVE:r1",
+          "child_task_state_before": "child=ACTIVE;task=ACTIVE:r1",
+          "classification": "PRODUCTIVE",
+          "next_root_input_tokens": 23547,
+          "result": "completed",
+          "root_turn": 3,
+          "tool": "wait_agent"
+        }
+      ],
+      "root_file": "rollout-2026-09-01T19-30-52-01a05cbc-7e30-7082-822d-ef26cc8a1674.jsonl",
+      "run": "C_T3"
+    },
+    {
+      "avoidable_input_proxy": 47691,
+      "classification_counts": {
+        "DUPLICATE_QUERY": 2,
+        "PRODUCTIVE": 2,
+        "RECOVERY": 0,
+        "TIMEOUT_POLL": 0,
+        "UNKNOWN": 0
+      },
+      "control_call_counts": {
+        "list_agents": 2,
+        "send_message": 0,
+        "task-status": 0,
+        "wait_agent": 2
+      },
+      "events": [
+        {
+          "avoidable_input_proxy": 0,
+          "child_task_state_after": "child=DONE;task=ACTIVE:r1",
+          "child_task_state_before": "child=ACTIVE;task=ACTIVE:r1",
+          "classification": "PRODUCTIVE",
+          "next_root_input_tokens": 23456,
+          "result": "completed",
+          "root_turn": 3,
+          "tool": "wait_agent"
+        },
+        {
+          "avoidable_input_proxy": 23639,
+          "child_task_state_after": "child=DONE;task=ACTIVE:r1",
+          "child_task_state_before": "child=DONE;task=ACTIVE:r1",
+          "classification": "DUPLICATE_QUERY",
+          "next_root_input_tokens": 23639,
+          "result": "topology:running,running",
+          "root_turn": 4,
+          "tool": "list_agents"
+        },
+        {
+          "avoidable_input_proxy": 0,
+          "child_task_state_after": "child=DONE;task=ACTIVE:r1",
+          "child_task_state_before": "child=DONE;task=ACTIVE:r1",
+          "classification": "PRODUCTIVE",
+          "next_root_input_tokens": 23825,
+          "result": "completed",
+          "root_turn": 5,
+          "tool": "wait_agent"
+        },
+        {
+          "avoidable_input_proxy": 24052,
+          "child_task_state_after": "child=DONE;task=ACTIVE:r1",
+          "child_task_state_before": "child=DONE;task=ACTIVE:r1",
+          "classification": "DUPLICATE_QUERY",
+          "next_root_input_tokens": 24052,
+          "result": "topology:running,running",
+          "root_turn": 6,
+          "tool": "list_agents"
+        }
+      ],
+      "root_file": "rollout-2026-09-01T19-35-57-01a05cc1-250b-7eb1-b107-a99c866b1c65.jsonl",
+      "run": "D_T2"
+    },
+    {
+      "avoidable_input_proxy": 0,
+      "classification_counts": {
+        "DUPLICATE_QUERY": 0,
+        "PRODUCTIVE": 1,
+        "RECOVERY": 0,
+        "TIMEOUT_POLL": 0,
+        "UNKNOWN": 0
+      },
+      "control_call_counts": {
+        "list_agents": 0,
+        "send_message": 0,
+        "task-status": 0,
+        "wait_agent": 1
+      },
+      "events": [
+        {
+          "avoidable_input_proxy": 0,
+          "child_task_state_after": "child=DONE;task=ACTIVE:r1",
+          "child_task_state_before": "child=ACTIVE;task=ACTIVE:r1",
+          "classification": "PRODUCTIVE",
+          "next_root_input_tokens": 23566,
+          "result": "completed",
+          "root_turn": 3,
+          "tool": "wait_agent"
+        }
+      ],
+      "root_file": "rollout-2026-09-01T19-40-07-01a05cc4-f94d-7970-b40c-b65df617338e.jsonl",
+      "run": "D_T3"
+    }
+  ],
+  "schema_version": 1
+}

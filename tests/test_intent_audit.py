@@ -689,6 +689,8 @@ def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
 
 def test_controller_guard_blocks_root_broad_investigation_and_mutation(tmp_path):
     root = repo(tmp_path)
+    init(root)
+    task_start(root, "guard source actions", None, None)
     for command in (
         "Get-Content -LiteralPath src/main.py",
         "rg -n root_cause src",
@@ -712,6 +714,8 @@ def test_controller_guard_blocks_root_broad_investigation_and_mutation(tmp_path)
 
 def test_controller_guard_blocks_root_apply_patch_without_leaking_payload(tmp_path):
     root = repo(tmp_path)
+    init(root)
+    task_start(root, "guard apply patch", None, None)
     secret_patch = "*** Begin Patch\n*** Update File: src/main.py\n+SECRET_PATCH_PAYLOAD\n*** End Patch"
     response = json.loads(
         handle_hook(
@@ -748,8 +752,19 @@ def test_controller_guard_allows_child_apply_patch(tmp_path):
     assert "CHILD_PATCH_PAYLOAD" not in json.dumps(evidence)
 
 
+def test_apply_patch_without_active_task_fails_open(tmp_path):
+    root = repo(tmp_path)
+    assert handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="apply_patch", tool_input={"patch": "*** Begin Patch\n*** End Patch"}),
+    ) == ""
+
+
 def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path):
     root = repo(tmp_path)
+    init(root)
+    task_start(root, "guard lifecycle", None, None)
     blocked = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
     assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
     handle_hook(root, "PostToolUse", payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "none", "message": "bounded child"}, tool_response={"task_name": "/root/child"}))
@@ -759,6 +774,8 @@ def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path
 
 def test_controller_guard_accepts_opaque_native_spawn_post_result(tmp_path):
     root = repo(tmp_path)
+    init(root)
+    task_start(root, "guard opaque response", None, None)
     handle_hook(
         root,
         "PostToolUse",

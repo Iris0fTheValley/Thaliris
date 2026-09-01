@@ -542,6 +542,8 @@ def _post_tool_succeeded(response: object) -> bool:
 
 def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | None:
     """Classify only well-known shell actions; unknown commands fail open."""
+    if _active_task_id(root) is None:
+        return None
     command = _bash_command(payload)
     if command is None:
         return "UNKNOWN"
@@ -1073,6 +1075,8 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
         return ""
     if tool == _CONTROLLER_MUTATION_TOOL_NAME:
         root = _hook_repository_root(root or Path.cwd(), payload)
+        if _active_task_id(root) is None:
+            return ""
         _record_controller_guard_event(root, payload, "SOURCE_MUTATION", "blocked")
         return json.dumps({
             "hookSpecificOutput": {

@@ -34,8 +34,11 @@ statistics exclude earlier shared-worktree/session-contaminated attempts.
 The model run itself is intentionally not automated by this repository: it
 requires the installed Codex CLI, account state, and the configured MCP tools.
 The workload acceptance tests are checked in under `tests/test_abcd_workload_acceptance.py`.
-The sanitized run ledger is `results.json`; raw Codex session telemetry and
-external clone contents are not committed.
+The sanitized run ledger is `results.json`. The benchmark-only
+`analyze_orchestration.py` reconstructs control-call classifications from
+exported session JSONL using `clean_run_manifest.json`; its baseline output is
+`orchestration_baseline.json`. Raw Codex session telemetry and external clone
+contents are not committed.
 
 ## Result headline
 

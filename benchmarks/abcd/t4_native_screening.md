@@ -10,8 +10,12 @@
   API, remote refs, installs, or dependency-cache exploration.
 - Each model used a fresh shallow checkout at the exact task base commit. No
   Codex session, child, patch, answer, or failure reason was reused.
-- Same task wording, acceptance criteria, focused tests, and relevant test
-  suite. Run order was randomized operationally as B-lite then A-lite.
+- Same task wording, acceptance criteria, and focused evaluator. The directly
+  relevant-suite breadth was model-selected under the bounded prompt: A ran
+  `TestOps + test_datatree_mapping`, while B ran the full
+  `test_datatree + test_datatree_mapping`. This is recorded as a limitation,
+  not silently treated as an equal test count. Run order was randomized
+  operationally as B-lite then A-lite.
 
 ## xarray-9636 (valid clean pair)
 
@@ -40,9 +44,11 @@ but the focused evaluator is reliable and the final patch is narrow.
 The CLI emitted an existing local `requests` dependency-version warning. It
 did not change the result. Both patches aligned nodes by relative path and
 retained positional fallback for intentionally differently named isomorphic
-trees. The clean pair therefore shows **no model-quality discrimination**:
-both models solved the task under the same controls. It should not be promoted
-to T4 solely because its static complexity score is high.
+trees. The common focused regression and scope outcome therefore show **no
+model-quality discrimination**: both models solved the task under the same
+controls. The differing relevant-suite breadth prevents treating the
+39-versus-146 pass counts as a quality ranking. It should not be promoted to
+T4 solely because its static complexity score is high.
 
 The JSONL `turn.completed` usage is the available CLI aggregate for this
 screen. It is not a substitute for a full ABCD telemetry ledger; peak context,

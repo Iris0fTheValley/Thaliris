@@ -870,7 +870,7 @@ def _isolation_classification(tool: str, tool_input: dict[str, Any], _role: str)
         return {"required": "YES", "fork_turns": "MISSING", "status": "FAIL"}
     if fork == "all":
         return {"required": "YES", "fork_turns": "ALL", "status": "FAIL"}
-    if type(fork) is int and 1 <= fork <= 2:
+    if isinstance(fork, str) and fork in {"1", "2"}:
         return {"required": "YES", "fork_turns": "SMALL", "status": "EXCEPTION" if _has_isolation_reason(tool_input) else "FAIL"}
     return {"required": "YES", "fork_turns": "OTHER", "status": "FAIL"}
 
@@ -895,7 +895,7 @@ def _pre_tool_output(payload: dict[str, Any]) -> str:
             }
         }, separators=(",", ":"))
     fork = tool_input.get("fork_turns")
-    allowed_small = type(fork) is int and 1 <= fork <= 2 and _has_isolation_reason(tool_input)
+    allowed_small = isinstance(fork, str) and fork in {"1", "2"} and _has_isolation_reason(tool_input)
     if fork == "none" or allowed_small:
         return json.dumps({
             "hookSpecificOutput": {

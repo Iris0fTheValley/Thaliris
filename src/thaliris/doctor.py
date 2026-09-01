@@ -1,8 +1,8 @@
 """Read-only adapter and Codex configuration diagnostics."""
 from __future__ import annotations
 
-import os
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -16,21 +16,22 @@ from .intent_audit import hooks_health, is_managed_handler
 UNKNOWN = "UNKNOWN"
 
 
-def _context_isolation(root: Path) -> dict[str, str]:
+def _context_isolation(root: Path) -> dict[str, object]:
     """Report policy wiring separately from native runtime attestation.
 
     A repository hook proves that the policy is installed, not that the
     currently running Codex build honors PreToolUse or updatedInput.  Those
-    runtime capabilities therefore remain UNKNOWN until a live probe records
-    them; PostToolUse is a local observation surface when configured.
+    runtime capabilities therefore remain UNKNOWN until a live native probe
+    records them.  Configuration is reported only under ``configured``;
+    ``observed`` never becomes YES merely because a hook file exists.
     """
     path = root / ".codex" / "hooks.json"
-    policy = post = "NO"
+    policy = pre = post = "NO"
     try:
         value = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
         hooks = value.get("hooks") if isinstance(value, dict) else None
         if isinstance(hooks, dict):
-            for event, target in (("PreToolUse", "policy"), ("PostToolUse", "post")):
+            for event, target in (("PreToolUse", "pre"), ("PostToolUse", "post")):
                 entries = hooks.get(event)
                 if not isinstance(entries, list):
                     continue
@@ -41,19 +42,26 @@ def _context_isolation(root: Path) -> dict[str, str]:
                     for entry in entries
                 )
                 if managed:
-                    if target == "policy":
+                    if target == "pre":
+                        pre = "YES"
                         policy = "YES"
                     else:
                         post = "YES"
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        policy = post = UNKNOWN
+        policy = pre = post = UNKNOWN
     return {
-        "policy_present": policy,
-        "pre_dispatch_hook_supported": UNKNOWN,
-        "spawn_payload_supported": UNKNOWN,
-        "input_rewrite_supported": UNKNOWN,
-        "pre_dispatch_enforcement": UNKNOWN,
-        "post_dispatch_observation": post,
+        "configured": {
+            "policy_present": policy,
+            "pre_dispatch_hook": pre,
+            "post_dispatch_hook": post,
+        },
+        "observed": {
+            "pre_dispatch_hook_supported": UNKNOWN,
+            "spawn_payload_supported": UNKNOWN,
+            "input_rewrite_supported": UNKNOWN,
+            "pre_dispatch_enforcement": UNKNOWN,
+            "post_dispatch_observation": UNKNOWN,
+        },
     }
 
 

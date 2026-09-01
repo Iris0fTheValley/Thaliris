@@ -31,15 +31,14 @@ Codex 仍然是 runtime 和 Controller。源代码、Git、测试、编译器和
 ## 紧凑路由与隔离
 
 此前托管的 `AGENTS.md` 会把完整 lifecycle policy 放进每个 Codex context；而原生
-`spawn_agent` 默认 `fork_turns="all"`。这既增加了控制指令成本，也会在调用方遗漏
-参数时让需要隔离的角色继承父上下文。
+`spawn_agent` 的 schema 使用 `"none"`、`"all"` 或 `"1"`/`"2"` 字符串。缺少参数时，
+需要隔离的 child 会继承父上下文。
 
-现在 `context init` 生成紧凑 router。Investigator、Curator、Reasoning Specialist、
-Implementer 与 Reviewer 必须使用新的 `fork_turns="none"` child。PostToolUse hook
-只在原生 dispatch 完成后做确定性分类：`none` 为 PASS；缺失或 `all` 为 FAIL；只允许
-message 中带 `Isolation reason:` 行的一到两个 turn fork 作为 exception。它是事后观察，不能阻止
-或改写 Codex 已经创建的 child。详细 lifecycle、promotion 和 verification 规则只在需要时
-从 `docs/thaliris-role-packs.md` 加载。
+现在 `context init` 生成紧凑 router。所有 root child 默认使用新的
+`fork_turns="none"`。PreToolUse 在原生 dispatch 前把缺失、`"all"` 或没有
+`Isolation reason:` 的 `"1"`/`"2"` 重写为 `"none"`；PostToolUse 继续做事后分类验证。
+详细 lifecycle、promotion 和 verification 规则只在需要时从 `docs/thaliris-role-packs.md`
+加载。
 
 普通 Controller packet（`context task-status` 或 `prepare --role controller`）只包含 task
 identity/status、active work、pending results、unresolved questions、artifact pointers 和
@@ -49,7 +48,8 @@ accepted constraints/decisions。它刻意不包含 raw findings、review bodies
 
 `context doctor` 把 `ready_for_routing` 与 command execution 分开报告，并给出
 `command_executed`、`configuration_valid`、`managed_agents_present`、`task_state_valid` 和
-`role_routing_ready` 五个维度。
+`role_routing_ready` 五个维度；`context_isolation.configured` 与
+`context_isolation.observed` 分开，配置存在不等于 native hook 已观察。
 
 可复现的 A/B protocol 在 `tests/fixtures/workflow_ab.json`，可用
 `python tools/workflow_ab.py --fixture tests/fixtures/workflow_ab.json` 报告。没有明确的

@@ -39,7 +39,7 @@ Codex remains the runtime. Thaliris stores bounded task control and pointers; it
 
 Controller uses `context task-status` or `context prepare --role controller` for bounded packets. `context task-show` is explicit raw diagnostics; `context task-artifact` passes pointers, not contents.
 
-Every new root `spawn_agent` is fresh with `fork_turns="none"`; only `1` or `2` with an explicit `Isolation reason:` is allowed, and `all` is never a compatibility fallback. PreToolUse enforces this before dispatch; PostToolUse verifies the native result. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+Every new root `spawn_agent` is fresh with `fork_turns="none"`; only `"1"` or `"2"` with an explicit `Isolation reason:` is allowed, and `all` is never a compatibility fallback. PreToolUse enforces this before dispatch; PostToolUse verifies the native result. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
 
 Read detailed role packs only when needed. Keep raw findings, evidence, transcripts, logs, and tool output outside Controller packets and durable memory; promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress.
 {MANAGED_END}

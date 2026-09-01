@@ -24,19 +24,16 @@ Codex remains the runtime and controller. Source code, Git, tests, compilers, an
 ## Compact routing and isolation
 
 The original managed `AGENTS.md` accumulated detailed lifecycle policy in every
-Codex context, while native `spawn_agent` defaults to `fork_turns="all"`. That
-made the control instruction costly and allowed isolation-sensitive role
-dispatches to inherit the parent context unless the caller remembered an
-otherwise invisible native default.
+Codex context. Native `spawn_agent` accepts `"none"`, `"all"`, or string
+`"1"`/`"2"`; omitting the value lets an isolation-sensitive child inherit the
+parent context.
 
-`context init` now generates a compact router. It requires a fresh
-`fork_turns="none"` dispatch for Investigator, Curator, Reasoning Specialist,
-Implementer, and Reviewer. The PostToolUse hook classifies the completed native
-dispatch: `none` passes; omitted or `all` fails; a one- or two-turn fork is an
-exception only when its native message has an `Isolation reason:` line. This is
-observational after dispatch, so it cannot prevent or alter a child Codex has
-already created. Detailed lifecycle, promotion, and verification policy is
-loaded only when needed from `docs/thaliris-role-packs.md`.
+`context init` now generates a compact router. Every root child defaults to a
+fresh `fork_turns="none"` dispatch. The PreToolUse hook rewrites omitted,
+`"all"`, or string `"1"`/`"2"` forks without an `Isolation reason:` to
+`"none"` before native dispatch; PostToolUse still classifies the completed
+dispatch for verification. Detailed lifecycle, promotion, and verification
+policy is loaded only when needed from `docs/thaliris-role-packs.md`.
 
 The normal Controller packet (`context task-status` or `prepare --role
 controller`) contains only task identity/status, active work, pending results,
@@ -49,6 +46,8 @@ pointers without inlining their contents.
 `context doctor` reports `ready_for_routing` separately from successful command
 execution, with the dimensions `command_executed`, `configuration_valid`,
 `managed_agents_present`, `task_state_valid`, and `role_routing_ready`.
+`context_isolation.configured` and `.observed` are separate; configured hooks
+are not native observation evidence.
 
 The reproducible A/B protocol is the static fixture
 `tests/fixtures/workflow_ab.json`, reported by

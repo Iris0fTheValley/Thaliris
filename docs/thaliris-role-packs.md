@@ -12,8 +12,8 @@ bodies as part of normal routing. Use `context task-show` only for an explicit
 diagnostic need.
 
 Dispatch every new root child as a fresh native child with `fork_turns="none"`. A
-positive fork of one or two turns needs an `Isolation reason:` line in the native
-message. The PreToolUse hook rewrites unsafe input before dispatch; PostToolUse
+positive fork of `"1"` or `"2"` turns needs an `Isolation reason:` line in the
+native message. The PreToolUse hook rewrites unsafe input before dispatch; PostToolUse
 keeps the native result auditable.
 
 For a local, obvious microtask, one fresh Implementer followed by deterministic

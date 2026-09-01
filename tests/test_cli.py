@@ -1146,8 +1146,8 @@ def test_doctor_reports_routing_readiness_separately_from_command_success(tmp_pa
     assert code == 0 and result["ok"] is True and result["context"]["ready_for_routing"] == "YES"
     assert readiness == {"command_executed": "YES", "configuration_valid": "YES", "managed_agents_present": "YES", "task_state_valid": "YES", "role_routing_ready": "YES"}
     isolation = result["context_isolation"]
-    assert isolation["policy_present"] == "YES" and isolation["post_dispatch_observation"] == "YES"
-    assert all(isolation[key] == "UNKNOWN" for key in ("pre_dispatch_hook_supported", "spawn_payload_supported", "input_rewrite_supported", "pre_dispatch_enforcement"))
+    assert isolation["configured"] == {"policy_present": "YES", "pre_dispatch_hook": "YES", "post_dispatch_hook": "YES"}
+    assert all(isolation["observed"][key] == "UNKNOWN" for key in ("pre_dispatch_hook_supported", "spawn_payload_supported", "input_rewrite_supported", "pre_dispatch_enforcement", "post_dispatch_observation"))
     (root / ".context/state.json").write_text('{"invalid":true}', encoding="utf-8")
     code, invalid = run(capsys, root, "doctor")
     assert code == 0 and invalid["ok"] is True and invalid["context"]["ready_for_routing"] == "NO"

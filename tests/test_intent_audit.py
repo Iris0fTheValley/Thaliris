@@ -604,11 +604,13 @@ def test_pre_tool_isolation_rewrites_before_dispatch_without_agent_type(tmp_path
     response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="collaboration.spawn_agent", tool_input={"fork_turns": "all", "message": "work"})))
     assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
 
-    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": 1, "message": "Isolation reason: bounded compatibility"})))
+    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "1", "message": "Isolation reason: bounded compatibility"})))
     output = response["hookSpecificOutput"]
     assert output["permissionDecision"] == "allow" and "updatedInput" not in output
 
-    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": 2, "message": "work"})))
+    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "2", "message": "work"})))
+    assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
+    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": 1, "message": "Isolation reason: wrong native type"})))
     assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
     assert handle_hook(root, "PreToolUse", payload(agent_id="child", tool_name="spawn_agent", tool_input={"fork_turns": "all"})) == ""
 
@@ -818,7 +820,7 @@ def test_incomplete_evidence_cannot_turn_auditor_drift_into_a_block(tmp_path, mo
 
 def test_spawn_isolation_is_classified_after_native_dispatch(tmp_path):
     root = repo(tmp_path)
-    for fork_turns, message in (("none", "work"), ("all", "work"), (None, "work"), (1, "Isolation reason: bounded compatibility need"), (2, "work")):
+    for fork_turns, message in (("none", "work"), ("all", "work"), (None, "work"), ("1", "Isolation reason: bounded compatibility need"), ("2", "work")):
         tool_input = {"message": message, "agent_type": "Terra Implementer"}
         if fork_turns is not None:
             tool_input["fork_turns"] = fork_turns

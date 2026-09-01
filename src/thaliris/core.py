@@ -39,7 +39,7 @@ Codex remains the runtime. Thaliris stores bounded task control and pointers; it
 
 Controller uses `context task-status` or `context prepare --role controller` for bounded packets. `context task-show` is explicit raw diagnostics; `context task-artifact` passes pointers, not contents.
 
-Every new root `spawn_agent` is fresh with `fork_turns="none"`; only `"1"` or `"2"` with an explicit `Isolation reason:` is allowed, and `all` is never a compatibility fallback. PreToolUse enforces this before dispatch; PostToolUse verifies the native result. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+During an active task the Controller is control-plane-only. Every new root child must be a fresh execution child with `fork_turns="none"`, and at least one child is required before investigation, source edits, or task-close, including for microtasks. Root shell investigation/mutation is mechanically guarded at PreToolUse; PostToolUse records dispatch evidence; bounded context commands and deterministic acceptance checks remain available. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
 
 Read detailed role packs only when needed. Keep raw findings, evidence, transcripts, logs, and tool output outside Controller packets and durable memory; promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress.
 {MANAGED_END}
@@ -56,18 +56,25 @@ unresolved questions, artifact pointers, and accepted constraints/decisions. Raw
 findings, reviews, evidence records, Git state, and broad memory/milestone bodies
 do not belong in normal Controller routing. `context task-show` is diagnostic-only.
 
-Dispatch every new root child as a fresh native child with `fork_turns="none"`.
-A one- or two-turn fork needs an `Isolation reason:` line in its message. The
-PreToolUse hook rewrites unsafe input before dispatch; PostToolUse verifies the
-native result. Use native completion/mailbox observation; there is no Thaliris
-worker, scheduler, polling loop, or retry runtime.
+Every active task starts with one fresh execution child using `fork_turns="none"`.
+The Controller may then add Investigator, Curator, Reasoning Specialist, or
+Reviewer children only when the bounded result shows that role is needed. A
+one- or two-turn fork is also rewritten to `none`; no encrypted reason is used
+as an exception. PreToolUse guards root shell investigation/mutation and
+task-close-before-child; PostToolUse records native dispatch evidence. Use
+native completion/mailbox observation; there is no Thaliris worker, scheduler,
+polling loop, or retry runtime.
 
 ## Work And Retention
 
-For a local microtask, use one fresh Implementer then deterministic verification.
+For a local microtask, use exactly one fresh Implementer then deterministic
+verification; the persistent Controller never edits source directly.
 Investigators append bounded findings; Curators compact a snapshot; Reasoning
 Specialists receive accepted decisions rather than raw history; Implementers receive
-the modification boundary; reviewers return independent findings. Promote only
+the explicit Modification Boundary, including out-of-scope exclusions and required
+verification; reviewers return independent findings. If bounded findings contain an
+unresolved architecture, provenance, or cross-module decision, route only that
+Decision Context to `sol-high` rather than investigating at root. Promote only
 reusable decisions, constraints, invariants, failure modes, or material milestone
 progress/verification. `task-artifact` records a bounded normalized external pointer.
 """
@@ -777,7 +784,7 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
             bind_unbound_intent(root, str(state["task_id"]), intent_capture_id)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
-    return _controller_ack(state, ["task"])
+    return _controller_ack(state, ["task"], include_packet=True)
 
 
 def task_update(root: Path, role: str, base_revision: int, input_file: str | None) -> dict[str, object]:
@@ -849,6 +856,7 @@ def task_show(root: Path) -> dict[str, object]:
 def _controller_packet(state: dict[str, object]) -> dict[str, object]:
     """Return control metadata only; raw evidence remains task-show-only."""
     statements = lambda items: [item["text"] for item in items]
+    boundary = state["modification_boundary"]
     return {
         "ok": True,
         "schema_version": state["schema_version"],
@@ -860,18 +868,28 @@ def _controller_packet(state: dict[str, object]) -> dict[str, object]:
         "Artifact Refs": state["artifact_refs"],
         "Accepted Constraints": statements(state["constraints"]),
         "Accepted Decisions": statements(state["decisions"]),
+        "Modification Boundary": {
+            "status": boundary["status"],
+            "includes": boundary["includes"],
+            "excludes": boundary["excludes"],
+            "evidence_refs": boundary["evidence_refs"],
+        },
+        "Verification Target": state["verification_target"],
     }
 
 
-def _controller_ack(state: dict[str, object], changed: list[str]) -> dict[str, object]:
+def _controller_ack(state: dict[str, object], changed: list[str], *, include_packet: bool = False) -> dict[str, object]:
     """Return mutation metadata without exposing the internal task state."""
-    return {
+    result: dict[str, object] = {
         "ok": True,
         "task_id": state["task_id"],
         "revision": state["revision"],
         "status": state["status"],
         "changed": sorted({value for value in changed if isinstance(value, str)}),
     }
+    if include_packet:
+        result["controller_packet"] = _controller_packet(state)
+    return result
 
 
 def task_status(root: Path) -> dict[str, object]:

@@ -36,6 +36,31 @@ def _runtime_hook_evidence(root: Path) -> tuple[bool, bool, bool]:
     return pre, post, spawn
 
 
+def _controller_boundary_evidence(root: Path) -> dict[str, str]:
+    """Report only observed root-guard events from private runtime markers."""
+    guard = blocked = child = False
+    for path in (root / ".context" / "audit").glob("*/runtime.json"):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(value, dict):
+            continue
+        counters = value.get("controller_guard")
+        if isinstance(counters, dict):
+            guard = True
+            try:
+                blocked = blocked or int(counters.get("blocked", 0) or 0) > 0
+            except (TypeError, ValueError):
+                pass
+        child = child or value.get("successful_spawn_observed") is True
+    return {
+        "root_action_guard": "YES" if guard else UNKNOWN,
+        "blocked_root_action": "YES" if blocked else UNKNOWN,
+        "child_dispatch_observed": "YES" if child else UNKNOWN,
+    }
+
+
 def _context_isolation(root: Path) -> dict[str, object]:
     """Report policy wiring separately from native runtime attestation.
 
@@ -186,4 +211,4 @@ def report(root: Path) -> dict[str, object]:
         "task_state_valid": task_state_valid,
         "role_routing_ready": routing_ready,
     }
-    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "intent_audit": hooks_health(root), "context_isolation": _context_isolation(root), "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}
+    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "intent_audit": hooks_health(root), "context_isolation": _context_isolation(root), "controller_boundary": {"observed": _controller_boundary_evidence(root)}, "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}

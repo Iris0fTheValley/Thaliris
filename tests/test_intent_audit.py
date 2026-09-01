@@ -680,7 +680,38 @@ def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
     assert re.fullmatch(matcher, "spawn_agent")
     assert re.fullmatch(matcher, "collaboration.spawn_agent")
     assert re.fullmatch(matcher, "collaborationspawn_agent")
-    assert not re.fullmatch(matcher, "shell")
+    assert re.fullmatch(matcher, "Bash")
+    assert not re.fullmatch(matcher, "shell-script")
+
+
+def test_controller_guard_blocks_root_broad_investigation_and_mutation(tmp_path):
+    root = repo(tmp_path)
+    for command in (
+        "Get-Content -LiteralPath src/main.py",
+        "rg -n root_cause src",
+        "Set-Content -LiteralPath src/main.py -Value changed",
+        "git diff -- src/main.py",
+    ):
+        response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
+        output = response["hookSpecificOutput"]
+        assert output["permissionDecision"] == "deny"
+        assert output["permissionDecisionReason"].startswith("THALIRIS_CONTROLLER_BOUNDARY:")
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-status"})) == ""
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_intent_audit.py"})) == ""
+    assert handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name="Bash", tool_input={"command": "Get-Content src/main.py"})) == ""
+    runtime = list((root / ".context" / "audit").glob("*/runtime.json"))
+    evidence = json.loads(runtime[0].read_text(encoding="utf-8"))
+    assert evidence["controller_guard"]["blocked"] == 4
+    assert "BROAD_INVESTIGATION" in evidence["controller_actions_observed"]
+    assert "SOURCE_MUTATION" in evidence["controller_actions_observed"]
+
+
+def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path):
+    root = repo(tmp_path)
+    blocked = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
+    assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
+    handle_hook(root, "PostToolUse", payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "none", "message": "bounded child"}, tool_response={"task_name": "/root/child"}))
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})) == ""
 
 
 def test_auditor_rubric_is_separate_from_untrusted_stdin_evidence(monkeypatch):

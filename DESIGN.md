@@ -25,19 +25,28 @@ small router in `core.py:MANAGED`; the detailed policy is on demand in
 
 The capture adapter in `intent_audit.py:_capture_delegation` classifies completed
 `spawn_agent` calls for isolation-required roles. `fork_turns="none"` is PASS;
-missing or `all` is FAIL; a positive fork of one or two turns is an EXCEPTION
-only with an `Isolation reason:` line in the native message. This is intentionally post-dispatch evidence, not
-a native interception point: it cannot prevent, cancel, or rewrite the child.
-Codex remains the runtime and native completion/mailbox mechanisms remain the
-only lifecycle mechanisms.
+missing, `all`, and positive one/two-turn forks are FAIL. PreToolUse rewrites
+every non-`none` fork before dispatch and no longer treats an encrypted reason as
+an exception. Codex remains the runtime and native completion/mailbox mechanisms
+remain the only lifecycle mechanisms.
+
+The same PreToolUse surface exposes Codex 0.146 root shell execution as
+`Bash`. The adapter mechanically denies only recognized root broad investigation,
+source mutation, and `task-close` before a successful child dispatch. Bounded
+`context` commands and deterministic acceptance checks remain allowed. Unknown
+scripts, non-shell tools, and child events that do not expose the documented root
+topology remain fail-open/`UNKNOWN`; the adapter does not claim a universal
+permission system.
 
 `core.py:_controller_packet` emits the normal Controller control plane: task
 identity/status, active work, pending results, unresolved questions, external
-artifact pointers, and accepted constraints/decisions. It does not calculate or
-return raw investigation/review material, evidence records, Git status, or
-memory/milestone bodies. Raw state is diagnostic-only through `task-show`.
-`task-artifact` appends a bounded normalized repo-relative pointer; its contents
-are external to the packet.
+artifact pointers, accepted constraints/decisions, and the bounded Modification
+Boundary. It does not calculate or return raw investigation/review material,
+evidence records, Git status, or memory/milestone bodies. Raw state is
+diagnostic-only through `task-show`. `task-artifact` appends a bounded normalized
+repo-relative pointer; its contents are external to the packet. `task-start`
+returns this bounded packet once so a Controller can dispatch without an
+extra status round trip.
 
 `doctor.py:report` reports routing readiness independently from command success.
 The A/B fixture and reporter (`tests/fixtures/workflow_ab.json` and

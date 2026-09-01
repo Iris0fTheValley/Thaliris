@@ -30,18 +30,25 @@ parent context.
 
 `context init` now generates a compact router. Every root child defaults to a
 fresh `fork_turns="none"` dispatch. The PreToolUse hook rewrites omitted,
-`"all"`, or string `"1"`/`"2"` forks without an `Isolation reason:` to
-`"none"` before native dispatch; PostToolUse still classifies the completed
-dispatch for verification. Detailed lifecycle, promotion, and verification
-policy is loaded only when needed from `docs/thaliris-role-packs.md`.
+`"all"`, and string `"1"`/`"2"` forks to `"none"` before native dispatch; it no
+longer depends on an encrypted `Isolation reason:`. PostToolUse still classifies
+the completed dispatch for verification. Detailed lifecycle, promotion, and
+verification policy is loaded only when needed from `docs/thaliris-role-packs.md`.
 
 The normal Controller packet (`context task-status` or `prepare --role
 controller`) contains only task identity/status, active work, pending results,
-unresolved-question text, artifact pointers, and accepted constraints/decisions.
-It deliberately omits raw findings, review bodies, evidence records, broad Git
-state, and memory/milestone bodies. `context task-show` remains the explicit raw
-diagnostic command. `context task-artifact` appends bounded, path-safe artifact
-pointers without inlining their contents.
+unresolved-question text, artifact pointers, accepted constraints/decisions, and
+the bounded `Modification Boundary`. It deliberately omits raw findings, review
+bodies, evidence records, broad Git state, and memory/milestone bodies.
+`context task-show` remains the explicit raw diagnostic command.
+`context task-artifact` appends bounded, path-safe artifact pointers without
+inlining their contents.
+
+During an ACTIVE task the Controller must dispatch a fresh execution child before
+investigation, source mutation, or `task-close`. PreToolUse rejects recognized
+root shell investigation/mutation and close-before-child actions. Unknown scripts
+and tools not exposed through the Codex hook surface remain fail-open and are
+reported as `UNKNOWN` rather than being overstated as enforced.
 
 `context doctor` reports `ready_for_routing` separately from successful command
 execution, with the dimensions `command_executed`, `configuration_valid`,
@@ -246,6 +253,13 @@ The parent Controller owns:
 Only the Controller delegates work.
 
 The Controller should operate on bounded task views rather than raw investigation transcripts.
+
+During an ACTIVE task the Controller is a control plane, not the execution
+worker. Even a simple task must first dispatch one fresh execution child with
+`fork_turns="none"`. The Controller retains bounded routing, child dispatch,
+result acceptance, and deterministic verification; broad root source/log/Git
+investigation and source mutation are rejected by the PreToolUse mechanical
+boundary.
 
 ---
 

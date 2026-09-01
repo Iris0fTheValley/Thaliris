@@ -46,6 +46,18 @@ def test_init_idempotent_preserves_agents_and_required_block(tmp_path, capsys):
     assert code == 0 and not second["changed"]
 
 
+def test_task_start_returns_bounded_controller_packet_with_boundary(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    boundary = {"status": "SUPPORTED", "includes": ["src/target.py"], "excludes": ["seeded/unrelated.py"], "evidence_refs": []}
+    code, result = task_input(root, capsys, {"modification_boundary": boundary, "verification_target": "pytest -q tests/test_target.py"}, "task-start", "bounded child routing")
+    assert code == 0
+    packet = result["controller_packet"]
+    assert packet["role"] == "controller"
+    assert packet["Modification Boundary"] == boundary
+    assert packet["Verification Target"] == "pytest -q tests/test_target.py"
+    assert "investigation_findings" not in json.dumps(packet)
+
+
 def test_managed_policy_keeps_roles_conditional_and_project_memory_scoped(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     text = (root / "AGENTS.md").read_text(encoding="utf-8")

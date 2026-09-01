@@ -46,10 +46,25 @@ _COLLABORATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _COLL
 # `collaboration<tool>` names to hooks.  Keep the matcher explicit so other
 # collaboration-prefixed tools cannot enter the audit plane accidentally.
 POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN})$"
-# Pre-dispatch isolation only needs to see native spawn calls.  Keep the
-# matcher narrow so unrelated tools never receive a rewritten invocation.
-PRE_TOOL_MATCHER = rf"^(?:spawn_agent|(?:[A-Za-z0-9_]+\.)+spawn_agent|collaborationspawn_agent)$"
+# Codex 0.146 exposes shell execution to hooks as ``Bash``.  The controller
+# guard uses that native surface for deterministic action classification while
+# retaining the historical aliases for runtimes that expose a different name.
+_CONTROLLER_EXECUTION_TOOL_NAMES = ("Bash", "Shell", "exec_command", "command_execution")
+_CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_EXECUTION_TOOL_NAMES) + ")"
+# Pre-dispatch isolation sees native spawn calls and root shell execution.  The
+# latter is intentionally explicit: a broad matcher would also intercept
+# unrelated tools whose payload cannot be classified safely.
+PRE_TOOL_MATCHER = rf"^(?:spawn_agent|(?:[A-Za-z0-9_]+\.)+spawn_agent|collaborationspawn_agent|{_CONTROLLER_EXECUTION_TOOL_PATTERN})$"
 _DELEGATION_TOOL_NAMES = frozenset({"spawn_agent", "Agent", "followup_task", "send_input", "send_message"})
+_CONTROLLER_BOUNDARY_REASON = "THALIRIS_CONTROLLER_BOUNDARY: delegate investigation and edits to a fresh child; root may run only bounded control-plane or acceptance checks."
+_CONTROLLER_CLOSE_REASON = "THALIRIS_CONTROLLER_BOUNDARY: dispatch a fresh child before task-close."
+_BROAD_INVESTIGATION = re.compile(
+    r"(?i)(?<![\w-])(?:rg|ripgrep|grep|findstr|select-string|gci|get-childitem|dir|ls|tree|cat|type|gc|get-content|git\s+(?:log|show|blame|grep)|task-show)(?![\w-])"
+)
+_SOURCE_MUTATION = re.compile(
+    r"(?i)(?:apply_patch|git\s+(?:apply|commit|reset|checkout|restore|rebase)|(?:set|add|clear|out|remove|move|copy|rename|new)-content|(?:set|add|remove|move|copy|rename|new)-item|\b(?:ni|mkdir)\b|(?<![<>])>{1,2}(?![&]))"
+)
+_COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||;)")
 ALLOWED_FINDINGS = {
     "requirement_omission",
     "constraint_weakening",
@@ -293,7 +308,7 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) == "spawn_agent":
                 _record_runtime_event(root, payload, event, tool)
-            return _pre_tool_output(payload)
+            return _pre_tool_output(payload, root)
         if event == "SessionStart":
             _record_session_start(root, payload)
             return ""
@@ -426,7 +441,79 @@ def _record_runtime_event(root: Path, payload: dict[str, Any], event: str, tool:
     if event == "PreToolUse":
         tool_input = _delegation_input(payload)
         state["pre_dispatch_rewrite"] = "NO" if tool_input.get("fork_turns") == "none" else "YES"
+    if event == "PostToolUse" and _tool_basename(tool) == "spawn_agent":
+        response = payload.get("tool_response")
+        if isinstance(response, dict) and not any(response.get(key) for key in ("isError", "failed", "error")):
+            state["successful_spawn_observed"] = True
     _write_capture(path, state)
+
+
+def _record_controller_guard_event(root: Path, payload: dict[str, Any], action: str, decision: str) -> None:
+    """Persist only bounded action/decision evidence for the root guard."""
+    path = _session_dir(root, payload) / "runtime.json"
+    state = _load_runtime(path)
+    state.setdefault("events_observed", {})["PreToolUse"] = True
+    tools = state.setdefault("tools_observed", [])
+    if "Bash" not in tools and len(tools) < 16:
+        tools.append("Bash")
+    raw_tools = state.setdefault("tool_names_observed", [])
+    if "Bash" not in raw_tools and len(raw_tools) < 16:
+        raw_tools.append("Bash")
+    counters = state.setdefault("controller_guard", {"allowed": 0, "blocked": 0, "unknown": 0})
+    if decision in counters:
+        counters[decision] = int(counters[decision]) + 1
+    actions = state.setdefault("controller_actions_observed", [])
+    if action not in actions and len(actions) < 16:
+        actions.append(action)
+    _write_capture(path, state)
+
+
+def _bash_command(payload: dict[str, Any]) -> str | None:
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    command = tool_input.get("command") or tool_input.get("cmd")
+    return command if isinstance(command, str) and command.strip() else None
+
+
+def _successful_spawn_observed(root: Path, payload: dict[str, Any]) -> bool:
+    path = _session_dir(root, payload) / "runtime.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return isinstance(value, dict) and value.get("successful_spawn_observed") is True
+
+
+def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | None:
+    """Classify only well-known shell actions; unknown commands fail open."""
+    command = _bash_command(payload)
+    if command is None:
+        return "UNKNOWN"
+    for segment in _COMMAND_SEPARATOR.split(command):
+        value = segment.strip()
+        if not value:
+            continue
+        lowered = value.lower()
+        if re.match(r"^(?:context|python\s+-m\s+thaliris\.cli)\b", lowered):
+            if re.search(r"\btask[-_ ]show\b", lowered):
+                return "BROAD_INVESTIGATION"
+            if re.search(r"\btask[-_ ]close\b", lowered) and not _successful_spawn_observed(root, payload):
+                return "TASK_CLOSE_NO_CHILD"
+            continue
+        if re.match(r"^(?:pytest|python\s+-m\s+pytest|uv\s+run\s+(?:python\s+-m\s+)?pytest)\b", lowered):
+            continue
+        if re.match(r"^git\s+status\s+--short\b", lowered):
+            continue
+        if re.match(r"^git\s+diff\s+--(?:check|stat|name-only)\b", lowered):
+            continue
+        if re.match(r"^git\s+(?:rev-parse|hash-object)\b", lowered):
+            continue
+        if _SOURCE_MUTATION.search(value):
+            return "SOURCE_MUTATION"
+        if _BROAD_INVESTIGATION.search(value) or re.match(r"^git\s+diff\b", lowered):
+            return "BROAD_INVESTIGATION"
+    return None
 
 
 def _load_runtime(path: Path) -> dict[str, Any]:
@@ -917,7 +1004,7 @@ def _isolation_classification(tool: str, tool_input: dict[str, Any], _role: str)
     return {"required": "YES", "fork_turns": "OTHER", "status": "FAIL"}
 
 
-def _pre_tool_output(payload: dict[str, Any]) -> str:
+def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
     """Rewrite unsafe root spawn input before Codex dispatches it.
 
     The response uses Codex's stable PreToolUse contract.  It deliberately
@@ -925,7 +1012,11 @@ def _pre_tool_output(payload: dict[str, Any]) -> str:
     or any other task evidence.
     """
     tool = payload.get("tool_name") or payload.get("tool")
-    if not isinstance(tool, str) or _tool_basename(tool) != "spawn_agent":
+    if not isinstance(tool, str):
+        return ""
+    if tool in _CONTROLLER_EXECUTION_TOOL_NAMES:
+        return _controller_guard_output(payload, root)
+    if _tool_basename(tool) != "spawn_agent":
         return ""
     tool_input = _delegation_input(payload)
     if not isinstance(tool_input, dict):
@@ -954,6 +1045,28 @@ def _pre_tool_output(payload: dict[str, Any]) -> str:
             "updatedInput": updated,
         }
     }, ensure_ascii=False, separators=(",", ":"))
+
+
+def _controller_guard_output(payload: dict[str, Any], root: Path | None = None) -> str:
+    """Block only classified root investigation/mutation actions.
+
+    The hook cannot safely reason about arbitrary scripts or non-shell native
+    tools, so unknown actions remain fail-open and are recorded as such.
+    """
+    root = _hook_repository_root(root or Path.cwd(), payload)
+    action = _controller_command_action(root, payload)
+    if action in {"SOURCE_MUTATION", "BROAD_INVESTIGATION", "TASK_CLOSE_NO_CHILD"}:
+        _record_controller_guard_event(root, payload, action, "blocked")
+        reason = _CONTROLLER_CLOSE_REASON if action == "TASK_CLOSE_NO_CHILD" else _CONTROLLER_BOUNDARY_REASON
+        return json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        }, ensure_ascii=False, separators=(",", ":"))
+    _record_controller_guard_event(root, payload, action or "UNKNOWN", "allowed" if action is None else "unknown")
+    return ""
 
 
 def _capture_delegation(state: dict[str, Any], payload: dict[str, Any]) -> bool:

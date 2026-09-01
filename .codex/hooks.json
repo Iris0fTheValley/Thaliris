@@ -55,7 +55,7 @@
             "timeout": 60
           }
         ],
-        "matcher": "^(?:spawn_agent|(?:[A-Za-z0-9_]+\\.)+spawn_agent|collaborationspawn_agent)$"
+        "matcher": "^(?:spawn_agent|(?:[A-Za-z0-9_]+\\.)+spawn_agent|collaborationspawn_agent|(?:Bash|Shell|exec_command|command_execution))$"
       }
     ]
   }

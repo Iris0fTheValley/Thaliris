@@ -11,23 +11,28 @@ findings, review bodies, evidence records, Git status, or broad memory/milestone
 bodies as part of normal routing. Use `context task-show` only for an explicit
 diagnostic need.
 
-Dispatch every new root child as a fresh native child with `fork_turns="none"`. A
-positive fork of `"1"` or `"2"` turns needs an `Isolation reason:` line in the
-native message. The PreToolUse hook rewrites unsafe input before dispatch; PostToolUse
-keeps the native result auditable.
+Every active task starts with one fresh execution child using `fork_turns="none"`.
+A positive fork is rewritten to `none`; an encrypted `Isolation reason:` never
+creates an exception. The PreToolUse hook also guards root shell investigation,
+source mutation, and task-close-before-child. PostToolUse keeps native dispatch
+evidence auditable.
 
-For a local, obvious microtask, one fresh Implementer followed by deterministic
-verification is sufficient. Larger work uses only the roles needed by risk and
-unknowns. Wait for native completion or mailbox updates; Thaliris has no polling,
-worker, retry, or scheduling runtime.
+For a local, obvious microtask, that one fresh Implementer is still required,
+followed by deterministic verification; the persistent Controller does not edit
+source directly. Larger work adds only the roles needed by risk and unknowns.
+Wait for native completion or mailbox updates; Thaliris has no polling, worker,
+retry, or scheduling runtime.
 
 ## Evidence Roles
 
 Investigators append bounded findings and evidence references. Curators receive a
 current snapshot and uncovered suffix only, then may replace the compact snapshot.
 Reasoning Specialists receive accepted Decision Context rather than raw
-investigation or review history. Implementers receive the explicit modification
-boundary. Reviewers receive intent, changed surface, constraints, and decisions;
+investigation or review history. Implementers receive the explicit Modification
+Boundary, including out-of-scope exclusions and required verification. If bounded
+findings contain an unresolved architecture, provenance, or cross-module decision,
+route only that Decision Context to `sol-high` rather than investigating at root.
+Reviewers receive intent, changed surface, constraints, and decisions;
 their findings are independent evidence, not an automatic implementation loop.
 
 Use focused checks while changing code and one complete relevant validation at the

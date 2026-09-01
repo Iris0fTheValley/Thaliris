@@ -1,0 +1,36 @@
+[
+  {
+    "task": "python-telegram-bot__python-telegram-bot-4617",
+    "source": "SWE-bench-Live lite",
+    "source_url": "https://github.com/microsoft/SWE-bench-Live",
+    "revision": "f57dd52100aafc4640891493ba43ad527433232f",
+    "readiness": "ENVIRONMENT_INCONCLUSIVE",
+    "checks": {
+      "checkout_exact": "PASS",
+      "dependencies_import": "PASS",
+      "focused_evaluator_starts": "FAIL",
+      "baseline_expected_failure": "UNAVAILABLE",
+      "pass_to_pass_evaluator": "UNAVAILABLE",
+      "network_or_cache_archaeology_required": "NO",
+      "historical_fix_or_prior_artifact_available": "NO"
+    },
+    "B1_result": "NOT_RUN",
+    "A1_result": "NOT_RUN",
+    "B2_result": "NOT_RUN",
+    "input_tokens": "UNAVAILABLE",
+    "cached_input_tokens": "UNAVAILABLE",
+    "uncached_input_tokens": "UNAVAILABLE",
+    "output_tokens": "UNAVAILABLE",
+    "reasoning_tokens": "UNAVAILABLE",
+    "model_turns": "UNAVAILABLE",
+    "wall_clock": "UNAVAILABLE",
+    "changed_files": [],
+    "scope_result": "NOT_RUN",
+    "FAIL_TO_PASS": [
+      "tests/test_bot.py::TestBotWithRequest::test_set_game_score_and_high_scores"
+    ],
+    "PASS_TO_PASS_count": 6236,
+    "failure_mode": "evaluator_failure: pytest configuration requires unavailable --no-success-flaky-report plugin; override also lacks flaky and asyncio plugins",
+    "notes": "Do not infer model capability. Public evaluator was never changed or bypassed for screening."
+  }
+]

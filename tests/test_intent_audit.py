@@ -718,6 +718,16 @@ def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})) == ""
 
 
+def test_controller_guard_accepts_opaque_native_spawn_post_result(tmp_path):
+    root = repo(tmp_path)
+    handle_hook(
+        root,
+        "PostToolUse",
+        payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "none"}, tool_response="/root/child"),
+    )
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
+
+
 def test_auditor_rubric_is_separate_from_untrusted_stdin_evidence(monkeypatch):
     captured = {}
     monkeypatch.setattr(audit_module, "_resolve_runner", lambda: "codex-test")

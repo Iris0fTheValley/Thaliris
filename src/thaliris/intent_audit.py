@@ -51,11 +51,12 @@ POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_C
 # retaining the historical aliases for runtimes that expose a different name.
 _CONTROLLER_EXECUTION_TOOL_NAMES = ("Bash", "Shell", "exec_command", "command_execution")
 _CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_EXECUTION_TOOL_NAMES) + ")"
+_CONTROLLER_MUTATION_TOOL_NAME = "apply_patch"
 # Pre-dispatch isolation sees native spawn calls, the other flattened V2
 # collaboration names (for compatibility/observation), and root shell
 # execution.  The latter is intentionally explicit: a broad matcher would
 # also intercept unrelated tools whose payload cannot be classified safely.
-PRE_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN})$"
+PRE_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN}|{re.escape(_CONTROLLER_MUTATION_TOOL_NAME)})$"
 _DELEGATION_TOOL_NAMES = frozenset({"spawn_agent", "Agent", "followup_task", "send_input", "send_message"})
 _CONTROLLER_BOUNDARY_REASON = "THALIRIS_CONTROLLER_BOUNDARY: delegate investigation and edits to a fresh child; root may run only bounded control-plane or acceptance checks."
 _CONTROLLER_CLOSE_REASON = "THALIRIS_CONTROLLER_BOUNDARY: dispatch a fresh child before task-close."
@@ -1048,6 +1049,16 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
         return ""
+    if tool == _CONTROLLER_MUTATION_TOOL_NAME:
+        root = _hook_repository_root(root or Path.cwd(), payload)
+        _record_controller_guard_event(root, payload, "SOURCE_MUTATION", "blocked")
+        return json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": _CONTROLLER_BOUNDARY_REASON,
+            }
+        }, ensure_ascii=False, separators=(",", ":"))
     if tool in _CONTROLLER_EXECUTION_TOOL_NAMES:
         return _controller_guard_output(payload, root)
     if _tool_basename(tool) != "spawn_agent":

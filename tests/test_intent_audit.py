@@ -683,6 +683,7 @@ def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
     assert re.fullmatch(matcher, "collaborationsend_message")
     assert re.fullmatch(matcher, "collaborationfollowup_task")
     assert re.fullmatch(matcher, "Bash")
+    assert re.fullmatch(matcher, "apply_patch")
     assert not re.fullmatch(matcher, "shell-script")
 
 
@@ -707,6 +708,39 @@ def test_controller_guard_blocks_root_broad_investigation_and_mutation(tmp_path)
     assert evidence["controller_guard"]["blocked"] == 5
     assert "BROAD_INVESTIGATION" in evidence["controller_actions_observed"]
     assert "SOURCE_MUTATION" in evidence["controller_actions_observed"]
+
+
+def test_controller_guard_blocks_root_apply_patch_without_leaking_payload(tmp_path):
+    root = repo(tmp_path)
+    secret_patch = "*** Begin Patch\n*** Update File: src/main.py\n+SECRET_PATCH_PAYLOAD\n*** End Patch"
+    response = json.loads(
+        handle_hook(
+            root,
+            "PreToolUse",
+            payload(tool_name="apply_patch", tool_input={"patch": secret_patch}),
+        )
+    )
+    output = response["hookSpecificOutput"]
+    assert output["permissionDecision"] == "deny"
+    runtime = list((root / ".context" / "audit").glob("*/runtime.json"))
+    evidence = json.loads(runtime[0].read_text(encoding="utf-8"))
+    assert evidence["controller_guard"]["blocked"] == 1
+    assert "SOURCE_MUTATION" in evidence["controller_actions_observed"]
+    assert "SECRET_PATCH_PAYLOAD" not in json.dumps(evidence)
+
+
+def test_controller_guard_allows_child_apply_patch(tmp_path):
+    root = repo(tmp_path)
+    assert handle_hook(
+        root,
+        "PreToolUse",
+        payload(
+            agent_id="child-1",
+            tool_name="apply_patch",
+            tool_input={"patch": "*** Begin Patch\n*** Update File: src/main.py\n*** End Patch"},
+        ),
+    ) == ""
+    assert not list((root / ".context" / "audit").glob("*/runtime.json"))
 
 
 def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path):

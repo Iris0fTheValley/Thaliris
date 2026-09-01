@@ -505,6 +505,9 @@ def _post_tool_succeeded(response: object) -> bool:
     if isinstance(response, dict):
         if any(response.get(key) is True or response.get(key) not in (None, False, "") for key in ("isError", "failed", "error")):
             return False
+        status = response.get("status")
+        if isinstance(status, str) and status.strip().lower() in {"error", "failed", "failure", "rejected"}:
+            return False
         nested = response.get("result")
         if isinstance(nested, dict):
             return _post_tool_succeeded(nested)

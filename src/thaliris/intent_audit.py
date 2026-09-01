@@ -58,6 +58,7 @@ PRE_TOOL_MATCHER = rf"^(?:spawn_agent|(?:[A-Za-z0-9_]+\.)+spawn_agent|collaborat
 _DELEGATION_TOOL_NAMES = frozenset({"spawn_agent", "Agent", "followup_task", "send_input", "send_message"})
 _CONTROLLER_BOUNDARY_REASON = "THALIRIS_CONTROLLER_BOUNDARY: delegate investigation and edits to a fresh child; root may run only bounded control-plane or acceptance checks."
 _CONTROLLER_CLOSE_REASON = "THALIRIS_CONTROLLER_BOUNDARY: dispatch a fresh child before task-close."
+_CONTROLLER_ACCEPTANCE_REASON = "THALIRIS_CONTROLLER_BOUNDARY: dispatch a fresh child before deterministic acceptance."
 _BROAD_INVESTIGATION = re.compile(
     r"(?i)(?<![\w-])(?:rg|ripgrep|grep|findstr|select-string|gci|get-childitem|dir|ls|tree|cat|type|gc|get-content|git\s+(?:log|show|blame|grep)|task-show)(?![\w-])"
 )
@@ -502,6 +503,8 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
                 return "TASK_CLOSE_NO_CHILD"
             continue
         if re.match(r"^(?:pytest|python\s+-m\s+pytest|uv\s+run\s+(?:python\s+-m\s+)?pytest)\b", lowered):
+            if not _successful_spawn_observed(root, payload):
+                return "ACCEPTANCE_BEFORE_CHILD"
             continue
         if re.match(r"^git\s+status\s+--short\b", lowered):
             continue
@@ -1055,9 +1058,14 @@ def _controller_guard_output(payload: dict[str, Any], root: Path | None = None) 
     """
     root = _hook_repository_root(root or Path.cwd(), payload)
     action = _controller_command_action(root, payload)
-    if action in {"SOURCE_MUTATION", "BROAD_INVESTIGATION", "TASK_CLOSE_NO_CHILD"}:
+    if action in {"SOURCE_MUTATION", "BROAD_INVESTIGATION", "TASK_CLOSE_NO_CHILD", "ACCEPTANCE_BEFORE_CHILD"}:
         _record_controller_guard_event(root, payload, action, "blocked")
-        reason = _CONTROLLER_CLOSE_REASON if action == "TASK_CLOSE_NO_CHILD" else _CONTROLLER_BOUNDARY_REASON
+        if action == "TASK_CLOSE_NO_CHILD":
+            reason = _CONTROLLER_CLOSE_REASON
+        elif action == "ACCEPTANCE_BEFORE_CHILD":
+            reason = _CONTROLLER_ACCEPTANCE_REASON
+        else:
+            reason = _CONTROLLER_BOUNDARY_REASON
         return json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",

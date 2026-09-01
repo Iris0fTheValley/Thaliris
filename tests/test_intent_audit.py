@@ -697,11 +697,12 @@ def test_controller_guard_blocks_root_broad_investigation_and_mutation(tmp_path)
         assert output["permissionDecision"] == "deny"
         assert output["permissionDecisionReason"].startswith("THALIRIS_CONTROLLER_BOUNDARY:")
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-status"})) == ""
-    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_intent_audit.py"})) == ""
+    before_child = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_intent_audit.py"})))
+    assert before_child["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name="Bash", tool_input={"command": "Get-Content src/main.py"})) == ""
     runtime = list((root / ".context" / "audit").glob("*/runtime.json"))
     evidence = json.loads(runtime[0].read_text(encoding="utf-8"))
-    assert evidence["controller_guard"]["blocked"] == 4
+    assert evidence["controller_guard"]["blocked"] == 5
     assert "BROAD_INVESTIGATION" in evidence["controller_actions_observed"]
     assert "SOURCE_MUTATION" in evidence["controller_actions_observed"]
 
@@ -711,6 +712,7 @@ def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path
     blocked = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
     assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
     handle_hook(root, "PostToolUse", payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "none", "message": "bounded child"}, tool_response={"task_name": "/root/child"}))
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})) == ""
 
 

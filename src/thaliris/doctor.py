@@ -16,6 +16,26 @@ from .intent_audit import hooks_health, is_managed_handler
 UNKNOWN = "UNKNOWN"
 
 
+def _runtime_hook_evidence(root: Path) -> tuple[bool, bool, bool]:
+    """Read only private runtime markers emitted by the hook adapter."""
+    pre = post = spawn = False
+    for path in (root / ".context" / "audit").glob("*/runtime.json"):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(value, dict):
+            continue
+        events = value.get("events_observed")
+        if isinstance(events, dict):
+            pre = pre or events.get("PreToolUse") is True
+            post = post or events.get("PostToolUse") is True
+        tools = value.get("tools_observed")
+        if isinstance(tools, list):
+            spawn = spawn or "spawn_agent" in tools
+    return pre, post, spawn
+
+
 def _context_isolation(root: Path) -> dict[str, object]:
     """Report policy wiring separately from native runtime attestation.
 
@@ -49,6 +69,7 @@ def _context_isolation(root: Path) -> dict[str, object]:
                         post = "YES"
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         policy = pre = post = UNKNOWN
+    pre_observed, post_observed, spawn_observed = _runtime_hook_evidence(root)
     return {
         "configured": {
             "policy_present": policy,
@@ -56,11 +77,11 @@ def _context_isolation(root: Path) -> dict[str, object]:
             "post_dispatch_hook": post,
         },
         "observed": {
-            "pre_dispatch_hook_supported": UNKNOWN,
-            "spawn_payload_supported": UNKNOWN,
+            "pre_dispatch_hook_supported": "YES" if pre_observed else UNKNOWN,
+            "spawn_payload_supported": "YES" if spawn_observed else UNKNOWN,
             "input_rewrite_supported": UNKNOWN,
             "pre_dispatch_enforcement": UNKNOWN,
-            "post_dispatch_observation": UNKNOWN,
+            "post_dispatch_observation": "YES" if post_observed else UNKNOWN,
         },
     }
 

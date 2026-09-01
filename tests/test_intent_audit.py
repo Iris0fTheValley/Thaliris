@@ -11,6 +11,7 @@ import sys
 import pytest
 
 from thaliris.core import init, task_close, task_start, uninstall
+from thaliris.doctor import _context_isolation
 import thaliris.intent_audit as audit_module
 from thaliris.intent_audit import handle_hook, hooks_health
 
@@ -120,20 +121,71 @@ def test_spawn_and_followup_instructions_are_captured_verbatim(tmp_path):
 
 def test_v1_v2_and_namespaced_messages_capture_instruction_text_only(tmp_path):
     root = repo(tmp_path)
-    handle_hook(root, "PostToolUse", payload(tool_name="collaboration.send_message", tool_input={"message": "v2 instruction", "target": "private-child"}, tool_response={"success": True}))
+    # Codex 0.146 Multi-Agent V2 flattens collaboration tool names at the
+    # hook boundary (for example, collaborationsend_message).
+    handle_hook(root, "PostToolUse", payload(tool_name="collaborationsend_message", tool_input={"message": "v2 instruction", "target": "private-child"}, tool_response={"success": True}))
+    handle_hook(root, "PostToolUse", payload(tool_name="collaborationfollowup_task", tool_input={"message": "v2 followup", "target": "private-child"}, tool_response={"success": True}))
     # V1 can expose only an input object rather than tool_input.
     handle_hook(root, "PostToolUse", payload(tool_name="legacy.send_input", input={"input": "v1 instruction", "id": "private-child"}, tool_response={"success": True}))
     state = captures(root)
-    assert [item["text"] for item in state["delegations"]] == ["v2 instruction", "v1 instruction"]
+    assert [item["text"] for item in state["delegations"]] == ["v2 instruction", "v2 followup", "v1 instruction"]
     assert all("child_identity_hash" in item for item in state["delegations"])
     encoded = json.dumps(state)
     assert "private-child" not in encoded and all("target" not in item and "id" not in item for item in state["delegations"])
 
 
+def test_flattened_v2_runtime_evidence_records_pre_and_post_hooks(tmp_path):
+    root = repo(tmp_path)
+    pre = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "2", "message": "encrypted"})))
+    assert pre["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
+    handle_hook(root, "PostToolUse", payload(tool_name="collaborationsend_message", tool_input={"message": "delegated", "target": "child"}, tool_response={"success": True}))
+    runtime = list((root / ".context" / "audit").glob("*/runtime.json"))
+    assert len(runtime) == 1
+    evidence = json.loads(runtime[0].read_text(encoding="utf-8"))
+    assert evidence["events_observed"] == {"PreToolUse": True, "PostToolUse": True}
+    assert evidence["tool_names_observed"] == ["collaborationspawn_agent", "collaborationsend_message"]
+    assert evidence["pre_dispatch_rewrite"] == "YES"
+    assert evidence["tools_observed"] == ["spawn_agent", "send_message"]
+    assert _context_isolation(root)["observed"] == {
+        "pre_dispatch_hook_supported": "YES",
+        "spawn_payload_supported": "YES",
+        "input_rewrite_supported": "UNKNOWN",
+        "pre_dispatch_enforcement": "UNKNOWN",
+        "post_dispatch_observation": "YES",
+    }
+
+
+def test_real_cli_audit_hook_accepts_flattened_v2_names(tmp_path):
+    root = repo(tmp_path)
+    command = [sys.executable, "-m", "thaliris.cli", "--root", str(root), "audit-hook"]
+    pre = subprocess.run(
+        [*command, "PreToolUse"],
+        input=json.dumps(payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "2", "message": "encrypted V2"})).encode(),
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    assert pre.returncode == 0 and json.loads(pre.stdout)["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
+    post = subprocess.run(
+        [*command, "PostToolUse"],
+        input=json.dumps(payload(tool_name="collaborationsend_message", tool_input={"message": "delegated", "target": "child"}, tool_response={"success": True})).encode(),
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    assert post.returncode == 0 and post.stdout == b"" and post.stderr == b""
+    runtime = list((root / ".context" / "audit").glob("*/runtime.json"))
+    assert len(runtime) == 1
+    evidence = json.loads(runtime[0].read_text(encoding="utf-8"))
+    assert evidence["events_observed"] == {"PreToolUse": True, "PostToolUse": True}
+
+
 def test_non_delegation_lifecycle_tools_are_not_captured(tmp_path):
     root = repo(tmp_path)
     handle_hook(root, "PostToolUse", payload(tool_name="send_message", tool_input={"message": "delegate"}, tool_response={"success": True}))
-    for tool in ("wait_agent", "list_agents", "status", "task_close", "interrupt_agent"):
+    for tool in ("wait_agent", "list_agents", "interrupt_agent"):
+        handle_hook(root, "PostToolUse", payload(tool_name=f"collaboration{tool}", tool_input={"message": "private"}, tool_response={"success": True}))
+    for tool in ("status", "task_close"):
         handle_hook(root, "PostToolUse", payload(tool_name=f"collaboration.{tool}", tool_input={"message": "private"}, tool_response={"success": True}))
     assert [item["tool"] for item in captures(root)["delegations"]] == ["send_message"]
 
@@ -375,7 +427,9 @@ def test_missing_turn_ids_use_unknown_coverage_without_synthetic_state_machine(t
     assert len(states) == 1 and len(requests) == 0
     assert states[0]["turn_status"] == "UNKNOWN" and states[0]["intent_coverage"] == "UNKNOWN"
     assert [item["text"] for item in states[0]["delegations"]] == ["delegation-1", "delegation-2"]
-    assert not list((root / ".context" / "audit").glob("*/runtime.json"))
+    runtime = list((root / ".context" / "audit").glob("*/runtime.json"))
+    assert len(runtime) == 1
+    assert json.loads(runtime[0].read_text(encoding="utf-8"))["events_observed"] == {"PostToolUse": True}
 
 
 def test_missing_turn_orphan_events_remain_unknown_and_do_not_create_orphan_partitions(tmp_path, monkeypatch):
@@ -581,7 +635,13 @@ def test_post_tool_matcher_uses_regex_for_namespaced_multiagent_tools(tmp_path):
             return value in matcher.split("|")
         return re.fullmatch(matcher, value) is not None
 
-    assert all(codex_match(value) for value in ("spawn_agent", "Agent", "followup_task", "send_input", "send_message", "collaboration.spawn_agent", "collaboration.followup_task", "collaboration.send_input", "collaboration.send_message"))
+    assert all(codex_match(value) for value in (
+        "spawn_agent", "Agent", "followup_task", "send_input", "send_message",
+        "list_agents", "wait_agent", "interrupt_agent",
+        "collaboration.spawn_agent", "collaboration.followup_task", "collaboration.send_input", "collaboration.send_message",
+        "collaborationspawn_agent", "collaborationfollowup_task", "collaborationsend_message",
+        "collaborationlist_agents", "collaborationwait_agent", "collaborationinterrupt_agent",
+    ))
     assert not codex_match("collaboration.not_a_delegation")
     root = repo(tmp_path)
     old = {"hooks": {"PostToolUse": [{"hooks": [{"type": "command", "command": "context audit-hook PostToolUse", "timeout": 60}], "matcher": "spawn_agent|Agent|followup_task"}]}}
@@ -604,9 +664,9 @@ def test_pre_tool_isolation_rewrites_before_dispatch_without_agent_type(tmp_path
     response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="collaboration.spawn_agent", tool_input={"fork_turns": "all", "message": "work"})))
     assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
 
-    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "1", "message": "Isolation reason: bounded compatibility"})))
+    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "1", "message": "Isolation reason: encrypted V2 text"})))
     output = response["hookSpecificOutput"]
-    assert output["permissionDecision"] == "allow" and "updatedInput" not in output
+    assert output["permissionDecision"] == "allow" and output["updatedInput"]["fork_turns"] == "none"
 
     response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "2", "message": "work"})))
     assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
@@ -619,6 +679,7 @@ def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
     matcher = audit_module.hook_spec()["hooks"]["PreToolUse"][0]["matcher"]
     assert re.fullmatch(matcher, "spawn_agent")
     assert re.fullmatch(matcher, "collaboration.spawn_agent")
+    assert re.fullmatch(matcher, "collaborationspawn_agent")
     assert not re.fullmatch(matcher, "shell")
 
 
@@ -820,16 +881,17 @@ def test_incomplete_evidence_cannot_turn_auditor_drift_into_a_block(tmp_path, mo
 
 def test_spawn_isolation_is_classified_after_native_dispatch(tmp_path):
     root = repo(tmp_path)
-    for fork_turns, message in (("none", "work"), ("all", "work"), (None, "work"), ("1", "Isolation reason: bounded compatibility need"), ("2", "work")):
+    for index, (fork_turns, message) in enumerate((("none", "work"), ("all", "work"), (None, "work"), ("1", "Isolation reason: encrypted V2 text"), ("2", "work"))):
         tool_input = {"message": message, "agent_type": "Terra Implementer"}
         if fork_turns is not None:
             tool_input["fork_turns"] = fork_turns
-        handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input=tool_input, tool_response={"success": True}))
+        tool_name = "collaborationspawn_agent" if index == 1 else "spawn_agent"
+        handle_hook(root, "PostToolUse", payload(tool_name=tool_name, tool_input=tool_input, tool_response={"success": True}))
     items = captures(root)["delegations"]
     assert [item["isolation"] for item in items] == [
         {"required": "YES", "fork_turns": "NONE", "status": "PASS"},
         {"required": "YES", "fork_turns": "ALL", "status": "FAIL"},
         {"required": "YES", "fork_turns": "MISSING", "status": "FAIL"},
-        {"required": "YES", "fork_turns": "SMALL", "status": "EXCEPTION"},
+        {"required": "YES", "fork_turns": "SMALL", "status": "FAIL"},
         {"required": "YES", "fork_turns": "SMALL", "status": "FAIL"},
     ]

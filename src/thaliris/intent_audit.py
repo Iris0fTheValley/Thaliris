@@ -31,10 +31,25 @@ AUDIT_RUNNER_ENV = "THALIRIS_CODEX_EXECUTABLE"
 AUDIT_AUTH_FILE_ENV = "THALIRIS_INTENT_AUDIT_AUTH_FILE"
 INTENT_AUDITOR_MODEL = "gpt-5.6-luna"
 INTENT_AUDITOR_REASONING = "high"
-POST_TOOL_MATCHER = r"^(?:spawn_agent|Agent|followup_task|send_input|send_message|(?:[A-Za-z0-9_]+\.)+(?:spawn_agent|Agent|followup_task|send_input|send_message))$"
+_COLLABORATION_TOOL_NAMES = (
+    "spawn_agent",
+    "Agent",
+    "followup_task",
+    "send_input",
+    "send_message",
+    "list_agents",
+    "wait_agent",
+    "interrupt_agent",
+)
+_COLLABORATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _COLLABORATION_TOOL_NAMES) + ")"
+# Codex 0.146 Multi-Agent V2 exposes both dotted names and flattened
+# `collaboration<tool>` names to hooks.  Keep the matcher explicit so other
+# collaboration-prefixed tools cannot enter the audit plane accidentally.
+POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN})$"
 # Pre-dispatch isolation only needs to see native spawn calls.  Keep the
 # matcher narrow so unrelated tools never receive a rewritten invocation.
-PRE_TOOL_MATCHER = r"^(?:spawn_agent|(?:[A-Za-z0-9_]+\.)+spawn_agent)$"
+PRE_TOOL_MATCHER = rf"^(?:spawn_agent|(?:[A-Za-z0-9_]+\.)+spawn_agent|collaborationspawn_agent)$"
+_DELEGATION_TOOL_NAMES = frozenset({"spawn_agent", "Agent", "followup_task", "send_input", "send_message"})
 ALLOWED_FINDINGS = {
     "requirement_omission",
     "constraint_weakening",
@@ -275,6 +290,9 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
         if payload.get("agent_id") is not None:
             return ""
         if event == "PreToolUse":
+            tool = payload.get("tool_name") or payload.get("tool")
+            if isinstance(tool, str) and _tool_basename(tool) == "spawn_agent":
+                _record_runtime_event(root, payload, event, tool)
             return _pre_tool_output(payload)
         if event == "SessionStart":
             _record_session_start(root, payload)
@@ -295,6 +313,9 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             _write_capture(state_path, state)
             return _unbound_capture_output(capture_id) if task_id is None and capture_id else ""
         if event == "PostToolUse":
+            tool = payload.get("tool_name") or payload.get("tool")
+            if isinstance(tool, str) and _tool_basename(tool) in _COLLABORATION_TOOL_NAMES:
+                _record_runtime_event(root, payload, event, tool)
             result = _capture_delegation(state, payload)
             if not result:
                 return ""
@@ -386,6 +407,25 @@ def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
     if payload.get("source") in {"startup", "clear"}:
         state.pop("expected_continuation_sha256", None)
     state.update({"version": 3, "session_start_observed": True, "root_classification": "UNKNOWN"})
+    _write_capture(path, state)
+
+
+def _record_runtime_event(root: Path, payload: dict[str, Any], event: str, tool: str) -> None:
+    """Persist bounded evidence that a root hook event reached this adapter."""
+    path = _session_dir(root, payload) / "runtime.json"
+    state = _load_runtime(path)
+    observed = state.setdefault("events_observed", {})
+    observed[event] = True
+    tools = state.setdefault("tools_observed", [])
+    normalized = _tool_basename(tool)
+    if normalized not in tools and len(tools) < 16:
+        tools.append(normalized)
+    raw_tools = state.setdefault("tool_names_observed", [])
+    if tool not in raw_tools and len(raw_tools) < 16:
+        raw_tools.append(tool)
+    if event == "PreToolUse":
+        tool_input = _delegation_input(payload)
+        state["pre_dispatch_rewrite"] = "NO" if tool_input.get("fork_turns") == "none" else "YES"
     _write_capture(path, state)
 
 
@@ -815,13 +855,23 @@ def _normalized_agent_role(tool_input: dict[str, Any], payload: dict[str, Any]) 
 
 
 def _child_identity_hash(tool: str, tool_input: dict[str, Any]) -> str | None:
-    if tool.rsplit(".", 1)[-1] not in {"followup_task", "send_input", "send_message"}:
+    if _tool_basename(tool) not in {"followup_task", "send_input", "send_message"}:
         return None
     for key in ("task_id", "child_id", "target", "task_name", "agent_id", "id"):
         value = tool_input.get(key)
         if isinstance(value, (str, int)) and str(value):
             return _identity_hash(f"{key}:{value}")
     return None
+
+
+def _tool_basename(tool: str) -> str:
+    """Normalize dotted and 0.146 V2 flattened collaboration tool names."""
+    dotted = tool.rsplit(".", 1)[-1]
+    if dotted != tool:
+        return dotted
+    if tool.startswith("collaboration"):
+        return tool[len("collaboration") :]
+    return tool
 
 
 def _delegation_input(payload: dict[str, Any]) -> dict[str, Any]:
@@ -851,17 +901,9 @@ def _delegation_text(tool_input: dict[str, Any]) -> object:
     return None
 
 
-def _has_isolation_reason(tool_input: dict[str, Any]) -> bool:
-    value = tool_input.get("isolation_reason", tool_input.get("fork_turns_reason"))
-    if isinstance(value, str) and value.strip():
-        return True
-    message = _delegation_text(tool_input)
-    return isinstance(message, str) and re.search(r"(?im)^isolation reason:\s*\S", message) is not None
-
-
 def _isolation_classification(tool: str, tool_input: dict[str, Any], _role: str) -> dict[str, str] | None:
     """Classify every completed native root spawn, independent of agent_type."""
-    if tool.rsplit(".", 1)[-1] != "spawn_agent":
+    if _tool_basename(tool) != "spawn_agent":
         return None
     fork = tool_input.get("fork_turns")
     if fork == "none":
@@ -871,7 +913,7 @@ def _isolation_classification(tool: str, tool_input: dict[str, Any], _role: str)
     if fork == "all":
         return {"required": "YES", "fork_turns": "ALL", "status": "FAIL"}
     if isinstance(fork, str) and fork in {"1", "2"}:
-        return {"required": "YES", "fork_turns": "SMALL", "status": "EXCEPTION" if _has_isolation_reason(tool_input) else "FAIL"}
+        return {"required": "YES", "fork_turns": "SMALL", "status": "FAIL"}
     return {"required": "YES", "fork_turns": "OTHER", "status": "FAIL"}
 
 
@@ -883,7 +925,7 @@ def _pre_tool_output(payload: dict[str, Any]) -> str:
     or any other task evidence.
     """
     tool = payload.get("tool_name") or payload.get("tool")
-    if not isinstance(tool, str) or tool.rsplit(".", 1)[-1] != "spawn_agent":
+    if not isinstance(tool, str) or _tool_basename(tool) != "spawn_agent":
         return ""
     tool_input = _delegation_input(payload)
     if not isinstance(tool_input, dict):
@@ -895,8 +937,7 @@ def _pre_tool_output(payload: dict[str, Any]) -> str:
             }
         }, separators=(",", ":"))
     fork = tool_input.get("fork_turns")
-    allowed_small = isinstance(fork, str) and fork in {"1", "2"} and _has_isolation_reason(tool_input)
-    if fork == "none" or allowed_small:
+    if fork == "none":
         return json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -917,7 +958,7 @@ def _pre_tool_output(payload: dict[str, Any]) -> str:
 
 def _capture_delegation(state: dict[str, Any], payload: dict[str, Any]) -> bool:
     tool = payload.get("tool_name") or payload.get("tool")
-    if not isinstance(tool, str) or tool.rsplit(".", 1)[-1] not in {"spawn_agent", "Agent", "followup_task", "send_input", "send_message"}:
+    if not isinstance(tool, str) or _tool_basename(tool) not in _DELEGATION_TOOL_NAMES:
         return False
     tool_input = _delegation_input(payload)
     dispatch_status = _dispatch_status(payload.get("tool_response"))

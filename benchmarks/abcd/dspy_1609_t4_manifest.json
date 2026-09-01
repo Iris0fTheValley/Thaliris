@@ -10,7 +10,7 @@
   "original_issue_wording": {
     "source_record": "swe-live-lite.parquet instance stanfordnlp__dspy-1609, problem_statement column",
     "verbatim_file": "benchmarks/abcd/dspy_1609_issue.md",
-    "sha256": "6C1FBB315EE9E333E3A8BA4E3085E0ECE6E129DBFE9A9896E642242184A9A959",
+    "sha256": "073C4C2FD269CF4D6ED0EEDF9CA8CEF949F216691B14F3607AAB0B97272A8D92",
     "provided_to_model": "YES: problem_statement only"
   },
   "fixed_fail_to_pass": [

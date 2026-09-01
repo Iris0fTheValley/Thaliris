@@ -6,6 +6,7 @@
     "repo": "pydata/xarray",
     "revision": "8f6e45ba63941316b630e4c94ee2063395aa2b63",
     "status": "screened_no_discrimination",
+    "fixture_classification": "INVALIDATED_SOLUTION_LEAKAGE",
     "decision_boundary": "Whether corresponding DataTree nodes are matched by relative path or only by breadth-first position; preserve positional semantics for intentionally differently named trees.",
     "hidden_invariants": "Node-path identity and existing isomorphism/error behavior must both remain valid.",
     "setup_cost": "Low: shallow Python checkout and focused pytest tests run locally.",
@@ -21,7 +22,7 @@
     "evaluator_reliability": 5,
     "environment_reproduction_cost": 2,
     "evaluator": "Focused FAIL_TO_PASS and related DataTree tests; full suite available in task metadata.",
-    "screening_note": "Clean offline A-lite and B-lite both passed. This task currently has no observed Sol/Luna separation, so it is not approved as T4 yet."
+    "screening_note": "Historical A-lite/B-lite both passed, but the A-Sol JSONL shows git log/remote inspection and the fixture was not sealed v2. Retain only as an invalidated observation; do not use for T4 entry evidence."
   },
   {
     "task": "python-telegram-bot__python-telegram-bot-4617",
@@ -150,6 +151,7 @@
     "repo": "tox-dev/tox",
     "revision": "f919d0d0d512a755f0f85af540ed75f73140a685",
     "status": "screened_no_separation_both_fail",
+    "fixture_classification": "INVALIDATED_SOLUTION_LEAKAGE",
     "decision_boundary": "PEP 735 dependency-group expansion, including recursive include-group handling, installation integration, and exact error contracts.",
     "hidden_invariants": "Group-name normalization, recursive expansion, cycle/missing-group diagnostics, and compatibility with existing deps configuration.",
     "setup_cost": "Medium: isolated Python checkout; Windows virtualenv symlink permissions required evaluator-only copy mode.",
@@ -165,7 +167,7 @@
     "evaluator_reliability": 5,
     "environment_reproduction_cost": 3,
     "evaluator": "Official overlay with 9 FAIL_TO_PASS tests and selected PASS_TO_PASS tests.",
-    "screening_note": "Readiness PASS. B1 Luna and A1 Sol both failed all 9 fixed FAIL_TO_PASS contracts with different but semantically incomplete implementations; no model separation and not a T4 candidate."
+    "screening_note": "Historical B1/A1 both failed the fixed contracts, but legacy worktrees retained origin/full history and issue-related upstream commits. Retain only as an invalidated observation; no model separation claim is permitted."
   },
   {
     "task": "modelcontextprotocol__python-sdk-167",
@@ -174,6 +176,7 @@
     "repo": "modelcontextprotocol/python-sdk",
     "revision": "08042c3307bdd0d4a66b0dd3200f38222f447b1e",
     "status": "screened_no_separation_both_fail",
+    "fixture_classification": "INVALIDATED_SOLUTION_LEAKAGE",
     "decision_boundary": "Cancellation/timeout response lifecycle, in-flight request cleanup, late-response handling, and closed transport races.",
     "hidden_invariants": "Pending request state is cleared on every terminal path while genuinely unknown request IDs still surface errors.",
     "setup_cost": "Medium: isolated package environment with trio/pytest/ruff/pyright dependencies prepared before model runs.",
@@ -189,7 +192,7 @@
     "evaluator_reliability": 5,
     "environment_reproduction_cost": 3,
     "evaluator": "Official overlay with 2 FAIL_TO_PASS tests plus issue regression and selected PASS_TO_PASS tests.",
-    "screening_note": "Readiness PASS. Valid B1 Luna and A1 Sol both failed the same fixed in-flight/cancellation contracts while passing the issue regression; no model separation and not a T4 candidate. One earlier B1 violated the no-install protocol and is excluded from results."
+    "screening_note": "Historical valid B1/A1 both failed the same fixed contracts, but legacy worktrees retained origin/remote refs and were not sealed v2 fixtures. Retain only as an invalidated observation; the earlier no-install B1 remains excluded."
   },
   {
     "task": "stanfordnlp__dspy-1609",
@@ -198,6 +201,7 @@
     "repo": "stanfordnlp/dspy",
     "revision": "16ceaba5f7126ca86e5b50b669975c926b9f8f55",
     "status": "invalidated_solution_leakage",
+    "fixture_classification": "INVALIDATED_SOLUTION_LEAKAGE",
     "decision_boundary": "TypedPredictor list outputs must remain machine-parseable when BootstrapFewShot reuses ChatAdapter-rendered demonstrations.",
     "hidden_invariants": "Typed list output parsing, existing numbered passage formatting, scalar/Pydantic/dataclass behavior, input-list formatting, and BootstrapFewShot preservation.",
     "setup_cost": "Medium: isolated DSPy environment with dependencies installed before model runs; two unrelated baseline Pydantic context-manager tests remain environment-sensitive.",

@@ -49,6 +49,13 @@ single blocking wait after spawn, avoid normal-path topology/status chatter,
 and reserve `send_message` for material updates. It does not change routing
 or isolation implementation.
 
+For external candidate screening, `build_sealed_fixture.py` creates a
+model-only workspace from an exact source revision and a synthetic baseline
+commit. Run `validate_sealed_fixture.py` before every model invocation; it is
+fail-closed and returns `SEALED_PASS` or `FIXTURE_NOT_SEALED`. Evaluator assets
+are materialized only after model completion. The DSPy-1609 acceptance and
+legacy fixture audit are recorded in `sealed_fixture_v2.md`.
+
 ## Result headline
 
 Isolation behavior was observed end to end, and D matched A on the three

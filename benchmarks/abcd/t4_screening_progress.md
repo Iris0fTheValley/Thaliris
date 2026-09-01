@@ -125,8 +125,14 @@ as evidence of a Luna/Sol capability boundary.
   truncation), `python-telegram-bot__python-telegram-bot-4617` (invalid
   network fixture).
 - Unstable separations: none so far.
-- Invalidated candidates: `stanfordnlp__dspy-1609` (solution leakage; all
-  model results are observations only).
+- Legacy unaudited screens: none among the four audited historical fixtures;
+  each has either confirmed history/artifact exposure or an unprovable clean
+  boundary.
+- Invalidated candidates: `pydata__xarray-9636` (A-Sol queried git history and
+  remote), `tox-dev__tox-3409` (origin/full history and issue-related upstream
+  commits were available), `modelcontextprotocol__python-sdk-167` (origin and
+  remote refs remained in the worktrees), and `stanfordnlp__dspy-1609`
+  (confirmed upstream fix objects plus parent-side evaluator artifacts).
 - Provisional T4 candidates: none.
 - Screened with no separation because both models failed the fixed semantic
   evaluator: `tox-dev__tox-3409`,

@@ -39,6 +39,7 @@
     "repo": "tox-dev/tox",
     "revision": "f919d0d0d512a755f0f85af540ed75f73140a685",
     "readiness": "PASS",
+    "fixture_classification": "INVALIDATED_SOLUTION_LEAKAGE",
     "checks": {
       "checkout_exact": "PASS",
       "dependencies_import": "PASS",
@@ -46,7 +47,7 @@
       "baseline_expected_failure": "PASS",
       "pass_to_pass_evaluator": "PASS (selected subset)",
       "network_or_cache_archaeology_required": "NO",
-      "historical_fix_or_prior_artifact_available": "NO",
+      "historical_fix_or_prior_artifact_available": "FAIL: legacy worktrees retained origin/full history; issue-related upstream commits were available",
       "windows_evaluator_adjustment": "evaluator-only VIRTUALENV_SYMLINK_APP_DATA=0 and VIRTUALENV_SYMLINKS=0 copy mode"
     },
     "evaluator": {
@@ -85,7 +86,7 @@
       "A1": ["src/tox/tox_env/python/runner.py", "src/tox/tox_env/python/dependency_groups.py", "docs/config.rst", "tests/tox_env/python/test_dependency_groups.py", "tests/tox_env/python/test_python_runner.py"]
     },
     "scope_result": "SCOPED_BUT_EVALUATOR_FAIL",
-    "notes": "Independent clean worktrees and offline protocol. Focused local tests passed, but fixed evaluator rejected both implementations; no Sol/Luna separation."
+    "notes": "Historical result is retained for observation only. Legacy worktrees retained origin and broad upstream history, so the Sol/Luna result cannot be used as sealed capability evidence."
   },
   {
     "task": "modelcontextprotocol__python-sdk-167",
@@ -93,6 +94,7 @@
     "repo": "modelcontextprotocol/python-sdk",
     "revision": "08042c3307bdd0d4a66b0dd3200f38222f447b1e",
     "readiness": "PASS",
+    "fixture_classification": "INVALIDATED_SOLUTION_LEAKAGE",
     "checks": {
       "checkout_exact": "PASS",
       "dependencies_import": "PASS",
@@ -100,7 +102,7 @@
       "baseline_expected_failure": "PASS",
       "pass_to_pass_evaluator": "PASS (selected subset)",
       "network_or_cache_archaeology_required": "NO",
-      "historical_fix_or_prior_artifact_available": "NO"
+      "historical_fix_or_prior_artifact_available": "FAIL: legacy worktrees retained origin and remote refs; exact-base cleanliness is not proven"
     },
     "evaluator": {
       "FAIL_TO_PASS_count": 2,
@@ -149,7 +151,7 @@
       "A1": ["src/mcp/shared/session.py", "tests/client/test_session.py"]
     },
     "scope_result": "SCOPED_BUT_EVALUATOR_FAIL",
-    "notes": "Valid B1 was rerun with preinstalled dependencies and no uv in PATH. The earlier invalid run is retained as cost data but not used for quality. Both valid models passed the issue regression yet failed the same fixed concurrency contracts."
+    "notes": "Historical result is retained for observation only. Legacy worktrees retained origin/remote refs and were not sealed v2 fixtures; no Sol/Luna capability claim is permitted. The earlier invalid run remains excluded for its protocol violation."
   },
   {
     "task": "stanfordnlp__dspy-1609",
@@ -158,6 +160,7 @@
     "revision": "16ceaba5f7126ca86e5b50b669975c926b9f8f55",
     "readiness": "PASS",
     "fixture_validity": "INVALID_SOLUTION_LEAKAGE",
+    "fixture_classification": "INVALIDATED_SOLUTION_LEAKAGE",
     "checks": {
       "checkout_exact": "PASS",
       "dependencies_import": "PASS",

@@ -443,8 +443,13 @@ def _record_runtime_event(root: Path, payload: dict[str, Any], event: str, tool:
         tool_input = _delegation_input(payload)
         state["pre_dispatch_rewrite"] = "NO" if tool_input.get("fork_turns") == "none" else "YES"
     if event == "PostToolUse" and _tool_basename(tool) == "spawn_agent":
-        response = payload.get("tool_response")
-        if isinstance(response, dict) and not any(response.get(key) for key in ("isError", "failed", "error")):
+        # Codex 0.146 has emitted both a structured response object and a
+        # scalar/opaque response for collaboration tools.  The PostToolUse
+        # event itself is the completion boundary; only an explicit failure
+        # marker should prevent the Controller from recognizing that a child
+        # dispatch completed.  Do not inspect encrypted V2 message content.
+        response = _post_tool_response(payload)
+        if _post_tool_succeeded(response):
             state["successful_spawn_observed"] = True
     _write_capture(path, state)
 
@@ -484,6 +489,28 @@ def _successful_spawn_observed(root: Path, payload: dict[str, Any]) -> bool:
     except (OSError, ValueError, json.JSONDecodeError):
         return False
     return isinstance(value, dict) and value.get("successful_spawn_observed") is True
+
+
+def _post_tool_response(payload: dict[str, Any]) -> object:
+    """Read the native PostToolUse result across 0.146 payload variants."""
+    for key in ("tool_response", "tool_result", "result", "output"):
+        if key in payload:
+            return payload[key]
+    return None
+
+
+def _post_tool_succeeded(response: object) -> bool:
+    """Treat a completed PostToolUse spawn as success unless it says failure."""
+    if isinstance(response, dict):
+        if any(response.get(key) is True or response.get(key) not in (None, False, "") for key in ("isError", "failed", "error")):
+            return False
+        nested = response.get("result")
+        if isinstance(nested, dict):
+            return _post_tool_succeeded(nested)
+        return True
+    if isinstance(response, str) and response.strip().lower() in {"error", "failed", "rejected"}:
+        return False
+    return True
 
 
 def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | None:

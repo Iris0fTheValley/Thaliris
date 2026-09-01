@@ -731,16 +731,21 @@ def test_controller_guard_blocks_root_apply_patch_without_leaking_payload(tmp_pa
 
 def test_controller_guard_allows_child_apply_patch(tmp_path):
     root = repo(tmp_path)
+    secret_patch = "*** Begin Patch\n*** Update File: src/main.py\n+CHILD_PATCH_PAYLOAD\n*** End Patch"
     assert handle_hook(
         root,
         "PreToolUse",
         payload(
             agent_id="child-1",
             tool_name="apply_patch",
-            tool_input={"patch": "*** Begin Patch\n*** Update File: src/main.py\n*** End Patch"},
+            tool_input={"patch": secret_patch},
         ),
     ) == ""
-    assert not list((root / ".context" / "audit").glob("*/runtime.json"))
+    runtime = list((root / ".context" / "audit").glob("*/runtime.json"))
+    evidence = json.loads(runtime[0].read_text(encoding="utf-8"))
+    assert evidence["child_tools_observed"] == ["apply_patch"]
+    assert evidence["child_actions_observed"] == ["SOURCE_MUTATION"]
+    assert "CHILD_PATCH_PAYLOAD" not in json.dumps(evidence)
 
 
 def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path):

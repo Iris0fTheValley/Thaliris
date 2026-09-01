@@ -306,6 +306,7 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             return ""
         root = _hook_repository_root(root, payload)
         if payload.get("agent_id") is not None:
+            _record_child_runtime_event(root, payload, event)
             return ""
         if event == "PreToolUse":
             tool = payload.get("tool_name") or payload.get("tool")
@@ -473,6 +474,27 @@ def _record_controller_guard_event(root: Path, payload: dict[str, Any], action: 
     actions = state.setdefault("controller_actions_observed", [])
     if action not in actions and len(actions) < 16:
         actions.append(action)
+    _write_capture(path, state)
+
+
+def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str) -> None:
+    """Persist only bounded child execution categories, never tool payloads."""
+    if event != "PreToolUse":
+        return
+    tool = payload.get("tool_name") or payload.get("tool")
+    if not isinstance(tool, str):
+        return
+    normalized = _tool_basename(tool)
+    if normalized != _CONTROLLER_MUTATION_TOOL_NAME:
+        return
+    path = _session_dir(root, payload) / "runtime.json"
+    state = _load_runtime(path)
+    tools = state.setdefault("child_tools_observed", [])
+    if normalized not in tools and len(tools) < 16:
+        tools.append(normalized)
+    actions = state.setdefault("child_actions_observed", [])
+    if "SOURCE_MUTATION" not in actions and len(actions) < 16:
+        actions.append("SOURCE_MUTATION")
     _write_capture(path, state)
 
 

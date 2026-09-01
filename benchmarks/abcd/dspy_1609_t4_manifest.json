@@ -1,0 +1,99 @@
+{
+  "manifest_version": 1,
+  "task": "stanfordnlp__dspy-1609",
+  "status": "INVALIDATED_SOLUTION_LEAKAGE",
+  "source": "SWE-bench-Live lite",
+  "source_url": "https://github.com/microsoft/SWE-bench-Live",
+  "repository": "https://github.com/stanfordnlp/dspy",
+  "exact_revision": "16ceaba5f7126ca86e5b50b669975c926b9f8f55",
+  "issue_number": "1567",
+  "original_issue_wording": {
+    "source_record": "swe-live-lite.parquet instance stanfordnlp__dspy-1609, problem_statement column",
+    "verbatim_file": "benchmarks/abcd/dspy_1609_issue.md",
+    "sha256": "6C1FBB315EE9E333E3A8BA4E3085E0ECE6E129DBFE9A9896E642242184A9A959",
+    "provided_to_model": "YES: problem_statement only"
+  },
+  "fixed_fail_to_pass": [
+    "tests/functional/test_signature_typed.py::test_pydantic",
+    "tests/functional/test_signature_typed.py::test_optional_pydantic",
+    "tests/functional/test_signature_typed.py::test_nested_pydantic",
+    "tests/functional/test_signature_typed.py::test_dataclass"
+  ],
+  "required_pass_to_pass": {
+    "official_count": 257,
+    "preservation_subset": [
+      "tests/functional/test_functional.py::test_list_output",
+      "tests/functional/test_functional.py::test_list_inputs_and_outputs",
+      "tests/functional/test_functional.py::test_simple_type",
+      "tests/functional/test_functional.py::test_simple_type_input",
+      "tests/functional/test_signature_typed.py::test_basic_types[str-foo-foo]",
+      "tests/functional/test_signature_typed.py::test_basic_types[int-42-42]",
+      "tests/functional/test_signature_typed.py::test_basic_types[float-42.42-42.42]",
+      "tests/functional/test_signature_typed.py::test_boolean",
+      "tests/functional/test_signature_typed.py::test_sequences[list-[\"foo\", \"bar\"]-expected0]",
+      "tests/functional/test_signature_typed.py::test_sequences[tuple-[42, 3.14]-expected1]",
+      "tests/functional/test_signature_typed.py::test_unions[Optional-\"foobar\"-foobar]",
+      "tests/functional/test_signature_typed.py::test_unions[Optional-null-None]",
+      "tests/functional/test_signature_typed.py::test_unions[Union-3.14-3.14]",
+      "tests/functional/test_signature_typed.py::test_unions[Union-true-True]",
+      "tests/functional/test_signature_opt_typed.py",
+      "tests/teleprompt/test_bootstrap.py",
+      "tests/dsp_LM/functional/test_functional.py::test_list_output",
+      "tests/dsp_LM/functional/test_signature_opt_typed.py"
+    ],
+    "authority": "independent evaluator overlay after model run; model-selected tests are observational only"
+  },
+  "scope_rules": {
+    "allowed_product_paths": [
+      "dspy/adapters/chat_adapter.py",
+      "dspy/functional/functional.py"
+    ],
+    "allowed_regression_paths": ["tests/**"],
+    "forbidden": ["benchmark evaluator files", "test patch", "generated caches", "unrelated product files"],
+    "required_checks": ["fixed FAIL_TO_PASS", "required PASS_TO_PASS subset", "git diff --check", "scope diff"]
+  },
+  "environment": {
+    "python": "3.11.9",
+    "pydantic": "2.13.5",
+    "pytest": "9.1.1",
+    "dependencies": "preinstalled in I:/AI PROJECT/abcd-screening/dspy-1609-venv",
+    "network": "disabled by protocol; runtime enforcement not independently proven",
+    "installation": "disabled during model run by protocol; runtime enforcement not independently proven",
+    "working_tree": "fresh exact-revision checkout per run"
+  },
+  "model_run_controls": {
+    "fresh_session": true,
+    "same_task_wording": true,
+    "reasoning_effort": "high",
+    "git_history": "forbidden by protocol; not enforced in fixture",
+    "remote": "forbidden by protocol; origin remained configured",
+    "prior_run_artifacts": "forbidden; model-side control FAIL because sibling test patch and full parquet were readable from parent directory",
+    "test_patch": "not present in model checkout",
+    "historical_fix": "FAIL: model checkout retained origin refs/object database exposing upstream fix 2349c84b5489bb792edbedc81acfaf9bf2488ce0",
+    "evaluator_overlay": "applied only after model completion to a separate checkout"
+  },
+  "evaluator_overlay": {
+    "official_test_patch_sha256": "847C11165DF37458F3D931940693EE07A74E5163F73419FACDA85A84AA4A7B2C",
+    "model_checkout": "I:/AI PROJECT/abcd-screening/dspy-1609-A2-sol",
+    "evaluator_checkout": "I:/AI PROJECT/abcd-screening/dspy-1609-A2-sol-eval",
+    "source_changes_copied_after_run": true,
+    "test_patch_copied_after_run": true
+  },
+  "leakage_review": {
+    "correct_implementation_in_model_prompt": "PASS: absent",
+    "test_patch_in_model_checkout": "PASS: absent in checkout; FAIL for parent-directory side channel",
+    "exact_expected_helper_signature_in_model_prompt": "PASS: absent",
+    "upstream_patch_or_historical_fix": "FAIL: origin refs/object database expose 2349c84b Fix TypedPredictor formatting with list output values (#1609)",
+    "failure_explanation_in_model_prompt": "UNVERIFIED_ACROSS_RUNS: current A2 prompt was issue-only, but prior screening prompts are not independently proven identical",
+    "hints_text_or_all_hints_text_used": "NO direct prompt use observed; sibling parquet containing hints/test_patch remained readable",
+    "side_channel_parent_access": "FAIL: I:/AI PROJECT/abcd-screening/dspy-1609-test.patch and swe-live-lite.parquet were readable alongside model checkout",
+    "remote_refs_or_gold_objects": "FAIL: git remote origin and --all history expose the historical fix",
+    "status": "FAIL_INVALIDATE",
+    "evidence": [
+      "I:/AI PROJECT/abcd-screening/dspy-1609-A2-sol remote -v",
+      "I:/AI PROJECT/abcd-screening/dspy-1609-A2-sol log --all --grep=1609",
+      "I:/AI PROJECT/abcd-screening/dspy-1609-test.patch",
+      "I:/AI PROJECT/abcd-screening/swe-live-lite.parquet"
+    ]
+  }
+}

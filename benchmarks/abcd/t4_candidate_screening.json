@@ -197,7 +197,7 @@
     "source_url": "https://github.com/microsoft/SWE-bench-Live",
     "repo": "stanfordnlp/dspy",
     "revision": "16ceaba5f7126ca86e5b50b669975c926b9f8f55",
-    "status": "provisional_t4_candidate",
+    "status": "invalidated_solution_leakage",
     "decision_boundary": "TypedPredictor list outputs must remain machine-parseable when BootstrapFewShot reuses ChatAdapter-rendered demonstrations.",
     "hidden_invariants": "Typed list output parsing, existing numbered passage formatting, scalar/Pydantic/dataclass behavior, input-list formatting, and BootstrapFewShot preservation.",
     "setup_cost": "Medium: isolated DSPy environment with dependencies installed before model runs; two unrelated baseline Pydantic context-manager tests remain environment-sensitive.",
@@ -213,6 +213,6 @@
     "evaluator_reliability": 5,
     "environment_reproduction_cost": 3,
     "evaluator": "Official overlay with 4 FAIL_TO_PASS typed-signature tests; selected functional/teleprompt preservation suites.",
-    "screening_note": "Readiness PASS. B1 Luna failed the fixed evaluator with a typed-list bootstrap parsing contract error. A1 Sol passed 4/4. Independent B2 Luna failed the same fixed contract (missing field_info/value signature), so classify as PROVISIONAL_T4_CANDIDATE; do not start formal T4 until a fresh confirmation/entry review."
+    "screening_note": "Fixture entry review failed after model runs: origin refs/object history exposed upstream fix 2349c84b, and sibling dspy-1609-test.patch plus swe-live-lite.parquet were readable from the parent directory. B1/A1/B2 and the observed A2 run are retained as contaminated observations only; none can support a Sol/Luna qualification. Downgrade to INVALIDATED_SOLUTION_LEAKAGE and do not start formal T4."
   }
 ]

@@ -128,6 +128,11 @@ def main(argv: list[str] | None = None) -> int:
         "schema_version": 1,
         "baseline_commit": "ebfe9e9c4598e7896015d90cb89dd3c55eea0809",
         "policy_commit": "247abc4",
+        "wait_timeout_policy": {
+            "prior_child_latency_seconds": [104.2, 163.8, 118.3, 116.1, 257.3, 214.0, 239.8],
+            "selected_first_wait_timeout_ms": 240000,
+            "basis": "Observed prior C/D T2/T3 child task durations; 240 seconds covers the common range without using the tool maximum.",
+        },
         "aggregate": aggregate,
         "runs": rows,
         "model_breakdown": model_breakdown,

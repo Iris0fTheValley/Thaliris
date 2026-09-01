@@ -6,6 +6,7 @@
   "reasoning_effort": "high",
   "network_enforcement": "UNVERIFIED",
   "installation_enforcement": "UNVERIFIED",
+  "overlay_sequencing": "committed harness writes evaluator overlays post-model; historical runs pre-hardening, no observed leakage",
   "runs": [
     {"task":"reata__sqllineage-524","model":"luna","run":"LUNA1","result":"FAIL","failure_mode":"scope_violation","scope":"FAIL","model_pass":false,"gold_pass":true,"input":1272057,"cached":1194496,"uncached":77561,"output":10864,"reasoning":5197,"model_calls":1,"root_peak":1272057},
     {"task":"reata__sqllineage-524","model":"luna","run":"LUNA2","result":"FAIL","failure_mode":"scope_violation","scope":"FAIL","model_pass":false,"gold_pass":true,"input":1678100,"cached":1588480,"uncached":89620,"output":11832,"reasoning":5261,"model_calls":1,"root_peak":1678100},

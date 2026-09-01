@@ -10,10 +10,13 @@ No Thaliris C/D run and no product code change was made.
 - CLI: `codex-cli 0.146.0-alpha.3.1`; models:
   `gpt-5.6-luna`, `gpt-5.6-sol`; `model_reasoning_effort=high`.
 - Every counted attempt used a fresh synthetic `git archive` fixture, an
-  `--ephemeral` Codex session, and the same issue wording.  The fixed
-  evaluator was materialized only after model termination and kept outside the
-  model workspace.  A post-run telemetry search found no model reference to
-  evaluator, test-patch, gold-patch, history, or remote paths.
+  `--ephemeral` Codex session, and the same issue wording.  Evaluator files
+  were outside each model workspace, and a post-run telemetry search found no
+  model reference to evaluator, test-patch, gold-patch, history, or remote
+  paths.  The committed harness now defers writing trusted evaluator overlays
+  until model termination; the first runs were collected before that sequencing
+  hardening, so strict no-leak proof for those historical processes is
+  unavailable (no observed leakage was found).
 - `validate_sealed_fixture.py` was `SEALED_PASS` before every counted model
   attempt.  Dependencies were prepared before the model run; network and
   installation enforcement remain `UNVERIFIED` (protocol-level only).

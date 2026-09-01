@@ -8,9 +8,9 @@
     "checks": {
       "checkout_exact": "PASS",
       "dependencies_import": "PASS",
-      "focused_evaluator_starts": "FAIL",
-      "baseline_expected_failure": "UNAVAILABLE",
-      "pass_to_pass_evaluator": "UNAVAILABLE",
+      "focused_evaluator_starts": "PASS",
+      "baseline_expected_failure": "ENVIRONMENT_INCONCLUSIVE",
+      "pass_to_pass_evaluator": "PARTIAL",
       "network_or_cache_archaeology_required": "NO",
       "historical_fix_or_prior_artifact_available": "NO"
     },
@@ -30,7 +30,7 @@
       "tests/test_bot.py::TestBotWithRequest::test_set_game_score_and_high_scores"
     ],
     "PASS_TO_PASS_count": 6236,
-    "failure_mode": "evaluator_failure: pytest configuration requires unavailable --no-success-flaky-report plugin; override also lacks flaky and asyncio plugins",
-    "notes": "Do not infer model capability. Public evaluator was never changed or bypassed for screening."
+    "failure_mode": "evaluator_environment: network-backed fixture reaches Telegram API but embedded fallback bot returns 401 Unauthorized",
+    "notes": "Isolated venv repaired pytest/flaky/asyncio/pytz/cryptography dependencies. Do not infer model capability or run B1 without a valid authorized test fixture; public evaluator was not modified or bypassed."
   }
 ]

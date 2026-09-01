@@ -680,6 +680,8 @@ def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
     assert re.fullmatch(matcher, "spawn_agent")
     assert re.fullmatch(matcher, "collaboration.spawn_agent")
     assert re.fullmatch(matcher, "collaborationspawn_agent")
+    assert re.fullmatch(matcher, "collaborationsend_message")
+    assert re.fullmatch(matcher, "collaborationfollowup_task")
     assert re.fullmatch(matcher, "Bash")
     assert not re.fullmatch(matcher, "shell-script")
 

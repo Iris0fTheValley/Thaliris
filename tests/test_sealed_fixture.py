@@ -14,6 +14,7 @@ sys.path.insert(0, str(BENCHMARK_TOOLS))
 
 from build_sealed_fixture import build_fixture  # noqa: E402
 from validate_sealed_fixture import validate_fixture  # noqa: E402
+from prepare_benchmark_codex_home import build_minimal_home  # noqa: E402
 
 
 def _git(path: Path, *args: str) -> str:
@@ -105,3 +106,31 @@ def test_gate_fails_for_parent_side_channel(source_repo: tuple[Path, str], tmp_p
     )
     assert gate["status"] == "FIXTURE_NOT_SEALED"
     assert gate["checks"]["filesystem_parent_traversal"]["status"] == "FAIL"
+
+
+def test_minimal_codex_home_projects_provider_without_history(tmp_path: Path) -> None:
+    source = tmp_path / "source-codex"
+    source.mkdir()
+    (source / "config.toml").write_text(
+        "model_provider = \"custom\"\nmodel = \"gpt-5.6-sol\"\nmodel_reasoning_effort = \"high\"\n"
+        "[model_providers.custom]\nname = \"external\"\nbase_url = \"https://example.invalid\"\n"
+        "wire_api = \"responses\"\nrequires_openai_auth = true\n"
+        "[projects.'c:\\\\machine']\ntrust_level = \"trusted\"\n",
+        encoding="utf-8",
+    )
+    (source / "auth.json").write_text('{"OPENAI_API_KEY":"test-secret"}\n', encoding="utf-8")
+    (source / "sessions").mkdir()
+    (source / "sessions" / "old.jsonl").write_text("old session\n", encoding="utf-8")
+    agents = tmp_path / "AGENTS.md"
+    agents.write_text("global benchmark policy\n", encoding="utf-8")
+
+    destination = tmp_path / "fresh-codex"
+    result = build_minimal_home(source, destination, global_agents=agents)
+
+    assert result["auth_projected"] is True
+    assert result["global_agents_projected"] is True
+    assert not (destination / "sessions").exists()
+    assert not (destination / "plugins").exists()
+    assert (destination / "auth.json").read_text(encoding="utf-8") == (source / "auth.json").read_text(encoding="utf-8")
+    config = (destination / "config.toml").read_text(encoding="utf-8")
+    assert "base_url" in config and "[projects" not in config

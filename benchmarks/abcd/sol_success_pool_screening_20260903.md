@@ -35,6 +35,11 @@ Both have zero model calls and are not Luna failures. The first attempt also
 exposed a long Windows plugin-materialization path; the runner now places
 per-run homes below `C:\thaliris-codex` to avoid that unrelated artifact.
 
+An independent provider smoke using the same CC Switch configuration returned
+`OK` for `gpt-5.5`, while `gpt-5.6-luna` returned `503 Service Unavailable`.
+Neither smoke used official OAuth. This isolates the current blocker to the
+Luna model route at the external provider, not to CODEX_HOME or authentication.
+
 No candidate produced an interpretable Luna/Sol separation. The pool remains
 blocked by provider account state and legacy evaluator feasibility, so no
 plausible semantic Luna failure can be claimed and no task is authorized for

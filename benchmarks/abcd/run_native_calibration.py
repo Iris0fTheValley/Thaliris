@@ -41,7 +41,7 @@ CODEX_CANDIDATES = (
 )
 EXTERNAL_CODEX_HOME = Path(os.environ.get(
     "THALIRIS_EXTERNAL_CODEX_HOME",
-    r"C:\Users\12298\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\ThalirisBench\managed-cli-builder-external-home-r3",
+    str(Path.home() / ".codex"),
 ))
 CODEX_HOME_ROOT = Path(os.environ.get("THALIRIS_CODEX_HOME_ROOT", r"C:\thaliris-codex"))
 GO_BIN = Path(r"I:\AI PROJECT\abcd-screening\readiness-20260902\tools\go\bin")

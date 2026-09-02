@@ -4,6 +4,10 @@
   "provider": "external CC Switch provider (credential details omitted)",
   "reasoning_effort": "high",
   "model_runs": 2,
+  "provider_smokes": [
+    {"model": "gpt-5.5", "provider": "external CC Switch", "result": "PASS", "response": "OK", "oauth_fallback": false},
+    {"model": "gpt-5.6-luna", "provider": "external CC Switch", "result": "ENVIRONMENT_INCONCLUSIVE", "error": "503 SERVICE_UNAVAILABLE", "model_calls": 0, "oauth_fallback": false}
+  ],
   "sealed_tasks": ["asdf-format__asdf-1907"],
   "separation_pool": [],
   "provisional_separation": [],

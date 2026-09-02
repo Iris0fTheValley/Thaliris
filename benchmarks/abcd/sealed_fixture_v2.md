@@ -10,8 +10,10 @@ screen.
 - `build_sealed_fixture.py` accepts a trusted repository, exact revision, issue
   text file, and dependency-environment reference.
 - It materializes the exact tree with `git archive` (forced `core.autocrlf=false`),
-  rejects symlink/submodule entries, removes any source `.git`, and initializes
-  a fresh repository with one synthetic `sealed baseline` commit.
+  restores source blobs affected by `export-subst`, represents symlinks as
+  non-following mode-120000 blobs and submodules as mode-160000 gitlinks,
+  removes any source `.git`, and initializes a fresh repository with one
+  synthetic `sealed baseline` commit.
 - Tracked ignored files are force-added, executable modes are preserved in the
   synthetic tree, and Windows mode-only working-tree noise is disabled after
   the commit.  The issue text and dependency reference are metadata only; no

@@ -79,7 +79,18 @@ def _is_suspicious_name(name: str) -> bool:
     return any(token in name for token in ("test_patch", "test-patch", "all_hints", "hints_text", "gold_patch", "prior_run"))
 
 
-def _is_suspicious_file(path: Path) -> bool:
+def _is_suspicious_file(path: Path, tracked_files: set[str] | None = None, workspace: Path | None = None) -> bool:
+    if tracked_files and workspace is not None:
+        try:
+            relative = path.resolve().relative_to(workspace.resolve()).as_posix()
+        except ValueError:
+            relative = ""
+        # Repositories may legitimately version fixture files ending in
+        # .diff.  Exact-tree and clean-status checks still protect against
+        # added or modified evaluator patches; only known baseline paths get
+        # this narrow exemption.
+        if relative in tracked_files and path.suffix.lower() == ".diff":
+            return False
     return _is_suspicious_name(path.name)
 
 
@@ -288,6 +299,7 @@ def validate_fixture(
     scope_ok, roots, scope_error = _ancestor_scope(workspace, scan_root)
     findings: list[str] = []
     scan_error: str | None = None
+    tracked_files = set(_git_value(workspace, "ls-files")[1].splitlines())
     if scope_ok:
         seen: set[str] = set()
         try:
@@ -297,7 +309,7 @@ def validate_fixture(
                     if resolved in seen:
                         continue
                     seen.add(resolved)
-                    if _is_suspicious_file(path):
+                    if _is_suspicious_file(path, tracked_files=tracked_files, workspace=workspace):
                         findings.append(resolved)
         except ScanLimitExceeded as error:
             scan_error = str(error)

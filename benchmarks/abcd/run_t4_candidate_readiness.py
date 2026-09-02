@@ -61,6 +61,13 @@ def _load_rows(metadata: Path, trusted_root: Path, issue_root: Path, prep_root: 
             continue
         repo_name = task if (trusted_root / task).exists() else item["repo"].split("/", 1)[1]
         row = dict(item)
+        selection = list(item.get("FAIL_TO_PASS", [])) + list(item.get("PASS_TO_PASS", []))
+        # A few parquet rows contain truncated parametrized node ids (the
+        # closing bracket and parameter value were lost during dataset export).
+        # File-level selection is the only honest fallback; it preserves the
+        # task's test module without inventing a test name.
+        if any("[" in test and "]" not in test for test in selection):
+            selection = sorted({test.split("::", 1)[0] for test in selection})
         row.update({
             "task": task,
             "dataset": "SWE-rebench-V2-Filtered-Verified",
@@ -72,6 +79,7 @@ def _load_rows(metadata: Path, trusted_root: Path, issue_root: Path, prep_root: 
             "future_evaluator_path": str(prep_root / "future-evaluator" / task),
             "FAIL_TO_PASS": item.get("FAIL_TO_PASS", []),
             "PASS_TO_PASS": item.get("PASS_TO_PASS", []),
+            "test_selection": selection,
         })
         rows.append(row)
     return rows

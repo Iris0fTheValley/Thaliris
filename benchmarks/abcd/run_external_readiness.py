@@ -334,6 +334,22 @@ def evaluate_task(row: dict[str, Any], prep_root: Path, timeout: int) -> dict[st
         record["final"] = "EVALUATOR_INCONCLUSIVE"
         record["blocker"] = f"evaluator fixture could not be materialized: {error}"
         return record
+    selected_tests = row.get("test_selection")
+    selected_runner: Path | None = None
+    if selected_tests and toolchain == "python/pip":
+        # Keep readiness focused on the trusted F2P/P2P contract.  The runner
+        # lives only in the evaluator checkout and is never visible to a model.
+        selection_file = evaluator / ".t4_selected_tests.json"
+        selection_file.write_text(json.dumps(list(selected_tests)) + "\n", encoding="utf-8")
+        selected_runner = evaluator / ".t4_selected_runner.py"
+        selected_runner.write_text(
+            "import json\n"
+            "from pathlib import Path\n"
+            "import pytest\n"
+            "tests = json.loads((Path(__file__).with_name('.t4_selected_tests.json')).read_text())\n"
+            "raise SystemExit(pytest.main(['-q', *tests]))\n",
+            encoding="utf-8",
+        )
     env = os.environ.copy()
     env["PIP_NO_INPUT"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
@@ -356,7 +372,11 @@ def evaluate_task(row: dict[str, Any], prep_root: Path, timeout: int) -> dict[st
                     return record
             env["PATH"] = str(venv_python.parent) + os.pathsep + env.get("PATH", "")
             install = install.replace("python", f'"{venv_python}"', 1)
-            test_command = test_command.replace("python", f'"{venv_python}"', 1)
+            test_command = (
+                f'"{venv_python}" "{selected_runner}"'
+                if selected_runner is not None
+                else test_command.replace("python", f'"{venv_python}"', 1)
+            )
         elif toolchain == "node/npm":
             env["npm_config_ignore_scripts"] = "1"
         elif toolchain == "go":

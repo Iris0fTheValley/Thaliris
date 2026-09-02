@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from build_sealed_fixture import build_fixture
+from prepare_benchmark_codex_home import build_minimal_home
 from run_external_readiness import _commands, _load_tasks
 from validate_sealed_fixture import validate_fixture
 
@@ -34,11 +35,28 @@ TASKS = (
 )
 MODELS = ("luna", "sol")
 KNOWN_GOLD_COMMIT = "2349c84b5489bb792edbedc81acfaf9bf2488ce0"
-CODEX = Path(os.environ.get("CODEX_EXE", r"C:\Users\12298\AppData\Local\codex-cli\codex.exe"))
+CODEX_CANDIDATES = (
+    Path(r"C:\Users\12298\AppData\Local\OpenAI\Codex\bin\87e5fb3433dabab1\codex.exe"),
+    Path(r"C:\Users\12298\AppData\Local\codex-cli\codex.exe"),
+)
+EXTERNAL_CODEX_HOME = Path(os.environ.get(
+    "THALIRIS_EXTERNAL_CODEX_HOME",
+    r"C:\Users\12298\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\ThalirisBench\managed-cli-builder-external-home-r3",
+))
+CODEX_HOME_ROOT = Path(os.environ.get("THALIRIS_CODEX_HOME_ROOT", r"C:\thaliris-codex"))
 GO_BIN = Path(r"I:\AI PROJECT\abcd-screening\readiness-20260902\tools\go\bin")
 PY38 = Path(r"C:\Users\12298\AppData\Local\Programs\Python\Python38\python.exe")
 READINESS_ROOT = Path(r"I:\AI PROJECT\abcd-screening\readiness-20260902")
 TRUSTED_PATCH_ROOT = READINESS_ROOT / "evaluator-patches"
+
+
+def _codex_executable() -> Path:
+    configured = os.environ.get("CODEX_EXE")
+    candidates = (Path(configured),) if configured else CODEX_CANDIDATES
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError("no usable Codex CLI executable; set CODEX_EXE to codex.exe")
 
 
 def _calibration_commands(row: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
@@ -51,6 +69,8 @@ def _calibration_commands(row: dict[str, Any]) -> tuple[str | None, str | None, 
     preservation evaluator for calibration.
     """
     install, test, toolchain = _commands(row)
+    if install is None and row.get("exact_issue_only"):
+        return None, "python -m pytest -q", "python/pip"
     if row["task"].startswith("reata__sqllineage") and test:
         test = f"{test} --ignore=tests/core/test_drawing.py"
     return install, test, toolchain
@@ -256,6 +276,28 @@ def _prepare_dependency(task: str, source: Path, dependency: Path) -> dict[str, 
         env["GOMODCACHE"] = str(gomod)
         download = _run([str(go), "mod", "download"], cwd=source, env=env, timeout=1200)
         return {"status": "PASS" if download["exit_code"] == 0 else "FAIL", "kind": "go", "gomodcache": str(gomod), "reason": download["stderr"][-4000:]}
+    if task.startswith(("aaugustin__websockets-", "asdf-format__asdf-", "alteryx__woodwork-", "amaranth-lang__amaranth-", "bashtage__arch-")):
+        python = dependency / "Scripts" / "python.exe"
+        if not python.exists():
+            base = Path(r"C:\Users\12298\AppData\Local\Programs\Python\Python311\python.exe")
+            if task.startswith("aaugustin__websockets-"):
+                base = PY38
+            if not base.exists():
+                return {"status": "FAIL", "reason": f"missing Python runtime: {base}"}
+            made = _run([str(base), "-m", "venv", str(dependency)], cwd=source, env=os.environ.copy(), timeout=300)
+            if made["exit_code"]:
+                return {"status": "FAIL", "reason": made["stderr"][-4000:]}
+            packages = ["pytest<9", "psutil", "pytest-remotedata"]
+            if task.startswith("asdf-format__asdf-"):
+                packages += ["asdf-standard", "asdf-transform-schemas", "numpy", "pyyaml", "semantic_version", "jmespath", "attrs"]
+            elif task.startswith("alteryx__woodwork-"):
+                packages += ["pandas==1.5.3", "scikit-learn"]
+            elif task.startswith("bashtage__arch-"):
+                packages += ["numpy==1.26.4", "pandas==1.5.3", "scipy==1.11.4", "statsmodels==0.14.4"]
+            installed = _run([str(python), "-m", "pip", "install", "-q", "--disable-pip-version-check", *packages], cwd=source, env=os.environ.copy(), timeout=1200)
+            if installed["exit_code"]:
+                return {"status": "FAIL", "reason": installed["stderr"][-4000:]}
+        return {"status": "PASS", "kind": "python", "python": str(python)}
     return {"status": "FAIL", "reason": f"unsupported task dependency: {task}"}
 
 
@@ -268,6 +310,11 @@ def _model_env(task: str, dependency: Path, workspace: Path) -> dict[str, str]:
         return env
     if task == "mozilla-services__cliquet-203":
         return _python_env(task, dependency, workspace)
+    if task.startswith(("aaugustin__websockets-", "asdf-format__asdf-", "alteryx__woodwork-", "amaranth-lang__amaranth-", "bashtage__arch-")):
+        env = _python_env(task, dependency, workspace)
+        python = dependency / "Scripts" / "python.exe"
+        env["PATH"] = str(python.parent) + os.pathsep + env.get("PATH", "")
+        return env
     env = os.environ.copy()
     env["PATH"] = str(GO_BIN) + os.pathsep + env.get("PATH", "")
     env["GOTOOLCHAIN"] = "local"
@@ -283,6 +330,21 @@ def _evaluate(row: dict[str, Any], model_workspace: Path, evaluator: Path, depen
     eval_build = build_fixture(source=source, revision=baseline, issue_text=Path(row["issue_path"]), dependency_reference=str(dependency), workspace=evaluator, report=None)
     install, test_command, toolchain = _calibration_commands(row)
     env = _model_env(row["task"], dependency, evaluator)
+    test_argv: list[str] | None = None
+    if row.get("exact_issue_only") and toolchain == "python/pip":
+        selection = list(row.get("test_selection") or row.get("FAIL_TO_PASS", []) + row.get("PASS_TO_PASS", []))
+        if any("[" in test and "]" not in test for test in selection):
+            selection = sorted({test.split("::", 1)[0] for test in selection})
+        selection_file = evaluator / ".t4_selected_tests.json"
+        selection_file.write_text(json.dumps(selection) + "\n", encoding="utf-8")
+        runner = evaluator / ".t4_selected_runner.py"
+        runner.write_text(
+            "import json\nfrom pathlib import Path\nimport pytest\n"
+            "tests = json.loads((Path(__file__).with_name('.t4_selected_tests.json')).read_text())\n"
+            "raise SystemExit(pytest.main(['-q', *tests]))\n",
+            encoding="utf-8",
+        )
+        test_argv = [str(dependency / "Scripts" / "python.exe"), str(runner)]
     if row["task"].startswith("reata__sqllineage"):
         python = dependency / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
         test_command = test_command.replace("python", f'"{python}"', 1)
@@ -310,7 +372,8 @@ def _evaluate(row: dict[str, Any], model_workspace: Path, evaluator: Path, depen
         # All fixed commands use paths without spaces in this fixture root;
         # removing the optional Windows quoting preserves the executable as a
         # single argv item without POSIX shlex interpreting backslashes.
-        result = _run(test_command.replace('"', "").split(), cwd=evaluator, env=env, timeout=timeout)
+        command = test_argv if test_argv is not None else test_command.replace('"', "").split()
+        result = _run(command, cwd=evaluator, env=env, timeout=timeout)
         return {"kind": kind, "status": "PASS" if result["exit_code"] == 0 else "FAIL", "run": result, "actions": actions}
 
     model_result = stage("model", True, False)
@@ -342,9 +405,9 @@ def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeou
     telemetry = root / "telemetry" / f"{run_id}.jsonl"
     final = root / "final" / f"{run_id}.txt"
     model_patch = root / "model-patches" / f"{run_id}.patch"
-    patch_dir = TRUSTED_PATCH_ROOT / task
-    test_patch = patch_dir / "test.patch"
-    gold_patch = patch_dir / "gold.patch"
+    patch_dir = Path(row.get("patch_dir", str(TRUSTED_PATCH_ROOT / task)))
+    test_patch = Path(row.get("test_patch_path", str(patch_dir / "test.patch")))
+    gold_patch = Path(row.get("gold_patch_path", str(patch_dir / "gold.patch")))
     for path in (workspace, evaluator):
         if path.exists():
             shutil.rmtree(path)
@@ -372,9 +435,29 @@ def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeou
         record["classification"] = "ENVIRONMENT_INVALID"
         record["failure_mode"] = "pre-model sealed fixture gate failed"
         return record
-    prompt = Path(row["issue_path"]).read_text(encoding="utf-8") + "\n\nSolve this issue in the current repository. Investigate source and tests as needed, implement the smallest correct fix, and run relevant tests. Do not access git history, remotes, parent directories, benchmark/evaluator artifacts, or the network. Do not modify tests or unrelated files."
+    prompt = Path(row["issue_path"]).read_text(encoding="utf-8") if row.get("exact_issue_only") else Path(row["issue_path"]).read_text(encoding="utf-8") + "\n\nSolve this issue in the current repository. Investigate source and tests as needed, implement the smallest correct fix, and run relevant tests. Do not access git history, remotes, parent directories, benchmark/evaluator artifacts, or the network. Do not modify tests or unrelated files."
     env = _model_env(task, dependency, workspace)
-    command = [str(CODEX), "exec", "--ignore-rules", "--cd", str(workspace), "--model", "gpt-5.6-luna" if model_name == "luna" else "gpt-5.6-sol", "-c", "model_reasoning_effort=high", "--sandbox", "danger-full-access", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--json", "--ephemeral", "--output-last-message", str(final), "-"]
+    # Native runs must not inherit the desktop app's sessions, databases,
+    # plugins, or user instructions. Project only the configured provider and
+    # auth into a fresh home; credentials never enter telemetry or reports.
+    # Keep the home path short: Codex may materialize bundled plugin assets
+    # below CODEX_HOME, and Windows MAX_PATH otherwise masks provider/model
+    # failures before the first request.
+    CODEX_HOME_ROOT.mkdir(parents=True, exist_ok=True)
+    codex_home = CODEX_HOME_ROOT / f"r-{os.getpid()}-{task.split('__', 1)[0][:8]}-{model_name[0]}{index}"
+    if codex_home.exists():
+        shutil.rmtree(codex_home, ignore_errors=True)
+    try:
+        home_manifest = build_minimal_home(EXTERNAL_CODEX_HOME, codex_home)
+    except Exception as error:
+        record["classification"] = "ENVIRONMENT_INVALID"
+        record["failure_mode"] = f"minimal CODEX_HOME: {error}"
+        return record
+    env["CODEX_HOME"] = str(codex_home)
+    for key in ("CODEX_SESSION_ID", "CODEX_THREAD_ID", "CODEX_APP_SERVER", "CODEX_DESKTOP"):
+        env.pop(key, None)
+    record["codex"] = {"executable": str(_codex_executable()), "home": home_manifest}
+    command = [str(_codex_executable()), "exec", "--ignore-rules", "--cd", str(workspace), "--model", "gpt-5.6-luna" if model_name == "luna" else "gpt-5.6-sol", "-c", "model_reasoning_effort=high", "--sandbox", "danger-full-access", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--json", "--ephemeral", "--output-last-message", str(final), "-"]
     started = time.monotonic()
     process = subprocess.Popen(command, cwd=workspace, env=env, stdin=subprocess.PIPE, stdout=telemetry.open("w", encoding="utf-8"), stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     try:
@@ -388,20 +471,28 @@ def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeou
         record["model_process"] = {"exit_code": 124, "timeout": True, "duration_seconds": round(time.monotonic() - started, 2), "stderr_tail": stderr[-4000:]}
     else:
         record["model_process"] = {"exit_code": process.returncode, "timeout": False, "duration_seconds": round(time.monotonic() - started, 2), "stderr_tail": stderr[-4000:]}
-    if "usage limit" in record["model_process"].get("stderr_tail", "").lower() or "hit your usage limit" in record["model_process"].get("stderr_tail", "").lower():
+    stderr_lower = record["model_process"].get("stderr_tail", "").lower()
+    if "usage limit" in stderr_lower or "hit your usage limit" in stderr_lower:
         record["model_process"]["failure_reason"] = "USAGE_LIMIT"
+    elif "insufficient_balance" in stderr_lower or "insufficient account balance" in stderr_lower:
+        # Provider/account state is not a model result. Keep this run out of
+        # the capability funnel and make the environment blocker explicit.
+        record["model_process"]["failure_reason"] = "PROVIDER_INSUFFICIENT_BALANCE"
     totals, timeline, actual_model = _parse_jsonl(telemetry)
     record["telemetry"] = {"model_reported": actual_model, "usage": totals, "model_calls": len(timeline), "peak_context": max((item["input_tokens"] for item in timeline), default=0), "timeline": timeline}
     diff, untracked = _model_patch(workspace, build["synthetic_commit"], model_patch)
     record["scope"] = _scope(_patch_paths(diff), (row.get("patch") or ""), untracked)
-    if record["model_process"].get("failure_reason") == "USAGE_LIMIT":
-        record["evaluation"] = {"status": "NOT_RUN", "reason": "Codex usage limit; no model attempt completed"}
+    if record["model_process"].get("failure_reason") in {"USAGE_LIMIT", "PROVIDER_INSUFFICIENT_BALANCE"}:
+        reason = record["model_process"]["failure_reason"]
+        record["evaluation"] = {"status": "NOT_RUN", "reason": "external provider unavailable before model attempt" if reason == "PROVIDER_INSUFFICIENT_BALANCE" else "Codex usage limit; no model attempt completed"}
         record["quality"] = "ENVIRONMENT_INVALID"
-        record["failure_mode"] = "usage_limit"
+        record["failure_mode"] = reason.lower()
     elif process.returncode == 0 and model_patch.exists():
         patch_dir.mkdir(parents=True, exist_ok=True)
-        test_patch.write_text((row.get("test_patch") or "").replace("\r\n", "\n"), encoding="utf-8", newline="\n")
-        gold_patch.write_text((row.get("patch") or "").replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+        with test_patch.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write((row.get("test_patch") or "").replace("\r\n", "\n"))
+        with gold_patch.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write((row.get("patch") or "").replace("\r\n", "\n"))
         evaluator_report = _evaluate(row, workspace, evaluator, dependency, model_patch, test_patch, gold_patch, timeout=timeout)
         record["evaluation"] = evaluator_report
         record["quality"] = "PASS" if evaluator_report["model_pass"] and evaluator_report["no_edit_expected_fail"] and evaluator_report["gold_pass"] and record["scope"]["status"] == "PASS" else "FAIL"
@@ -417,7 +508,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live-metadata", required=True, type=Path)
     parser.add_argument("--v2-metadata", required=True, type=Path)
     parser.add_argument("--root", required=True, type=Path)
-    parser.add_argument("--only", action="append", choices=TASKS)
+    parser.add_argument("--only", action="append")
+    parser.add_argument("--t4-metadata", type=Path)
+    parser.add_argument("--t4-trusted-root", type=Path)
+    parser.add_argument("--t4-issue-root", type=Path)
+    parser.add_argument("--t4-patch-root", type=Path)
     parser.add_argument("--luna-runs", type=int, default=3)
     parser.add_argument("--sol-runs", type=int, default=3)
     parser.add_argument("--luna-start", type=int, default=1)
@@ -427,8 +522,26 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     # Use the already prepared trusted source and issue roots from readiness;
     # no evaluator material is placed beside a model workspace.
-    rows = _load_tasks(args.live_metadata, args.v2_metadata, args.root, READINESS_ROOT / "trusted-sources", READINESS_ROOT / "issues")
-    selected = tuple(args.only or TASKS)
+    if args.t4_metadata:
+        trusted_root = (args.t4_trusted_root or READINESS_ROOT / "trusted-sources").resolve()
+        issue_root = (args.t4_issue_root or READINESS_ROOT / "issues").resolve()
+        patch_root = (args.t4_patch_root or READINESS_ROOT / "patches").resolve()
+        rows = {}
+        for item in json.loads(args.t4_metadata.read_text(encoding="utf-8")):
+            task = item["instance_id"]
+            source = trusted_root / (task if (trusted_root / task).exists() else item["repo"].split("/", 1)[1])
+            rows[task] = {**item, "task": task, "dataset": "SWE-rebench-V2-Filtered-Verified",
+                          "source": str(source), "issue_path": str(issue_root / f"{task}.md"),
+                          "model_workspace": "", "evaluator_workspace": "", "dependency_reference": "",
+                          "future_evaluator_path": "", "exact_issue_only": True,
+                          "patch_dir": str(patch_root / task),
+                          "test_patch_path": str(patch_root / f"{task}.test.patch"),
+                          "gold_patch_path": str(patch_root / f"{task}.patch"),
+                          "FAIL_TO_PASS": item.get("FAIL_TO_PASS", []), "PASS_TO_PASS": item.get("PASS_TO_PASS", [])}
+        selected = tuple(args.only or rows.keys())
+    else:
+        rows = _load_tasks(args.live_metadata, args.v2_metadata, args.root, READINESS_ROOT / "trusted-sources", READINESS_ROOT / "issues")
+        selected = tuple(args.only or TASKS)
     all_results: list[dict[str, Any]] = []
     for task in selected:
         row = rows[task]

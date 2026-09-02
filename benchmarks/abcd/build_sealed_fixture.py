@@ -54,6 +54,19 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _git_blob(source: Path, object_id: str) -> bytes:
+    result = subprocess.run(
+        ["git", "-C", str(source), "cat-file", "blob", object_id],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip() or "git cat-file failed"
+        raise RuntimeError(f"git cat-file blob {object_id}: {detail}")
+    return result.stdout
+
+
 def _safe_extract(archive: BinaryIO, destination: Path) -> None:
     """Extract a trusted git archive without allowing path traversal."""
 
@@ -63,8 +76,15 @@ def _safe_extract(archive: BinaryIO, destination: Path) -> None:
             target = (destination / member.name).resolve()
             if os.path.commonpath((str(root), str(target))) != str(root):
                 raise RuntimeError(f"archive member escapes workspace: {member.name!r}")
-            if member.issym() or member.islnk():
-                raise RuntimeError(f"archive links are not supported in sealed fixtures: {member.name!r}")
+            if member.islnk():
+                raise RuntimeError(f"archive hard links are not supported in sealed fixtures: {member.name!r}")
+            if member.issym():
+                # Never create a real link in the model workspace.  The link
+                # target is restored from the source blob below and indexed
+                # as mode 120000, preserving the exact Git tree safely.
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(member.linkname.encode("utf-8"))
+                continue
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
@@ -112,9 +132,6 @@ def build_fixture(
     source_tree = _git_output(source, "rev-parse", f"{revision}^{{tree}}")
     _git_output(source, "cat-file", "-e", f"{revision}^{{commit}}")
     source_entries = _git_output(source, "ls-tree", "-r", "--full-tree", revision).splitlines()
-    unsupported = [line for line in source_entries if line.startswith(("120000 ", "160000 "))]
-    if unsupported:
-        raise ValueError("sealed builder does not materialize symlink or submodule entries")
 
     workspace.parent.mkdir(parents=True, exist_ok=True)
     workspace.mkdir()
@@ -134,6 +151,18 @@ def build_fixture(
             raise RuntimeError(detail)
         with archive_path.open("rb") as archive:
             _safe_extract(archive, workspace)
+        # git archive applies export-subst attributes and may normalize a
+        # platform-sensitive byte stream.  Restore any differing blobs from
+        # the exact source revision before constructing the synthetic tree.
+        for entry in source_entries:
+            mode, kind, object_id, path = entry.split(maxsplit=3)
+            target = workspace / path
+            if mode == "160000":
+                continue
+            blob = _git_blob(source, object_id)
+            if not target.is_file() or _sha256(target) != hashlib.sha256(blob).hexdigest():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(blob)
     except Exception:
         shutil.rmtree(workspace, ignore_errors=True)
         raise
@@ -172,6 +201,23 @@ def build_fixture(
     if added.returncode:
         shutil.rmtree(workspace, ignore_errors=True)
         raise RuntimeError(added.stderr.strip() or "git add failed")
+    # A gitlink has no working-tree payload.  Symlinks are represented by a
+    # regular file on Windows, then corrected to the source mode/object here.
+    for entry in source_entries:
+        mode, _kind, object_id, path = entry.split(maxsplit=3)
+        if mode not in {"120000", "160000"}:
+            continue
+        indexed = subprocess.run(
+            ["git", "-C", str(workspace), "update-index", "--add", "--cacheinfo", f"{mode},{object_id},{path}"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if indexed.returncode:
+            shutil.rmtree(workspace, ignore_errors=True)
+            raise RuntimeError(indexed.stderr.strip() or f"could not preserve special entry: {path}")
     for entry in source_entries:
         mode, _kind, _object_id, path = entry.split(maxsplit=3)
         if mode != "100755":

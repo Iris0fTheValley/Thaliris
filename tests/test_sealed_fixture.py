@@ -36,6 +36,7 @@ def source_repo(tmp_path: Path) -> tuple[Path, str]:
     _git(source, "config", "user.name", "fixture-test")
     _git(source, "config", "user.email", "fixture-test@invalid.local")
     (source / "README.md").write_text("sealed fixture test\n", encoding="utf-8")
+    (source / "fixture.diff").write_text("--- a/example\n+++ b/example\n", encoding="utf-8")
     _git(source, "add", "--all", "--force")
     _git(source, "commit", "--quiet", "-m", "base")
     revision = _git(source, "rev-parse", "HEAD")
@@ -106,6 +107,41 @@ def test_gate_fails_for_parent_side_channel(source_repo: tuple[Path, str], tmp_p
     )
     assert gate["status"] == "FIXTURE_NOT_SEALED"
     assert gate["checks"]["filesystem_parent_traversal"]["status"] == "FAIL"
+
+
+def test_builder_preserves_special_git_entries_without_following_links(tmp_path: Path) -> None:
+    source = tmp_path / "special-source"
+    source.mkdir()
+    _git(source, "init", "--quiet")
+    _git(source, "config", "user.name", "fixture-test")
+    _git(source, "config", "user.email", "fixture-test@invalid.local")
+    (source / "link-target").write_bytes(b"safe target")
+    _git(source, "add", "--all", "--force")
+    link_blob = _git(source, "hash-object", "link-target")
+    _git(source, "update-index", "--add", "--cacheinfo", f"120000,{link_blob},link")
+    _git(source, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},vendor/module")
+    _git(source, "commit", "--quiet", "-m", "special entries")
+    revision = _git(source, "rev-parse", "HEAD")
+    issue = tmp_path / "issue.md"
+    issue.write_text("public issue only\n", encoding="utf-8")
+    dependency = tmp_path / "venv"
+    dependency.mkdir()
+    workspace = tmp_path / "sealed-run" / "workspace"
+
+    result = build_fixture(
+        source=source,
+        revision=revision,
+        issue_text=issue,
+        dependency_reference=str(dependency),
+        workspace=workspace,
+        report=None,
+    )
+
+    assert result["source_tree"] == result["synthetic_tree"]
+    assert (workspace / "link").is_file()
+    assert not (workspace / "link").is_symlink()
+    assert (workspace / "vendor" / "module").is_dir()
+    assert list((workspace / "vendor" / "module").iterdir()) == []
 
 
 def test_minimal_codex_home_projects_provider_without_history(tmp_path: Path) -> None:

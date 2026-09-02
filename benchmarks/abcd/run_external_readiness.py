@@ -295,8 +295,13 @@ def evaluate_task(row: dict[str, Any], prep_root: Path, timeout: int) -> dict[st
     patch_dir.mkdir(parents=True, exist_ok=True)
     test_patch = patch_dir / f"{task}.test.patch"
     gold_patch = patch_dir / f"{task}.gold.patch"
-    test_patch.write_text((row.get("test_patch") or "").replace("\r\n", "\n"), encoding="utf-8", newline="\n")
-    gold_patch.write_text((row.get("patch") or "").replace("\r\n", "\n"), encoding="utf-8", newline="\n")
+    # pathlib.Path.write_text gained the ``newline`` parameter after the
+    # Python 3.8 runtime used by several candidate projects.  Use an
+    # explicit text handle so patch bytes remain normalized on all runners.
+    with test_patch.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write((row.get("test_patch") or "").replace("\r\n", "\n"))
+    with gold_patch.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write((row.get("patch") or "").replace("\r\n", "\n"))
     # The future evaluator path is intentionally absent for the model gate.
     future_evaluator = Path(row["future_evaluator_path"])
     if future_evaluator.exists():

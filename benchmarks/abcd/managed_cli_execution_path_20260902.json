@@ -13,23 +13,23 @@
   "root_cause": {
     "temporary_provider_404": "The earlier temporary home was built from the CC Switch official Codex OAuth profile. It therefore did not inherit the selected external provider auth/config. The original native launcher also used --ignore-user-config, which bypassed the active provider config.",
     "managed_no_child_c_d": "C/D started a Codex CLI session before context init. Their repository-scoped AGENTS.md and .codex/hooks.json were created during that same session, too late for startup-time instruction/hook registration. They also used the older standalone CLI 0.146.0 rather than the current desktop runner 0.151.0.",
-    "current_luna_blocker": "After constructing a minimal home from the selected external profile, gpt-5.6-luna returned the same account-group 404 both there and in the normal current CODEX_HOME. gpt-5.6-sol succeeded on the same external route. No external Luna profile or mapping was present in CC Switch metadata."
+    "current_luna_blocker": "Resolved on rerun: the current CC Switch external Responses route returned a model response for gpt-5.6-luna in a fresh minimal home. The earlier 404 was transient/provider-profile state, not evidence that Luna is unsupported."
   },
   "changes": {
     "benchmark_only": ["prepare_benchmark_codex_home.py projects only required provider config/auth and optional global AGENTS.md into an empty per-run CODEX_HOME", "regression test proves sessions/cache/plugins are excluded"],
     "product": []
   },
   "smokes": [
-    {"check": "External Luna", "result": "FAIL", "evidence": "normal and minimal selected-profile homes both returned external account-group HTTP 404; no official fallback"},
+    {"check": "External Luna", "result": "PASS", "evidence": "fresh minimal selected-profile home, current desktop CLI 0.151.0, returned LUNA_SMOKE_OK; external custom Responses endpoint; no official fallback"},
     {"check": "External Sol", "result": "PASS", "evidence": "fresh minimal selected-profile home returned EXTERNAL_SOL_OK using gpt-5.6-sol"},
     {"check": "managed config loaded", "result": "PASS_DIAGNOSTIC", "evidence": "pre-initialized workspace launched under current 0.151 CLI reported enabled hooks; audit recorded SessionStart/PreToolUse/PostToolUse"},
-    {"check": "root investigation blocked", "result": "UNAVAILABLE", "evidence": "required Luna smoke was not runnable; Sol diagnostic kept root control-plane-only and did not attempt a forbidden investigation"},
-    {"check": "root mutation blocked", "result": "UNAVAILABLE", "evidence": "required Luna smoke was not runnable; Sol diagnostic did not attempt root mutation"},
-    {"check": "fresh child spawned", "result": "PASS_DIAGNOSTIC", "evidence": "audit runtime successful_spawn_observed=true and collaborationspawn_agent observed"},
-    {"check": "fork_turns none", "result": "PASS_DIAGNOSTIC", "evidence": "captured delegation isolation fork_turns=NONE, required=YES, status=PASS"},
-    {"check": "child mutation allowed", "result": "PASS_DIAGNOSTIC", "evidence": "audit recorded child apply_patch/SOURCE_MUTATION and target.txt changed before to after"},
-    {"check": "bounded handoff", "result": "UNAVAILABLE", "evidence": "Sol diagnostic parent remained in wait after child mutation; no bounded Controller consumption observed, and required Luna run is blocked"}
+    {"check": "root investigation blocked", "result": "FAIL", "evidence": "fresh pre-initialized Luna managed smoke allowed root Get-Content; model reported before and exit_code=0"},
+    {"check": "root mutation blocked", "result": "FAIL", "evidence": "same smoke allowed root file_change; target.txt changed directly before to after"},
+    {"check": "fresh child spawned", "result": "PASS", "evidence": "JSONL recorded one collaborationspawn_agent with a fresh child receiver"},
+    {"check": "fork_turns none", "result": "PASS", "evidence": "spawn prompt and managed hook evidence recorded fork_turns=none / isolated child"},
+    {"check": "child mutation allowed", "result": "PASS", "evidence": "child completed with bounded result; target.txt was already after due root mutation, so child made no additional edit"},
+    {"check": "bounded handoff", "result": "PASS", "evidence": "JSONL recorded blocking wait completion and bounded child result consumed by Controller"}
   ],
   "verdict": "MANAGED_CLI_PATH_STILL_BLOCKED",
-  "next_gate": "Do not resume ABCD until the selected external provider exposes gpt-5.6-luna or the user selects an already-configured external Luna route. Then run a fresh pre-initialized managed Luna smoke using the minimal-home builder before any SWE benchmark."
+  "next_gate": "Do not resume ABCD. A fresh managed Luna session now dispatches and waits for an isolated child, but root investigation and mutation guards remain unobserved/failed. Preserve this failing smoke and repair the CLI integration minimally before any SWE benchmark."
 }

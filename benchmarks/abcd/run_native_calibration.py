@@ -478,13 +478,15 @@ def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeou
         # Provider/account state is not a model result. Keep this run out of
         # the capability funnel and make the environment blocker explicit.
         record["model_process"]["failure_reason"] = "PROVIDER_INSUFFICIENT_BALANCE"
+    elif "503 service unavailable" in stderr_lower or "service temporarily unavailable" in stderr_lower:
+        record["model_process"]["failure_reason"] = "PROVIDER_UNAVAILABLE"
     totals, timeline, actual_model = _parse_jsonl(telemetry)
     record["telemetry"] = {"model_reported": actual_model, "usage": totals, "model_calls": len(timeline), "peak_context": max((item["input_tokens"] for item in timeline), default=0), "timeline": timeline}
     diff, untracked = _model_patch(workspace, build["synthetic_commit"], model_patch)
     record["scope"] = _scope(_patch_paths(diff), (row.get("patch") or ""), untracked)
-    if record["model_process"].get("failure_reason") in {"USAGE_LIMIT", "PROVIDER_INSUFFICIENT_BALANCE"}:
+    if record["model_process"].get("failure_reason") in {"USAGE_LIMIT", "PROVIDER_INSUFFICIENT_BALANCE", "PROVIDER_UNAVAILABLE"}:
         reason = record["model_process"]["failure_reason"]
-        record["evaluation"] = {"status": "NOT_RUN", "reason": "external provider unavailable before model attempt" if reason == "PROVIDER_INSUFFICIENT_BALANCE" else "Codex usage limit; no model attempt completed"}
+        record["evaluation"] = {"status": "NOT_RUN", "reason": "external provider unavailable before model attempt" if reason in {"PROVIDER_INSUFFICIENT_BALANCE", "PROVIDER_UNAVAILABLE"} else "Codex usage limit; no model attempt completed"}
         record["quality"] = "ENVIRONMENT_INVALID"
         record["failure_mode"] = reason.lower()
     elif process.returncode == 0 and model_patch.exists():
@@ -499,7 +501,14 @@ def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeou
     else:
         record["evaluation"] = {"status": "NOT_RUN", "reason": "model process failed or produced no patch"}
         record["quality"] = "FAIL"
-    record["failure_mode"] = None if record["quality"] == "PASS" else ("scope_violation" if record["scope"]["status"] != "PASS" else "evaluator/model failure")
+    if record["quality"] == "PASS":
+        record["failure_mode"] = None
+    elif record["scope"]["status"] != "PASS":
+        record["failure_mode"] = "scope_violation"
+    elif record.get("model_process", {}).get("failure_reason"):
+        record["failure_mode"] = record["model_process"]["failure_reason"].lower()
+    else:
+        record["failure_mode"] = "evaluator/model failure"
     return record
 
 

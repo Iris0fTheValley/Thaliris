@@ -28,12 +28,12 @@ BOTH_WEAK = []
 ENVIRONMENT_INCONCLUSIVE = [all candidates except asdf-format__asdf-1907]
 ```
 
-The fresh asdf B1 reached the external provider through the correct CLI and
-minimal home, then received `403 INSUFFICIENT_BALANCE` before a model turn;
-telemetry therefore contains zero model calls and the run is not a Luna
-failure. The first attempt also exposed a long Windows plugin-materialization
-path; the runner now places per-run homes below `C:\thaliris-codex` to avoid
-that unrelated path-length artifact.
+Two fresh asdf B1 attempts reached the external provider through the correct
+CLI and minimal home, but failed before a model turn: first
+`403 INSUFFICIENT_BALANCE`, then repeated `503 Service Unavailable` responses.
+Both have zero model calls and are not Luna failures. The first attempt also
+exposed a long Windows plugin-materialization path; the runner now places
+per-run homes below `C:\thaliris-codex` to avoid that unrelated artifact.
 
 No candidate produced an interpretable Luna/Sol separation. The pool remains
 blocked by provider account state and legacy evaluator feasibility, so no

@@ -3,7 +3,7 @@
   "screening_date": "2026-09-03",
   "provider": "external CC Switch provider (credential details omitted)",
   "reasoning_effort": "high",
-  "model_runs": 1,
+  "model_runs": 2,
   "sealed_tasks": ["asdf-format__asdf-1907"],
   "separation_pool": [],
   "provisional_separation": [],
@@ -28,7 +28,10 @@
     {"task": "amaranth-lang__amaranth-912", "tier": "A", "readiness": "ENVIRONMENT_INCONCLUSIVE", "classification": "ENVIRONMENT_INCONCLUSIVE"},
     {"task": "d0c-s4vage__pfp-126", "tier": "A", "readiness": "ENVIRONMENT_INCONCLUSIVE", "classification": "ENVIRONMENT_INCONCLUSIVE"}
   ],
-  "runs": [{"task": "asdf-format__asdf-1907", "arm": "B1", "model": "gpt-5.6-luna", "provider": "external CC Switch", "result": "ENVIRONMENT_INVALID", "provider_error": "INSUFFICIENT_BALANCE", "model_calls": 0, "telemetry": "I:/AI PROJECT/abcd-screening/t4-20260903/native-asdf-b1-rerun/telemetry/asdf-format__asdf-1907-LUNA1.jsonl"}],
+  "runs": [
+    {"task": "asdf-format__asdf-1907", "arm": "B1", "model": "gpt-5.6-luna", "provider": "external CC Switch", "result": "ENVIRONMENT_INVALID", "provider_error": "INSUFFICIENT_BALANCE", "model_calls": 0, "telemetry": "I:/AI PROJECT/abcd-screening/t4-20260903/native-asdf-b1-rerun/telemetry/asdf-format__asdf-1907-LUNA1.jsonl"},
+    {"task": "asdf-format__asdf-1907", "arm": "B1-retry", "model": "gpt-5.6-luna", "provider": "external CC Switch", "result": "ENVIRONMENT_INVALID", "provider_error": "SERVICE_UNAVAILABLE", "model_calls": 0, "telemetry": "I:/AI PROJECT/abcd-screening/t4-20260903/native-asdf-b1-provider-retry/telemetry/asdf-format__asdf-1907-LUNA1.jsonl"}
+  ],
   "network_enforcement": "UNVERIFIED",
   "installation_enforcement": "UNVERIFIED",
   "product_changes": [],

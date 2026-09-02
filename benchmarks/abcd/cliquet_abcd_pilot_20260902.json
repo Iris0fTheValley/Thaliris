@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "protocol": "ABCD_pilot_1x",
   "task": "mozilla-services__cliquet-203",
   "dataset": "SWE-rebench V2 Filtered-Verified",
@@ -9,86 +9,23 @@
   "run_date": "2026-09-02",
   "run_order": ["B", "A", "C", "D"],
   "runtime": {
-    "python": "3.8",
-    "webtest": "1.4.3",
-    "pyramid": "1.10.8",
-    "werkzeug": "0.16.1",
-    "reasoning_effort": "high",
-    "network_enforcement": "UNVERIFIED",
-    "installation_enforcement": "UNVERIFIED"
+    "python": "3.8", "webtest": "1.4.3", "pyramid": "1.10.8", "werkzeug": "0.16.1",
+    "reasoning_effort": "high", "provider": "official Codex OAuth through an isolated temporary CODEX_HOME",
+    "network_enforcement": "UNVERIFIED", "installation_enforcement": "UNVERIFIED"
   },
-  "readiness_authority": {
-    "sealed_gate": "SEALED_PASS",
-    "baseline": {"f2p": 1, "p2p": 27},
-    "gold": {"f2p": 0, "p2p": 28},
-    "gold_repeat": "3/3 PASS"
-  },
+  "readiness_authority": {"sealed_gate": "SEALED_PASS", "baseline": {"f2p": 1, "p2p": 27}, "gold": {"f2p": 0, "p2p": 28}, "gold_repeat": "3/3 PASS"},
+  "discarded_attempts": [
+    {"kind": "native A/B preflight", "reason": "custom provider HTTP 404 for both requested models; zero model calls", "counted": false},
+    {"kind": "native A/B official first attempt", "reason": "benchmark harness serialized model patches with CRLF, preventing LF evaluator git apply", "counted": false}
+  ],
   "runs": [
-    {
-      "arm": "A",
-      "models": ["gpt-5.6-sol"],
-      "workspace": "C:\\Users\\12298\\AppData\\Local\\ThalirisBench\\abcd-pilot-20260902-native2",
-      "synthetic_commit": "8b05e7402f8fe51c187e145ae5e91e203fedd1f3",
-      "gate": "SEALED_PASS",
-      "result": "ENVIRONMENT_INVALID",
-      "quality": "UNAVAILABLE",
-      "f2p": "UNAVAILABLE",
-      "p2p": "UNAVAILABLE",
-      "scope": "PASS",
-      "changed_files": [],
-      "telemetry": {"input": "UNAVAILABLE", "cached_input": "UNAVAILABLE", "uncached_input": "UNAVAILABLE", "output": "UNAVAILABLE", "reasoning": "UNAVAILABLE", "model_calls": 0, "turns": 1, "root_cumulative_input": "UNAVAILABLE", "root_peak_context": "UNAVAILABLE", "largest_child_context": "UNAVAILABLE", "control_calls": "UNAVAILABLE", "wall_clock_seconds": 34.38},
-      "failure": "Provider returned HTTP 404: model gpt-5.6-sol is not supported by any configured account in the custom provider. No model response or patch was produced."
-    },
-    {
-      "arm": "B",
-      "models": ["gpt-5.6-luna"],
-      "workspace": "C:\\Users\\12298\\AppData\\Local\\ThalirisBench\\abcd-pilot-20260902-native2",
-      "synthetic_commit": "5011476daa44c8090a8d4c455fcf2f0c32cc10b4",
-      "gate": "SEALED_PASS",
-      "result": "ENVIRONMENT_INVALID",
-      "quality": "UNAVAILABLE",
-      "f2p": "UNAVAILABLE",
-      "p2p": "UNAVAILABLE",
-      "scope": "PASS",
-      "changed_files": [],
-      "telemetry": {"input": "UNAVAILABLE", "cached_input": "UNAVAILABLE", "uncached_input": "UNAVAILABLE", "output": "UNAVAILABLE", "reasoning": "UNAVAILABLE", "model_calls": 0, "turns": 1, "root_cumulative_input": "UNAVAILABLE", "root_peak_context": "UNAVAILABLE", "largest_child_context": "UNAVAILABLE", "control_calls": "UNAVAILABLE", "wall_clock_seconds": 27.27},
-      "failure": "Provider returned HTTP 404: model gpt-5.6-luna is not supported by any configured account in the custom provider. No model response or patch was produced."
-    },
-    {
-      "arm": "C",
-      "models": ["gpt-5.6-luna", "gpt-5.6-luna"],
-      "workspace": "C:\\Users\\12298\\AppData\\Local\\ThalirisBench\\abcd-pilot-20260902-cd\\C\\workspace",
-      "synthetic_commit": "aa0a2bb53ebf2e4bdb0880166fa10f9854ed5b01",
-      "gate": "SEALED_PASS",
-      "result": "ENVIRONMENT_INVALID",
-      "quality": "UNAVAILABLE",
-      "f2p": "UNAVAILABLE",
-      "p2p": "UNAVAILABLE",
-      "scope": "UNAVAILABLE",
-      "changed_files": "UNAVAILABLE",
-      "telemetry": {"input": "UNAVAILABLE", "cached_input": "UNAVAILABLE", "uncached_input": "UNAVAILABLE", "output": "UNAVAILABLE", "reasoning": "UNAVAILABLE", "model_calls": "UNAVAILABLE", "root_peak_context": "UNAVAILABLE", "largest_child_context": "UNAVAILABLE", "spawn": "UNAVAILABLE", "wait": "UNAVAILABLE", "list_agents": "UNAVAILABLE", "task-status": "UNAVAILABLE", "send_message": "UNAVAILABLE", "wall_clock": "UNAVAILABLE"},
-      "failure": "Not started after native model availability failed; no managed routing capability result is attributable."
-    },
-    {
-      "arm": "D",
-      "models": ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-luna"],
-      "workspace": "C:\\Users\\12298\\AppData\\Local\\ThalirisBench\\abcd-pilot-20260902-cd\\D\\workspace",
-      "synthetic_commit": "9132efc77d0c6fd10f565ce3f96c55940e3413a4",
-      "gate": "SEALED_PASS",
-      "result": "ENVIRONMENT_INVALID",
-      "quality": "UNAVAILABLE",
-      "f2p": "UNAVAILABLE",
-      "p2p": "UNAVAILABLE",
-      "scope": "UNAVAILABLE",
-      "changed_files": "UNAVAILABLE",
-      "telemetry": {"input": "UNAVAILABLE", "cached_input": "UNAVAILABLE", "uncached_input": "UNAVAILABLE", "output": "UNAVAILABLE", "reasoning": "UNAVAILABLE", "model_calls": "UNAVAILABLE", "root_peak_context": "UNAVAILABLE", "largest_child_context": "UNAVAILABLE", "largest_sol_context": "UNAVAILABLE", "spawn": "UNAVAILABLE", "wait": "UNAVAILABLE", "list_agents": "UNAVAILABLE", "task-status": "UNAVAILABLE", "send_message": "UNAVAILABLE", "decision_context_size": "UNAVAILABLE", "evidence_pointer_count": "UNAVAILABLE", "raw_investigation_excluded": "UNAVAILABLE", "wall_clock": "UNAVAILABLE"},
-      "sol_invoked": "UNAVAILABLE",
-      "failure": "Not started after native model availability failed; escalation and Decision Context are not interpretable."
-    }
+    {"arm": "A", "models": ["gpt-5.6-sol"], "synthetic_commit": "a4c528f4d635d7f119b8ab34bdbfe2fcd90ed600", "gate": "SEALED_PASS", "result": "PASS", "f2p": 0, "p2p": 28, "scope": "PASS", "changed_files": ["cliquet/__init__.py"], "telemetry": {"input": 292930, "cached_input": 260352, "uncached_input": 32578, "output": 6081, "reasoning": 3859, "model_calls": 1, "turns": 1, "root_cumulative_input": 292930, "root_peak_context": 292930, "largest_child_context": "NOT_APPLICABLE", "spawn": 0, "wait": 0, "list_agents": 0, "task_status": 0, "send_message": 0}},
+    {"arm": "B", "models": ["gpt-5.6-luna"], "synthetic_commit": "a1ee26f31533ebc17d8dfac5bdcab81a5c6d9ff3", "gate": "SEALED_PASS", "result": "PASS", "f2p": 0, "p2p": 28, "scope": "PASS", "changed_files": ["cliquet/__init__.py"], "telemetry": {"input": 705266, "cached_input": 643584, "uncached_input": 61682, "output": 12962, "reasoning": 9934, "model_calls": 1, "turns": 1, "root_cumulative_input": 705266, "root_peak_context": 705266, "largest_child_context": "NOT_APPLICABLE", "spawn": 0, "wait": 0, "list_agents": 0, "task_status": 0, "send_message": 0}},
+    {"arm": "C", "models": ["gpt-5.6-luna"], "synthetic_commit": "a7ce09a198f4e30d73150c1375ac3a53333d06b9", "gate": "SEALED_PASS", "result": "FAIL", "f2p": 1, "p2p": 27, "scope": "PRODUCT_DIFF_PASS; ARM_PROTOCOL_FAIL", "changed_files": ["cliquet/__init__.py"], "arm_protocol": {"controller_luna": true, "fresh_luna_child_fork_none": false, "controller_only": false, "raw_investigation_backflow": "UNAVAILABLE"}, "telemetry": {"input": 1128977, "cached_input": 1057792, "uncached_input": 71185, "output": 11997, "reasoning": 9229, "model_calls": 1, "turns": 1, "root_cumulative_input": 1128977, "root_peak_context": 1128977, "largest_child_context": "UNAVAILABLE", "spawn": 0, "wait": 0, "list_agents": 0, "task_status": 0, "send_message": 0, "wall_clock": "UNAVAILABLE"}, "failure": "Incompatible extra_settings API; independent evaluator found the trusted F2P failure. Managed root also mutated source without an observed fresh child."},
+    {"arm": "D", "models": ["gpt-5.6-luna"], "synthetic_commit": "567f865d99c33a9fa00932324602fefd991a721b", "gate": "SEALED_PASS", "result": "PASS_WITH_ARM_PROTOCOL_FAILURE", "f2p": 0, "p2p": 28, "scope": "PRODUCT_DIFF_PASS; ARM_PROTOCOL_FAIL", "changed_files": ["cliquet/__init__.py"], "arm_protocol": {"controller_luna": true, "fresh_luna_child_fork_none": false, "controller_only": false, "sol_invoked": false, "serialized_decision_context_size": "NOT_APPLICABLE", "evidence_artifact_pointer_count": 0, "raw_investigation_excluded_from_sol": "NOT_APPLICABLE"}, "telemetry": {"input": 1582985, "cached_input": 1494272, "uncached_input": 88713, "output": 9288, "reasoning": 5837, "model_calls": 1, "turns": 1, "root_cumulative_input": 1582985, "root_peak_context": 1582985, "largest_child_context": "UNAVAILABLE", "spawn": 0, "wait": 0, "list_agents": 0, "task_status": 4, "send_message": 0, "wall_clock": "UNAVAILABLE"}, "failure": "No Sol escalation. Single Luna root directly investigated and edited source; product quality passed but cannot establish the intended Hybrid control-plane path."}
   ],
   "derived": {"sol_exposure_ratio": "NOT INTERPRETABLE", "total_compute_ratio": "NOT INTERPRETABLE"},
-  "verdict": "PILOT_INVALID_ENVIRONMENT",
-  "stop_reason": "The configured custom provider does not expose gpt-5.6-luna or gpt-5.6-sol. Do not count this run toward capability, quality, escalation, or repetition evidence.",
-  "product_defect_found": "UNAVAILABLE",
-  "repeat_recommendation": "BLOCKED until both requested models are available through the execution provider; then rerun exactly ABCD x1 before considering ABCD x3."
+  "verdict": "NATIVE_SEPARATION_NOT_REPRODUCED; MANAGED_ARMS_PROTOCOL_NONCOMPLIANT",
+  "product_defect_found": "In the Codex CLI execution path, current managed control-layer installation did not yield an observed fresh child dispatch or Controller root-action blocking; C and D completed as a single Luna root model turn.",
+  "repeat_recommendation": "Do not enter ABCD x3. First repair and independently validate managed fresh-child dispatch and root guard observability for fresh CLI sessions; separately re-establish a current sealed Native Sol/Luna separation task before testing Sol escalation."
 }

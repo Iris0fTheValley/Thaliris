@@ -121,7 +121,11 @@ def _patch_paths(patch: str) -> list[str]:
 
 def _model_patch(workspace: Path, baseline: str, destination: Path) -> tuple[str, list[str]]:
     diff = _git(workspace, "diff", "--binary", baseline, "--", ".")
-    destination.write_text(diff.stdout, encoding="utf-8")
+    # Keep Git's LF patch stream intact on Windows.  ``Path.write_text`` did
+    # not gain ``newline=`` until Python 3.10, while this harness supports
+    # the Cliquet Python 3.8 environment.
+    with destination.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(diff.stdout)
     status = _git(workspace, "status", "--porcelain", "--untracked-files=all").stdout
     untracked = [line[3:] for line in status.splitlines() if len(line) >= 3 and line[:2] == "??"]
     return diff.stdout, untracked

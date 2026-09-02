@@ -121,7 +121,7 @@ def _patch_paths(patch: str) -> list[str]:
 
 def _model_patch(workspace: Path, baseline: str, destination: Path) -> tuple[str, list[str]]:
     diff = _git(workspace, "diff", "--binary", baseline, "--", ".")
-    destination.write_text(diff.stdout, encoding="utf-8", newline="\n")
+    destination.write_text(diff.stdout, encoding="utf-8")
     status = _git(workspace, "status", "--porcelain", "--untracked-files=all").stdout
     untracked = [line[3:] for line in status.splitlines() if len(line) >= 3 and line[:2] == "??"]
     return diff.stdout, untracked
@@ -353,7 +353,7 @@ def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeou
         return record
     prompt = Path(row["issue_path"]).read_text(encoding="utf-8") + "\n\nSolve this issue in the current repository. Investigate source and tests as needed, implement the smallest correct fix, and run relevant tests. Do not access git history, remotes, parent directories, benchmark/evaluator artifacts, or the network. Do not modify tests or unrelated files."
     env = _model_env(task, dependency, workspace)
-    command = [str(CODEX), "exec", "--ignore-user-config", "--ignore-rules", "--cd", str(workspace), "--model", "gpt-5.6-luna" if model_name == "luna" else "gpt-5.6-sol", "-c", "model_reasoning_effort=high", "--sandbox", "danger-full-access", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--json", "--ephemeral", "--output-last-message", str(final), "-"]
+    command = [str(CODEX), "exec", "--ignore-rules", "--cd", str(workspace), "--model", "gpt-5.6-luna" if model_name == "luna" else "gpt-5.6-sol", "-c", "model_reasoning_effort=high", "--sandbox", "danger-full-access", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--json", "--ephemeral", "--output-last-message", str(final), "-"]
     started = time.monotonic()
     process = subprocess.Popen(command, cwd=workspace, env=env, stdin=subprocess.PIPE, stdout=telemetry.open("w", encoding="utf-8"), stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     try:

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-03",
+  "provider": "CC Switch selected external custom Responses provider",
+  "cli": "codex-cli 0.151.0-alpha.7.2",
+  "reasoning_effort": "high",
+  "scope": "fresh external-provider native Luna-first screening only; no C/D or ABCD",
+  "candidate_source": {
+    "v2": "I:\\AI PROJECT\\abcd-screening\\benchmark-source-cache\\swerebench-v2-selected.json",
+    "live": "I:\\AI PROJECT\\abcd-screening\\benchmark-source-cache\\live-selected.json",
+    "available_candidates": 10,
+    "selection_limit": "The local auditable cache exposed 10 candidates; no additional source metadata was available without inventing records."
+  },
+  "readiness": {
+    "rerun": "benchmarks/abcd/external_readiness_20260903_valid.json and external_readiness_20260903_go.json",
+    "network_enforcement": "UNVERIFIED",
+    "installation_enforcement": "UNVERIFIED",
+    "sealed_tasks": [
+      "reata__sqllineage-524",
+      "mozilla-services__cliquet-203",
+      "editorconfig-checker__editorconfig-checker-360",
+      "reata__sqllineage-565",
+      "databacker__mysql-backup-266"
+    ],
+    "excluded": {
+      "cliquet": "excluded by current-round instruction",
+      "fixture_not_sealed": ["fluent__fluent-bit-10563", "webpack-contrib__copy-webpack-plugin-590", "privacyidea__privacyidea-3852"],
+      "evaluator_inconclusive": ["elastic__synthetics-316", "sphinx-doc__sphinx-11888"]
+    }
+  },
+  "screening_runs": [
+    {"task": "reata__sqllineage-524", "revision": "4adcc8f46fe9c5f919c9d942e1e1a0cf7d342cc2", "model": "gpt-5.6-luna", "run": "native_20260903_sq524_b1_retry.json", "result": "FAIL", "classification": "VALID_SEALED_BOTH_FAIL_PENDING_SOL_CONFIRMATION", "f2p_p2p": "2 F2P remain failing; 378 P2P pass", "scope": "FAIL: changed sqllineage/core/parser/sqlparse/analyzer.py outside gold allowlist", "changed_files": ["sqllineage/core/parser/sqlfluff/extractors/update.py", "sqllineage/core/parser/sqlparse/analyzer.py"], "input": 1117806, "cached_input": "UNAVAILABLE", "uncached_input": "UNAVAILABLE", "output": 12166, "reasoning": "UNAVAILABLE", "model_calls": 1, "wall_seconds": 418.09, "failure_mode": "scope_violation"},
+    {"task": "reata__sqllineage-524", "revision": "4adcc8f46fe9c5f919c9d942e1e1a0cf7d342cc2", "model": "gpt-5.6-sol", "run": "native_20260903_sq524_a1.json", "result": "FAIL", "classification": "VALID_SEALED_BOTH_FAIL", "f2p_p2p": "2 F2P remain failing; 378 P2P pass", "scope": "FAIL: changed sqllineage/core/parser/sqlparse/analyzer.py outside gold allowlist", "changed_files": ["sqllineage/core/parser/sqlfluff/extractors/update.py", "sqllineage/core/parser/sqlparse/analyzer.py"], "input": 3324336, "cached_input": "UNAVAILABLE", "uncached_input": "UNAVAILABLE", "output": "UNAVAILABLE", "reasoning": "UNAVAILABLE", "model_calls": 1, "wall_seconds": "UNAVAILABLE", "failure_mode": "scope_violation"},
+    {"task": "reata__sqllineage-565", "revision": "4c6c65e7c94b87b50f26ad7f35ac26ed26a54cee", "model": "gpt-5.6-luna", "run": "native_20260903_sq565_b1_retry.json", "result": "PASS", "classification": "VALID_SEALED_NO_DISCRIMINATION", "f2p_p2p": "2 F2P pass; 382 P2P pass", "scope": "PASS", "changed_files": ["sqllineage/core/parser/sqlfluff/extractors/create_insert.py"], "input": 473833, "cached_input": 409088, "uncached_input": 64745, "output": 6439, "reasoning": 1940, "model_calls": 1, "wall_seconds": 374.19, "failure_mode": null},
+    {"task": "editorconfig-checker__editorconfig-checker-360", "revision": "6116ec6685b33652e9e25def9b8897ed4b015c7d", "model": "gpt-5.6-luna", "run": "native_20260903_editorconfig_b1.json", "result": "FAIL", "classification": "PENDING_SOL_CONFIRMATION", "f2p_p2p": "13 F2P remain failing", "scope": "PASS", "changed_files": ["pkg/error/error.go"], "input": 729893, "cached_input": "UNAVAILABLE", "uncached_input": "UNAVAILABLE", "output": 11187, "reasoning": "UNAVAILABLE", "model_calls": 1, "wall_seconds": "UNAVAILABLE", "failure_mode": "evaluator/model failure"},
+    {"task": "editorconfig-checker__editorconfig-checker-360", "revision": "6116ec6685b33652e9e25def9b8897ed4b015c7d", "model": "gpt-5.6-sol", "run": "native_20260903_editorconfig_a1.json", "result": "FAIL", "classification": "VALID_SEALED_BOTH_FAIL", "f2p_p2p": "13 F2P remain failing", "scope": "PASS", "changed_files": ["pkg/error/error.go"], "input": 672007, "cached_input": "UNAVAILABLE", "uncached_input": "UNAVAILABLE", "output": 9004, "reasoning": "UNAVAILABLE", "model_calls": 1, "wall_seconds": "UNAVAILABLE", "failure_mode": "evaluator/model failure"},
+    {"task": "databacker__mysql-backup-266", "revision": "738a5d651d8501f6b17bcd4d1ed9df481eb8f557", "model": "gpt-5.6-luna", "run": "native_20260903_mysql_b1.json", "result": "PASS", "classification": "VALID_SEALED_NO_DISCRIMINATION", "f2p_p2p": "6 F2P pass; 13 P2P pass", "scope": "PASS", "changed_files": ["cmd/dump.go", "pkg/core/timer.go"], "input": 302416, "cached_input": "UNAVAILABLE", "uncached_input": "UNAVAILABLE", "output": 4538, "reasoning": "UNAVAILABLE", "model_calls": 1, "wall_seconds": "UNAVAILABLE", "failure_mode": null}
+  ],
+  "SEALED_TASKS": ["reata__sqllineage-524", "mozilla-services__cliquet-203", "editorconfig-checker__editorconfig-checker-360", "reata__sqllineage-565", "databacker__mysql-backup-266"],
+  "SEPARATION_POOL": [],
+  "LUNA_SUFFICIENT_CONTROLS": ["reata__sqllineage-565", "databacker__mysql-backup-266"],
+  "BOTH_WEAK": ["reata__sqllineage-524", "editorconfig-checker__editorconfig-checker-360"],
+  "ENVIRONMENT_INCONCLUSIVE": ["fluent__fluent-bit-10563", "elastic__synthetics-316", "webpack-contrib__copy-webpack-plugin-590", "privacyidea__privacyidea-3852", "sphinx-doc__sphinx-11888"],
+  "conclusion": "No new reproducible Sol/Luna separation was established under the current external provider. Do not run C/D or ABCD from this report."
+}

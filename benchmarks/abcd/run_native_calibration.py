@@ -234,8 +234,16 @@ def _prepare_dependency(task: str, source: Path, dependency: Path) -> dict[str, 
                     return {"status": "FAIL", "reason": metadata["stderr"][-4000:]}
         return {"status": "PASS", "kind": "python3.8", "python": str(python)}
     if task.startswith("reata__sqllineage"):
-        probe = _run([sys.executable, "-c", "import pytest,sqlfluff,sqlparse,networkx,sqlalchemy"], cwd=source, env=os.environ.copy(), timeout=60)
-        return {"status": "PASS" if probe["exit_code"] == 0 else "FAIL", "kind": "python3.11-global", "reason": probe["stderr"][-2000:]}
+        python = dependency / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+        if not python.exists():
+            made = _run([sys.executable, "-m", "venv", str(dependency)], cwd=source, env=os.environ.copy(), timeout=300)
+            if made["exit_code"]:
+                return {"status": "FAIL", "kind": "python-venv", "reason": made["stderr"][-2000:]}
+            installed = _run([str(python), "-m", "pip", "install", "-q", "--disable-pip-version-check", "-e", str(source), "pytest", "sqlfluff", "sqlparse", "networkx", "sqlalchemy"], cwd=source, env=os.environ.copy(), timeout=1200)
+            if installed["exit_code"]:
+                return {"status": "FAIL", "kind": "python-venv", "reason": installed["stderr"][-2000:]}
+        probe = _run([str(python), "-c", "import pytest,sqlfluff,sqlparse,networkx,sqlalchemy"], cwd=source, env=os.environ.copy(), timeout=60)
+        return {"status": "PASS" if probe["exit_code"] == 0 else "FAIL", "kind": "python-venv", "python": str(python), "reason": probe["stderr"][-2000:]}
     if task in {"editorconfig-checker__editorconfig-checker-360", "databacker__mysql-backup-266"}:
         go = GO_BIN / ("go.exe" if os.name == "nt" else "go")
         if not go.exists():
@@ -252,7 +260,13 @@ def _prepare_dependency(task: str, source: Path, dependency: Path) -> dict[str, 
 
 
 def _model_env(task: str, dependency: Path, workspace: Path) -> dict[str, str]:
-    if task.startswith("reata__sqllineage") or task == "mozilla-services__cliquet-203":
+    if task.startswith("reata__sqllineage"):
+        env = _python_env(task, dependency, workspace)
+        python = dependency / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+        env["PATH"] = str(python.parent) + os.pathsep + env.get("PATH", "")
+        env["THALIRIS_BENCHMARK_PYTHON"] = str(python)
+        return env
+    if task == "mozilla-services__cliquet-203":
         return _python_env(task, dependency, workspace)
     env = os.environ.copy()
     env["PATH"] = str(GO_BIN) + os.pathsep + env.get("PATH", "")
@@ -269,6 +283,9 @@ def _evaluate(row: dict[str, Any], model_workspace: Path, evaluator: Path, depen
     eval_build = build_fixture(source=source, revision=baseline, issue_text=Path(row["issue_path"]), dependency_reference=str(dependency), workspace=evaluator, report=None)
     install, test_command, toolchain = _calibration_commands(row)
     env = _model_env(row["task"], dependency, evaluator)
+    if row["task"].startswith("reata__sqllineage"):
+        python = dependency / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+        test_command = test_command.replace("python", f'"{python}"', 1)
     if row["task"] == "mozilla-services__cliquet-203":
         python = dependency / "Scripts" / "python.exe"
         test_command = test_command.replace("python", f'"{python}"', 1)

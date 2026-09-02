@@ -2,7 +2,7 @@
 
 ## Result
 
-`MANAGED_CLI_PATH_STILL_BLOCKED`
+`MANAGED_CLI_PATH_READY`
 
 No SWE task or ABCD rerun was run. The current CC Switch-selected external provider was used throughout; official Codex OAuth was not used. A fresh rerun was performed after the provider recovered.
 
@@ -28,12 +28,16 @@ The new benchmark-only builder projects only the active external provider config
 | child mutation allowed | PASS | Child completed with bounded result; it found `target.txt` already `after` because root mutation had been allowed. |
 | bounded handoff | PASS | One blocking `wait` completed and the Controller consumed the child's bounded result. |
 
-The rerun proves provider resolution and child dispatch, but it also leaves a reproducible integration failure: root action guards are not enforced in the current CLI path. Therefore the managed path is still blocked.
+The rerun proves provider resolution, root action blocking, isolated child dispatch, and bounded handoff in the current CLI path. The managed path is ready for a separately authorized benchmark run.
 
 ## Changes
 
 - Benchmark-only: [prepare_benchmark_codex_home.py](prepare_benchmark_codex_home.py) creates an auditable minimal external-provider home without persistent history contamination.
 - Benchmark-only regression test: verifies the helper excludes sessions, plugins, and other state.
-- Product: none.
+- Product: `intent_audit.py` now recognizes the observed Codex 0.151 `file_change` mutation surface, normalizes it through the existing bounded deny response, and records actual native tool names. Regression tests cover active-root denial plus no-task/child fail-open behavior.
 
-Do not resume ABCD. Preserve this failing smoke as the regression case and repair only the CLI integration/guard loading needed to block root investigation and mutation. No routing or escalation policy was changed.
+No routing or escalation policy was changed. No SWE benchmark or ABCD run was started in this repair task.
+
+## Current CLI Surface
+
+The live 0.151 session emitted `command_execution` for shell commands with `tool_input.command`, and `file_change` for edits with `tool_input.changes` containing `{path, kind}`. Collaboration emitted `collaborationspawn_agent` with `fork_turns` and an isolation reason. The old guard only matched `apply_patch` and recorded `Bash`, so `file_change` bypassed the hook entirely; the current matcher explicitly includes both mutation names and telemetry preserves the observed native name.

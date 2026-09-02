@@ -51,12 +51,13 @@ POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_C
 # retaining the historical aliases for runtimes that expose a different name.
 _CONTROLLER_EXECUTION_TOOL_NAMES = ("Bash", "Shell", "exec_command", "command_execution")
 _CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_EXECUTION_TOOL_NAMES) + ")"
-_CONTROLLER_MUTATION_TOOL_NAME = "apply_patch"
+_CONTROLLER_MUTATION_TOOL_NAMES = ("apply_patch", "file_change")
+_CONTROLLER_MUTATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_MUTATION_TOOL_NAMES) + ")"
 # Pre-dispatch isolation sees native spawn calls, the other flattened V2
 # collaboration names (for compatibility/observation), and root shell
 # execution.  The latter is intentionally explicit: a broad matcher would
 # also intercept unrelated tools whose payload cannot be classified safely.
-PRE_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN}|{re.escape(_CONTROLLER_MUTATION_TOOL_NAME)})$"
+PRE_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN}|{_CONTROLLER_MUTATION_TOOL_PATTERN})$"
 _DELEGATION_TOOL_NAMES = frozenset({"spawn_agent", "Agent", "followup_task", "send_input", "send_message"})
 _CONTROLLER_BOUNDARY_REASON = "THALIRIS_CONTROLLER_BOUNDARY: delegate investigation and edits to a fresh child; root may run only bounded control-plane or acceptance checks."
 _CONTROLLER_CLOSE_REASON = "THALIRIS_CONTROLLER_BOUNDARY: dispatch a fresh child before task-close."
@@ -462,12 +463,15 @@ def _record_controller_guard_event(root: Path, payload: dict[str, Any], action: 
     path = _session_dir(root, payload) / "runtime.json"
     state = _load_runtime(path)
     state.setdefault("events_observed", {})["PreToolUse"] = True
+    tool = payload.get("tool_name") or payload.get("tool")
+    normalized = _tool_basename(tool) if isinstance(tool, str) else "UNKNOWN"
     tools = state.setdefault("tools_observed", [])
-    if "Bash" not in tools and len(tools) < 16:
-        tools.append("Bash")
+    if normalized not in tools and len(tools) < 16:
+        tools.append(normalized)
+    raw_name = tool if isinstance(tool, str) else "UNKNOWN"
     raw_tools = state.setdefault("tool_names_observed", [])
-    if "Bash" not in raw_tools and len(raw_tools) < 16:
-        raw_tools.append("Bash")
+    if raw_name not in raw_tools and len(raw_tools) < 16:
+        raw_tools.append(raw_name)
     counters = state.setdefault("controller_guard", {"allowed": 0, "blocked": 0, "unknown": 0})
     if decision in counters:
         counters[decision] = int(counters[decision]) + 1
@@ -485,7 +489,7 @@ def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str)
     if not isinstance(tool, str):
         return
     normalized = _tool_basename(tool)
-    if normalized != _CONTROLLER_MUTATION_TOOL_NAME:
+    if normalized not in _CONTROLLER_MUTATION_TOOL_NAMES:
         return
     path = _session_dir(root, payload) / "runtime.json"
     state = _load_runtime(path)
@@ -1073,7 +1077,7 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
         return ""
-    if tool == _CONTROLLER_MUTATION_TOOL_NAME:
+    if _tool_basename(tool) in _CONTROLLER_MUTATION_TOOL_NAMES:
         root = _hook_repository_root(root or Path.cwd(), payload)
         if _active_task_id(root) is None:
             return ""

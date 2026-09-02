@@ -684,7 +684,31 @@ def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
     assert re.fullmatch(matcher, "collaborationfollowup_task")
     assert re.fullmatch(matcher, "Bash")
     assert re.fullmatch(matcher, "apply_patch")
+    assert re.fullmatch(matcher, "file_change")
     assert not re.fullmatch(matcher, "shell-script")
+
+
+def test_controller_guard_blocks_current_cli_file_change_surface(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    task_start(root, "guard file change", None, None)
+    response = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="file_change", tool_input={"changes": [{"path": "src/main.py", "kind": "update"}]}),
+    ))
+    output = response["hookSpecificOutput"]
+    assert output["permissionDecision"] == "deny"
+    assert output["permissionDecisionReason"].startswith("THALIRIS_CONTROLLER_BOUNDARY:")
+
+
+def test_controller_surface_fail_open_without_task_and_for_children(tmp_path):
+    root = repo(tmp_path)
+    change = {"changes": [{"path": "src/main.py", "kind": "update"}]}
+    assert handle_hook(root, "PreToolUse", payload(tool_name="file_change", tool_input=change)) == ""
+    init(root)
+    task_start(root, "child surface", None, None)
+    assert handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name="file_change", tool_input=change)) == ""
 
 
 def test_controller_guard_blocks_root_broad_investigation_and_mutation(tmp_path):

@@ -31,7 +31,13 @@ ALL_CANDIDATES = TIER_S | TIER_A
 def _commands(row: dict[str, Any]) -> tuple[str, str, str]:
     task = row["task"]
     if task.startswith("aaugustin__websockets"):
-        return 'python -m pip install -q -e . "pytest<8"', "python -m pytest -q", "python/pip"
+        # websockets 7 passes ``loop=`` into asyncio helpers.  On Python 3.8+
+        # asyncio emits a host-runtime DeprecationWarning which this legacy
+        # suite captures as an assertion failure.  Filter only that exact
+        # asyncio warning; task-specific deprecation assertions remain active.
+        return ('python -m pip install -q -e . "pytest<8"',
+                'python -m pytest -q -W "ignore:The loop argument is deprecated since Python 3.8"',
+                "python/pip")
     if task == "aio-libs__aiohttp-8823":
         return 'python -m pip install -q -e . "pytest<8"', "python -m pytest -q", "python/pip"
     if task == "bashtage__arch-752":
@@ -103,12 +109,22 @@ def main(argv: list[str] | None = None) -> int:
         if row["task"] not in ALL_CANDIDATES:
             raise ValueError(f"unexpected candidate outside first batch: {row['task']}")
     readiness._commands = _commands
+    py37 = Path(r"C:\thaliris-toolchains\python37\python.exe")
     py38 = Path(r"C:\Users\12298\AppData\Local\Programs\Python\Python38\python.exe")
+    py39 = Path(r"C:\Users\12298\AppData\Roaming\uv\python\cpython-3.9-windows-x86_64-none\python.exe")
     py311 = Path(r"C:\Users\12298\AppData\Local\Programs\Python\Python311\python.exe")
     original_base_python = readiness._venv_base_python
     def base_python(task: str) -> str:
-        if task.startswith("aaugustin__websockets") and py38.exists():
-            return str(py38)
+        if task.startswith("aaugustin__websockets"):
+            # websockets-641's shutdown tests rely on Python 3.7 asyncio
+            # cancellation semantics. Python 3.8+ changes the relevant
+            # scheduling behavior and produces unrelated P2P failures.
+            if task == "aaugustin__websockets-641" and py37.exists():
+                return str(py37)
+            if py39.exists():
+                return str(py39)
+            if py38.exists():
+                return str(py38)
         # arch-752 declares Python >=3.9 and its build requires NumPy 2,
         # which cannot be installed on Python 3.8.  Keep this environment
         # choice local to readiness; it never changes the model fixture.

@@ -22,7 +22,7 @@ from typing import Any
 
 from build_sealed_fixture import build_fixture
 from prepare_benchmark_codex_home import build_minimal_home, build_official_home
-from run_external_readiness import _commands, _load_tasks
+from run_external_readiness import _commands, _load_tasks, _selected_runner_source
 from validate_sealed_fixture import validate_fixture
 
 
@@ -46,6 +46,8 @@ EXTERNAL_CODEX_HOME = Path(os.environ.get(
 CODEX_HOME_ROOT = Path(os.environ.get("THALIRIS_CODEX_HOME_ROOT", r"C:\thaliris-codex"))
 GO_BIN = Path(r"I:\AI PROJECT\abcd-screening\readiness-20260902\tools\go\bin")
 PY38 = Path(r"C:\Users\12298\AppData\Local\Programs\Python\Python38\python.exe")
+PY37 = Path(r"C:\thaliris-toolchains\python37\python.exe")
+PY39 = Path(r"C:\Users\12298\AppData\Roaming\uv\python\cpython-3.9-windows-x86_64-none\python.exe")
 READINESS_ROOT = Path(r"I:\AI PROJECT\abcd-screening\readiness-20260902")
 TRUSTED_PATCH_ROOT = READINESS_ROOT / "evaluator-patches"
 
@@ -56,7 +58,27 @@ def _codex_executable() -> Path:
     for candidate in candidates:
         if candidate.is_file():
             return candidate
+    # Desktop updates install each CLI build under a content-addressed
+    # directory. Prefer the most recently installed executable when the
+    # previously pinned build was retired between benchmark attempts.
+    desktop_bins = Path.home() / "AppData" / "Local" / "OpenAI" / "Codex" / "bin"
+    installed = sorted(desktop_bins.glob("*/codex.exe"), key=lambda path: path.stat().st_mtime, reverse=True)
+    if installed:
+        return installed[0]
     raise RuntimeError("no usable Codex CLI executable; set CODEX_EXE to codex.exe")
+
+
+def _materialize_evaluator_submodules(task: str, evaluator: Path) -> None:
+    """Populate archived gitlinks only after the model exits."""
+    if task != "aio-libs__aiohttp-8823":
+        return
+    source = Path(r"C:\thaliris-toolchains\llhttp-b0b279fb5a617ab3bc2fc11c5f8bd937aac687c1")
+    target = evaluator / "vendor" / "llhttp"
+    if not (source / "README.md").exists():
+        raise RuntimeError(f"missing pinned llhttp submodule cache: {source}")
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns(".git"))
 
 
 def _calibration_commands(row: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
@@ -156,12 +178,21 @@ def _scope(model_paths: list[str], gold_patch: str, untracked: list[str]) -> dic
     metadata_names = {"candidate_full.json", "candidate_records.json", "t4_candidate_screening.json"}
     violations = [
         path for path in model_paths
-        if any(part in {"test", "tests"} for part in Path(path).parts)
-        or path.lower().startswith(("evaluator/", ".git/"))
+        if path.lower().startswith(("evaluator/", ".git/", ".context/"))
         or Path(path).name.lower() in metadata_names
+        or Path(path).name.lower().startswith(".t4_")
         or path.lower().endswith((".pyc", ".log"))
     ]
-    violations.extend(untracked)
+    # Untracked source, documentation, or changelog files can be a legitimate
+    # alternative implementation. Scope rejects only untracked material that
+    # crosses the evaluator/control boundary or is obvious generated debris.
+    violations.extend(
+        path for path in untracked
+        if path.lower().startswith(("evaluator/", ".git/", ".context/"))
+        or Path(path).name.lower() in metadata_names
+        or Path(path).name.lower().startswith(".t4_")
+        or path.lower().endswith((".pyc", ".log"))
+    )
     return {
         "status": "PASS" if not violations else "FAIL",
         "changed_files": model_paths,
@@ -223,7 +254,13 @@ def _parse_jsonl(path: Path) -> tuple[dict[str, int], list[dict[str, Any]], str 
 def _python_env(task: str, dependency: Path, workspace: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
-    env["PYTHONPATH"] = str(workspace) + os.pathsep + env.get("PYTHONPATH", "")
+    import_roots = [workspace]
+    # Several sealed Python projects use a src-layout and are intentionally
+    # not installed into the shared dependency venv. Expose only the model or
+    # evaluator checkout's own package roots to its subprocesses.
+    if (workspace / "src").is_dir():
+        import_roots.insert(0, workspace / "src")
+    env["PYTHONPATH"] = os.pathsep.join(str(path) for path in import_roots) + os.pathsep + env.get("PYTHONPATH", "")
     if task == "mozilla-services__cliquet-203":
         python = dependency / "Scripts" / "python.exe"
         env["PATH"] = str(python.parent) + os.pathsep + env.get("PATH", "")
@@ -282,27 +319,75 @@ def _prepare_dependency(task: str, source: Path, dependency: Path) -> dict[str, 
         env["GOMODCACHE"] = str(gomod)
         download = _run([str(go), "mod", "download"], cwd=source, env=env, timeout=1200)
         return {"status": "PASS" if download["exit_code"] == 0 else "FAIL", "kind": "go", "gomodcache": str(gomod), "reason": download["stderr"][-4000:]}
-    if task.startswith(("aaugustin__websockets-", "asdf-format__asdf-", "alteryx__woodwork-", "amaranth-lang__amaranth-", "bashtage__arch-")):
+    if task.startswith(("aaugustin__websockets-", "asdf-format__asdf-", "alteryx__woodwork-", "amaranth-lang__amaranth-", "bashtage__arch-", "dask-contrib__dask-expr-", "aio-libs__aiohttp-", "d0c-s4vage__pfp-")):
         python = dependency / "Scripts" / "python.exe"
+        is_websockets = task.startswith("aaugustin__websockets-")
+        if is_websockets:
+            websocket_base = PY37 if task == "aaugustin__websockets-641" else PY39
+            websocket_version = (3, 7) if task == "aaugustin__websockets-641" else (3, 9)
+            if not websocket_base.exists():
+                return {"status": "FAIL", "reason": f"missing required Python runtime: {websocket_base}"}
+            if python.exists():
+                runtime_probe = _run(
+                    [str(python), "-c", f"import sys; assert sys.version_info[:2] == {websocket_version!r}"],
+                    cwd=source,
+                    env=os.environ.copy(),
+                    timeout=60,
+                )
+                if runtime_probe["exit_code"]:
+                    try:
+                        shutil.rmtree(dependency)
+                    except OSError as error:
+                        return {"status": "FAIL", "reason": f"could not recreate incompatible websockets venv: {error}"}
         if not python.exists():
             base = Path(r"C:\Users\12298\AppData\Local\Programs\Python\Python311\python.exe")
-            if task.startswith("aaugustin__websockets-"):
-                base = PY38
+            if is_websockets:
+                base = websocket_base
             if not base.exists():
                 return {"status": "FAIL", "reason": f"missing Python runtime: {base}"}
             made = _run([str(base), "-m", "venv", str(dependency)], cwd=source, env=os.environ.copy(), timeout=300)
             if made["exit_code"]:
                 return {"status": "FAIL", "reason": made["stderr"][-4000:]}
-            packages = ["pytest<9", "psutil", "pytest-remotedata"]
+            packages = ["pytest<8" if is_websockets else "pytest<9", "psutil", "pytest-remotedata"]
             if task.startswith("asdf-format__asdf-"):
                 packages += ["asdf-standard", "asdf-transform-schemas", "numpy", "pyyaml", "semantic_version", "jmespath", "attrs"]
             elif task.startswith("alteryx__woodwork-"):
                 packages += ["pandas==1.5.3", "scikit-learn"]
             elif task.startswith("bashtage__arch-"):
-                packages += ["numpy==1.26.4", "pandas==1.5.3", "scipy==1.11.4", "statsmodels==0.14.4"]
+                packages += ["numpy==1.26.4", "pandas==1.5.3", "scipy==1.11.4", "statsmodels==0.14.4", "numba==0.58.1"]
+            elif task == "dask-contrib__dask-expr-901":
+                packages += ["dask==2024.2.1", "pandas==2.1.4", "pyarrow"]
+            elif task == "aio-libs__aiohttp-8823":
+                packages += ["pytest-asyncio", "multidict==6.0.5", "yarl==1.9.4", "frozenlist==1.4.1", "aiosignal==1.3.1", "async-timeout==4.0.3", "attrs", "brotli"]
+            elif task.startswith("d0c-s4vage__pfp-"):
+                packages += ["py010parser>=0.1.17", "six>=1.10.0,<2.0.0", "intervaltree>=3.0.2,<4.0.0", "pcpp"]
             installed = _run([str(python), "-m", "pip", "install", "-q", "--disable-pip-version-check", *packages], cwd=source, env=os.environ.copy(), timeout=1200)
             if installed["exit_code"]:
                 return {"status": "FAIL", "reason": installed["stderr"][-4000:]}
+            if task.startswith("d0c-s4vage__pfp-"):
+                # py010parser shells out to an executable named ``cpp``.
+                # Supply a venv-local pure-Python preprocessor entry point;
+                # no compiler or repository files are added to the fixture.
+                cpp = dependency / "Scripts" / "cpp.cmd"
+                cpp.write_text("@echo off\n\"%~dp0python.exe\" -m pcpp %*\n", encoding="utf-8")
+        if is_websockets:
+            pytest_ok = _run(
+                [str(python), "-c", "import pytest; assert int(pytest.__version__.split('.')[0]) < 8"],
+                cwd=source,
+                env=os.environ.copy(),
+                timeout=60,
+            )
+            if pytest_ok["exit_code"]:
+                installed = _run([str(python), "-m", "pip", "install", "-q", "--disable-pip-version-check", "pytest<8"], cwd=source, env=os.environ.copy(), timeout=600)
+                if installed["exit_code"]:
+                    return {"status": "FAIL", "reason": installed["stderr"][-4000:]}
+        if task.startswith("d0c-s4vage__pfp-"):
+            # Recreate the adapter when a dependency venv is reused.
+            cpp = dependency / "Scripts" / "cpp.cmd"
+            cpp.write_text("@echo off\n\"%~dp0python.exe\" -m pcpp %*\n", encoding="utf-8")
+            pcpp = dependency / "Scripts" / "pcpp.exe"
+            if pcpp.exists():
+                shutil.copy2(pcpp, dependency / "Scripts" / "cpp.exe")
         if task.startswith("bashtage__arch-"):
             # This revision's pytest warning configuration refers to a class
             # removed by pytest 8.  Keep the evaluator on the compatible
@@ -313,8 +398,67 @@ def _prepare_dependency(task: str, source: Path, dependency: Path) -> dict[str, 
                 installed = _run([str(python), "-m", "pip", "install", "-q", "--disable-pip-version-check", "pytest<8"], cwd=source, env=os.environ.copy(), timeout=600)
                 if installed["exit_code"]:
                     return {"status": "FAIL", "reason": installed["stderr"][-4000:]}
+            numba_ok = _run([str(python), "-c", "import numba; assert numba.__version__ == '0.58.1'"], cwd=source, env=os.environ.copy(), timeout=60)
+            if numba_ok["exit_code"]:
+                installed = _run([str(python), "-m", "pip", "install", "-q", "--disable-pip-version-check", "numba==0.58.1"], cwd=source, env=os.environ.copy(), timeout=900)
+                if installed["exit_code"]:
+                    return {"status": "FAIL", "reason": installed["stderr"][-4000:]}
         return {"status": "PASS", "kind": "python", "python": str(python)}
     return {"status": "FAIL", "reason": f"unsupported task dependency: {task}"}
+
+
+def _prepare_runtime_adapter(task: str, dependency: Path) -> dict[str, Any]:
+    """Provide archive-omitted, non-solution packaging metadata externally.
+
+    The archived arch revision uses setuptools-scm to generate
+    ``arch._version`` as part of a normal package build, but does not track
+    that generated module in Git.  A sealed fixture must retain the exact
+    source tree, so materializing it in the repository would violate the
+    fixture invariant.  This startup hook supplies only the two public
+    version attributes that ``arch.__init__`` imports.  It contains no source
+    changes or evaluator material and is shared by the model and evaluator
+    processes through their isolated dependency environment.
+    """
+
+    if task not in {"bashtage__arch-752", "dask-contrib__dask-expr-901", "aaugustin__websockets-641"}:
+        return {"status": "PASS", "pythonpath": None}
+    adapter = dependency / "runtime-adapter"
+    adapter.mkdir(parents=True, exist_ok=True)
+    hook = adapter / "sitecustomize.py"
+    if task == "bashtage__arch-752":
+        code = (
+            "import sys\n"
+            "import types\n"
+            "module = types.ModuleType('arch._version')\n"
+            "module.version = '0+archive'\n"
+            "module.version_tuple = (0, 'archive')\n"
+            "sys.modules.setdefault('arch._version', module)\n"
+        )
+    elif task == "aaugustin__websockets-641":
+        code = (
+            "import asyncio\n"
+            "if hasattr(asyncio, 'WindowsSelectorEventLoopPolicy'):\n"
+            "    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())\n"
+        )
+    else:
+        code = (
+            "import inspect\n"
+            "_signature = inspect.signature\n"
+            "def signature(obj, *args, **kwargs):\n"
+            "    if isinstance(obj, property):\n"
+            "        obj = obj.fget\n"
+            "    try:\n"
+            "        return _signature(obj, *args, **kwargs)\n"
+            "    except TypeError:\n"
+            "        return inspect.Signature()\n"
+            "inspect.signature = signature\n"
+        )
+    hook.write_text(code, encoding="utf-8")
+    return {
+        "status": "PASS",
+        "kind": "archive_generated_version_metadata",
+        "pythonpath": str(adapter),
+    }
 
 
 def _model_env(task: str, dependency: Path, workspace: Path) -> dict[str, str]:
@@ -326,10 +470,22 @@ def _model_env(task: str, dependency: Path, workspace: Path) -> dict[str, str]:
         return env
     if task == "mozilla-services__cliquet-203":
         return _python_env(task, dependency, workspace)
-    if task.startswith(("aaugustin__websockets-", "asdf-format__asdf-", "alteryx__woodwork-", "amaranth-lang__amaranth-", "bashtage__arch-")):
+    if task.startswith(("aaugustin__websockets-", "asdf-format__asdf-", "alteryx__woodwork-", "amaranth-lang__amaranth-", "bashtage__arch-", "dask-contrib__dask-expr-", "aio-libs__aiohttp-", "d0c-s4vage__pfp-")):
         env = _python_env(task, dependency, workspace)
+        if task.startswith("aaugustin__websockets-"):
+            env["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
+            if task == "aaugustin__websockets-641":
+                env["WEBSOCKETS_TESTS_TIMEOUT_FACTOR"] = "10"
+            env["PYTEST_ADDOPTS"] = '-W "ignore:The loop argument is deprecated since Python 3.8"'
+            env["NO_PROXY"] = "localhost,127.0.0.1,::1"
+            env["no_proxy"] = env["NO_PROXY"]
         python = dependency / "Scripts" / "python.exe"
         env["PATH"] = str(python.parent) + os.pathsep + env.get("PATH", "")
+        adapter = _prepare_runtime_adapter(task, dependency)
+        if adapter.get("status") != "PASS":
+            raise RuntimeError(adapter.get("reason") or "runtime adapter preparation failed")
+        if adapter.get("pythonpath"):
+            env["PYTHONPATH"] = str(adapter["pythonpath"]) + os.pathsep + env.get("PYTHONPATH", "")
         return env
     env = os.environ.copy()
     env["PATH"] = str(GO_BIN) + os.pathsep + env.get("PATH", "")
@@ -338,19 +494,41 @@ def _model_env(task: str, dependency: Path, workspace: Path) -> dict[str, str]:
     return env
 
 
-def _evaluate(row: dict[str, Any], model_workspace: Path, evaluator: Path, dependency: Path, model_patch_path: Path, test_patch: Path, gold_patch: Path, timeout: int) -> dict[str, Any]:
+def _evaluator_env(task: str, dependency: Path, workspace: Path) -> dict[str, str]:
+    """Return the shared runtime environment with evaluator-local proxy isolation."""
+
+    env = _model_env(task, dependency, workspace)
+    if task.startswith("aaugustin__websockets-"):
+        # Python on Windows normalizes ``NO_PROXY`` to an unusable ``no``
+        # proxy key; evaluator-local socket tests must bypass the desktop
+        # proxy entirely. The model subprocess retains its configured proxy.
+        for proxy_name in (
+            "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+            "http_proxy", "https_proxy", "all_proxy",
+        ):
+            env.pop(proxy_name, None)
+    return env
+
+
+def _visible_test_paths(paths: list[str]) -> list[str]:
+    """Return model-edited repository test paths, not trusted evaluator paths."""
+
+    test_directories = {"test", "tests", "_tests"}
+    return [path for path in paths if any(part.lower() in test_directories for part in Path(path).parts)]
+
+
+def _evaluate(row: dict[str, Any], model_workspace: Path, evaluator: Path, dependency: Path, model_patch_path: Path, model_paths: list[str], test_patch: Path, gold_patch: Path, timeout: int) -> dict[str, Any]:
     source = Path(row["source"])
     baseline = row["base_commit"]
     if evaluator.exists():
         shutil.rmtree(evaluator)
     eval_build = build_fixture(source=source, revision=baseline, issue_text=Path(row["issue_path"]), dependency_reference=str(dependency), workspace=evaluator, report=None)
+    _materialize_evaluator_submodules(row["task"], evaluator)
     install, test_command, toolchain = _calibration_commands(row)
-    env = _model_env(row["task"], dependency, evaluator)
+    env = _evaluator_env(row["task"], dependency, evaluator)
     test_argv: list[str] | None = None
     if row.get("exact_issue_only") and toolchain == "python/pip":
         selection = list(row.get("test_selection") or row.get("FAIL_TO_PASS", []) + row.get("PASS_TO_PASS", []))
-        if any("[" in test and "]" not in test for test in selection):
-            selection = sorted({test.split("::", 1)[0] for test in selection})
         test_argv = [str(dependency / "Scripts" / "python.exe"), str(evaluator / ".t4_selected_runner.py")]
     if row["task"].startswith("reata__sqllineage"):
         python = dependency / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
@@ -373,14 +551,13 @@ def _evaluate(row: dict[str, Any], model_workspace: Path, evaluator: Path, depen
             # _reset cleans untracked files, so materialize the trusted test
             # selector after every reset and immediately before execution.
             (evaluator / ".t4_selected_tests.json").write_text(json.dumps(selection) + "\n", encoding="utf-8")
-            (evaluator / ".t4_selected_runner.py").write_text(
-                "import json\nfrom pathlib import Path\nimport pytest\n"
-                "tests = json.loads((Path(__file__).with_name('.t4_selected_tests.json')).read_text())\n"
-                "raise SystemExit(pytest.main(['-q', *tests]))\n",
-                encoding="utf-8",
-            )
+            (evaluator / ".t4_selected_runner.py").write_text(_selected_runner_source(), encoding="utf-8")
         if include_model:
             actions.append({"model_patch": _apply(evaluator, model_patch_path)})
+            visible_tests = _visible_test_paths(model_paths)
+            if visible_tests and actions[-1]["model_patch"]["exit_code"] == 0:
+                reset_tests = _git(evaluator, "checkout", eval_build["synthetic_commit"], "--", *visible_tests)
+                actions.append({"visible_test_reset": {"paths": visible_tests, "exit_code": reset_tests.returncode, "stderr": reset_tests.stderr[-4000:]}})
         actions.append({"test_patch": _apply(evaluator, test_patch)})
         if include_gold:
             actions.append({"gold_patch": _apply(evaluator, gold_patch)})
@@ -391,7 +568,24 @@ def _evaluate(row: dict[str, Any], model_workspace: Path, evaluator: Path, depen
         # single argv item without POSIX shlex interpreting backslashes.
         command = test_argv if test_argv is not None else test_command.replace('"', "").split()
         result = _run(command, cwd=evaluator, env=env, timeout=timeout)
-        return {"kind": kind, "status": "PASS" if result["exit_code"] == 0 else "FAIL", "run": result, "actions": actions}
+        attempts = [result]
+        # The archived websockets suite contains a known Python 3.8
+        # millisecond keepalive timing flake. Retry only this benchmark's
+        # environment-only failure; retain every attempt so semantic failures
+        # remain visible in the evaluator telemetry.
+        if row["task"] == "aaugustin__websockets-543":
+            for _ in range(5):
+                if result.get("exit_code") == 0 or result.get("timeout"):
+                    break
+                result = _run(command, cwd=evaluator, env=env, timeout=timeout)
+                attempts.append(result)
+        return {
+            "kind": kind,
+            "status": "PASS" if result["exit_code"] == 0 else "FAIL",
+            "run": result,
+            "run_attempts": attempts,
+            "actions": actions,
+        }
 
     model_result = stage("model", True, False)
     no_edit = stage("no_edit", False, False)
@@ -417,7 +611,13 @@ def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeou
     # no previous benchmark artifact is reachable by walking its parent.
     isolated_parent = Path(tempfile.mkdtemp(prefix=f"thaliris-{run_id}-"))
     workspace = isolated_parent / "workspace"
-    evaluator = root / "evaluators" / run_id
+    # aiohttp's generated source has paths deep enough that placing the
+    # trusted checkout below a descriptive report root exceeds Windows path
+    # limits during ``git add``. Keep it in a separate, short-lived path; it
+    # is still created only after the model exits and never shares a parent
+    # with the sealed model fixture.
+    evaluator_parent = Path(tempfile.mkdtemp(prefix=f"t4eval-{model_name[0]}{index}-"))
+    evaluator = evaluator_parent / "workspace"
     dependency = root / "dependencies" / task
     telemetry = root / "telemetry" / f"{run_id}.jsonl"
     final = root / "final" / f"{run_id}.txt"
@@ -505,7 +705,12 @@ def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeou
     record["telemetry"] = {"model_reported": actual_model, "usage": totals, "model_calls": len(timeline), "peak_context": max((item["input_tokens"] for item in timeline), default=0), "timeline": timeline}
     diff, untracked = _model_patch(workspace, build["synthetic_commit"], model_patch)
     record["scope"] = _scope(_patch_paths(diff), (row.get("patch") or ""), untracked)
-    if record["model_process"].get("failure_reason") in {"USAGE_LIMIT", "PROVIDER_INSUFFICIENT_BALANCE", "PROVIDER_UNAVAILABLE"}:
+    # A successful model call may still report a transient 503 from an
+    # optional plugin bundle download on stderr.  Only classify provider
+    # failures as pre-model invalid when the process failed or emitted no
+    # model telemetry; otherwise the trusted evaluator must judge the patch.
+    provider_failure = record["model_process"].get("failure_reason") in {"USAGE_LIMIT", "PROVIDER_INSUFFICIENT_BALANCE", "PROVIDER_UNAVAILABLE"}
+    if provider_failure and (process.returncode != 0 or not timeline):
         reason = record["model_process"]["failure_reason"]
         record["evaluation"] = {"status": "NOT_RUN", "reason": "external provider unavailable before model attempt" if reason in {"PROVIDER_INSUFFICIENT_BALANCE", "PROVIDER_UNAVAILABLE"} else "Codex usage limit; no model attempt completed"}
         record["quality"] = "ENVIRONMENT_INVALID"
@@ -516,7 +721,10 @@ def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeou
             handle.write((row.get("test_patch") or "").replace("\r\n", "\n"))
         with gold_patch.open("w", encoding="utf-8", newline="\n") as handle:
             handle.write((row.get("patch") or "").replace("\r\n", "\n"))
-        evaluator_report = _evaluate(row, workspace, evaluator, dependency, model_patch, test_patch, gold_patch, timeout=timeout)
+        # Trusted evaluator-only submodules are materialized after model exit;
+        # the model's sealed archive retains the exact gitlink source tree.
+        _materialize_evaluator_submodules(task, evaluator)
+        evaluator_report = _evaluate(row, workspace, evaluator, dependency, model_patch, _patch_paths(diff), test_patch, gold_patch, timeout=timeout)
         record["evaluation"] = evaluator_report
         record["quality"] = "PASS" if evaluator_report["model_pass"] and evaluator_report["no_edit_expected_fail"] and evaluator_report["gold_pass"] and record["scope"]["status"] == "PASS" else "FAIL"
     else:

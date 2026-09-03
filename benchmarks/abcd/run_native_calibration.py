@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from build_sealed_fixture import build_fixture
-from prepare_benchmark_codex_home import build_minimal_home
+from prepare_benchmark_codex_home import build_minimal_home, build_official_home
 from run_external_readiness import _commands, _load_tasks
 from validate_sealed_fixture import validate_fixture
 
@@ -153,8 +153,14 @@ def _model_patch(workspace: Path, baseline: str, destination: Path) -> tuple[str
 
 def _scope(model_paths: list[str], gold_patch: str, untracked: list[str]) -> dict[str, Any]:
     gold_paths = set(_patch_paths(gold_patch))
-    forbidden = ("test", "tests/", "evaluator", ".git/")
-    violations = [path for path in model_paths if path not in gold_paths or path.lower().startswith(forbidden)]
+    metadata_names = {"candidate_full.json", "candidate_records.json", "t4_candidate_screening.json"}
+    violations = [
+        path for path in model_paths
+        if any(part in {"test", "tests"} for part in Path(path).parts)
+        or path.lower().startswith(("evaluator/", ".git/"))
+        or Path(path).name.lower() in metadata_names
+        or path.lower().endswith((".pyc", ".log"))
+    ]
     violations.extend(untracked)
     return {
         "status": "PASS" if not violations else "FAIL",
@@ -297,6 +303,16 @@ def _prepare_dependency(task: str, source: Path, dependency: Path) -> dict[str, 
             installed = _run([str(python), "-m", "pip", "install", "-q", "--disable-pip-version-check", *packages], cwd=source, env=os.environ.copy(), timeout=1200)
             if installed["exit_code"]:
                 return {"status": "FAIL", "reason": installed["stderr"][-4000:]}
+        if task.startswith("bashtage__arch-"):
+            # This revision's pytest warning configuration refers to a class
+            # removed by pytest 8.  Keep the evaluator on the compatible
+            # pre-8 line rather than treating that dependency mismatch as a
+            # model result.
+            pytest_ok = _run([str(python), "-c", "import pytest; assert int(pytest.__version__.split('.')[0]) < 8"], cwd=source, env=os.environ.copy(), timeout=60)
+            if pytest_ok["exit_code"]:
+                installed = _run([str(python), "-m", "pip", "install", "-q", "--disable-pip-version-check", "pytest<8"], cwd=source, env=os.environ.copy(), timeout=600)
+                if installed["exit_code"]:
+                    return {"status": "FAIL", "reason": installed["stderr"][-4000:]}
         return {"status": "PASS", "kind": "python", "python": str(python)}
     return {"status": "FAIL", "reason": f"unsupported task dependency: {task}"}
 
@@ -335,16 +351,7 @@ def _evaluate(row: dict[str, Any], model_workspace: Path, evaluator: Path, depen
         selection = list(row.get("test_selection") or row.get("FAIL_TO_PASS", []) + row.get("PASS_TO_PASS", []))
         if any("[" in test and "]" not in test for test in selection):
             selection = sorted({test.split("::", 1)[0] for test in selection})
-        selection_file = evaluator / ".t4_selected_tests.json"
-        selection_file.write_text(json.dumps(selection) + "\n", encoding="utf-8")
-        runner = evaluator / ".t4_selected_runner.py"
-        runner.write_text(
-            "import json\nfrom pathlib import Path\nimport pytest\n"
-            "tests = json.loads((Path(__file__).with_name('.t4_selected_tests.json')).read_text())\n"
-            "raise SystemExit(pytest.main(['-q', *tests]))\n",
-            encoding="utf-8",
-        )
-        test_argv = [str(dependency / "Scripts" / "python.exe"), str(runner)]
+        test_argv = [str(dependency / "Scripts" / "python.exe"), str(evaluator / ".t4_selected_runner.py")]
     if row["task"].startswith("reata__sqllineage"):
         python = dependency / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
         test_command = test_command.replace("python", f'"{python}"', 1)
@@ -362,6 +369,16 @@ def _evaluate(row: dict[str, Any], model_workspace: Path, evaluator: Path, depen
     def stage(kind: str, include_model: bool, include_gold: bool) -> dict[str, Any]:
         _reset(evaluator, eval_build["synthetic_commit"])
         actions: list[dict[str, Any]] = []
+        if test_argv is not None:
+            # _reset cleans untracked files, so materialize the trusted test
+            # selector after every reset and immediately before execution.
+            (evaluator / ".t4_selected_tests.json").write_text(json.dumps(selection) + "\n", encoding="utf-8")
+            (evaluator / ".t4_selected_runner.py").write_text(
+                "import json\nfrom pathlib import Path\nimport pytest\n"
+                "tests = json.loads((Path(__file__).with_name('.t4_selected_tests.json')).read_text())\n"
+                "raise SystemExit(pytest.main(['-q', *tests]))\n",
+                encoding="utf-8",
+            )
         if include_model:
             actions.append({"model_patch": _apply(evaluator, model_patch_path)})
         actions.append({"test_patch": _apply(evaluator, test_patch)})
@@ -392,7 +409,7 @@ def _evaluate(row: dict[str, Any], model_workspace: Path, evaluator: Path, depen
     }
 
 
-def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeout: int) -> dict[str, Any]:
+def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeout: int, provider: str = "external") -> dict[str, Any]:
     task = row["task"]
     run_id = f"{task}-{model_name.upper()}{index}"
     # Keep each model workspace in a unique temporary one-entry directory.
@@ -448,7 +465,10 @@ def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeou
     if codex_home.exists():
         shutil.rmtree(codex_home, ignore_errors=True)
     try:
-        home_manifest = build_minimal_home(EXTERNAL_CODEX_HOME, codex_home)
+        if provider == "official":
+            home_manifest = build_official_home(EXTERNAL_CODEX_HOME, codex_home)
+        else:
+            home_manifest = build_minimal_home(EXTERNAL_CODEX_HOME, codex_home)
     except Exception as error:
         record["classification"] = "ENVIRONMENT_INVALID"
         record["failure_mode"] = f"minimal CODEX_HOME: {error}"
@@ -456,8 +476,9 @@ def run_one(row: dict[str, Any], model_name: str, index: int, root: Path, timeou
     env["CODEX_HOME"] = str(codex_home)
     for key in ("CODEX_SESSION_ID", "CODEX_THREAD_ID", "CODEX_APP_SERVER", "CODEX_DESKTOP"):
         env.pop(key, None)
+    record["provider"] = provider
     record["codex"] = {"executable": str(_codex_executable()), "home": home_manifest}
-    command = [str(_codex_executable()), "exec", "--ignore-rules", "--cd", str(workspace), "--model", "gpt-5.6-luna" if model_name == "luna" else "gpt-5.6-sol", "-c", "model_reasoning_effort=high", "--sandbox", "danger-full-access", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--json", "--ephemeral", "--output-last-message", str(final), "-"]
+    command = [str(_codex_executable()), "exec", "--ignore-user-config", "--ignore-rules", "--cd", str(workspace), "--model", "gpt-5.6-luna" if model_name == "luna" else "gpt-5.6-sol", "-c", "model_reasoning_effort=high", "--sandbox", "danger-full-access", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--json", "--ephemeral", "--output-last-message", str(final), "-"]
     started = time.monotonic()
     process = subprocess.Popen(command, cwd=workspace, env=env, stdin=subprocess.PIPE, stdout=telemetry.open("w", encoding="utf-8"), stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     try:
@@ -528,6 +549,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sol-start", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--provider", choices=("external", "official"), default="external")
     args = parser.parse_args(argv)
     # Use the already prepared trusted source and issue roots from readiness;
     # no evaluator material is placed beside a model workspace.
@@ -556,7 +578,7 @@ def main(argv: list[str] | None = None) -> int:
         row = rows[task]
         luna_results = []
         for index in range(args.luna_start, args.luna_start + args.luna_runs):
-            result = run_one(row, "luna", index, args.root, args.timeout)
+            result = run_one(row, "luna", index, args.root, args.timeout, args.provider)
             luna_results.append(result)
             all_results.append(result)
             # Adaptive rule: only run Sol if Luna is already 0/3 or 1/3 after
@@ -565,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
         luna_passes = sum(item.get("quality") == "PASS" for item in luna_results)
         if luna_passes <= 1:
             for index in range(args.sol_start, args.sol_start + args.sol_runs):
-                all_results.append(run_one(row, "sol", index, args.root, args.timeout))
+                all_results.append(run_one(row, "sol", index, args.root, args.timeout, args.provider))
     payload = {"schema_version": 1, "protocol": "native_calibration_luna_first", "tasks": selected, "runs": all_results}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

@@ -99,6 +99,40 @@ def build_minimal_home(source: Path, destination: Path, *, global_agents: Path |
     }
 
 
+def build_official_home(source: Path, destination: Path) -> dict[str, Any]:
+    """Project only ChatGPT OAuth credentials for an official native run.
+
+    The runner invokes ``codex exec --ignore-user-config``.  Consequently no
+    provider configuration is copied here: the isolated home contains only
+    the authenticated ``auth.json`` needed by the official backend.
+    """
+
+    source = source.resolve()
+    destination = destination.resolve()
+    auth_path = source / "auth.json"
+    if not auth_path.is_file():
+        raise ValueError("official CODEX_HOME must contain auth.json")
+    if destination.exists() and any(destination.iterdir()):
+        raise ValueError("destination CODEX_HOME must be empty")
+    try:
+        auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("official auth.json is unreadable") from error
+    if not isinstance(auth, dict) or auth.get("auth_mode") != "chatgpt":
+        raise ValueError("official auth.json is not ChatGPT OAuth")
+    destination.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(auth_path, destination / "auth.json")
+    return {
+        "schema_version": 1,
+        "source": str(source),
+        "destination": str(destination),
+        "provider": "official_openai_chatgpt",
+        "auth_projected": True,
+        "global_agents_projected": False,
+        "excluded": ["config.toml", "sessions", "archived_sessions", "cache", "log", "state", "sqlite", "plugins", "prompts"],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-home", required=True, type=Path)

@@ -23,5 +23,6 @@
   "sol_exposure_interpretable": false,
   "attention_protection_hypothesis": "NOT_SUPPORTED_BY_THIS_PILOT",
   "budget_policy":{"pilot":"one fresh high-reasoning root turn per arm","future_rerun":"shared 1-model-call cap plus explicit wall-time cap","token_cap":null,"wall_time_cap_seconds":null},
-  "next_action":"repeat A/B/C/D under explicit comparable budget before large workload"
+  "managed_preflight":{"runner":"benchmarks/abcd/managed_protocol_preflight.py","status":"PASS","checks":"all required hard-gate checks PASS","native_surface":"functions.exec_command, file_change, collaborationspawn_agent"},
+  "next_action":"fresh D rerun is permitted only after the hard preflight gate; use explicit comparable budget"
 }

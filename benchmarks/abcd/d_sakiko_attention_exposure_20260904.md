@@ -69,10 +69,17 @@ failure because the shared modules do not exist at merge-base. Scoring is
 behavior-oriented and does not require changed-file or gold-diff equality.
 
 D3 JSONL mechanically records one fresh `spawn_agent` and one bounded `wait`;
-no `send_message`-to-Sol or Sol model turn occurred. Thus D3's arithmetic Sol
-exposure is zero, but `INTERPRETABLE=false`: it is not an attention-saving
-rescue comparison because the arm did not invoke Sol. The current routing made
-the same decision as C3 for this pilot.
+however, the old run predates the hard preflight attestation. Its quality result
+is retained, but managed protocol validity is `INVALID / UNVERIFIED` and
+Thaliris effectiveness is not interpretable. No Sol model turn occurred. Thus
+D3's arithmetic Sol exposure is zero, but `INTERPRETABLE=false`.
+
+The benchmark-only hard preflight now runs against the real native surfaces
+(`functions.exec_command`, `file_change`, and `collaborationspawn_agent`) and
+passed every required check: active task, managed AGENTS, observed PreToolUse,
+root investigation/mutation denial, fresh dispatch, `fork_turns="none"`, child
+investigation/mutation allowance, and PostToolUse evidence. A formal D rerun is
+permitted only after this gate.
 
 ```text
 SEALED_TASKS = [d_sakiko_shared_live2d_medium]

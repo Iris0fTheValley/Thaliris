@@ -47,7 +47,8 @@ Controller uses `context task-status` or `context prepare --role controller` for
 - Query `task-status` only after a known task mutation, a state/revision change, or recovery is required; do not repeat an unchanged revision.
 - Use `send_message` only for a new constraint, correction, or material evidence. Do not use it to ask for progress or to say “continue”.
 
-During an active task the Controller is control-plane-only. Every new root child must be a fresh execution child with `fork_turns="none"`, and at least one child is required before investigation, source edits, or task-close, including for microtasks. Root shell investigation/mutation is mechanically guarded at PreToolUse; PostToolUse records dispatch evidence; bounded context commands and deterministic acceptance checks remain available. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+During an ACTIVE task, the persistent Controller is control-plane-only. The Controller MUST NOT perform repository investigation or source mutation at any time, before or after child dispatch. Dispatching a child never grants the Controller permission to investigate or edit. Repository investigation and source mutation belong only to fresh execution children using `fork_turns="none"`. The Controller may perform only bounded routing/state operations and deterministic acceptance checks. Root actions are mechanically guarded at PreToolUse; PostToolUse records dispatch evidence. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+Every new root child must use `fork_turns="none"`; this never unlocks root investigation or mutation.
 
 Read detailed role packs only when needed. Keep raw findings, evidence, transcripts, logs, and tool output outside Controller packets and durable memory; promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress.
 {MANAGED_END}

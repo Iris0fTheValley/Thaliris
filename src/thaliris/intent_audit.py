@@ -1089,7 +1089,7 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
                 "permissionDecisionReason": _CONTROLLER_BOUNDARY_REASON,
             }
         }, ensure_ascii=False, separators=(",", ":"))
-    if tool in _CONTROLLER_EXECUTION_TOOL_NAMES:
+    if _tool_basename(tool) in _CONTROLLER_EXECUTION_TOOL_NAMES:
         return _controller_guard_output(payload, root)
     if _tool_basename(tool) != "spawn_agent":
         return ""

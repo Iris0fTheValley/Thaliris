@@ -736,6 +736,24 @@ def test_controller_guard_blocks_root_broad_investigation_and_mutation(tmp_path)
     assert "SOURCE_MUTATION" in evidence["controller_actions_observed"]
 
 
+def test_controller_guard_covers_namespaced_native_shell_surface(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    task_start(root, "namespaced shell guard", None, None)
+    response = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="functions.exec_command", tool_input={"cmd": "Get-Content src/main.py"}),
+    ))
+    output = response["hookSpecificOutput"]
+    assert output["permissionDecision"] == "deny"
+    assert handle_hook(
+        root,
+        "PreToolUse",
+        payload(agent_id="child-1", tool_name="functions.exec_command", tool_input={"cmd": "Get-Content src/main.py"}),
+    ) == ""
+
+
 def test_controller_guard_blocks_root_apply_patch_without_leaking_payload(tmp_path):
     root = repo(tmp_path)
     init(root)

@@ -44,7 +44,9 @@ artifact pointers, accepted constraints/decisions, and the bounded Modification
 Boundary. It does not calculate or return raw investigation/review material,
 evidence records, Git status, or memory/milestone bodies. Raw state is
 diagnostic-only through `task-show`. `task-artifact` appends a bounded normalized
-repo-relative pointer; its contents are external to the packet. `task-start`
+repo-relative pointer; its contents are external to the packet. The Controller
+registers the pointer and may record the producing child separately; artifacts
+are not automatically projected to later roles. `task-start`
 returns this bounded packet once so a Controller can dispatch without an
 extra status round trip.
 

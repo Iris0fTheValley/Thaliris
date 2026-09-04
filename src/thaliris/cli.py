@@ -44,7 +44,7 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--id", required=True)
     q.add_argument("--path", required=True)
     q.add_argument("--summary", required=True)
-    q.add_argument("--role", choices=("controller", "luna", "luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"))
+    q.add_argument("--producer-role", choices=("luna", "luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"))
     q = sub.add_parser("task-close")
     q.add_argument("--base-revision", required=True, type=int)
     q = sub.add_parser(
@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "task-update": out = task_update(root, args.role, args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
         elif args.command == "task-status": out = task_status(root)
-        elif args.command == "task-artifact": out = task_artifact(root, args.base_revision, args.id, args.path, args.summary, producer_role=getattr(args, "role", None))
+        elif args.command == "task-artifact": out = task_artifact(root, args.base_revision, args.id, args.path, args.summary, producer_role=getattr(args, "producer_role", None))
         elif args.command == "task-close": out = task_close(root, args.base_revision)
         elif args.command == "task-promote": out = task_promote(root, args.role, args.base_revision, args.input)
         elif args.command == "rollback": out = rollback(root, args.backup)

@@ -42,7 +42,9 @@ the bounded `Modification Boundary`. It deliberately omits raw findings, review
 bodies, evidence records, broad Git state, and memory/milestone bodies.
 `context task-show` remains the explicit raw diagnostic command.
 `context task-artifact` appends bounded, path-safe artifact pointers without
-inlining their contents.
+inlining their contents. The Controller registers the pointer, while
+`--producer-role` records the child that produced it; artifacts are never
+automatically injected into later role packs.
 
 During an ACTIVE task the Controller must dispatch a fresh execution child before
 investigation, source mutation, or `task-close`. PreToolUse rejects recognized

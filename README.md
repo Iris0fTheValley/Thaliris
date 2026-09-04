@@ -45,7 +45,7 @@ PostToolUse 继续做事后分类验证。
 identity/status、active work、pending results、unresolved questions、artifact pointers 和
 accepted constraints/decisions 和 bounded `Modification Boundary`。它刻意不包含 raw findings、
 review bodies、evidence records、宽泛 Git state 或 memory/milestone bodies。`context task-show` 仍是显式 raw diagnostic；
-`context task-artifact` 只追加有界、path-safe artifact pointer，不内联 artifact 内容。
+`context task-artifact` 只追加有界、path-safe artifact pointer，不内联 artifact 内容；Controller 注册 pointer，`--producer-role` 记录实际产出 child，且 artifact 不会自动注入后续角色。
 
 ACTIVE task 的 Controller 必须先 dispatch 一个 fresh execution child；PreToolUse
 会拒绝 root 的已识别广泛 shell 调查、source mutation，以及没有成功 child dispatch

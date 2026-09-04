@@ -37,7 +37,7 @@ MANAGED = f"""{MANAGED_START}
 
 Codex remains the runtime. Thaliris stores bounded task control and pointers; it has no worker, scheduler, polling loop, or authority to decide correctness.
 
-Controller uses `context task-status` or `context prepare --role controller` for bounded packets. `context task-show` is explicit raw diagnostics; `context task-artifact` passes pointers, not contents. Only Controller registers artifact pointers, which must target ordinary task-local files rather than `.context/`, `.git/`, `.agent-memory/`, or `.milestones/` control data.
+Controller uses `context task-status` or `context prepare --role controller` for bounded packets. `context task-show` is explicit raw diagnostics; `context task-artifact` passes pointers, not contents. Controller registers ordinary task-local pointers; `--producer-role` records the child producer. Pointers are not auto-injected.
 
 ### Controller orchestration economy
 
@@ -85,7 +85,7 @@ verification; reviewers return independent findings. If bounded findings contain
 unresolved architecture, provenance, or cross-module decision, route only that
 Decision Context to `sol-high` rather than investigating at root. Promote only
 reusable decisions, constraints, invariants, failure modes, or material milestone
-progress/verification. `task-artifact` records a bounded normalized external pointer. Artifact registration is Controller-only and excludes private control paths such as `.context/`, `.git/`, `.agent-memory/`, and `.milestones/`.
+progress/verification. `task-artifact` records a bounded normalized external pointer. Artifact registration is Controller-only, may record a separate producer role, and excludes private control paths such as `.context/`, `.git/`, `.agent-memory/`, and `.milestones/`; artifact contents are never automatically injected into later roles.
 """
 
 
@@ -578,7 +578,7 @@ def _bounded_lines(value: object, field: str) -> None:
 
 
 def _artifact_ref(root: Path, value: object) -> None:
-    if not isinstance(value, dict) or not {"id", "path", "summary"}.issubset(value) or set(value) - {"id", "path", "summary", "producer_role", "scope", "evidence_refs"}:
+    if not isinstance(value, dict) or not {"id", "path", "summary"}.issubset(value) or set(value) - {"id", "path", "summary", "producer_role", "registered_by", "scope", "evidence_refs"}:
         raise ValueError("invalid artifact reference")
     identifier, path, summary = value["id"], value["path"], value["summary"]
     if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", identifier):
@@ -590,6 +590,8 @@ def _artifact_ref(root: Path, value: object) -> None:
         raise ValueError("invalid artifact reference")
     if "producer_role" in value and (not isinstance(value["producer_role"], str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", value["producer_role"])):
         raise ValueError("invalid artifact reference")
+    if "registered_by" in value and value["registered_by"] != "controller":
+        raise ValueError("artifact pointers must be registered by Controller")
     if "scope" in value and (not isinstance(value["scope"], str) or not value["scope"].strip() or _bad_text(value["scope"]) or len(value["scope"]) > 300):
         raise ValueError("invalid artifact reference")
     if "evidence_refs" in value and (not isinstance(value["evidence_refs"], list) or len(value["evidence_refs"]) > 16 or not all(isinstance(ref, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", ref) for ref in value["evidence_refs"])):
@@ -914,12 +916,13 @@ def task_status(root: Path) -> dict[str, object]:
     return _controller_packet(_load_state(root))
 
 
-def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer_role: str | None = None, scope: str | None = None, evidence_refs: list[str] | None = None) -> dict[str, object]:
+def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer_role: str | None = None, registered_by: str = "controller", scope: str | None = None, evidence_refs: list[str] | None = None) -> dict[str, object]:
     root = _repo_root(root)
-    if producer_role not in {None, "controller"}:
+    if registered_by != "controller":
         raise ValueError("only Controller may register artifact pointers")
     artifact = {"id": artifact_id, "path": path, "summary": summary}
     if producer_role is not None: artifact["producer_role"] = producer_role
+    if producer_role is not None: artifact["registered_by"] = registered_by
     if scope is not None: artifact["scope"] = scope
     if evidence_refs is not None: artifact["evidence_refs"] = evidence_refs
     _artifact_ref(root, artifact)

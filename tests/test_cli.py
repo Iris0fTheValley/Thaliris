@@ -1126,10 +1126,13 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     assert all(value not in encoded for value in ("private source evidence", "raw investigation", "Evidence refs", "Investigation Findings"))
     code, failed = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "escape", "--path", "../outside.md", "--summary", "bad")
     assert code == 2 and "path" in failed["error"]
-    code, failed = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "child-artifact", "--path", "docs/child.md", "--summary", "child handoff", "--role", "luna-investigator")
-    assert code == 2 and "only Controller" in failed["error"]
+    code, registered = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "child-artifact", "--path", "docs/child.md", "--summary", "child handoff", "--producer-role", "luna-investigator")
+    assert code == 0 and registered["revision"] == 3
+    state = state_of(root)
+    assert state["artifact_refs"][-1]["producer_role"] == "luna-investigator"
+    assert state["artifact_refs"][-1]["registered_by"] == "controller"
     for private_path in (".context/state.json", ".context/audit/runtime.json", ".git/config", ".agent-memory/INDEX.md"):
-        code, failed = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "private-" + private_path.split("/")[0].replace(".", ""), "--path", private_path, "--summary", "bad")
+        code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "private-" + private_path.split("/")[0].replace(".", ""), "--path", private_path, "--summary", "bad")
         assert code == 2 and "private control data" in failed["error"]
 
 

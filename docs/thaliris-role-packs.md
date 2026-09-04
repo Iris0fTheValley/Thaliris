@@ -42,9 +42,10 @@ end. Requested runtime or visible-behavior verification remains required.
 
 `active_work` and `pending_results` are short controller-visible labels. Use
 `context task-artifact --base-revision N --id ID --path repo/relative --summary TEXT`
-to append a path-safe pointer to external work. The artifact contents remain
-outside the status packet. Raw task state remains diagnostic-only in
-`.context/state.json`.
+to append a path-safe pointer to external work. Only the Controller registers
+the pointer; pass `--producer-role` to record which child produced it. Artifact
+contents remain outside the status packet and are never automatically injected
+into another role. Raw task state remains diagnostic-only in `.context/state.json`.
 
 At task end, promote only reusable decisions, constraints, invariants, failure
 modes, and material milestone progress or completed verification through

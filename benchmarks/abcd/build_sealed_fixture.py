@@ -28,7 +28,7 @@ FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 def _run_git(source: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", "-C", str(source), *args],
+        ["git", "-c", "core.quotePath=false", "-C", str(source), *args],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -141,7 +141,18 @@ def build_fixture(
             archive_path = Path(temporary.name)
         with archive_path.open("wb") as archive:
             result = subprocess.run(
-                ["git", "-c", "core.autocrlf=false", "-C", str(source), "archive", "--format=tar", revision],
+                [
+                    "git",
+                    "-c",
+                    "core.autocrlf=false",
+                    "-c",
+                    "core.quotePath=false",
+                    "-C",
+                    str(source),
+                    "archive",
+                    "--format=tar",
+                    revision,
+                ],
                 check=False,
                 stdout=archive,
                 stderr=subprocess.PIPE,

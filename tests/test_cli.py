@@ -1116,6 +1116,8 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     raw = {"kind": "SUPPORTED", "text": "raw investigation must not reach controller", "evidence_refs": ["src"]}
     payload = {"evidence_refs": [evidence], "unknowns": [{"text": "choose the narrow behavior", "evidence_refs": []}], "constraints": [{"text": "preserve public API", "evidence_refs": []}], "decisions": [{"text": "use a status packet", "evidence_refs": []}], "active_work": ["implement packet"], "pending_results": ["focused tests"], "investigation_findings": [raw]}
     task_input(root, capsys, payload, "task-start", "isolate controller")
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "docs/handoff.md").write_text("detailed child notes", encoding="utf-8")
     code, registered = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "handoff", "--path", "docs/handoff.md", "--summary", "worker handoff")
     assert code == 0 and registered["revision"] == 2 and "state" not in registered
     assert state_of(root)["artifact_refs"] == [{"id": "handoff", "path": "docs/handoff.md", "summary": "worker handoff"}]
@@ -1129,6 +1131,7 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     assert all(value not in encoded for value in ("private source evidence", "raw investigation", "Evidence refs", "Investigation Findings"))
     code, failed = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "escape", "--path", "../outside.md", "--summary", "bad")
     assert code == 2 and "path" in failed["error"]
+    (root / "docs/child.md").write_text("child notes", encoding="utf-8")
     code, registered = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "child-artifact", "--path", "docs/child.md", "--summary", "child handoff", "--producer-role", "luna-investigator")
     assert code == 0 and registered["revision"] == 3
     state = state_of(root)
@@ -1137,6 +1140,8 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     for private_path in (".context/state.json", ".context/audit/runtime.json", ".git/config", ".agent-memory/INDEX.md"):
         code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "private-" + private_path.split("/")[0].replace(".", ""), "--path", private_path, "--summary", "bad")
         assert code == 2 and "private control data" in failed["error"]
+    code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "phantom", "--path", "missing.md", "--summary", "bad")
+    assert code == 2 and "existing regular file" in failed["error"]
 
 
 def test_controller_mutation_responses_never_leak_raw_working_set(tmp_path, capsys):

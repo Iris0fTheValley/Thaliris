@@ -578,13 +578,21 @@ def _bounded_lines(value: object, field: str) -> None:
 
 
 def _artifact_ref(root: Path, value: object) -> None:
-    if not isinstance(value, dict) or set(value) != {"id", "path", "summary"}:
+    if not isinstance(value, dict) or not {"id", "path", "summary"}.issubset(value) or set(value) - {"id", "path", "summary", "producer_role", "scope", "evidence_refs"}:
         raise ValueError("invalid artifact reference")
     identifier, path, summary = value["id"], value["path"], value["summary"]
     if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", identifier):
         raise ValueError("invalid artifact reference")
     _valid_relative(root, path)
+    if path == ".git" or path.startswith(".git/") or path == ".context" or path.startswith(".context/") or path == ".agent-memory" or path.startswith(".agent-memory/") or path == ".milestones" or path.startswith(".milestones/"):
+        raise ValueError("artifact path targets private control data")
     if not isinstance(summary, str) or not summary.strip() or _bad_text(summary) or len(summary) > 300:
+        raise ValueError("invalid artifact reference")
+    if "producer_role" in value and (not isinstance(value["producer_role"], str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", value["producer_role"])):
+        raise ValueError("invalid artifact reference")
+    if "scope" in value and (not isinstance(value["scope"], str) or not value["scope"].strip() or _bad_text(value["scope"]) or len(value["scope"]) > 300):
+        raise ValueError("invalid artifact reference")
+    if "evidence_refs" in value and (not isinstance(value["evidence_refs"], list) or len(value["evidence_refs"]) > 16 or not all(isinstance(ref, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", ref) for ref in value["evidence_refs"])):
         raise ValueError("invalid artifact reference")
 
 
@@ -906,9 +914,14 @@ def task_status(root: Path) -> dict[str, object]:
     return _controller_packet(_load_state(root))
 
 
-def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str) -> dict[str, object]:
+def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer_role: str | None = None, scope: str | None = None, evidence_refs: list[str] | None = None) -> dict[str, object]:
     root = _repo_root(root)
+    if producer_role not in {None, "controller"}:
+        raise ValueError("only Controller may register artifact pointers")
     artifact = {"id": artifact_id, "path": path, "summary": summary}
+    if producer_role is not None: artifact["producer_role"] = producer_role
+    if scope is not None: artifact["scope"] = scope
+    if evidence_refs is not None: artifact["evidence_refs"] = evidence_refs
     _artifact_ref(root, artifact)
     with _lock(root):
         state = _load_state(root, active=True)

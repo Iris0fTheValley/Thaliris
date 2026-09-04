@@ -61,11 +61,12 @@ cap, so natural investigation depth differs.
 | C3 managed Luna-only | 14,409,860 | 35,608 | 4 Python tests; frontend self-tests/lint/build reported pass | `HIGH_QUALITY_PARTIAL`: broad three-layer progress, fresh child and bounded wait | 0 |
 | D3 managed Hybrid | 13,918,652 | 42,986 | 4 Python tests; frontend self-tests/lint/build reported pass | `HIGH_QUALITY_PARTIAL`: broad three-layer progress, fresh child and bounded wait; no Sol escalation | 0 |
 
-The trusted contract evaluator contains 15 gold-derived behavioral tests. A2
-and B2 implementations expose different contract module names and therefore
-are scored by the arm-specific focused tests plus static/compilation evidence,
-not by a gold-file or changed-file comparison. The evaluator is being extended
-to normalize equivalent contract entry points before the next budgeted pilot.
+The trusted contract evaluator contains 15 gold-derived behavioral tests. The
+benchmark-only adapter `d_sakiko_quality_evaluator.py` discovers equivalent
+entry points and runs the same contract suites after model exit. Gold
+validation is 15/15 PASS; sealed base/no-edit is the expected collection
+failure because the shared modules do not exist at merge-base. Scoring is
+behavior-oriented and does not require changed-file or gold-diff equality.
 
 D3 JSONL mechanically records one fresh `spawn_agent` and one bounded `wait`;
 no `send_message`-to-Sol or Sol model turn occurred. Thus D3's arithmetic Sol

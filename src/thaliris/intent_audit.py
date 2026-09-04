@@ -819,7 +819,9 @@ def _mint_unbound_capture(root: Path, payload: dict[str, Any], state_path: Path,
     """Persist a one-time opaque link from this root turn to task-start."""
     if state.get("turn_status") != "IDENTIFIED" or prompt.get("text_status") != "AVAILABLE_UNVERIFIED":
         return None
-    capture_id = secrets.token_urlsafe(32)
+    # Keep the opaque token argparse-safe when it is pasted as the value of
+    # ``--intent-capture-id``; URL-safe randomness may otherwise begin with '-'.
+    capture_id = "c_" + secrets.token_urlsafe(32)
     capture_id_hash = _identity_hash(capture_id)
     prompt_hash = prompt.get("sha256")
     if capture_id_hash is None or not isinstance(prompt_hash, str):

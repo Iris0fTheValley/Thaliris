@@ -1274,7 +1274,9 @@ def _changed_files(root: Path, *, excluded_paths: set[str] | None = None) -> lis
         index += 1
     excluded = {path.strip("/") for path in (excluded_paths or set())}
     if excluded:
-        paths = [path for path in paths if not any(path == artifact or path.startswith(artifact + "/") for artifact in excluded)]
+        normalize = str.casefold if os.name == "nt" else (lambda value: value)
+        excluded_keys = {normalize(path) for path in excluded}
+        paths = [path for path in paths if not any(normalize(path) == artifact or normalize(path).startswith(artifact + "/") for artifact in excluded_keys)]
     return list(dict.fromkeys(paths))
 
 

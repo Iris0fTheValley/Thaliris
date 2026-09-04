@@ -66,6 +66,13 @@ def test_root_prompt_and_child_prompt_are_not_mixed(tmp_path):
     assert captures(root)["prompts"] == []
 
 
+def test_capture_capability_is_safe_as_argparse_value(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    monkeypatch.setattr(audit_module.secrets, "token_urlsafe", lambda _: "-leading-token")
+    response = handle_hook(root, "UserPromptSubmit", payload(prompt="safe token"))
+    assert capture_id(response).startswith("c_-")
+
+
 def test_cli_hook_decodes_utf8_bytes_verbatim_and_ignores_child(tmp_path):
     root = repo(tmp_path)
     init(root)

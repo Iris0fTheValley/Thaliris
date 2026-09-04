@@ -679,7 +679,8 @@ def test_pre_tool_isolation_rewrites_before_dispatch_without_agent_type(tmp_path
     assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
     response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": 1, "message": "Isolation reason: wrong native type"})))
     assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
-    assert handle_hook(root, "PreToolUse", payload(agent_id="child", tool_name="spawn_agent", tool_input={"fork_turns": "all"})) == ""
+    response = json.loads(handle_hook(root, "PreToolUse", payload(agent_id="child", tool_name="spawn_agent", tool_input={"fork_turns": "all"})))
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
@@ -692,6 +693,8 @@ def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
     assert re.fullmatch(matcher, "Bash")
     assert re.fullmatch(matcher, "apply_patch")
     assert re.fullmatch(matcher, "file_change")
+    assert re.fullmatch(matcher, "functions.exec_command")
+    assert re.fullmatch(matcher, "functions.apply_patch")
     assert not re.fullmatch(matcher, "shell-script")
 
 
@@ -759,6 +762,26 @@ def test_controller_guard_covers_namespaced_native_shell_surface(tmp_path):
         "PreToolUse",
         payload(agent_id="child-1", tool_name="functions.exec_command", tool_input={"cmd": "Get-Content src/main.py"}),
     ) == ""
+
+
+def test_controller_guard_blocks_child_projection_update_and_raw_task_show(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "role boundary", None, None)
+    for command in (
+        "context prepare --role terra-reviewer",
+        "context task-update --role luna-investigator --base-revision 1",
+        "context task-show",
+    ):
+        response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context prepare --role controller"})) == ""
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-status"})) == ""
+
+
+def test_child_delegation_is_denied_only_with_explicit_identity(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "child delegation", None, None)
+    response = json.loads(handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name="spawn_agent", tool_input={"fork_turns": "none"})))
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}))
 
 
 def test_controller_guard_blocks_root_apply_patch_without_leaking_payload(tmp_path):

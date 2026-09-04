@@ -50,9 +50,9 @@ POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_C
 # Codex 0.146 exposes shell execution to hooks as ``Bash``.  The controller
 # guard uses that native surface for deterministic action classification while
 # retaining the historical aliases for runtimes that expose a different name.
-_CONTROLLER_EXECUTION_TOOL_NAMES = ("Bash", "Shell", "exec_command", "command_execution")
+_CONTROLLER_EXECUTION_TOOL_NAMES = ("Bash", "Shell", "exec_command", "command_execution", "functions.exec_command")
 _CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_EXECUTION_TOOL_NAMES) + ")"
-_CONTROLLER_MUTATION_TOOL_NAMES = ("apply_patch", "file_change")
+_CONTROLLER_MUTATION_TOOL_NAMES = ("apply_patch", "file_change", "functions.apply_patch", "functions.file_change")
 _CONTROLLER_MUTATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_MUTATION_TOOL_NAMES) + ")"
 # Pre-dispatch isolation sees native spawn calls, the other flattened V2
 # collaboration names (for compatibility/observation), and root shell
@@ -323,6 +323,9 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             return ""
         root = _hook_repository_root(root, payload)
         if payload.get("agent_id") is not None:
+            tool = payload.get("tool_name") or payload.get("tool")
+            if event == "PreToolUse" and isinstance(tool, str) and _tool_basename(tool) in _DELEGATION_TOOL_NAMES:
+                return _permission_deny("THALIRIS_CHILD_DELEGATION: child-to-child delegation is not permitted.")
             _record_child_runtime_event(root, payload, event)
             return ""
         if event == "PreToolUse":
@@ -505,7 +508,14 @@ def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str)
     if not isinstance(tool, str):
         return
     normalized = _tool_basename(tool)
-    if normalized not in _CONTROLLER_MUTATION_TOOL_NAMES:
+    action = None
+    if normalized in _CONTROLLER_MUTATION_TOOL_NAMES:
+        action = "SOURCE_MUTATION"
+    elif normalized in _CONTROLLER_EXECUTION_TOOL_NAMES:
+        command = _bash_command(payload)
+        if command and (_BROAD_INVESTIGATION.search(command) or re.search(r"(?i)^git\s+diff\b", command)):
+            action = "BROAD_INVESTIGATION"
+    if action is None:
         return
     path = _session_dir(root, payload) / "runtime.json"
     state = _load_runtime(path)
@@ -513,8 +523,8 @@ def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str)
     if normalized not in tools and len(tools) < 16:
         tools.append(normalized)
     actions = state.setdefault("child_actions_observed", [])
-    if "SOURCE_MUTATION" not in actions and len(actions) < 16:
-        actions.append("SOURCE_MUTATION")
+    if action not in actions and len(actions) < 16:
+        actions.append(action)
     _write_capture(path, state)
 
 
@@ -573,6 +583,15 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
             continue
         lowered = value.lower()
         if re.match(r"^(?:context|python\s+-m\s+thaliris\.cli)\b", lowered):
+            if re.search(r"\bprepare\b", lowered):
+                role = re.search(r"(?:--role|-role)\s+([a-z0-9_-]+)", lowered)
+                if role and role.group(1) in {"luna", "luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"}:
+                    return "CHILD_PROJECTION"
+                continue
+            if re.search(r"\btask[-_ ]update\b", lowered):
+                role = re.search(r"(?:--role|-role)\s+([a-z0-9_-]+)", lowered)
+                if role and role.group(1) in {"luna", "luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"}:
+                    return "CHILD_UPDATE"
             if re.search(r"\btask[-_ ]show\b", lowered):
                 return "BROAD_INVESTIGATION"
             if re.search(r"\btask[-_ ]close\b", lowered) and not _successful_spawn_observed(root, payload):
@@ -1100,13 +1119,7 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
         if _active_task_id(root) is None:
             return ""
         _record_controller_guard_event(root, payload, "SOURCE_MUTATION", "blocked")
-        return json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": _CONTROLLER_BOUNDARY_REASON,
-            }
-        }, ensure_ascii=False, separators=(",", ":"))
+        return _permission_deny(_CONTROLLER_BOUNDARY_REASON)
     if _tool_basename(tool) in _CONTROLLER_EXECUTION_TOOL_NAMES:
         return _controller_guard_output(payload, root)
     if _tool_basename(tool) != "spawn_agent":
@@ -1140,6 +1153,16 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
     }, ensure_ascii=False, separators=(",", ":"))
 
 
+def _permission_deny(reason: str) -> str:
+    return json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }, ensure_ascii=False, separators=(",", ":"))
+
+
 def _controller_guard_output(payload: dict[str, Any], root: Path | None = None) -> str:
     """Block only classified root investigation/mutation actions.
 
@@ -1148,7 +1171,7 @@ def _controller_guard_output(payload: dict[str, Any], root: Path | None = None) 
     """
     root = _hook_repository_root(root or Path.cwd(), payload)
     action = _controller_command_action(root, payload)
-    if action in {"SOURCE_MUTATION", "BROAD_INVESTIGATION", "TASK_CLOSE_NO_CHILD", "ACCEPTANCE_BEFORE_CHILD"}:
+    if action in {"SOURCE_MUTATION", "BROAD_INVESTIGATION", "CHILD_PROJECTION", "CHILD_UPDATE", "TASK_CLOSE_NO_CHILD", "ACCEPTANCE_BEFORE_CHILD"}:
         _record_controller_guard_event(root, payload, action, "blocked")
         if action == "TASK_CLOSE_NO_CHILD":
             reason = _CONTROLLER_CLOSE_REASON

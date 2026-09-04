@@ -23,32 +23,6 @@ def discover_entry_points(root: Path) -> dict[str, list[str]]:
     modules = _public_modules(root)
     return {name: modules[:] for name in CONTRACTS}
 
-def _probe_path(root: Path) -> Path | None:
-    for p in (root / "GPT_SoVITS" / "contract_probe.py", root / "GPT_SoVITS" / "behavior_contract.py", root / "GPT_SoVITS" / "live2d_support" / "contract_probe.py"):
-        if p.is_file():
-            return p
-    return None
-
-def _run_probe(root: Path, name: str) -> dict | None:
-    probe = _probe_path(root)
-    if probe is None:
-        return None
-    script = ("import importlib.util,json,sys; p=sys.argv[1]; n=sys.argv[2]; "
-              "s=importlib.util.spec_from_file_location('contract_probe',p); "
-              "m=importlib.util.module_from_spec(s); s.loader.exec_module(m); "
-              "print(json.dumps(m.run_contract(n)))")
-    proc = subprocess.run([sys.executable, "-c", script, str(probe), name], cwd=root / "GPT_SoVITS", capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if proc.returncode:
-        return {"status": "FAIL", "tests": 0, "passed": 0, "source": "external_behavior_probe", "probe_error": proc.stderr[-1000:]}
-    try:
-        value = json.loads(proc.stdout.strip().splitlines()[-1])
-    except (json.JSONDecodeError, IndexError):
-        return {"status": "FAIL", "tests": 0, "passed": 0, "source": "external_behavior_probe", "probe_error": "invalid JSON"}
-    if not isinstance(value, dict):
-        return {"status": "FAIL", "tests": 0, "passed": 0, "source": "external_behavior_probe"}
-    passed, total = int(value.get("passed", 0)), int(value.get("total", value.get("tests", 0)))
-    return {"status": "PASS" if total > 0 and passed == total else "FAIL", "tests": total, "passed": passed, "source": "external_behavior_probe"}
-
 def _python_for_tests() -> str:
     if sys.platform == "win32":
         probe = subprocess.run(["py", "-3.11", "-c", "import sys; print(sys.executable)"], capture_output=True, text=True)
@@ -67,12 +41,12 @@ def _pytest_contract(root: Path, name: str) -> dict:
     return {"status": "PASS" if proc.returncode == 0 else "FAIL", "tests": passed + failed, "passed": passed, "returncode": proc.returncode, "source": "trusted_behavior_tests", "output_tail": output[-2000:]}
 
 def run_contract(root: Path, name: str) -> dict:
-    return _run_probe(root, name) or _pytest_contract(root, name)
+    return _pytest_contract(root, name)
 
 def evaluate(root: Path) -> dict:
     contracts = {name: run_contract(root, name) for name in CONTRACTS}
     total, passed = sum(v["tests"] for v in contracts.values()), sum(v["passed"] for v in contracts.values())
-    return {"workspace": str(root), "entry_points": discover_entry_points(root), "contracts": contracts, "trusted_test_pass_rate": passed / total if total else 0.0, "quality_profile": "FULL_PASS" if total and passed == total else ("PARTIAL" if passed else "LOW_VALUE_PROGRESS"), "implementation_independent": any(v.get("source") == "external_behavior_probe" for v in contracts.values())}
+    return {"workspace": str(root), "entry_points": discover_entry_points(root), "contracts": contracts, "trusted_test_pass_rate": passed / total if total else 0.0, "quality_profile": "FULL_PASS" if total and passed == total else ("PARTIAL" if passed else "LOW_VALUE_PROGRESS"), "implementation_independent": False}
 
 def main() -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("workspace", type=Path); parser.add_argument("--output", type=Path); args = parser.parse_args()

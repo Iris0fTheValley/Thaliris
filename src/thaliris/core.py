@@ -580,18 +580,26 @@ def _bounded_lines(value: object, field: str) -> None:
         raise ValueError(f"invalid {field}")
 
 
-def _artifact_ref(root: Path, value: object) -> None:
+def _artifact_ref(root: Path, value: object, *, require_target: bool = True) -> None:
     if not isinstance(value, dict) or not {"id", "path", "summary"}.issubset(value) or set(value) - {"id", "path", "summary", "producer_role", "registered_by", "scope", "evidence_refs"}:
         raise ValueError("invalid artifact reference")
     identifier, path, summary = value["id"], value["path"], value["summary"]
     if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", identifier):
         raise ValueError("invalid artifact reference")
-    _valid_relative(root, path)
+    # State loading must remain valid when a previously registered artifact is
+    # later removed or replaced. Registration performs the target check below;
+    # loading only validates the normalized pointer shape.
+    if not isinstance(path, str) or "\\" in path or not path or path.startswith("/") or any(part in {"", ".", ".."} for part in path.split("/")):
+        raise ValueError("path must be normalized POSIX repo-relative")
     if path == ".git" or path.startswith(".git/") or path == ".context" or path.startswith(".context/") or path == ".agent-memory" or path.startswith(".agent-memory/") or path == ".milestones" or path.startswith(".milestones/"):
         raise ValueError("artifact path targets private control data")
-    target = _safe(root, path)
-    if target.is_symlink() or not target.is_file():
-        raise ValueError("artifact path must name an existing regular file")
+    if require_target:
+        raw_target = root / path
+        if raw_target.is_symlink():
+            raise ValueError("artifact path must name an existing regular file")
+        target = _safe(root, path)
+        if target.is_symlink() or not target.is_file():
+            raise ValueError("artifact path must name an existing regular file")
     if not isinstance(summary, str) or not summary.strip() or _bad_text(summary) or len(summary) > 300:
         raise ValueError("invalid artifact reference")
     if "producer_role" in value and (not isinstance(value["producer_role"], str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", value["producer_role"])):
@@ -671,7 +679,7 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
         raise ValueError("invalid artifact_refs")
     artifact_ids: set[str] = set()
     for artifact in state["artifact_refs"]:
-        _artifact_ref(root, artifact)
+        _artifact_ref(root, artifact, require_target=False)
         if artifact["id"] in artifact_ids:
             raise ValueError("duplicate artifact reference id")
         artifact_ids.add(artifact["id"])

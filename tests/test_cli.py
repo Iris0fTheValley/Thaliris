@@ -1198,6 +1198,18 @@ def test_large_artifact_pointer_is_accepted_without_reading_contents(tmp_path, c
     assert state_of(root)["artifact_refs"] == [{"id": "large", "path": "large-notes.bin", "summary": "large notes", "producer_role": "luna-investigator"}]
 
 
+def test_missing_registered_artifact_does_not_invalidate_task_state(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "missing artifact")
+    artifact = root / "notes.md"; artifact.write_text("details\n", encoding="utf-8")
+    code, _ = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "notes", "--path", "notes.md", "--summary", "notes")
+    assert code == 0
+    artifact.unlink()
+    code, status = run(capsys, root, "task-status")
+    assert code == 0 and status["Task"]["revision"] == 2
+    code, controller = run(capsys, root, "prepare", "--role", "controller")
+    assert code == 0 and controller["Task"]["revision"] == 2
+
+
 def test_controller_mutation_responses_never_leak_raw_working_set(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     source = root / "source.txt"; source.write_text("source", encoding="utf-8")

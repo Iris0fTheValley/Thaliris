@@ -67,6 +67,38 @@ def _runtime_records(root: Path) -> list[dict[str, Any]]:
     return records
 
 
+def _runtime_delta(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep probe evidence scoped to values observed after its invocation."""
+    previous = {json.dumps(item, sort_keys=True) for item in before}
+    return [item for item in after if json.dumps(item, sort_keys=True) not in previous] or after
+
+
+def _requested_fork_observed(output: str) -> bool:
+    values = _json_lines(output)
+    rendered = json.dumps(values, ensure_ascii=False).lower()
+    return '"fork_turns": "all"' in rendered or '"fork_turns":"all"' in rendered
+
+
+def _artifact_isolation_observed(root: Path) -> bool:
+    for path in (root / ".context" / "audit").glob("*/*/capture.json"):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        delegations = value.get("delegations", []) if isinstance(value, dict) else []
+        if any(isinstance(item, dict) and item.get("isolation", {}).get("fork_turns") == "NONE" for item in delegations):
+            return True
+    return False
+
+
+def _native_wait_completed(text: str) -> bool:
+    values = _json_lines(text)
+    rendered = json.dumps(values, ensure_ascii=False).lower()
+    has_wait = '"name":"wait_agent"' in rendered or '"name": "wait_agent"' in rendered or 'wait_agent' in rendered
+    has_result = any(token in rendered for token in ("timed_out", "completed", "wait completed"))
+    return has_wait and has_result
+
+
 def run_preflight() -> dict[str, Any]:
     codex = _find("codex", "THALIRIS_CODEX_EXECUTABLE")
     context = _find("context", "THALIRIS_CONTEXT_EXECUTABLE")
@@ -94,9 +126,10 @@ def run_preflight() -> dict[str, Any]:
             hooks = root / ".codex" / "hooks.json"
             evidence.update({"workspace": str(root), "agents": str(agents), "hooks": str(hooks), "active_task": str(root / ".context" / "state.json"), "codex_home": str(home)})
             checks: dict[str, str] = {"same_workspace_identity": "PASS", "ACTIVE_task": "PASS", "managed_AGENTS_runtime_evidence": "FAIL"}
+            baseline_records = _runtime_records(root)
             inv_log = root / "root-investigation.jsonl"
             _, output = _run_codex(codex, home, root, "You are the root controller. Read README.md using the shell command Get-Content README.md, then report the marker.", inv_log)
-            records = _runtime_records(root)
+            records = _runtime_delta(baseline_records, _runtime_records(root))
             checks["native_PreToolUse_observed"] = "PASS" if records else "FAIL"
             checks["root_investigation_attempted"] = "PASS" if _contains(_json_lines(output), "Get-Content", "README.md") else "FAIL"
             checks["root_investigation_denied"] = "PASS" if any(int(r.get("controller_guard", {}).get("blocked", 0)) > 0 for r in records) else "FAIL"
@@ -104,23 +137,25 @@ def run_preflight() -> dict[str, Any]:
             checks["managed_AGENTS_runtime_evidence"] = "PASS" if marker.lower() in output.lower() else "FAIL"
             probe = root / "root-probe.txt"
             mut_log = root / "root-mutation.jsonl"
+            before_mutation = _runtime_records(root)
             _run_codex(codex, home, root, "You are the root controller. Create root-probe.txt with New-Item root-probe.txt, then stop.", mut_log)
-            records = _runtime_records(root)
+            records = _runtime_delta(before_mutation, _runtime_records(root))
             tools = [tool for r in records for tool in r.get("tools_observed", [])]
             checks["root_mutation_attempted"] = "PASS" if "file_change" in tools or "command_execution" in tools else "FAIL"
             checks["root_mutation_denied"] = "PASS" if any(int(r.get("controller_guard", {}).get("blocked", 0)) > 0 for r in records) else "FAIL"
             checks["root_mutation_not_executed"] = "PASS" if not probe.exists() else "FAIL"
             child_log = root / "child-dispatch.jsonl"
-            child_output = _run_codex(codex, home, root, "As root, use spawn_agent with fork_turns=all to create a fresh child. Instruct the child to read README.md and create child-probe.txt. Wait for completion, then stop.", child_log)[1]
-            records = _runtime_records(root)
+            before_child = _runtime_records(root)
+            child_output = _run_codex(codex, home, root, "As root, use spawn_agent with fork_turns=all to create a fresh child. Instruct the child to run Get-Content README.md and write its exact output to child-probe.txt. Wait for completion with wait_agent, then stop.", child_log)[1]
+            records = _runtime_delta(before_child, _runtime_records(root))
             tools = [tool for r in records for tool in r.get("tools_observed", [])]
             child_tools = [tool for r in records for tool in r.get("child_tools_observed", [])]
             checks["real_child_dispatch"] = "PASS" if "spawn_agent" in tools else "FAIL"
-            checks["fork_turns_none"] = "PASS" if any(r.get("pre_dispatch_rewrite") == "NO" for r in records) else "FAIL"
-            checks["child_investigation_executed"] = "PASS" if child_tools else "FAIL"
-            checks["child_mutation_executed"] = "PASS" if "file_change" in child_tools and (root / "child-probe.txt").exists() else "FAIL"
+            checks["fork_turns_none"] = "PASS" if _requested_fork_observed(child_output) and _artifact_isolation_observed(root) else "FAIL"
+            checks["child_investigation_executed"] = "PASS" if (root / "child-probe.txt").is_file() and (root / "child-probe.txt").read_text(encoding="utf-8", errors="replace").strip() == sentinel else "FAIL"
+            checks["child_mutation_executed"] = "PASS" if (root / "child-probe.txt").is_file() else "FAIL"
             checks["PostToolUse_dispatch_observed"] = "PASS" if any(r.get("successful_spawn_observed") for r in records) else "FAIL"
-            checks["bounded_wait"] = "PASS" if _contains(_json_lines(child_output), "wait") or (root / "child-probe.txt").exists() else "FAIL"
+            checks["bounded_wait"] = "PASS" if _native_wait_completed(child_output) else "FAIL"
             evidence["runtime_records"] = records
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         return {"status": "INFRA_INVALID", "checks": locals().get("checks", {}), "evidence": evidence, "error": str(exc)}

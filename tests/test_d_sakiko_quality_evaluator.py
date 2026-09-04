@@ -13,7 +13,7 @@ def _evaluator():
     return module
 
 
-def test_alternative_equivalent_fixture_is_scored_without_gold_names(tmp_path: Path) -> None:
+def test_candidate_probe_cannot_self_report_quality(tmp_path: Path) -> None:
     gpt = tmp_path / "GPT_SoVITS"
     (gpt / "live2d_support").mkdir(parents=True)
     (gpt / "live2d_support" / "model_selection.py").write_text("class RuntimeSelection: pass\n", encoding="utf-8")
@@ -22,6 +22,6 @@ def test_alternative_equivalent_fixture_is_scored_without_gold_names(tmp_path: P
         encoding="utf-8",
     )
     result = _evaluator().evaluate(tmp_path)
-    assert result["quality_profile"] == "FULL_PASS"
-    assert result["implementation_independent"] is True
+    assert result["quality_profile"] == "LOW_VALUE_PROGRESS"
+    assert result["implementation_independent"] is False
     assert all("SharedLive2DBehavior" not in values for values in result["entry_points"].values())

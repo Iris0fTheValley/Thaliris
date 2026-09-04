@@ -37,7 +37,7 @@ MANAGED = f"""{MANAGED_START}
 
 Codex remains the runtime. Thaliris stores bounded task control and pointers; it has no worker, scheduler, polling loop, or authority to decide correctness.
 
-Controller uses `context task-status` or `context prepare --role controller` for bounded packets. `context task-show` is explicit raw diagnostics; `context task-artifact` passes pointers, not contents.
+Controller uses `context task-status` or `context prepare --role controller` for bounded packets. `context task-show` is explicit raw diagnostics; `context task-artifact` passes pointers, not contents. Only Controller registers artifact pointers, which must target ordinary task-local files rather than `.context/`, `.git/`, `.agent-memory/`, or `.milestones/` control data.
 
 ### Controller orchestration economy
 
@@ -85,7 +85,7 @@ verification; reviewers return independent findings. If bounded findings contain
 unresolved architecture, provenance, or cross-module decision, route only that
 Decision Context to `sol-high` rather than investigating at root. Promote only
 reusable decisions, constraints, invariants, failure modes, or material milestone
-progress/verification. `task-artifact` records a bounded normalized external pointer.
+progress/verification. `task-artifact` records a bounded normalized external pointer. Artifact registration is Controller-only and excludes private control paths such as `.context/`, `.git/`, `.agent-memory/`, and `.milestones/`.
 """
 
 

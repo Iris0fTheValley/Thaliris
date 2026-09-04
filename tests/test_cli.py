@@ -1142,6 +1142,12 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
         assert code == 2 and "private control data" in failed["error"]
     code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "phantom", "--path", "missing.md", "--summary", "bad")
     assert code == 2 and "existing regular file" in failed["error"]
+    (root / "artifact-dir").mkdir()
+    code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "directory", "--path", "artifact-dir", "--summary", "bad")
+    assert code == 2 and "existing regular file" in failed["error"]
+    (root / "oversized.bin").write_bytes(b"x" * (4 * 1024 * 1024 + 1))
+    code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "oversized", "--path", "oversized.bin", "--summary", "bad")
+    assert code == 2 and "exceeds 4 MiB" in failed["error"]
 
 
 def test_controller_mutation_responses_never_leak_raw_working_set(tmp_path, capsys):

@@ -47,7 +47,7 @@ Controller uses `context task-status` or `context prepare --role controller` for
 - Query `task-status` only after a known task mutation, a state/revision change, or recovery is required; do not repeat an unchanged revision.
 - Use `send_message` only for a new constraint, correction, or material evidence. Do not use it to ask for progress or to say “continue”.
 
-During an ACTIVE task, the persistent Controller is control-plane-only. The Controller MUST NOT perform repository investigation or source mutation at any time, before or after child dispatch. Dispatching a child never grants the Controller permission to investigate or edit. Repository investigation and source mutation belong only to fresh execution children using `fork_turns="none"`. The Controller may perform only bounded routing/state operations and deterministic acceptance checks. Root actions are mechanically guarded at PreToolUse; PostToolUse records dispatch evidence. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+During an ACTIVE task, the persistent Controller is control-plane-only. The Controller MUST NOT perform repository investigation or source mutation at any time, before or after child dispatch. A successful child dispatch never changes those permissions. `task-close` requires a successful child dispatch. Repository investigation and source mutation belong only to fresh execution children using `fork_turns="none"`. The Controller may perform only bounded routing/state operations and deterministic acceptance checks. Root actions are mechanically guarded at PreToolUse; PostToolUse records dispatch evidence. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
 Every new root child must use `fork_turns="none"`; this never unlocks root investigation or mutation.
 
 Read detailed role packs only when needed. Keep raw findings, evidence, transcripts, logs, and tool output outside Controller packets and durable memory; promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress.
@@ -69,8 +69,10 @@ Every active task starts with one fresh execution child using `fork_turns="none"
 The Controller may then add Investigator, Curator, Reasoning Specialist, or
 Reviewer children only when the bounded result shows that role is needed. A
 one- or two-turn fork is also rewritten to `none`; no encrypted reason is used
-as an exception. PreToolUse guards root shell investigation/mutation and
-task-close-before-child; PostToolUse records native dispatch evidence. Use
+as an exception. The persistent Controller never investigates or mutates source
+before or after dispatch; successful child dispatch does not change those
+permissions. `task-close` requires a successful child dispatch. PreToolUse guards
+root shell investigation/mutation and close-without-child; PostToolUse records native dispatch evidence. Use
 native completion/mailbox observation; there is no Thaliris worker, scheduler,
 polling loop, or retry runtime.
 
@@ -586,6 +588,14 @@ def _artifact_ref(root: Path, value: object) -> None:
     _valid_relative(root, path)
     if path == ".git" or path.startswith(".git/") or path == ".context" or path.startswith(".context/") or path == ".agent-memory" or path.startswith(".agent-memory/") or path == ".milestones" or path.startswith(".milestones/"):
         raise ValueError("artifact path targets private control data")
+    target = _safe(root, path)
+    if target.is_symlink() or not target.is_file():
+        raise ValueError("artifact path must name an existing regular file")
+    try:
+        if target.stat().st_size > 4 * 1024 * 1024:
+            raise ValueError("artifact file exceeds 4 MiB")
+    except OSError as exc:
+        raise ValueError("artifact file cannot be inspected") from exc
     if not isinstance(summary, str) or not summary.strip() or _bad_text(summary) or len(summary) > 300:
         raise ValueError("invalid artifact reference")
     if "producer_role" in value and (not isinstance(value["producer_role"], str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", value["producer_role"])):

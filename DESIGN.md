@@ -32,7 +32,9 @@ remain the only lifecycle mechanisms.
 
 The same PreToolUse surface exposes Codex 0.146 root shell execution as
 `Bash`. The adapter mechanically denies only recognized root broad investigation,
-source mutation, and `task-close` before a successful child dispatch. Bounded
+source mutation, and `task-close` without a successful child dispatch. The
+persistent Controller never investigates or mutates source before or after
+dispatch; successful child dispatch does not change those permissions. Bounded
 `context` commands and deterministic acceptance checks remain allowed. Unknown
 scripts, non-shell tools, and child events that do not expose the documented root
 topology remain fail-open/`UNKNOWN`; the adapter does not claim a universal

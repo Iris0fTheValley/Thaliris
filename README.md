@@ -47,10 +47,11 @@ accepted constraints/decisions 和 bounded `Modification Boundary`。它刻意�
 review bodies、evidence records、宽泛 Git state 或 memory/milestone bodies。`context task-show` 仍是显式 raw diagnostic；
 `context task-artifact` 只追加有界、path-safe artifact pointer，不内联 artifact 内容；Controller 注册 pointer，`--producer-role` 记录实际产出 child，且 artifact 不会自动注入后续角色。
 
-ACTIVE task 的 Controller 必须先 dispatch 一个 fresh execution child；PreToolUse
-会拒绝 root 的已识别广泛 shell 调查、source mutation，以及没有成功 child dispatch
-时的 `task-close`。未知脚本和未被 Codex hook 暴露的工具保持 fail-open，并在 doctor
-中保持 `UNKNOWN`。
+在 ACTIVE task 中，persistent Controller 在 dispatch child 之前和之后都绝不执行
+repository investigation 或 source mutation；successful child dispatch 不会改变这些权限。
+`task-close` 需要 successful child dispatch。PreToolUse 会拒绝 root 的已识别广泛
+shell 调查、source mutation，以及没有 successful child dispatch 时的 `task-close`。
+未知脚本和未被 Codex hook 暴露的工具保持 fail-open，并在 doctor 中保持 `UNKNOWN`。
 
 `context doctor` 把 `ready_for_routing` 与 command execution 分开报告，并给出
 `command_executed`、`configuration_valid`、`managed_agents_present`、`task_state_valid` 和
@@ -252,11 +253,12 @@ hash 未变化只能证明被引用的证据没有变化，**不能**证明此�
 
 Controller 应基于有界任务视图工作，而不是读取原始调查 transcript。
 
-在 ACTIVE task 中，Controller 是 control plane，不是执行 worker：即使是
-简单任务，也必须先 dispatch 一个 fresh execution child（`fork_turns="none"`）。
-Controller 只保留 bounded routing、child dispatch、结果接收和 deterministic
-acceptance；root 的广泛源码/日志/Git 调查与 source mutation 由 PreToolUse
-mechanical boundary 拒绝。
+在 ACTIVE task 中，persistent Controller 是 control plane，不是执行 worker：它在
+dispatch child 之前和之后都绝不执行 repository investigation 或 source mutation。
+Successful child dispatch 不会改变这些权限；`task-close` 需要 successful child
+dispatch。Controller 只保留 bounded routing、child dispatch、结果接收和
+deterministic acceptance；root 的广泛源码/日志/Git 调查与 source mutation 由
+PreToolUse mechanical boundary 拒绝。
 
 ---
 

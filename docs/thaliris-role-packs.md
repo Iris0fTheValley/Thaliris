@@ -13,8 +13,11 @@ diagnostic need.
 
 Every active task starts with one fresh execution child using `fork_turns="none"`.
 A positive fork is rewritten to `none`; an encrypted `Isolation reason:` never
-creates an exception. The PreToolUse hook also guards root shell investigation,
-source mutation, and task-close-before-child. PostToolUse keeps native dispatch
+creates an exception. During an ACTIVE task the persistent Controller never
+performs repository investigation or source mutation, before or after dispatch;
+successful child dispatch does not change those permissions. `task-close` requires
+a successful child dispatch. The PreToolUse hook guards root investigation,
+source mutation, and close-without-child. PostToolUse keeps native dispatch
 evidence auditable.
 
 For a local, obvious microtask, that one fresh Implementer is still required,

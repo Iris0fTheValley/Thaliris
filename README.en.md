@@ -46,11 +46,12 @@ inlining their contents. The Controller registers the pointer, while
 `--producer-role` records the child that produced it; artifacts are never
 automatically injected into later role packs.
 
-During an ACTIVE task the Controller must dispatch a fresh execution child before
-investigation, source mutation, or `task-close`. PreToolUse rejects recognized
-root shell investigation/mutation and close-before-child actions. Unknown scripts
-and tools not exposed through the Codex hook surface remain fail-open and are
-reported as `UNKNOWN` rather than being overstated as enforced.
+During an ACTIVE task, the persistent Controller NEVER performs repository
+investigation or source mutation, before or after child dispatch. A successful
+child dispatch does not change those permissions. `task-close` requires a
+successful child dispatch. PreToolUse rejects recognized root investigation,
+mutation, and close-without-child actions. Unknown scripts and tools not exposed
+through the Codex hook surface remain fail-open and are reported as `UNKNOWN`.
 
 `context doctor` reports `ready_for_routing` separately from successful command
 execution, with the dimensions `command_executed`, `configuration_valid`,
@@ -256,12 +257,13 @@ Only the Controller delegates work.
 
 The Controller should operate on bounded task views rather than raw investigation transcripts.
 
-During an ACTIVE task the Controller is a control plane, not the execution
-worker. Even a simple task must first dispatch one fresh execution child with
-`fork_turns="none"`. The Controller retains bounded routing, child dispatch,
-result acceptance, and deterministic verification; broad root source/log/Git
-investigation and source mutation are rejected by the PreToolUse mechanical
-boundary.
+During an ACTIVE task, the persistent Controller is a control plane, not the
+execution worker. It NEVER performs repository investigation or source mutation
+before or after child dispatch. A successful child dispatch does not change those
+permissions. `task-close` requires a successful child dispatch. The Controller
+retains bounded routing, child dispatch, result acceptance, and deterministic
+verification; broad root source/log/Git investigation and source mutation are
+rejected by the PreToolUse mechanical boundary.
 
 ---
 

@@ -1122,6 +1122,9 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     _, packet = run(capsys, root, "task-status")
     assert packet["Task"]["revision"] == 2 and packet["Active Work"] == ["implement packet"]
     assert packet["Artifact Refs"][0]["path"] == "docs/handoff.md"
+    for role in ("luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"):
+        _, role_pack = run(capsys, root, "prepare", "--role", role)
+        assert "Artifact Refs" not in role_pack and "docs/handoff.md" not in json.dumps(role_pack)
     encoded = json.dumps(packet)
     assert all(value not in encoded for value in ("private source evidence", "raw investigation", "Evidence refs", "Investigation Findings"))
     code, failed = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "escape", "--path", "../outside.md", "--summary", "bad")

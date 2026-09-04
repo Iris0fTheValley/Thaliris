@@ -47,25 +47,51 @@ renderer ownership, runtime ingress, behavior scheduling, lifecycle/bye
 handling, backend/frontend compatibility, and regression tests. It does not
 name files, commits, branches, expected model outcomes, or escalation.
 
-Native Sol A was started with the official OpenAI/ChatGPT provider and a fresh
-sealed workspace, but the account usage limit was reached before the first
-model sample (`turn.failed`, zero model turns and no valid model result). It is
-therefore `PROVIDER_USAGE_LIMIT_INVALID`, not a capability failure. Native B,
-managed C, and managed D were not started; no A/B/C/D quality conclusion is
-claimed. A fresh A run is the next permitted action after the official quota
-resets, followed by B only if A produces a valid result.
+The first Native Sol attempt was invalidated by an official usage limit before
+sampling. After the quota recovered, a fresh Sol A2, Luna B2, managed Luna C3,
+and managed Hybrid D3 were run under the same one-turn, high-reasoning pilot
+rule. This is a comparable execution rule, not equal token usage: each arm had
+the same original task, full repository, fresh isolation, and no fixed token
+cap, so natural investigation depth differs.
+
+| Arm | Input tokens | Output | Focused tests | Final quality profile | Sol calls |
+| --- | ---: | ---: | ---: | --- | ---: |
+| A2 Native Sol | 7,717,195 | 21,443 | 3 Python contract tests | `PARTIAL`: shared contract started, but hidden shared behavior/ingress modules remained absent | 1 |
+| B2 Native Luna | 13,634,124 | 45,443 | 3 Python contract tests; frontend self-tests/build reported pass | `HIGH_QUALITY_PARTIAL`: desktop/backend/frontend contract work plus deterministic frontend scheduling; full regression not collected | 0 |
+| C3 managed Luna-only | 14,409,860 | 35,608 | 4 Python tests; frontend self-tests/lint/build reported pass | `HIGH_QUALITY_PARTIAL`: broad three-layer progress, fresh child and bounded wait | 0 |
+| D3 managed Hybrid | 13,918,652 | 42,986 | 4 Python tests; frontend self-tests/lint/build reported pass | `HIGH_QUALITY_PARTIAL`: broad three-layer progress, fresh child and bounded wait; no Sol escalation | 0 |
+
+The trusted contract evaluator contains 15 gold-derived behavioral tests. A2
+and B2 implementations expose different contract module names and therefore
+are scored by the arm-specific focused tests plus static/compilation evidence,
+not by a gold-file or changed-file comparison. The evaluator is being extended
+to normalize equivalent contract entry points before the next budgeted pilot.
+
+D3 JSONL mechanically records one fresh `spawn_agent` and one bounded `wait`;
+no `send_message`-to-Sol or Sol model turn occurred. Thus D3's arithmetic Sol
+exposure is zero, but `INTERPRETABLE=false`: it is not an attention-saving
+rescue comparison because the arm did not invoke Sol. The current routing made
+the same decision as C3 for this pilot.
 
 ```text
 SEALED_TASKS = [d_sakiko_shared_live2d_medium]
-NATIVE_A = PROVIDER_USAGE_LIMIT_INVALID
-NATIVE_B = NOT_RUN
-MANAGED_C = NOT_RUN
-MANAGED_D = NOT_RUN
-SOL_EXPOSURE_RATIO = UNAVAILABLE
+NATIVE_A = HIGH_QUALITY_PARTIAL (A2; hidden-contract completeness gap)
+NATIVE_B = HIGH_QUALITY_PARTIAL
+MANAGED_C = HIGH_QUALITY_PARTIAL
+MANAGED_D = HIGH_QUALITY_PARTIAL_NO_SOL_ESCALATION
+SOL_EXPOSURE_RATIO = 0 (arithmetic only)
 INTERPRETABLE = false
-ATTENTION_PROTECTION_HYPOTHESIS = NOT_TESTED
+ATTENTION_PROTECTION_HYPOTHESIS = NOT_SUPPORTED_BY_THIS_PILOT
 ```
 
 The aiohttp task is complete separately: Native Luna B1/B2 failed, Native Sol
-A1/A2 passed, and managed C2 passed as `LUNA_ORCHESTRATION_RESCUE`; no D3 Sol
-escalation was run.
+A1/A2 passed, and managed C2 passed as `LUNA_ORCHESTRATION_RESCUE`. Its managed
+smoke evidence mechanically records root investigation/mutation guard,
+fresh-child dispatch, `fork_turns=none`, bounded wait, and child mutation
+allowed. No aiohttp D3 Sol escalation was run.
+
+The D_sakiko medium pilot is useful as a quality-baseline run, but it does not
+justify a full large-workload run yet. First normalize evaluator entry points,
+then repeat A/B/C/D under an explicit wall-time or model-call budget. Proceed
+to the full shared-live2d-upstream task only if that pilot produces a stable
+quality comparison and an interpretable Sol invocation.

@@ -12,15 +12,15 @@
     {"project":"live2d-py","url":"https://github.com/EasyLive2D/live2d-py","revision":"f9512a458e7b67365cd504f94a6d17e419533050","tree":"fed42be8a2a95ad16fef90cfe7f3a9fb584025d5","tracked_files":660}
   ],
   "sealed": {"status":"SEALED_PASS","synthetic_commit":"bc32d93bfb1b1a059a03948d248bb16a4bfa64e5","fixture_path":"I:\\AI PROJECT\\abcd-screening\\d-sakiko-20260904\\fixtures\\sealed-medium-base3","evaluator_materialized_pre_model":false},
-  "evaluator_contract": {"gold_tests":15,"gold_pass":15,"base_status":"COLLECTION_FAIL","repeat_runs":"NOT_RUN"},
+  "evaluator_contract": {"gold_tests":15,"gold_pass":15,"base_status":"COLLECTION_FAIL","repeat_runs":"NOT_RUN","scoring_note":"quality profile uses arm-focused tests, compilation and static contract evidence; equivalent entry-point normalization is pending"},
   "arms": {
-    "A_native_sol": {"model":"gpt-5.6-sol","provider":"official_openai_chatgpt","reasoning_effort":"high","status":"PROVIDER_USAGE_LIMIT_INVALID","model_turns":0,"input_tokens":"UNAVAILABLE","output_tokens":"UNAVAILABLE"},
-    "B_native_luna": {"status":"NOT_RUN"},
-    "C_managed_luna_only": {"status":"NOT_RUN"},
-    "D_managed_hybrid": {"status":"NOT_RUN"}
+    "A_native_sol": {"model":"gpt-5.6-sol","provider":"official_openai_chatgpt","reasoning_effort":"high","status":"HIGH_QUALITY_PARTIAL","model_turns":1,"input_tokens":7717195,"output_tokens":21443,"reasoning_tokens":8275,"focused_python_tests":3,"hidden_contract_completeness":"PARTIAL"},
+    "B_native_luna": {"model":"gpt-5.6-luna","provider":"official_openai_chatgpt","reasoning_effort":"high","status":"HIGH_QUALITY_PARTIAL","model_turns":1,"input_tokens":13634124,"output_tokens":45443,"reasoning_tokens":20678,"focused_python_tests":3,"frontend_self_report":"tests/build pass"},
+    "C_managed_luna_only": {"model":"gpt-5.6-luna","provider":"official_openai_chatgpt","reasoning_effort":"high","status":"HIGH_QUALITY_PARTIAL","model_turns":1,"input_tokens":14409860,"output_tokens":35608,"reasoning_tokens":14923,"focused_python_tests":4,"child_count":1,"wait_count":1},
+    "D_managed_hybrid": {"model":"gpt-5.6-luna","provider":"official_openai_chatgpt","reasoning_effort":"high","status":"HIGH_QUALITY_PARTIAL_NO_SOL_ESCALATION","model_turns":1,"input_tokens":13918652,"output_tokens":42986,"reasoning_tokens":18824,"focused_python_tests":4,"child_count":1,"wait_count":1,"sol_invocation_count":0,"decision_context_tokens":"UNAVAILABLE"}
   },
-  "sol_exposure_ratio": "UNAVAILABLE",
-  "interpretable": false,
-  "attention_protection_hypothesis": "NOT_TESTED",
-  "next_action":"fresh Native Sol A after official quota reset"
+  "sol_exposure_ratio": 0.0,
+  "sol_exposure_interpretable": false,
+  "attention_protection_hypothesis": "NOT_SUPPORTED_BY_THIS_PILOT",
+  "next_action":"normalize evaluator entry points and repeat A/B/C/D under explicit comparable budget"
 }

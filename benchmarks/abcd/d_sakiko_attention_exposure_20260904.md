@@ -74,6 +74,14 @@ is retained, but managed protocol validity is `INVALID / UNVERIFIED` and
 Thaliris effectiveness is not interpretable. No Sol model turn occurred. Thus
 D3's arithmetic Sol exposure is zero, but `INTERPRETABLE=false`.
 
+Fresh D4 also fails protocol validity: the native session performed root
+investigation and source mutation, and produced no runtime guard attestation.
+Its product-quality observation is retained as `LOW_VALUE_PROGRESS`, but it is
+excluded from Hybrid effectiveness. Raw outputs:
+`I:\AI PROJECT\abcd-screening\d-sakiko-20260904\D4-managed-hybrid-final.txt`
+and
+`I:\AI PROJECT\abcd-screening\d-sakiko-20260904\D4-managed-hybrid.jsonl`.
+
 The benchmark-only hard preflight now runs against the real native surfaces
 (`functions.exec_command`, `file_change`, and `collaborationspawn_agent`) and
 passed every required check: active task, managed AGENTS, observed PreToolUse,

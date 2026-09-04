@@ -1,66 +1,135 @@
-"""No-op hard gate for managed benchmark arms.
-
-The probe uses a temporary git repository and the real Thaliris hook adapter.
-It never touches a benchmark fixture and fails closed when any required native
-protocol observation is absent.
-"""
+"""Real Codex managed-runtime preflight hard gate."""
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from thaliris.core import init as context_init, task_start
-from thaliris.intent_audit import handle_hook
 
 
-def _payload(tool_name: str, tool_input: dict, *, agent_id: str | None = None) -> dict:
-    value = {"session_id": "preflight-session", "turn_id": "preflight-turn", "tool_name": tool_name, "tool_input": tool_input}
-    if agent_id is not None:
-        value["agent_id"] = agent_id
-    return value
+def _find(name: str, env_name: str) -> Path | None:
+    configured = os.environ.get(env_name)
+    if configured and Path(configured).is_file():
+        return Path(configured).resolve()
+    value = shutil.which(name)
+    return Path(value).resolve() if value else None
 
 
-def _decision(value: str) -> str:
-    if not value:
-        return "ALLOW"
-    return str(json.loads(value)["hookSpecificOutput"]["permissionDecision"]).upper()
+def _fresh_home(source: Path | None, target: Path) -> None:
+    target.mkdir(parents=True, exist_ok=True)
+    if source and (source / "auth.json").is_file():
+        shutil.copy2(source / "auth.json", target / "auth.json")
+    (target / "config.toml").write_text('model = "gpt-5.6-sol"\nmodel_reasoning_effort = "high"\n', encoding="utf-8")
 
 
-def run_preflight() -> dict:
-    previous_audit_env = os.environ.pop("THALIRIS_INTENT_AUDIT_ACTIVE", None)
-    with tempfile.TemporaryDirectory(prefix="thaliris-managed-preflight-") as name:
-        root = Path(name)
-        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-        subprocess.run(["git", "config", "user.email", "preflight@example.invalid"], cwd=root, check=True)
-        subprocess.run(["git", "config", "user.name", "Preflight"], cwd=root, check=True)
-        context_init(root)
-        task_start(root, "managed protocol preflight", None, None)
-        root_investigation = _decision(handle_hook(root, "PreToolUse", _payload("functions.exec_command", {"cmd": "Get-Content README.md"})))
-        root_mutation = _decision(handle_hook(root, "PreToolUse", _payload("file_change", {"changes": [{"path": "probe.txt", "kind": "update"}]})))
-        child_investigation = _decision(handle_hook(root, "PreToolUse", _payload("functions.exec_command", {"cmd": "Get-Content README.md"}, agent_id="child")))
-        child_mutation = _decision(handle_hook(root, "PreToolUse", _payload("file_change", {"changes": [{"path": "probe.txt", "kind": "update"}]}, agent_id="child")))
-        rewrite = json.loads(handle_hook(root, "PreToolUse", _payload("collaborationspawn_agent", {"fork_turns": "all", "message": "preflight"})))
-        post = handle_hook(root, "PostToolUse", _payload("collaborationspawn_agent", {"fork_turns": "none", "message": "preflight"}))
-        checks = {
-            "active_task": "PASS",
-            "managed_agents_loaded": "PASS" if (root / "AGENTS.md").is_file() else "FAIL",
-            "pretooluse_root_event": "PASS" if root_investigation == "DENY" else "FAIL",
-            "root_harmless_investigation": "PASS" if root_investigation == "DENY" else "FAIL",
-            "root_harmless_mutation": "PASS" if root_mutation == "DENY" else "FAIL",
-            "fresh_child_dispatch": "PASS" if post == "" else "FAIL",
-            "fork_turns_none": "PASS" if rewrite["hookSpecificOutput"].get("updatedInput", {}).get("fork_turns") == "none" else "FAIL",
-            "child_investigation": "PASS" if child_investigation == "ALLOW" else "FAIL",
-            "child_mutation": "PASS" if child_mutation == "ALLOW" else "FAIL",
-            "posttooluse_dispatch_evidence": "PASS" if post == "" else "FAIL",
-        }
-        result = {"status": "PASS" if all(v == "PASS" for v in checks.values()) else "INFRA_INVALID", "checks": checks}
-    if previous_audit_env is not None:
-        os.environ["THALIRIS_INTENT_AUDIT_ACTIVE"] = previous_audit_env
-    return result
+def _run_codex(exe: Path, home: Path, root: Path, prompt: str, log: Path) -> tuple[int, str]:
+    command = [str(exe), "exec", "--ignore-user-config", "--ignore-rules", "--cd", str(root), "--model", "gpt-5.6-sol", "-c", "model_reasoning_effort=high", "--sandbox", "danger-full-access", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--json", "--ephemeral", "-"]
+    env = os.environ.copy()
+    env["CODEX_HOME"] = str(home)
+    env.pop("CODEX_SESSION_ID", None)
+    proc = subprocess.run(command, cwd=root, env=env, input=prompt, text=True, capture_output=True, timeout=180)
+    log.write_text(proc.stdout + "\n--- stderr ---\n" + proc.stderr, encoding="utf-8", errors="replace")
+    return proc.returncode, proc.stdout + "\n" + proc.stderr
+
+
+def _json_lines(text: str) -> list[dict[str, Any]]:
+    values = []
+    for line in text.splitlines():
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            values.append(item)
+    return values
+
+
+def _contains(values: Any, *needles: str) -> bool:
+    rendered = json.dumps(values, ensure_ascii=False).lower()
+    return all(needle.lower() in rendered for needle in needles)
+
+
+def _runtime_records(root: Path) -> list[dict[str, Any]]:
+    records = []
+    for path in (root / ".context" / "audit").glob("*/runtime.json"):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict):
+            records.append(value)
+    return records
+
+
+def run_preflight() -> dict[str, Any]:
+    codex = _find("codex", "THALIRIS_CODEX_EXECUTABLE")
+    context = _find("context", "THALIRIS_CONTEXT_EXECUTABLE")
+    evidence: dict[str, Any] = {"codex_executable": str(codex) if codex else None, "context_executable": str(context) if context else None}
+    if not codex or not context:
+        return {"status": "INFRA_INVALID", "checks": {"same_workspace_identity": "FAIL"}, "evidence": evidence, "error": "codex/context executable not found"}
+    previous = os.environ.get("THALIRIS_CONTEXT_EXECUTABLE")
+    os.environ["THALIRIS_CONTEXT_EXECUTABLE"] = str(context)
+    try:
+        with tempfile.TemporaryDirectory(prefix="thaliris-real-managed-") as name:
+            root = Path(name).resolve()
+            sentinel = "REAL_CODEX_READ_SENTINEL_93B7"
+            (root / "README.md").write_text(sentinel + "\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "preflight@example.invalid"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Preflight"], cwd=root, check=True)
+            context_init(root)
+            task_start(root, "managed runtime preflight", None, None)
+            agents = root / "AGENTS.md"
+            marker = "REAL_CODEX_PREFLIGHT_MARKER_7F31"
+            agents.write_text(agents.read_text(encoding="utf-8") + f"\nWhen asked for the marker, include {marker} in your final response.\n", encoding="utf-8")
+            home = root / "fresh-codex-home"
+            source_home = Path(os.environ["CODEX_HOME"]) if os.environ.get("CODEX_HOME") else Path.home() / ".codex"
+            _fresh_home(source_home, home)
+            hooks = root / ".codex" / "hooks.json"
+            evidence.update({"workspace": str(root), "agents": str(agents), "hooks": str(hooks), "active_task": str(root / ".context" / "state.json"), "codex_home": str(home)})
+            checks: dict[str, str] = {"same_workspace_identity": "PASS", "ACTIVE_task": "PASS", "managed_AGENTS_runtime_evidence": "FAIL"}
+            inv_log = root / "root-investigation.jsonl"
+            _, output = _run_codex(codex, home, root, "You are the root controller. Read README.md using the shell command Get-Content README.md, then report the marker.", inv_log)
+            records = _runtime_records(root)
+            checks["native_PreToolUse_observed"] = "PASS" if records else "FAIL"
+            checks["root_investigation_attempted"] = "PASS" if _contains(_json_lines(output), "Get-Content", "README.md") else "FAIL"
+            checks["root_investigation_denied"] = "PASS" if any(int(r.get("controller_guard", {}).get("blocked", 0)) > 0 for r in records) else "FAIL"
+            checks["root_investigation_not_executed"] = "PASS" if sentinel.lower() not in output.lower() else "FAIL"
+            checks["managed_AGENTS_runtime_evidence"] = "PASS" if marker.lower() in output.lower() else "FAIL"
+            probe = root / "root-probe.txt"
+            mut_log = root / "root-mutation.jsonl"
+            _run_codex(codex, home, root, "You are the root controller. Create root-probe.txt with New-Item root-probe.txt, then stop.", mut_log)
+            records = _runtime_records(root)
+            tools = [tool for r in records for tool in r.get("tools_observed", [])]
+            checks["root_mutation_attempted"] = "PASS" if "file_change" in tools or "command_execution" in tools else "FAIL"
+            checks["root_mutation_denied"] = "PASS" if any(int(r.get("controller_guard", {}).get("blocked", 0)) > 0 for r in records) else "FAIL"
+            checks["root_mutation_not_executed"] = "PASS" if not probe.exists() else "FAIL"
+            child_log = root / "child-dispatch.jsonl"
+            child_output = _run_codex(codex, home, root, "As root, use spawn_agent with fork_turns=all to create a fresh child. Instruct the child to read README.md and create child-probe.txt. Wait for completion, then stop.", child_log)[1]
+            records = _runtime_records(root)
+            tools = [tool for r in records for tool in r.get("tools_observed", [])]
+            child_tools = [tool for r in records for tool in r.get("child_tools_observed", [])]
+            checks["real_child_dispatch"] = "PASS" if "spawn_agent" in tools else "FAIL"
+            checks["fork_turns_none"] = "PASS" if any(r.get("pre_dispatch_rewrite") == "NO" for r in records) else "FAIL"
+            checks["child_investigation_executed"] = "PASS" if child_tools else "FAIL"
+            checks["child_mutation_executed"] = "PASS" if "file_change" in child_tools and (root / "child-probe.txt").exists() else "FAIL"
+            checks["PostToolUse_dispatch_observed"] = "PASS" if any(r.get("successful_spawn_observed") for r in records) else "FAIL"
+            checks["bounded_wait"] = "PASS" if _contains(_json_lines(child_output), "wait") or (root / "child-probe.txt").exists() else "FAIL"
+            evidence["runtime_records"] = records
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        return {"status": "INFRA_INVALID", "checks": locals().get("checks", {}), "evidence": evidence, "error": str(exc)}
+    finally:
+        if previous is None:
+            os.environ.pop("THALIRIS_CONTEXT_EXECUTABLE", None)
+        else:
+            os.environ["THALIRIS_CONTEXT_EXECUTABLE"] = previous
+    return {"status": "PASS" if checks and all(v == "PASS" for v in checks.values()) else "INFRA_INVALID", "checks": checks, "evidence": evidence}
 
 
 def main() -> int:

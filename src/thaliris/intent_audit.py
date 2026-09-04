@@ -29,6 +29,7 @@ MAX_CAPTURE_CAPABILITIES = MAX_RAW_RECORDS
 AUDIT_ENV = "THALIRIS_INTENT_AUDIT_ACTIVE"
 AUDIT_RUNNER_ENV = "THALIRIS_CODEX_EXECUTABLE"
 AUDIT_AUTH_FILE_ENV = "THALIRIS_INTENT_AUDIT_AUTH_FILE"
+CONTEXT_EXECUTABLE_ENV = "THALIRIS_CONTEXT_EXECUTABLE"
 INTENT_AUDITOR_MODEL = "gpt-5.6-luna"
 INTENT_AUDITOR_REASONING = "high"
 _COLLABORATION_TOOL_NAMES = (
@@ -80,9 +81,10 @@ ALLOWED_FINDINGS = {
 def hook_spec() -> dict[str, Any]:
     """Return the exact managed hooks fragment; callers merge it conservatively."""
     hooks: dict[str, list[dict[str, Any]]] = {}
+    prefix = _hook_command_prefix()
     for event in HOOK_EVENTS:
         entry: dict[str, Any] = {
-            "hooks": [{"type": "command", "command": f"{HOOK_COMMAND_PREFIX} {event}", "timeout": 60}]
+            "hooks": [{"type": "command", "command": f"{prefix} {event}", "timeout": 60}]
         }
         if event == "PostToolUse":
             # Codex treats a matcher made only of word characters and `|` as
@@ -96,7 +98,17 @@ def hook_spec() -> dict[str, Any]:
 
 
 def _managed_handler(event: str) -> dict[str, Any]:
-    return {"type": "command", "command": f"{HOOK_COMMAND_PREFIX} {event}", "timeout": 60}
+    return {"type": "command", "command": f"{_hook_command_prefix()} {event}", "timeout": 60}
+
+
+def _hook_command_prefix() -> str:
+    """Resolve the hook executable, allowing audited runs to pin a checkout."""
+    configured = os.environ.get(CONTEXT_EXECUTABLE_ENV)
+    if configured and Path(configured).is_file():
+        # Quote paths for the native command hook shell while preserving the
+        # CLI argument boundary on Windows and POSIX.
+        return f'"{configured}" audit-hook'
+    return HOOK_COMMAND_PREFIX
 
 
 def is_managed_handler(value: object, event: str) -> bool:

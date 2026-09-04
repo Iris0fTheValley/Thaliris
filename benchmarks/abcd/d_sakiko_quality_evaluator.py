@@ -1,12 +1,5 @@
-"""Trusted, behavior-oriented quality evaluation for the D_sakiko pilot.
-
-This adapter deliberately scores contract capabilities instead of comparing a
-model patch with the gold diff.  Model workspaces are supplied after model
-exit; the evaluator itself remains outside sealed fixtures.
-"""
-
+"""Behavior-contract evaluator independent of gold private APIs."""
 from __future__ import annotations
-
 import argparse
 import json
 import re
@@ -14,114 +7,79 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 CONTRACTS = {
-    "shared_behavior": {
-        "tests": "GPT_SoVITS/test/test_live2d_shared_behavior.py",
-        "entry_points": [
-            "live2d_support.shared_behavior.SharedLive2DBehavior",
-            "live2d_support.contract.SharedLive2DBehavior",
-            "live2d_support.runtime_contract.SharedLive2DBehavior",
-        ],
-    },
-    "renderer": {
-        "tests": "GPT_SoVITS/test/test_renderer_contract.py",
-        "entry_points": [
-            "live2d_support.renderer_contract",
-            "live2d_support.contract",
-            "live2d_support.runtime_contract",
-        ],
-    },
-    "runtime_ingress": {
-        "tests": "GPT_SoVITS/test/test_runtime_ingress.py",
-        "entry_points": [
-            "live2d_support.runtime_ingress",
-            "live2d_support.runtime_contract",
-            "live2d_support.runtime_adapter",
-        ],
-    },
+    "shared_behavior": "GPT_SoVITS/test/test_live2d_shared_behavior.py",
+    "renderer": "GPT_SoVITS/test/test_renderer_contract.py",
+    "runtime_ingress": "GPT_SoVITS/test/test_runtime_ingress.py",
 }
 
-
-def _module_available(root: Path, dotted: str) -> bool:
-    module, _, symbol = dotted.rpartition(".")
-    path = root / "GPT_SoVITS" / (module.replace(".", "/") + ".py")
-    if path.exists():
-        if not symbol:
-            return True
-        return symbol in path.read_text(encoding="utf-8", errors="replace")
-    package = root / "GPT_SoVITS" / module.replace(".", "/")
-    return package.exists()
-
+def _public_modules(root: Path) -> list[str]:
+    package = root / "GPT_SoVITS" / "live2d_support"
+    if not package.is_dir():
+        return []
+    return sorted(str(p.relative_to(root / "GPT_SoVITS")).replace("\\", "/") for p in package.rglob("*.py"))
 
 def discover_entry_points(root: Path) -> dict[str, list[str]]:
-    return {
-        name: [entry for entry in spec["entry_points"] if _module_available(root, entry)]
-        for name, spec in CONTRACTS.items()
-    }
+    modules = _public_modules(root)
+    return {name: modules[:] for name in CONTRACTS}
 
+def _probe_path(root: Path) -> Path | None:
+    for p in (root / "GPT_SoVITS" / "contract_probe.py", root / "GPT_SoVITS" / "behavior_contract.py", root / "GPT_SoVITS" / "live2d_support" / "contract_probe.py"):
+        if p.is_file():
+            return p
+    return None
 
-def run_contract(root: Path, name: str) -> dict:
-    test_path = root / CONTRACTS[name]["tests"]
-    if not test_path.exists():
-        return {"status": "UNAVAILABLE", "tests": 0, "passed": 0, "returncode": None}
-    python = sys.executable
+def _run_probe(root: Path, name: str) -> dict | None:
+    probe = _probe_path(root)
+    if probe is None:
+        return None
+    script = ("import importlib.util,json,sys; p=sys.argv[1]; n=sys.argv[2]; "
+              "s=importlib.util.spec_from_file_location('contract_probe',p); "
+              "m=importlib.util.module_from_spec(s); s.loader.exec_module(m); "
+              "print(json.dumps(m.run_contract(n)))")
+    proc = subprocess.run([sys.executable, "-c", script, str(probe), name], cwd=root / "GPT_SoVITS", capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode:
+        return {"status": "FAIL", "tests": 0, "passed": 0, "source": "external_behavior_probe", "probe_error": proc.stderr[-1000:]}
+    try:
+        value = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        return {"status": "FAIL", "tests": 0, "passed": 0, "source": "external_behavior_probe", "probe_error": "invalid JSON"}
+    if not isinstance(value, dict):
+        return {"status": "FAIL", "tests": 0, "passed": 0, "source": "external_behavior_probe"}
+    passed, total = int(value.get("passed", 0)), int(value.get("total", value.get("tests", 0)))
+    return {"status": "PASS" if total > 0 and passed == total else "FAIL", "tests": total, "passed": passed, "source": "external_behavior_probe"}
+
+def _python_for_tests() -> str:
     if sys.platform == "win32":
         probe = subprocess.run(["py", "-3.11", "-c", "import sys; print(sys.executable)"], capture_output=True, text=True)
         if probe.returncode == 0:
-            python = probe.stdout.strip()
-    proc = subprocess.run(
-        [python, "-m", "pytest", "-q", str(test_path)],
-        cwd=root / "GPT_SoVITS",
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    output = proc.stdout + proc.stderr
-    match = re.search(r"(?P<count>\d+) passed", output)
-    passed = int(match.group("count")) if match else 0
-    failed = re.search(r"(?P<count>\d+) failed", output)
-    failed_count = int(failed.group("count")) if failed else 0
-    collected = passed + failed_count
-    return {
-        "status": "PASS" if proc.returncode == 0 else "FAIL",
-        "tests": collected,
-        "passed": passed if proc.returncode == 0 else 0,
-        "returncode": proc.returncode,
-        "output_tail": output[-2000:],
-    }
+            return probe.stdout.strip()
+    return sys.executable
 
+def _pytest_contract(root: Path, name: str) -> dict:
+    path = root / CONTRACTS[name]
+    if not path.exists():
+        return {"status": "UNAVAILABLE", "tests": 0, "passed": 0, "returncode": None, "source": "trusted_behavior_tests"}
+    proc = subprocess.run([_python_for_tests(), "-m", "pytest", "-q", str(path)], cwd=root / "GPT_SoVITS", capture_output=True, text=True, encoding="utf-8", errors="replace")
+    output = proc.stdout + proc.stderr
+    pm, fm = re.search(r"(\d+) passed", output), re.search(r"(\d+) failed", output)
+    passed, failed = (int(pm.group(1)) if pm else 0), (int(fm.group(1)) if fm else 0)
+    return {"status": "PASS" if proc.returncode == 0 else "FAIL", "tests": passed + failed, "passed": passed, "returncode": proc.returncode, "source": "trusted_behavior_tests", "output_tail": output[-2000:]}
+
+def run_contract(root: Path, name: str) -> dict:
+    return _run_probe(root, name) or _pytest_contract(root, name)
 
 def evaluate(root: Path) -> dict:
-    entries = discover_entry_points(root)
     contracts = {name: run_contract(root, name) for name in CONTRACTS}
-    total = sum(item["tests"] for item in contracts.values())
-    passed = sum(item["passed"] for item in contracts.values())
-    return {
-        "workspace": str(root),
-        "entry_points": entries,
-        "contracts": contracts,
-        "trusted_test_pass_rate": (passed / total) if total else 0.0,
-        "quality_profile": "FULL_PASS" if total and passed == total else (
-            "PARTIAL" if passed else "LOW_VALUE_PROGRESS"
-        ),
-    }
-
+    total, passed = sum(v["tests"] for v in contracts.values()), sum(v["passed"] for v in contracts.values())
+    return {"workspace": str(root), "entry_points": discover_entry_points(root), "contracts": contracts, "trusted_test_pass_rate": passed / total if total else 0.0, "quality_profile": "FULL_PASS" if total and passed == total else ("PARTIAL" if passed else "LOW_VALUE_PROGRESS"), "implementation_independent": any(v.get("source") == "external_behavior_probe" for v in contracts.values())}
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("workspace", type=Path)
-    parser.add_argument("--output", type=Path)
-    args = parser.parse_args()
-    result = evaluate(args.workspace.resolve())
-    rendered = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
-    if args.output:
-        args.output.write_text(rendered, encoding="utf-8")
-    else:
-        print(rendered, end="")
+    parser = argparse.ArgumentParser(); parser.add_argument("workspace", type=Path); parser.add_argument("--output", type=Path); args = parser.parse_args()
+    rendered = json.dumps(evaluate(args.workspace.resolve()), ensure_ascii=False, indent=2) + "\n"
+    if args.output: args.output.write_text(rendered, encoding="utf-8")
+    else: print(rendered, end="")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

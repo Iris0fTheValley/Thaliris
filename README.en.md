@@ -46,6 +46,10 @@ inlining their contents. The Controller registers the pointer, while
 `--producer-role` records the child that produced it; artifacts are never
 automatically injected into later role packs.
 
+Artifact registration does not hide a path: the Reviewer's `Changed Surface`
+continues to reflect Git's real changed paths, while artifact contents remain
+outside automatic projection.
+
 During an ACTIVE task, the persistent Controller NEVER performs repository
 investigation or source mutation, before or after child dispatch. A successful
 child dispatch does not change those permissions. `task-close` requires a

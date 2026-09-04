@@ -47,6 +47,8 @@ accepted constraints/decisions 和 bounded `Modification Boundary`。它刻意�
 review bodies、evidence records、宽泛 Git state 或 memory/milestone bodies。`context task-show` 仍是显式 raw diagnostic；
 `context task-artifact` 只追加有界、path-safe artifact pointer，不内联 artifact 内容；Controller 注册 pointer，`--producer-role` 记录实际产出 child，且 artifact 不会自动注入后续角色。
 
+Artifact registration 不会隐藏文件路径：Reviewer 的 `Changed Surface` 仍以 Git 的真实 changed paths 为准；只有 artifact contents 不会自动投影。
+
 在 ACTIVE task 中，persistent Controller 在 dispatch child 之前和之后都绝不执行
 repository investigation 或 source mutation；successful child dispatch 不会改变这些权限。
 `task-close` 需要 successful child dispatch。PreToolUse 会拒绝 root 的已识别广泛

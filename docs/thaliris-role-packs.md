@@ -50,6 +50,9 @@ the pointer; pass `--producer-role` to record which child produced it. Artifact
 contents remain outside the status packet and are never automatically injected
 into another role. Raw task state remains diagnostic-only in `.context/state.json`.
 
+Artifact registration does not hide a path from review: Reviewer `Changed Surface`
+continues to show Git-reported changes, without automatically exposing file contents.
+
 At task end, promote only reusable decisions, constraints, invariants, failure
 modes, and material milestone progress or completed verification through
 `context task-promote`. Route memory and milestones through their INDEX files;

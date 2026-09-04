@@ -52,6 +52,10 @@ are not automatically projected to later roles. `task-start`
 returns this bounded packet once so a Controller can dispatch without an
 extra status round trip.
 
+Reviewer `Changed Surface` remains Git truth even when a changed path is also
+registered as an artifact; registration isolates contents, not repository
+state visibility.
+
 `doctor.py:report` reports routing readiness independently from command success.
 The A/B fixture and reporter (`tests/fixtures/workflow_ab.json` and
 `tools/workflow_ab.py`) specify the comparison protocol but report native

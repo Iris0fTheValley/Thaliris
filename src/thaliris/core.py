@@ -88,6 +88,7 @@ unresolved architecture, provenance, or cross-module decision, route only that
 Decision Context to `sol-high` rather than investigating at root. Promote only
 reusable decisions, constraints, invariants, failure modes, or material milestone
 progress/verification. `task-artifact` records a bounded normalized external pointer. Artifact registration is Controller-only, may record a separate producer role, and excludes private control paths such as `.context/`, `.git/`, `.agent-memory/`, and `.milestones/`; artifact contents are never automatically injected into later roles.
+Reviewer `Changed Surface` remains Git truth even when a changed path is also registered as an artifact; registration isolates contents, not repository state visibility.
 """
 
 
@@ -591,11 +592,6 @@ def _artifact_ref(root: Path, value: object) -> None:
     target = _safe(root, path)
     if target.is_symlink() or not target.is_file():
         raise ValueError("artifact path must name an existing regular file")
-    try:
-        if target.stat().st_size > 4 * 1024 * 1024:
-            raise ValueError("artifact file exceeds 4 MiB")
-    except OSError as exc:
-        raise ValueError("artifact file cannot be inspected") from exc
     if not isinstance(summary, str) or not summary.strip() or _bad_text(summary) or len(summary) > 300:
         raise ValueError("invalid artifact reference")
     if "producer_role" in value and (not isinstance(value["producer_role"], str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", value["producer_role"])):
@@ -875,7 +871,14 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
                 not isinstance(item, dict) or item.get("id") in existing_ids for item in additions
             ):
                 raise ValueError("artifact_refs must be append-only additions with new immutable IDs")
-            partial = partial | {"artifact_refs": state["artifact_refs"] + additions}
+            # Accept the legacy registration marker on input, but do not
+            # persist caller/authority metadata redundantly.
+            normalized = []
+            for item in additions:
+                if "registered_by" in item and item["registered_by"] != "controller":
+                    raise ValueError("artifact pointers must be registered by Controller")
+                normalized.append({key: value for key, value in item.items() if key != "registered_by"})
+            partial = partial | {"artifact_refs": state["artifact_refs"] + normalized}
         state.update(partial); state["revision"] = base_revision + 1
         new_snapshot = state["investigation_snapshot"] if "investigation_snapshot" in partial else []
         _require_fresh_confirmed_items(root, state["evidence_refs"], new_investigation + new_snapshot)
@@ -938,7 +941,6 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
         raise ValueError("only Controller may register artifact pointers")
     artifact = {"id": artifact_id, "path": path, "summary": summary}
     if producer_role is not None: artifact["producer_role"] = producer_role
-    if producer_role is not None: artifact["registered_by"] = registered_by
     if scope is not None: artifact["scope"] = scope
     if evidence_refs is not None: artifact["evidence_refs"] = evidence_refs
     _artifact_ref(root, artifact)
@@ -1259,7 +1261,7 @@ def _route(root: Path, task: str, role: str) -> tuple[list[Entry], list[str]]:
     return list({entry.path: entry for entry in matched}.values()), []
 
 
-def _changed_files(root: Path, *, excluded_paths: set[str] | None = None) -> list[str]:
+def _changed_files(root: Path) -> list[str]:
     proc = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all", "-z"], cwd=root, capture_output=True, text=True, check=False)
     if proc.returncode: return []
     records = proc.stdout.split("\0"); paths: list[str] = []; index = 0
@@ -1272,21 +1274,7 @@ def _changed_files(root: Path, *, excluded_paths: set[str] | None = None) -> lis
             index += 1
             if index < len(records) and records[index]: paths.append(records[index].replace("\\", "/"))
         index += 1
-    excluded = {path.strip("/") for path in (excluded_paths or set())}
-    if excluded:
-        normalize = str.casefold if os.name == "nt" else (lambda value: value)
-        excluded_keys = {normalize(path) for path in excluded}
-        paths = [path for path in paths if not any(normalize(path) == artifact or normalize(path).startswith(artifact + "/") for artifact in excluded_keys)]
     return list(dict.fromkeys(paths))
-
-
-def _registered_artifact_paths(root: Path) -> set[str]:
-    """Return artifact paths only for projection filtering, never for injection."""
-    try:
-        state = _load_state(root, active=True)
-    except (OSError, ValueError, json.JSONDecodeError):
-        return set()
-    return {str(item["path"]).replace("\\", "/").strip("/") for item in state["artifact_refs"]}
 
 
 def _milestone_slice(root: Path, milestone: str | None) -> dict[str, dict[str, object]]:
@@ -1466,8 +1454,7 @@ def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, ob
         payload = {"Goal": state["goal"], "Confirmed Facts": facts, "Supported Evidence": supported, "Hard Constraints": constraints, "Decisions": decisions, "Relevant Files": list(dict.fromkeys(state["relevant_files"] + memory["files"])), "Modification Boundary": state["modification_boundary"], "Required Verification": state["verification_target"], "Milestone Scope": milestone.get("Scope"), "Implementation Constraints": milestone.get("Decisions")}
         return meta | payload | {"Evidence refs": refs_for(facts, supported, constraints, decisions, state["modification_boundary"])}
     if role == "terra-reviewer":
-        artifact_paths = {str(item["path"]).replace("\\", "/").strip("/") for item in state["artifact_refs"]}
-        changed = list(dict.fromkeys(state["changed_surface"] + _changed_files(root, excluded_paths=artifact_paths)))
+        changed = list(dict.fromkeys(state["changed_surface"] + _changed_files(root)))
         intent = state["architectural_intent"] or milestone.get("Scope")
         constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"] + ([milestone["Decisions"]] if "Decisions" in milestone else [])
         payload = {"Review Goal": state["goal"], "Architectural Intent": intent, "Hard Constraints": constraints, "Durable Decisions": decisions, "Changed Surface": changed}
@@ -1499,7 +1486,7 @@ def prepare(root: Path, task: str | None, role: str) -> dict[str, object]:
     visible = memory["constraints"] + memory["decisions"]
     used = {ref_id for item in visible for ref_id in item["evidence_refs"]}
     evidence = [ref for ref in memory["evidence"] if ref["id"] in used]
-    return {"ok": True, "schema_version": 1, "task_id": None, "state_revision": None, "role": role, "Review Goal": task, "Architectural Intent": None, "Hard Constraints": memory["constraints"], "Durable Decisions": memory["decisions"], "Changed Surface": _changed_files(root, excluded_paths=_registered_artifact_paths(root)), "Evidence refs": evidence}
+    return {"ok": True, "schema_version": 1, "task_id": None, "state_revision": None, "role": role, "Review Goal": task, "Architectural Intent": None, "Hard Constraints": memory["constraints"], "Durable Decisions": memory["decisions"], "Changed Surface": _changed_files(root), "Evidence refs": evidence}
 
 
 def milestone_check(root: Path) -> dict[str, object]:

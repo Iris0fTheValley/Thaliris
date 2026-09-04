@@ -1127,7 +1127,12 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     assert packet["Artifact Refs"][0]["path"] == "docs/handoff.md"
     for role in ("luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"):
         _, role_pack = run(capsys, root, "prepare", "--role", role)
-        assert "Artifact Refs" not in role_pack and "docs/handoff.md" not in json.dumps(role_pack)
+        assert "Artifact Refs" not in role_pack
+        if role == "terra-reviewer":
+            assert "docs/handoff.md" in role_pack["Changed Surface"]
+        else:
+            assert "docs/handoff.md" not in json.dumps(role_pack)
+        assert "detailed child notes" not in json.dumps(role_pack)
     encoded = json.dumps(packet)
     assert all(value not in encoded for value in ("private source evidence", "raw investigation", "Evidence refs", "Investigation Findings"))
     code, failed = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "escape", "--path", "../outside.md", "--summary", "bad")
@@ -1137,22 +1142,28 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     assert code == 0 and registered["revision"] == 3
     state = state_of(root)
     assert state["artifact_refs"][-1]["producer_role"] == "luna-investigator"
-    assert state["artifact_refs"][-1]["registered_by"] == "controller"
+    assert "registered_by" not in state["artifact_refs"][-1]
     for private_path in (".context/state.json", ".context/audit/runtime.json", ".git/config", ".agent-memory/INDEX.md"):
         code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "private-" + private_path.split("/")[0].replace(".", ""), "--path", private_path, "--summary", "bad")
         assert code == 2 and "private control data" in failed["error"]
 
 
-def test_reviewer_does_not_infer_registered_artifact_as_changed_source(tmp_path, capsys):
+def test_reviewer_sees_changed_artifact_path_without_artifact_contents(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "review artifact boundary")
-    artifact = root / "handoff.md"; artifact.write_text("detailed child transcript marker", encoding="utf-8")
-    code, _ = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "handoff", "--path", "handoff.md", "--summary", "bounded notes", "--producer-role", "luna-investigator")
+    source = root / "src/example.py"; source.parent.mkdir(); source.write_text("original\n", encoding="utf-8")
+    subprocess.run(["git", "config", "user.name", "test"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
+    subprocess.run(["git", "add", "src/example.py"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+    source.write_text("detailed artifact-only content\n", encoding="utf-8")
+    code, _ = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "handoff", "--path", "src/example.py", "--summary", "bounded notes", "--producer-role", "luna-investigator")
     assert code == 0
     _, reviewer = run(capsys, root, "prepare", "--role", "terra-reviewer")
-    assert "handoff.md" not in reviewer["Changed Surface"]
-    assert "detailed child transcript marker" not in json.dumps(reviewer)
+    assert "src/example.py" in reviewer["Changed Surface"]
+    assert "detailed artifact-only content" not in json.dumps(reviewer)
     _, stateless_reviewer = run(capsys, root, "prepare", "review artifact boundary", "--role", "terra-reviewer")
-    assert "handoff.md" not in stateless_reviewer["Changed Surface"]
+    assert "src/example.py" in stateless_reviewer["Changed Surface"]
+    assert "detailed artifact-only content" not in json.dumps(stateless_reviewer)
 
 
 def test_milestone_projection_rejects_symlinked_files(tmp_path, capsys):
@@ -1177,9 +1188,14 @@ def test_milestone_projection_rejects_symlinked_files(tmp_path, capsys):
     (root / "artifact-dir").mkdir()
     code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "directory", "--path", "artifact-dir", "--summary", "bad")
     assert code == 2 and "existing regular file" in failed["error"]
-    (root / "oversized.bin").write_bytes(b"x" * (4 * 1024 * 1024 + 1))
-    code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "oversized", "--path", "oversized.bin", "--summary", "bad")
-    assert code == 2 and "exceeds 4 MiB" in failed["error"]
+
+
+def test_large_artifact_pointer_is_accepted_without_reading_contents(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "large artifact")
+    artifact = root / "large-notes.bin"; artifact.write_bytes(b"x" * (4 * 1024 * 1024 + 1))
+    code, registered = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "large", "--path", "large-notes.bin", "--summary", "large notes", "--producer-role", "luna-investigator")
+    assert code == 0 and registered["revision"] == 2
+    assert state_of(root)["artifact_refs"] == [{"id": "large", "path": "large-notes.bin", "summary": "large notes", "producer_role": "luna-investigator"}]
 
 
 def test_controller_mutation_responses_never_leak_raw_working_set(tmp_path, capsys):

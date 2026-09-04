@@ -584,12 +584,12 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
         lowered = value.lower()
         if re.match(r"^(?:context|python\s+-m\s+thaliris\.cli)\b", lowered):
             if re.search(r"\bprepare\b", lowered):
-                role = re.search(r"(?:--role|-role)\s+([a-z0-9_-]+)", lowered)
+                role = re.search(r"(?:--role|-role)(?:\s+|=)([a-z0-9_-]+)", lowered)
                 if role and role.group(1) in {"luna", "luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"}:
                     return "CHILD_PROJECTION"
                 continue
             if re.search(r"\btask[-_ ]update\b", lowered):
-                role = re.search(r"(?:--role|-role)\s+([a-z0-9_-]+)", lowered)
+                role = re.search(r"(?:--role|-role)(?:\s+|=)([a-z0-9_-]+)", lowered)
                 if role and role.group(1) in {"luna", "luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"}:
                     return "CHILD_UPDATE"
             if re.search(r"\btask[-_ ]show\b", lowered):

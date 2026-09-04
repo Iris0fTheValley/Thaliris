@@ -768,7 +768,9 @@ def test_controller_guard_blocks_child_projection_update_and_raw_task_show(tmp_p
     root = repo(tmp_path); init(root); task_start(root, "role boundary", None, None)
     for command in (
         "context prepare --role terra-reviewer",
+        "context prepare --role=terra-reviewer",
         "context task-update --role luna-investigator --base-revision 1",
+        "context task-update --role=luna-investigator --base-revision 1",
         "context task-show",
     ):
         response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))

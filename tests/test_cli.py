@@ -1148,6 +1148,17 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
         assert code == 2 and "private control data" in failed["error"]
 
 
+def test_task_artifact_is_the_only_artifact_ref_write_ingress(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    artifact = {"id": "handoff", "path": "notes.md", "summary": "bounded notes"}
+    code, failed = task_input(root, capsys, {"artifact_refs": [artifact]}, "task-start", "invalid artifact ingress")
+    assert code == 2 and "task-start input has forbidden fields" in failed["error"]
+    run(capsys, root, "task-start", "artifact ingress")
+    code, failed = task_input(root, capsys, {"artifact_refs": [artifact]}, "task-update", "--role", "controller", "--base-revision", "1")
+    assert code == 2 and "role is not allowed" in failed["error"]
+    assert state_of(root)["revision"] == 1 and state_of(root)["artifact_refs"] == []
+
+
 def test_reviewer_sees_changed_artifact_path_without_artifact_contents(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "review artifact boundary")
     source = root / "src/example.py"; source.parent.mkdir(); source.write_text("original\n", encoding="utf-8")

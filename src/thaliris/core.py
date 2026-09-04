@@ -480,6 +480,7 @@ _PROMOTION_BUDGET = 16
 _CONTROLLER_FIELDS = _STATE_FIELDS - {
     "schema_version", "revision", "task_id", "status", "goal", "durable_promotion_count",
     "investigation_findings", "investigation_snapshot", "review_findings",
+    "artifact_refs",
 }
 _ROLE_FIELDS = {
     "controller": _CONTROLLER_FIELDS,
@@ -806,7 +807,7 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
     if not _state_ignored(root): raise ValueError("task state is not ignored; run context init first")
     if not goal.strip(): raise ValueError("goal must not be empty")
     partial = _read_input(input_file)
-    allowed = _STATE_FIELDS - {"schema_version", "revision", "task_id", "status", "goal", "current_milestone", "durable_promotion_count"}
+    allowed = _STATE_FIELDS - {"schema_version", "revision", "task_id", "status", "goal", "current_milestone", "durable_promotion_count", "artifact_refs"}
     if set(partial) - allowed: raise ValueError("task-start input has forbidden fields")
     with _lock(root):
         if not _state_ignored(root): raise ValueError("task state is not ignored; run context init first")
@@ -872,21 +873,6 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
                 raise ValueError("evidence_refs must be append-only additions with new immutable IDs")
             # State validation checks every complete entry after this merge.
             partial = partial | {"evidence_refs": state["evidence_refs"] + additions}
-        if "artifact_refs" in partial:
-            additions = partial["artifact_refs"]
-            existing_ids = {item["id"] for item in state["artifact_refs"]}
-            if not isinstance(additions, list) or not additions or any(
-                not isinstance(item, dict) or item.get("id") in existing_ids for item in additions
-            ):
-                raise ValueError("artifact_refs must be append-only additions with new immutable IDs")
-            # Accept the legacy registration marker on input, but do not
-            # persist caller/authority metadata redundantly.
-            normalized = []
-            for item in additions:
-                if "registered_by" in item and item["registered_by"] != "controller":
-                    raise ValueError("artifact pointers must be registered by Controller")
-                normalized.append({key: value for key, value in item.items() if key != "registered_by"})
-            partial = partial | {"artifact_refs": state["artifact_refs"] + normalized}
         state.update(partial); state["revision"] = base_revision + 1
         new_snapshot = state["investigation_snapshot"] if "investigation_snapshot" in partial else []
         _require_fresh_confirmed_items(root, state["evidence_refs"], new_investigation + new_snapshot)

@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tomllib
+import pytest
 
 from thaliris.cli import main
 from thaliris import __version__
@@ -1140,6 +1141,37 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     for private_path in (".context/state.json", ".context/audit/runtime.json", ".git/config", ".agent-memory/INDEX.md"):
         code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "private-" + private_path.split("/")[0].replace(".", ""), "--path", private_path, "--summary", "bad")
         assert code == 2 and "private control data" in failed["error"]
+
+
+def test_reviewer_does_not_infer_registered_artifact_as_changed_source(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "review artifact boundary")
+    artifact = root / "handoff.md"; artifact.write_text("detailed child transcript marker", encoding="utf-8")
+    code, _ = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "handoff", "--path", "handoff.md", "--summary", "bounded notes", "--producer-role", "luna-investigator")
+    assert code == 0
+    _, reviewer = run(capsys, root, "prepare", "--role", "terra-reviewer")
+    assert "handoff.md" not in reviewer["Changed Surface"]
+    assert "detailed child transcript marker" not in json.dumps(reviewer)
+    _, stateless_reviewer = run(capsys, root, "prepare", "review artifact boundary", "--role", "terra-reviewer")
+    assert "handoff.md" not in stateless_reviewer["Changed Surface"]
+
+
+def test_milestone_projection_rejects_symlinked_files(tmp_path, capsys):
+    root = repo(tmp_path); run(capsys, root, "init")
+    run(capsys, root, "task-start", "milestone safety", "--milestone", "M001-name")
+    external = tmp_path.parent / "external-milestone.md"
+    external.write_text("EXTERNAL_MILESTONE_MARKER", encoding="utf-8")
+    scope = root / ".milestones/M001-name/scope.md"
+    scope.unlink()
+    try:
+        scope.symlink_to(external)
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
+    _, implementer = run(capsys, root, "prepare", "--role", "terra-implementer")
+    assert "EXTERNAL_MILESTONE_MARKER" not in json.dumps(sol)
+    assert "EXTERNAL_MILESTONE_MARKER" not in json.dumps(implementer)
+    assert "Milestone Scope" not in sol
+    assert "Milestone Scope" not in implementer
     code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "phantom", "--path", "missing.md", "--summary", "bad")
     assert code == 2 and "existing regular file" in failed["error"]
     (root / "artifact-dir").mkdir()

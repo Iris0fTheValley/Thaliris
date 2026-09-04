@@ -759,7 +759,13 @@ def _write_state(root: Path, state: dict[str, object], *, enforce_fresh: bool = 
 
 def _milestone_exists(root: Path, milestone: str) -> bool:
     index = root / ".milestones" / "INDEX.md"
-    if not index.is_file() or "/" in milestone or "\\" in milestone or milestone in {"", ".", ".."}: return False
+    if index.is_symlink() or not index.is_file() or "/" in milestone or "\\" in milestone or milestone in {"", ".", ".."}: return False
+    if (root / ".milestones").is_symlink(): return False
+    try:
+        milestone_dir = _safe(root, f".milestones/{milestone}")
+    except ValueError:
+        return False
+    if milestone_dir.is_symlink() or not milestone_dir.is_dir(): return False
     try: body = parse(index).body
     except ValueError: return False
     return f"]({milestone}/INDEX.md)" in body
@@ -1253,8 +1259,8 @@ def _route(root: Path, task: str, role: str) -> tuple[list[Entry], list[str]]:
     return list({entry.path: entry for entry in matched}.values()), []
 
 
-def _changed_files(root: Path) -> list[str]:
-    proc = subprocess.run(["git", "status", "--porcelain=v1", "-z"], cwd=root, capture_output=True, text=True, check=False)
+def _changed_files(root: Path, *, excluded_paths: set[str] | None = None) -> list[str]:
+    proc = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all", "-z"], cwd=root, capture_output=True, text=True, check=False)
     if proc.returncode: return []
     records = proc.stdout.split("\0"); paths: list[str] = []; index = 0
     while index < len(records):
@@ -1266,15 +1272,37 @@ def _changed_files(root: Path) -> list[str]:
             index += 1
             if index < len(records) and records[index]: paths.append(records[index].replace("\\", "/"))
         index += 1
+    excluded = {path.strip("/") for path in (excluded_paths or set())}
+    if excluded:
+        paths = [path for path in paths if not any(path == artifact or path.startswith(artifact + "/") for artifact in excluded)]
     return list(dict.fromkeys(paths))
+
+
+def _registered_artifact_paths(root: Path) -> set[str]:
+    """Return artifact paths only for projection filtering, never for injection."""
+    try:
+        state = _load_state(root, active=True)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return set()
+    return {str(item["path"]).replace("\\", "/").strip("/") for item in state["artifact_refs"]}
 
 
 def _milestone_slice(root: Path, milestone: str | None) -> dict[str, dict[str, object]]:
     if not milestone: return {}
-    directory = root / ".milestones" / milestone
+    try:
+        milestones_root = _safe(root, ".milestones")
+        directory = _safe(root, f".milestones/{milestone}")
+    except ValueError:
+        return {}
+    if milestones_root.is_symlink() or directory.is_symlink() or not directory.is_dir(): return {}
     result: dict[str, dict[str, object]] = {}
     for name, label in (("scope.md", "Scope"), ("decisions.md", "Decisions"), ("progress.md", "Progress"), ("verification.md", "Verification")):
-        path = directory / name
+        try:
+            path = _safe(root, f".milestones/{milestone}/{name}")
+        except ValueError:
+            continue
+        if path.is_symlink():
+            continue
         if path.is_file():
             try:
                 entry = parse(path); state, _ = evidence_status(entry, root)
@@ -1436,7 +1464,8 @@ def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, ob
         payload = {"Goal": state["goal"], "Confirmed Facts": facts, "Supported Evidence": supported, "Hard Constraints": constraints, "Decisions": decisions, "Relevant Files": list(dict.fromkeys(state["relevant_files"] + memory["files"])), "Modification Boundary": state["modification_boundary"], "Required Verification": state["verification_target"], "Milestone Scope": milestone.get("Scope"), "Implementation Constraints": milestone.get("Decisions")}
         return meta | payload | {"Evidence refs": refs_for(facts, supported, constraints, decisions, state["modification_boundary"])}
     if role == "terra-reviewer":
-        changed = list(dict.fromkeys(state["changed_surface"] + _changed_files(root)))
+        artifact_paths = {str(item["path"]).replace("\\", "/").strip("/") for item in state["artifact_refs"]}
+        changed = list(dict.fromkeys(state["changed_surface"] + _changed_files(root, excluded_paths=artifact_paths)))
         intent = state["architectural_intent"] or milestone.get("Scope")
         constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"] + ([milestone["Decisions"]] if "Decisions" in milestone else [])
         payload = {"Review Goal": state["goal"], "Architectural Intent": intent, "Hard Constraints": constraints, "Durable Decisions": decisions, "Changed Surface": changed}
@@ -1468,7 +1497,7 @@ def prepare(root: Path, task: str | None, role: str) -> dict[str, object]:
     visible = memory["constraints"] + memory["decisions"]
     used = {ref_id for item in visible for ref_id in item["evidence_refs"]}
     evidence = [ref for ref in memory["evidence"] if ref["id"] in used]
-    return {"ok": True, "schema_version": 1, "task_id": None, "state_revision": None, "role": role, "Review Goal": task, "Architectural Intent": None, "Hard Constraints": memory["constraints"], "Durable Decisions": memory["decisions"], "Changed Surface": _changed_files(root), "Evidence refs": evidence}
+    return {"ok": True, "schema_version": 1, "task_id": None, "state_revision": None, "role": role, "Review Goal": task, "Architectural Intent": None, "Hard Constraints": memory["constraints"], "Durable Decisions": memory["decisions"], "Changed Surface": _changed_files(root, excluded_paths=_registered_artifact_paths(root)), "Evidence refs": evidence}
 
 
 def milestone_check(root: Path) -> dict[str, object]:

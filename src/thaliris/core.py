@@ -42,7 +42,7 @@ Controller uses `context task-status` or `context prepare --role controller` for
 ### Controller orchestration economy
 
 - `task-start` already returns a bounded packet; do not immediately repeat `task-status`.
-- After a spawn, use one `wait_agent` with a realistic blocking timeout as the normal single-child primitive. For the measured T2/T3 children (104–257 seconds), the benchmark uses `timeout_ms=240000`; do not poll with repeated waits or fall back to sub-minimum values.
+- After a spawn, use one bounded native `wait_agent` observation as the normal single-child primitive; avoid polling loops and re-observe only when native state changes or recovery is needed.
 - Do not call `list_agents` on the normal single-child path. Use it only for topology checks or recovery after an unexpected wait/result.
 - Query `task-status` only after a known task mutation, a state/revision change, or recovery is required; do not repeat an unchanged revision.
 - Use `send_message` only for a new constraint, correction, or material evidence. Do not use it to ask for progress or to say “continue”.

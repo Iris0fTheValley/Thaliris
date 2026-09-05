@@ -54,7 +54,7 @@ def _controller_boundary_evidence(root: Path) -> dict[str, str]:
                 blocked = blocked or int(counters.get("blocked", 0) or 0) > 0
             except (TypeError, ValueError):
                 pass
-        child = child or value.get("successful_spawn_observed") is True
+        child = child or isinstance(value.get("successful_spawn_task_id_hash"), str)
     return {
         "root_action_guard": "YES" if guard else UNKNOWN,
         "blocked_root_action": "YES" if blocked else UNKNOWN,

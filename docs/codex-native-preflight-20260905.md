@@ -49,3 +49,10 @@ outside this local-hook enforcement envelope and are `UNKNOWN`.
 
 `FULL_NATIVE_PREFLIGHT = OBSERVED PASS` applies only to the tested Codex
 `0.153.0-alpha.5` native surfaces above.
+
+## Later edge-case review
+
+Subsequent source review identified untested enforcement edge cases around
+cross-task dispatch evidence, unsafe fork rewriting, and arbitrary root shell
+commands. Those are separate from the observations recorded above; the
+historical probe remains valid for the native surfaces it explicitly exercised.

@@ -28,7 +28,7 @@ IGNORE_RULES = (".context/backups/", ".context/state.json", ".context/context.lo
 # Keep the generated instruction surface small. Detailed policy lives in the
 # role-pack document and is loaded only when a task needs it.
 MANAGED = ""
-'''{MANAGED_START}
+'''thaliris-core:begin
 ## Thaliris Router
 
 runtime remains the runtime. Thaliris stores bounded task control and pointers; it has no worker, scheduler, polling loop, or authority to decide correctness.
@@ -38,16 +38,16 @@ Controller uses `context task-status` or `context prepare --role controller` for
 ### Controller orchestration economy
 
 - `task-start` already returns a bounded packet; do not immediately repeat `task-status`.
-- After a spawn, use one bounded native `wait_agent` observation as the normal single-child primitive; avoid polling loops and re-observe only when native state changes or recovery is needed.
-- Do not call `list_agents` on the normal single-child path. Use it only for topology checks or recovery after an unexpected wait/result.
+- After a spawn, use one bounded native `completion_observation` observation as the normal single-child primitive; avoid polling loops and re-observe only when native state changes or recovery is needed.
+- Do not call `topology_listing` on the normal single-child path. Use it only for topology checks or recovery after an unexpected wait/result.
 - Query `task-status` only after a known task mutation, a state/revision change, or recovery is required; do not repeat an unchanged revision.
-- Use `send_message` only for a new constraint, correction, or material evidence. Do not use it to ask for progress or to say “continue”.
+- Use `bounded_message` only for a new constraint, correction, or material evidence. Do not use it to ask for progress or to say “continue”.
 
-During an ACTIVE task, the persistent Controller is control-plane-only. The Controller MUST NOT perform repository investigation or source mutation at any time, before or after child dispatch. A successful child dispatch never changes those permissions. `task-close` requires a successful child dispatch. Repository investigation and source mutation belong only to fresh execution children using `fork_turns="none"`. The Controller may perform only bounded routing/state operations and deterministic acceptance checks. Root actions are mechanically guarded at PreToolUse; PostToolUse records dispatch evidence. runtime owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
-Every new root child must use `fork_turns="none"`; this never unlocks root investigation or mutation.
+During an ACTIVE task, the persistent Controller is control-plane-only. The Controller MUST NOT perform repository investigation or source mutation at any time, before or after child dispatch. A successful child dispatch never changes those permissions. `task-close` requires a successful child dispatch. Repository investigation and source mutation belong only to fresh execution children using `fresh_child="none"`. The Controller may perform only bounded routing/state operations and deterministic acceptance checks. Root actions are mechanically guarded at policy_boundary; observation_boundary records dispatch evidence. runtime owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+Every new root child must use `fresh_child="none"`; this never unlocks root investigation or mutation.
 
 Read detailed role packs only when needed. Keep raw findings, evidence, transcripts, logs, and tool output outside Controller packets and durable memory; promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress.
-{MANAGED_END}
+thaliris-core:end
 '''
 
 ROLE_PACKS = """# Thaliris Role Packs
@@ -61,14 +61,14 @@ unresolved questions, artifact pointers, and accepted constraints/decisions. Raw
 findings, reviews, evidence records, Git state, and broad memory/milestone bodies
 do not belong in normal Controller routing. `context task-show` is diagnostic-only.
 
-Every active task starts with one fresh execution child using `fork_turns="none"`.
+Every active task starts with one fresh execution child using `fresh_child="none"`.
 The Controller may then add Investigator, Curator, Reasoning Specialist, or
 Reviewer children only when the bounded result shows that role is needed. A
 one- or two-turn fork is also rewritten to `none`; no encrypted reason is used
 as an exception. The persistent Controller never investigates or mutates source
 before or after dispatch; successful child dispatch does not change those
-permissions. `task-close` requires a successful child dispatch. PreToolUse guards
-root shell investigation/mutation and close-without-child; PostToolUse records native dispatch evidence. Use
+permissions. `task-close` requires a successful child dispatch. policy_boundary guards
+root shell investigation/mutation and close-without-child; observation_boundary records native dispatch evidence. Use
 native completion/mailbox observation; there is no Thaliris worker, scheduler,
 polling loop, or retry runtime.
 
@@ -249,7 +249,7 @@ def _managed_span(current: str, start_marker: str, end_marker: str, legacy_start
 
 
 def _managed_agents(current: str) -> str:
-    span = _managed_span(current, MANAGED_START, MANAGED_END, LEGACY_MANAGED_START, LEGACY_MANAGED_END, "AGENTS.md")
+    span = _managed_span(current, CORE_START, CORE_END, LEGACY_CORE_START, LEGACY_CORE_END, "AGENTS.md")
     newline = "\r\n" if "\r\n" in current else "\n"
     block = MANAGED.replace("\n", newline)
     if span is None:
@@ -1422,4 +1422,6 @@ def milestone_check(root: Path) -> dict[str, object]:
             except ValueError as exc: errors.append(str(exc))
         checked.append(link)
     return {"ok": not errors, "checked": checked, "errors": errors}
+
+
 

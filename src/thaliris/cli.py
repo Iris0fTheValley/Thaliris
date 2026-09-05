@@ -18,7 +18,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = _Parser(prog="context", description="Thaliris: Git-native context packs for runtime workflows")
+    p = _Parser(prog="context", description="Thaliris: Git-native context routing for agent workflows")
     p.add_argument("--pretty", action="store_true")
     p.add_argument("--root", type=Path, default=Path.cwd())
     sub = p.add_subparsers(dest="command", required=True)
@@ -97,4 +97,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

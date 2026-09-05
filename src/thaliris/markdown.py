@@ -50,7 +50,7 @@ def parse(path: Path) -> Entry:
     for key in OPTIONAL_LISTS:
         if key in meta and (not isinstance(meta[key], list) or not all(isinstance(item, str) and item for item in meta[key])):
             raise ValueError(f"{path}: {key} must be a JSON string list")
-    if "Audience" in meta and not set(meta["Audience"]) <= {"all", "controller", "sol-high", "luna", "terra-implementer", "terra-reviewer"}:
+    if "Audience" in meta and not set(meta["Audience"]) <= {"all", "controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}:
         raise ValueError(f"{path}: Audience contains an unknown role")
     if "Kind" in meta and meta["Kind"] not in KINDS:
         raise ValueError(f"{path}: Kind must be MEMORY or HARD_CONSTRAINT")
@@ -96,3 +96,4 @@ def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
         if actual.lower() != match.group(2).lower():
             stale.append(match.group(1))
     return ("STALE" if stale else "FRESH", stale)
+

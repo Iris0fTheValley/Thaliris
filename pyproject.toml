@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "thaliris"
 version = "0.3.0"
-description = "Thaliris: Git-native context packs for Codex workflows"
+description = "Git-native, evidence-backed context routing and memory core for agent workflows"
 requires-python = ">=3.11"
 readme = "README.md"
 license = "MIT"
 authors = [{name = "Thaliris contributors"}]
-keywords = ["codex", "context", "memory", "multi-agent"]
+keywords = ["context", "routing", "memory", "evidence"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "License :: OSI Approved :: MIT License",

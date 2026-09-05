@@ -34,3 +34,38 @@ def test_codex_init_is_one_backup_for_core_and_adapter(tmp_path: Path) -> None:
     root = repo(tmp_path)
     result = codex_adapter.init(root)
     assert result["ok"] and len(list((root / ".context/backups").glob("*.json"))) == 1
+
+
+def test_codex_uninstall_is_one_backup_for_core_and_adapter(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    codex_adapter.init(root)
+    result = codex_adapter.uninstall(root)
+    assert result["ok"] and len(list((root / ".context/backups").glob("*.json"))) == 2
+
+
+def test_adapter_close_rejects_task_identity_change_during_audit(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    codex_adapter.init(root)
+    started = codex_adapter.task_start(root, "race", None, None)
+
+    def audit_with_task_switch(*_args, **_kwargs):
+        state = json.loads((root / ".context/state.json").read_text(encoding="utf-8"))
+        state["task_id"] = "00000000-0000-0000-0000-000000000001"
+        state["revision"] = 1
+        (root / ".context/state.json").write_text(json.dumps(state), encoding="utf-8")
+        return {"status": "UNKNOWN"}
+
+    monkeypatch.setattr(codex_adapter, "task_close_audit", audit_with_task_switch)
+    with pytest.raises(ValueError, match="task revision conflict"):
+        codex_adapter.task_close(root, started["revision"])
+
+
+def test_child_bootstrap_loads_projection_inside_child_boundary(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    codex_adapter.init(root)
+    codex_adapter.task_start(root, "child ingress", None, None)
+    instruction = codex_adapter.child_bootstrap("terra-implementer")
+    assert "context prepare --role implementer" in instruction
+    pack = codex_adapter.prepare_child(root, "terra-implementer")
+    assert pack["role"] == "implementer"
+    assert "Investigation Snapshot" not in json.dumps(pack)

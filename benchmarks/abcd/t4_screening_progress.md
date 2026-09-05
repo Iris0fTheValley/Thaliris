@@ -8,7 +8,8 @@ lite metadata.
 
 ## Environment and controls
 
-- Branch: `codex/abcd-benchmark-20260901`.
+- Former benchmark development branch (now deleted; policy experiment commit
+  `247abc48eb9d057ff528c2f6998a9cc434dd7722`).
 - Product ancestry: `a03db1a`; benchmark records are committed after that
   point.  No product architecture, isolation, guard, or routing policy was
   changed during this screening round.

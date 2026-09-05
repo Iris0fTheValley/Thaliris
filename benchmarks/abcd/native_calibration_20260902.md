@@ -1,12 +1,14 @@
 # Native model calibration (2026-09-02)
 
-This is a benchmark-only calibration on branch `codex/abcd-benchmark-20260901`.
+This is a benchmark-only calibration on the former (now deleted) benchmark
+development branch; its policy experiment began at
+`247abc48eb9d057ff528c2f6998a9cc434dd7722`.
 No Thaliris C/D run and no product code change was made.
 
 ## Protocol and environment
 
-- Product checkout: `6d44bd74c1658123248c0195769a2000886bdccf`; branch:
-  `codex/abcd-benchmark-20260901`.
+- Product checkout: `6d44bd74c1658123248c0195769a2000886bdccf`; former
+  benchmark development branch (now deleted).
 - CLI: `codex-cli 0.146.0-alpha.3.1`; models:
   `gpt-5.6-luna`, `gpt-5.6-sol`; `model_reasoning_effort=high`.
 - Every counted attempt used a fresh synthetic `git archive` fixture, an

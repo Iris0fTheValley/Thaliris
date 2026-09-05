@@ -43,11 +43,21 @@ in `clean_run_manifest_v7.json`, `orchestration_v7.json`,
 `session_metrics_v7.json`, and `rerun_v7_report.json`. Raw Codex session
 telemetry and external clone contents are not committed.
 
-The policy-only experiment is on `codex/abcd-benchmark-20260901` after
-`247abc4`. It changes only the managed instruction surface: use a realistic
+The policy-only experiment was on the former (now deleted) benchmark
+development branch, beginning at commit `247abc48eb9d057ff528c2f6998a9cc434dd7722`.
+It changes only the managed instruction surface: use a realistic
 single blocking wait after spawn, avoid normal-path topology/status chatter,
 and reserve `send_message` for material updates. It does not change routing
 or isolation implementation.
+
+## Historical-result status
+
+Results dated 2026-09-01 through 2026-09-04 are historical experiment records.
+They do not attest to readiness of the current Adapter HEAD: the Adapter has
+since undergone the semantic-role split, Core/Adapter branch reconstruction,
+and child self-pull/bootstrap changes. A fresh runtime preflight is required
+after Adapter changes; preserve the original results, but do not read a past
+`managed_preflight = PASS` as verification of the current checkout.
 
 For external candidate screening, `build_sealed_fixture.py` creates a
 model-only workspace from an exact source revision and a synthetic baseline

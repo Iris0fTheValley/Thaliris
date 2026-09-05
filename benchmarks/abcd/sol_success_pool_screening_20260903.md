@@ -8,7 +8,8 @@ product, routing, guard, isolation, or escalation code was changed.
 
 ## Controls
 
-- Branch: `codex/abcd-benchmark-20260901`.
+- Former benchmark development branch (now deleted; policy experiment commit
+  `247abc48eb9d057ff528c2f6998a9cc434dd7722`).
 - Candidate base revisions were exact and sealed before any Native attempt.
 - Sealed fixtures followed the required archive, synthetic parentless commit,
   no-remote/no-history, and evaluator-after-exit controls.

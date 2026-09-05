@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "run_date": "2026-09-02",
-  "branch": "codex/abcd-benchmark-20260901",
+  "branch": "former benchmark development branch (deleted; policy experiment commit 247abc48eb9d057ff528c2f6998a9cc434dd7722)",
   "model_runs": 0,
   "sources": {
     "live": "SWE-bench-Live/MultiLang (trusted metadata cache)",

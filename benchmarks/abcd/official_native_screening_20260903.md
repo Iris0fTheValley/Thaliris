@@ -6,7 +6,8 @@ routing, guard, isolation, escalation, or Decision Context code.
 
 ## Controls
 
-- Branch: `codex/abcd-benchmark-20260901`; benchmark baseline:
+- Former benchmark development branch (now deleted; policy experiment commit
+  `247abc48eb9d057ff528c2f6998a9cc434dd7722`); benchmark baseline:
   `871a2dfc611767a1b11e4f4839337f899c0e994d`.
 - Provider: official OpenAI / ChatGPT authentication. Each run copied only
   `auth.json` to a fresh `CODEX_HOME`; `codex exec --ignore-user-config`

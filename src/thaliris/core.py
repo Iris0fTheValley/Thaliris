@@ -375,6 +375,7 @@ _ROLE_FIELDS = {
     "reviewer": {"review_findings", "evidence_refs"},
 }
 _PACK_ROLES = {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}
+_EXECUTION_ROLES = _PACK_ROLES - {"controller"}
 
 
 def _state_path(root: Path) -> Path:
@@ -464,7 +465,7 @@ def _bounded_lines(value: object, field: str) -> None:
         raise ValueError(f"invalid {field}")
 
 
-def _artifact_ref(root: Path, value: object, *, require_target: bool = True) -> None:
+def _artifact_ref(root: Path, value: object, *, require_target: bool = True, require_semantic_producer: bool = False) -> None:
     if not isinstance(value, dict) or not {"id", "path", "summary"}.issubset(value) or set(value) - {"id", "path", "summary", "producer_role", "registered_by", "scope", "evidence_refs"}:
         raise ValueError("invalid artifact reference")
     identifier, path, summary = value["id"], value["path"], value["summary"]
@@ -488,6 +489,11 @@ def _artifact_ref(root: Path, value: object, *, require_target: bool = True) -> 
         raise ValueError("invalid artifact reference")
     if "producer_role" in value and (not isinstance(value["producer_role"], str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", value["producer_role"])):
         raise ValueError("invalid artifact reference")
+    # Loading deliberately remains compatible with pre-semantic states.  New
+    # registrations, however, are Core-owned provenance and must never write
+    # a runtime alias (or Controller) into persisted state.
+    if require_semantic_producer and "producer_role" in value and value["producer_role"] not in _EXECUTION_ROLES:
+        raise ValueError("artifact producer_role must be a semantic execution role")
     if "registered_by" in value and value["registered_by"] != "controller":
         raise ValueError("artifact pointers must be registered by Controller")
     if "scope" in value and (not isinstance(value["scope"], str) or not value["scope"].strip() or _bad_text(value["scope"]) or len(value["scope"]) > 300):
@@ -814,7 +820,7 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
     if producer_role is not None: artifact["producer_role"] = producer_role
     if scope is not None: artifact["scope"] = scope
     if evidence_refs is not None: artifact["evidence_refs"] = evidence_refs
-    _artifact_ref(root, artifact)
+    _artifact_ref(root, artifact, require_semantic_producer=True)
     with _lock(root):
         state = _load_state(root, active=True)
         if state["revision"] != base_revision:

@@ -2,8 +2,10 @@
 .context/backups/
 .context/state.json
 .context/context.lock
-.context/audit/
 # thaliris:end
+# thaliris-codex:begin
+.context/audit/
+# thaliris-codex:end
 .venv/
 __pycache__/
 .pytest_cache/

@@ -58,3 +58,56 @@ def test_legacy_memory_audience_is_normalized_on_read(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert parse(path).meta["Audience"] == ["reasoning-specialist", "reviewer"]
+
+
+def test_role_projections_keep_working_set_bounded(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    main(["--root", str(root), "init"])
+    core.task_start(root, "projection", None, None)
+    investigator = core.prepare(root, None, "investigator")
+    curator = core.prepare(root, None, "curator")
+    specialist = core.prepare(root, None, "reasoning-specialist")
+    assert investigator["role"] == "investigator"
+    assert curator["Current Investigation Snapshot"] == []
+    assert "Investigation Findings" not in json.dumps(specialist)
+
+
+def test_reviewer_sees_git_changed_paths_without_artifact_contents(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    main(["--root", str(root), "init"])
+    core.task_start(root, "review", None, None)
+    changed = root / "changed.txt"
+    changed.write_text("private contents", encoding="utf-8")
+    pack = core.prepare(root, None, "reviewer")
+    assert "changed.txt" in pack["Changed Surface"]
+    assert "private contents" not in json.dumps(pack)
+
+
+def test_evidence_freshness_demotes_changed_confirmed_fact(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    main(["--root", str(root), "init"])
+    source = root / "fact.txt"
+    source.write_text("v1", encoding="utf-8")
+    evidence = {"id": "fact", "kind": "file", "locator": "fact.txt", "summary": "fact", "confidence": "CONFIRMED"}
+    state_input = root / "start.json"
+    state_input.write_text(json.dumps({"evidence_refs": [evidence], "confirmed_facts": [{"text": "v1", "evidence_refs": ["fact"]}]}), encoding="utf-8")
+    core.task_start(root, "freshness", None, str(state_input))
+    source.write_text("v2", encoding="utf-8")
+    pack = core.prepare(root, None, "implementer")
+    assert pack["Confirmed Facts"] == []
+    assert "stale confirmed fact" in json.dumps(pack)
+
+
+def test_task_promote_requires_explicit_fresh_evidence(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    main(["--root", str(root), "init"])
+    source = root / "decision.txt"
+    source.write_text("decision", encoding="utf-8")
+    evidence = {"id": "decision", "kind": "file", "locator": "decision.txt", "summary": "decision", "confidence": "CONFIRMED"}
+    start_input = root / "start.json"
+    start_input.write_text(json.dumps({"evidence_refs": [evidence]}), encoding="utf-8")
+    started = core.task_start(root, "promotion", None, str(start_input))
+    promote_input = root / "promote.json"
+    promote_input.write_text(json.dumps({"records": [{"type": "decision", "id": "D-1", "title": "Use decision", "text": "Adopt it.", "evidence_refs": ["decision"], "confidence": "CONFIRMED"}]}), encoding="utf-8")
+    result = core.task_promote(root, "controller", started["revision"], str(promote_input))
+    assert result["ok"] and (root / ".agent-memory/decisions/D-1.md").is_file()

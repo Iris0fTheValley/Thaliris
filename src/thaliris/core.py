@@ -378,7 +378,7 @@ def _uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str],
         _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
     private_state_present = any(
         (_safe(root, relative).is_file() or _safe(root, relative).is_dir())
-        for relative in (".context/audit", ".context/backups", ".context/state.json", ".context/context.lock")
+        for relative in (".context/backups", ".context/state.json", ".context/context.lock")
     )
     writes: dict[str, bytes] = {}; deletes: list[str] = []; kept: list[str] = []; manual: list[str] = []
     ignore = _safe(root, ".gitignore")

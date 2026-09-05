@@ -41,7 +41,7 @@ def test_init_idempotent_preserves_agents_and_required_block(tmp_path, capsys):
     code, first = run(capsys, root, "init")
     assert code == 0 and first["changed"]
     text = (root / "AGENTS.md").read_text(encoding="utf-8")
-    assert "Keep this rule." in text and all(term in text for term in ("Codex remains the runtime", "Controller uses", "fork_turns=\"none\"", "task-artifact", "task-show", "PreToolUse", "PostToolUse"))
+    assert "Keep this rule." in text and all(term in text for term in ("runtime remains the runtime", "Controller uses", "fork_turns=\"none\"", "task-artifact", "task-show", "PreToolUse", "PostToolUse"))
     assert "# Thaliris Role Packs" in (root / "docs/thaliris-role-packs.md").read_text(encoding="utf-8")
     code, second = run(capsys, root, "init")
     assert code == 0 and not second["changed"]
@@ -71,7 +71,7 @@ def test_single_bounded_investigator_finding_does_not_auto_curate(tmp_path, caps
     request = {"id": "request", "kind": "task-input", "locator": "user request", "summary": "bounded request", "confidence": "SUPPORTED"}
     task_input(root, capsys, {"evidence_refs": [request]}, "task-start", "inspect one bounded finding")
     finding = {"kind": "SUPPORTED", "text": "single bounded finding", "evidence_refs": ["request"]}
-    code, updated = task_input(root, capsys, {"investigation_findings": [finding]}, "task-update", "--role", "luna-investigator", "--base-revision", "1")
+    code, updated = task_input(root, capsys, {"investigation_findings": [finding]}, "task-update", "--role", "investigator", "--base-revision", "1")
     assert code == 0
     assert updated["revision"] == 2 and updated["changed"] == ["investigation_findings"]
     current = state_of(root)
@@ -79,7 +79,7 @@ def test_single_bounded_investigator_finding_does_not_auto_curate(tmp_path, caps
     assert current["investigation_snapshot"] == []
     assert current["investigation_covered_through"] == 0
     state_path = root / ".context/state.json"; before_prepare = state_path.read_bytes()
-    _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
+    _, curator = run(capsys, root, "prepare", "--role", "curator")
     assert curator["Current Investigation Snapshot"] == []
     assert curator["Uncovered Investigation Findings"] == [finding]
     assert state_path.read_bytes() == before_prepare
@@ -112,7 +112,7 @@ def test_init_and_migrate_upgrade_legacy_markers_without_duplicates(tmp_path, ca
     for command in ("init", "migrate"):
         root = repo(tmp_path / command)
         (root / "AGENTS.md").write_text(
-            "Keep.\n<!-- codex-context:begin -->\n## Codex context\nOld block.\n<!-- codex-context:end -->\n",
+            "Keep.\n<!-- codex-context:begin -->\n## runtime context\nOld block.\n<!-- codex-context:end -->\n",
             encoding="utf-8",
         )
         (root / ".gitignore").write_text(
@@ -199,7 +199,7 @@ def test_stale_effective_confidence_uses_real_file_hash(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     source = root / "src.txt"; source.write_text("one", encoding="utf-8")
     digest = hashlib.sha256(source.read_bytes()).hexdigest(); entry = root / ".agent-memory" / "fact.md"
-    entry.write_text(f'---\nEvidence: file:src.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: CONFIRMED\nAudience: ["sol-high"]\n---\n\n# Fact\n\nConfirmed.\n', encoding="utf-8")
+    entry.write_text(f'---\nEvidence: file:src.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: CONFIRMED\nAudience: ["reasoning-specialist"]\n---\n\n# Fact\n\nConfirmed.\n', encoding="utf-8")
     index = root / ".agent-memory" / "INDEX.md"
     index.write_text(index.read_text(encoding="utf-8") + "\n- [Fact](fact.md)\n", encoding="utf-8")
     _, fresh = run(capsys, root, "stale")
@@ -207,7 +207,7 @@ def test_stale_effective_confidence_uses_real_file_hash(tmp_path, capsys):
     source.write_text("two", encoding="utf-8")
     _, changed = run(capsys, root, "stale")
     record = next(x for x in changed["entries"] if x["path"].endswith("fact.md")); assert record["state"] == "STALE" and record["effective_confidence"] == "STALE"
-    _, pack = run(capsys, root, "prepare", "fact", "--role", "sol-high")
+    _, pack = run(capsys, root, "prepare", "fact", "--role", "reasoning-specialist")
     assert not any(item["source"].endswith("fact.md") for item in pack["Confirmed Facts"])
     assert any("stale evidence" in str(item) for item in pack["Unknowns"])
 
@@ -252,15 +252,15 @@ def test_init_recovers_an_interrupted_multi_file_write(tmp_path, capsys, monkeyp
 def test_role_specific_projection_and_native_fallback(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     expected = {
-        "sol-high": {"Goal", "Confirmed Facts", "Supported Evidence", "Hard Constraints", "Decisions", "Unknowns", "Contradictions", "Evidence refs", "Investigation Readiness", "Review Readiness"},
-        "luna": {"Goal", "Relevant Files", "Relevant Symbols", "Hard Constraints", "Unknowns", "Contradictions", "Evidence refs", "Investigation Target", "Investigation Snapshot", "Verification Target"},
-        "terra-implementer": {"Goal", "Confirmed Facts", "Supported Evidence", "Relevant Files", "Hard Constraints", "Decisions", "Modification Boundary", "Required Verification", "Evidence refs"},
-        "terra-reviewer": {"Review Goal", "Architectural Intent", "Hard Constraints", "Durable Decisions", "Changed Surface", "Evidence refs"},
+        "reasoning-specialist": {"Goal", "Confirmed Facts", "Supported Evidence", "Hard Constraints", "Decisions", "Unknowns", "Contradictions", "Evidence refs", "Investigation Readiness", "Review Readiness"},
+        "investigator": {"Goal", "Relevant Files", "Relevant Symbols", "Hard Constraints", "Unknowns", "Contradictions", "Evidence refs", "Investigation Target", "Investigation Snapshot", "Verification Target"},
+        "implementer": {"Goal", "Confirmed Facts", "Supported Evidence", "Relevant Files", "Hard Constraints", "Decisions", "Modification Boundary", "Required Verification", "Evidence refs"},
+        "reviewer": {"Review Goal", "Architectural Intent", "Hard Constraints", "Durable Decisions", "Changed Surface", "Evidence refs"},
     }
     for role, fields in expected.items():
         _, pack = run(capsys, root, "prepare", "implement policy", "--role", role)
         assert fields <= set(pack) and set(pack) - fields <= {"ok", "role", "schema_version", "task_id", "state_revision"}
-    _, implementer = run(capsys, root, "prepare", "implement policy", "--role", "terra-implementer")
+    _, implementer = run(capsys, root, "prepare", "implement policy", "--role", "implementer")
     assert implementer["Relevant Files"] == []
     assert implementer["Modification Boundary"] == {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}
 
@@ -273,7 +273,7 @@ def test_reviewer_changed_surface_expands_rename_paths(tmp_path, capsys):
     subprocess.run(["git", "add", "old.txt"], cwd=root, check=True)
     subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
     subprocess.run(["git", "mv", "old.txt", "new.txt"], cwd=root, check=True)
-    _, pack = run(capsys, root, "prepare", "review rename", "--role", "terra-reviewer")
+    _, pack = run(capsys, root, "prepare", "review rename", "--role", "reviewer")
     assert set(pack["Changed Surface"]) == {"old.txt", "new.txt"}
 
 
@@ -361,7 +361,7 @@ def test_stale_applicability_does_not_become_modification_boundary(tmp_path, cap
     fact.write_text(f"---\nEvidence: file:src.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: src.txt\nConfidence: SUPPORTED\n---\n\n# Fact\n\nCurrent behavior.\n", encoding="utf-8")
     index = root / ".agent-memory/INDEX.md"; index.write_text(index.read_text(encoding="utf-8") + "\n- [Fact](fact.md)\n", encoding="utf-8")
     source.write_text("two", encoding="utf-8")
-    _, pack = run(capsys, root, "prepare", "fact", "--role", "terra-implementer")
+    _, pack = run(capsys, root, "prepare", "fact", "--role", "implementer")
     assert pack["Modification Boundary"] == {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}
 
 
@@ -480,7 +480,7 @@ def test_task_promote_rejects_large_maintenance_and_non_controller(tmp_path, cap
     code, failed = task_input(root, capsys, {"maintenance": {"deduplicate": True}}, "task-promote", "--role", "controller", "--base-revision", "1")
     assert code == 2 and "fresh child" in failed["error"]
     record = {"type": "decision", "id": "D-002", "title": "Use Y", "text": "Adopt Y.", "evidence_refs": ["e1"], "confidence": "SUPPORTED"}
-    code, failed = task_input(root, capsys, {"records": [record]}, "task-promote", "--role", "terra-implementer", "--base-revision", "1")
+    code, failed = task_input(root, capsys, {"records": [record]}, "task-promote", "--role", "implementer", "--base-revision", "1")
     assert code == 2 and "only the Controller" in failed["error"]
 
 
@@ -545,11 +545,11 @@ def test_task_state_cas_atomic_and_cross_reference_validation(tmp_path, capsys):
     code, controlled = task_input(root, capsys, {"modification_boundary": boundary}, "task-update", "--role", "controller", "--base-revision", "1")
     assert code == 0 and controlled["revision"] == 2 and state_of(root)["modification_boundary"] == boundary
     state = root / ".context/state.json"; original = state.read_bytes()
-    code, failed = task_input(root, capsys, {"modification_boundary": boundary}, "task-update", "--role", "sol-high", "--base-revision", "2")
+    code, failed = task_input(root, capsys, {"modification_boundary": boundary}, "task-update", "--role", "reasoning-specialist", "--base-revision", "2")
     assert code == 2 and "not allowed" in failed["error"] and state.read_bytes() == original
-    code, failed = task_input(root, capsys, {"unknowns": [{"text": "later", "evidence_refs": []}]}, "task-update", "--role", "luna", "--base-revision", "1")
+    code, failed = task_input(root, capsys, {"unknowns": [{"text": "later", "evidence_refs": []}]}, "task-update", "--role", "investigator", "--base-revision", "1")
     assert code == 2 and "not allowed" in failed["error"] and state.read_bytes() == original
-    code, failed = task_input(root, capsys, {"confirmed_facts": [{"text": "bad", "evidence_refs": ["missing"]}]}, "task-update", "--role", "terra-implementer", "--base-revision", "2")
+    code, failed = task_input(root, capsys, {"confirmed_facts": [{"text": "bad", "evidence_refs": ["missing"]}]}, "task-update", "--role", "implementer", "--base-revision", "2")
     assert code == 2 and "not allowed" in failed["error"]
     state.write_text('{"raw":"tool output"}', encoding="utf-8")
     code, failed = run(capsys, root, "task-show")
@@ -574,7 +574,7 @@ def test_supported_memory_evidence_remains_supported_when_fresh(tmp_path, capsys
     claim = {"text": "historical observation", "evidence_refs": ["memory1"]}
     task_input(root, capsys, {"evidence_refs": [ref], "supported_evidence": [claim]}, "task-start", "repair")
 
-    _, pack = run(capsys, root, "prepare", "--role", "sol-high")
+    _, pack = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert claim in pack["Supported Evidence"]
     assert not any("stale supported evidence" in item["text"] for item in pack["Unknowns"])
 
@@ -599,28 +599,28 @@ def test_task_start_rechecks_ignore_inside_lock(tmp_path, capsys, monkeypatch):
     assert not (root / ".context/state.json").exists()
 
 
-def test_luna_to_sol_handoff_split_and_fresh_reviewer(tmp_path, capsys):
+def test_investigator_to_sol_handoff_split_and_fresh_reviewer(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     code, made = run(capsys, root, "task-start", "repair")
     assert code == 0
     source = root / "src.txt"; source.write_text("inspection", encoding="utf-8")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     e = {"id": "s", "kind": "file", "locator": f"file:src.txt#{digest}", "summary": "inspection", "confidence": "SUPPORTED"}
-    code, denied = task_input(root, capsys, {"evidence_refs": [e], "supported_evidence": [{"text": "not promoted", "evidence_refs": ["s"]}]}, "task-update", "--role", "luna", "--base-revision", "1")
+    code, denied = task_input(root, capsys, {"evidence_refs": [e], "supported_evidence": [{"text": "not promoted", "evidence_refs": ["s"]}]}, "task-update", "--role", "investigator", "--base-revision", "1")
     assert code == 2 and "not allowed" in denied["error"]
     finding = {"kind": "SUPPORTED", "text": "likely behavior", "evidence_refs": ["s"]}
-    code, updated = task_input(root, capsys, {"evidence_refs": [e], "investigation_findings": [finding]}, "task-update", "--role", "luna", "--base-revision", "1")
+    code, updated = task_input(root, capsys, {"evidence_refs": [e], "investigation_findings": [finding]}, "task-update", "--role", "investigator", "--base-revision", "1")
     assert code == 0
-    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
+    _, sol = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert "Confirmed Facts" in sol and sol["Confirmed Facts"] == [] and sol["Supported Evidence"] == []
     _, shown = run(capsys, root, "task-show")
     assert shown["state"]["investigation_findings"] == [finding]
     promoted = {"text": "likely behavior", "evidence_refs": ["s"]}
     code, _ = task_input(root, capsys, {"supported_evidence": [promoted]}, "task-update", "--role", "controller", "--base-revision", "2")
     assert code == 0
-    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
+    _, sol = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert sol["Supported Evidence"] == [promoted]
-    _, review = run(capsys, root, "prepare", "--role", "terra-reviewer")
+    _, review = run(capsys, root, "prepare", "--role", "reviewer")
     assert "Unknowns" not in review and "Known Risks" not in review and "check" not in " ".join(review)
 
 
@@ -630,10 +630,10 @@ def test_non_controller_evidence_updates_are_append_only(tmp_path, capsys):
     original = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "original", "confidence": "SUPPORTED"}
     task_input(root, capsys, {"evidence_refs": [original]}, "task-start", "inspect")
     rebound = original | {"summary": "rebound"}
-    code, failed = task_input(root, capsys, {"evidence_refs": [rebound]}, "task-update", "--role", "luna", "--base-revision", "1")
+    code, failed = task_input(root, capsys, {"evidence_refs": [rebound]}, "task-update", "--role", "investigator", "--base-revision", "1")
     assert code == 2 and "append-only" in failed["error"]
     added = {"id": "extra", "kind": "file", "locator": original["locator"], "summary": "additional", "confidence": "SUPPORTED"}
-    code, updated = task_input(root, capsys, {"evidence_refs": [added]}, "task-update", "--role", "luna", "--base-revision", "1")
+    code, updated = task_input(root, capsys, {"evidence_refs": [added]}, "task-update", "--role", "investigator", "--base-revision", "1")
     assert code == 0 and updated["revision"] == 2 and state_of(root)["evidence_refs"] == [original, added]
 
 
@@ -658,9 +658,9 @@ def test_v1_unbound_test_evidence_loads_stale_until_reverified(tmp_path, capsys)
     path.write_text(json.dumps(legacy), encoding="utf-8")
     code, shown = run(capsys, root, "task-show")
     assert code == 0 and shown["state"]["evidence_refs"][0]["source_refs"] == []
-    _, pack = run(capsys, root, "prepare", "--role", "sol-high")
+    _, pack = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert pack["Supported Evidence"] == [] and pack["Unknowns"][0]["text"].startswith("stale supported evidence")
-    code, updated = task_input(root, capsys, {"changed_surface": ["src"]}, "task-update", "--role", "terra-implementer", "--base-revision", "1")
+    code, updated = task_input(root, capsys, {"changed_surface": ["src"]}, "task-update", "--role", "implementer", "--base-revision", "1")
     assert code == 0 and updated["revision"] == 2
     code, closed = run(capsys, root, "task-close", "--base-revision", "2")
     assert code == 0 and closed["status"] == "DONE" and "state" not in closed
@@ -669,28 +669,28 @@ def test_v1_unbound_test_evidence_loads_stale_until_reverified(tmp_path, capsys)
 def test_memory_audience_and_unicode_topics_symbols(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     item = root / ".agent-memory" / "zh.md"
-    item.write_text('---\nEvidence: NONE\nRevision: 1\nStatus: DRAFT\nApplicability: PROJECT\nConfidence: UNVERIFIED\nAudience: ["luna"]\nTopics: ["中文路由"]\nSymbols: ["函数甲"]\n---\n\n# private\n\nprivate body\n', encoding="utf-8")
+    item.write_text('---\nEvidence: NONE\nRevision: 1\nStatus: DRAFT\nApplicability: PROJECT\nConfidence: UNVERIFIED\nAudience: ["investigator"]\nTopics: ["中文路由"]\nSymbols: ["函数甲"]\n---\n\n# private\n\nprivate body\n', encoding="utf-8")
     index = root / ".agent-memory/INDEX.md"; index.write_text(index.read_text(encoding="utf-8") + "\n- [zh](zh.md)\n", encoding="utf-8")
-    _, luna = run(capsys, root, "prepare", "检查中文路由函数甲", "--role", "luna")
-    _, sol = run(capsys, root, "prepare", "检查中文路由函数甲", "--role", "sol-high")
-    assert any(ref["locator"].endswith("zh.md") for ref in luna["Evidence refs"])
+    _, investigator = run(capsys, root, "prepare", "检查中文路由函数甲", "--role", "investigator")
+    _, sol = run(capsys, root, "prepare", "检查中文路由函数甲", "--role", "reasoning-specialist")
+    assert any(ref["locator"].endswith("zh.md") for ref in investigator["Evidence refs"])
     assert not any(ref["locator"].endswith("zh.md") for ref in sol["Evidence refs"])
     run(capsys, root, "task-start", "检查中文路由函数甲")
-    _, state_luna = run(capsys, root, "prepare", "--role", "luna")
-    _, state_sol = run(capsys, root, "prepare", "--role", "sol-high")
-    assert any("zh.md" in str(item) for item in state_luna["Unknowns"])
+    _, state_investigator = run(capsys, root, "prepare", "--role", "investigator")
+    _, state_sol = run(capsys, root, "prepare", "--role", "reasoning-specialist")
+    assert any("zh.md" in str(item) for item in state_investigator["Unknowns"])
     assert not any("zh.md" in str(item) for item in state_sol["Unknowns"])
 
     policy = root / ".agent-memory/policy-extra.md"
     policy.write_text('---\nEvidence: NONE\nRevision: 1\nStatus: DRAFT\nApplicability: PROJECT\nConfidence: UNVERIFIED\nAudience: ["controller"]\nTopics: ["中文路由"]\nSymbols: []\n---\n\n# controller only\n', encoding="utf-8")
     index.write_text(index.read_text(encoding="utf-8") + "\n- [policy](policy-extra.md)\n", encoding="utf-8")
-    _, sol = run(capsys, root, "prepare", "检查中文路由", "--role", "sol-high")
+    _, sol = run(capsys, root, "prepare", "检查中文路由", "--role", "reasoning-specialist")
     assert not any(ref["locator"].endswith("policy-extra.md") for ref in sol["Evidence refs"])
 
     legacy = root / ".agent-memory/legacy.md"
     legacy.write_text('---\nEvidence: NONE\nRevision: 1\nStatus: DRAFT\nApplicability: PROJECT\nConfidence: UNVERIFIED\nTopics: ["legacy-topic"]\nSymbols: []\n---\n\n# Legacy\n', encoding="utf-8")
     index.write_text(index.read_text(encoding="utf-8") + "\n- [legacy](legacy.md)\n", encoding="utf-8")
-    _, legacy_pack = run(capsys, root, "prepare", "legacy-topic", "--role", "terra-reviewer")
+    _, legacy_pack = run(capsys, root, "prepare", "legacy-topic", "--role", "reviewer")
     assert not any(ref["locator"].endswith("legacy.md") for ref in legacy_pack["Evidence refs"])
 
 
@@ -698,7 +698,7 @@ def test_milestone_slice_and_memory_applicability_is_not_boundary(tmp_path, caps
     root = repo(tmp_path); run(capsys, root, "init")
     code, _ = run(capsys, root, "task-start", "repair", "--milestone", "M001-name")
     assert code == 0
-    _, implementer = run(capsys, root, "prepare", "--role", "terra-implementer")
+    _, implementer = run(capsys, root, "prepare", "--role", "implementer")
     assert implementer["Milestone Scope"]["source"].endswith("scope.md")
     assert implementer["Implementation Constraints"]["confidence"] == "UNVERIFIED"
     assert implementer["Modification Boundary"]["includes"] == []
@@ -714,8 +714,8 @@ def test_milestone_progress_is_projected_only_to_controller(tmp_path, capsys):
     _, controller = run(capsys, root, "prepare", "--role", "controller")
     assert controller["Task"]["milestone"] == "M001-name"
     assert "Milestone Progress" not in controller
-    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
-    _, reviewer = run(capsys, root, "prepare", "--role", "terra-reviewer")
+    _, sol = run(capsys, root, "prepare", "--role", "reasoning-specialist")
+    _, reviewer = run(capsys, root, "prepare", "--role", "reviewer")
     assert "Milestone Progress" not in sol and "Milestone Progress" not in reviewer
 
 
@@ -735,17 +735,17 @@ def test_state_pack_keeps_memory_provenance_and_changed_path_evidence(tmp_path, 
     source = root / "src.txt"; source.write_text("stable", encoding="utf-8")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     memory = root / ".agent-memory/fact.md"
-    memory.write_text(f'---\nEvidence: file:src.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: src.txt\nConfidence: CONFIRMED\nAudience: ["sol-high", "luna", "terra-implementer"]\nTopics: ["handoff"]\nSymbols: ["Thing.run"]\n---\n\n# Fact\n\nStable behavior.\n', encoding="utf-8")
+    memory.write_text(f'---\nEvidence: file:src.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: src.txt\nConfidence: CONFIRMED\nAudience: ["reasoning-specialist", "investigator", "implementer"]\nTopics: ["handoff"]\nSymbols: ["Thing.run"]\n---\n\n# Fact\n\nStable behavior.\n', encoding="utf-8")
     index = root / ".agent-memory/INDEX.md"; index.write_text(index.read_text(encoding="utf-8") + "\n- [fact](fact.md)\n", encoding="utf-8")
     evidence = {"id": "changed1", "kind": "file", "locator": f"file:src.txt#{digest}", "summary": "changed path", "confidence": "SUPPORTED"}
     task_input(root, capsys, {"evidence_refs": [evidence], "changed_surface": ["src.txt"]}, "task-start", "handoff Thing.run")
-    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
+    _, sol = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert not sol["Confirmed Facts"]
     assert any(item.get("source", "").endswith("fact.md") for item in sol["Supported Evidence"])
     assert any(ref["id"].startswith("memory:") and ref["confidence"] == "SUPPORTED" for ref in sol["Evidence refs"])
-    _, luna = run(capsys, root, "prepare", "--role", "luna")
-    assert "src.txt" in luna["Relevant Files"] and "Thing.run" in luna["Relevant Symbols"]
-    _, review = run(capsys, root, "prepare", "--role", "terra-reviewer")
+    _, investigator = run(capsys, root, "prepare", "--role", "investigator")
+    assert "src.txt" in investigator["Relevant Files"] and "Thing.run" in investigator["Relevant Symbols"]
+    _, review = run(capsys, root, "prepare", "--role", "reviewer")
     assert any(ref["id"] == "changed1" for ref in review["Evidence refs"])
 
 
@@ -753,20 +753,20 @@ def test_reviewer_excludes_memory_unrelated_to_visible_fields(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init")
     source = root / "source.txt"; source.write_text("stable", encoding="utf-8")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    front_matter = f'---\nEvidence: file:source.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: HARD_CONSTRAINT\nAudience: ["terra-reviewer"]\nTopics: ["review-memory"]\nSymbols: []\n---\n\n'
+    front_matter = f'---\nEvidence: file:source.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: HARD_CONSTRAINT\nAudience: ["reviewer"]\nTopics: ["review-memory"]\nSymbols: []\n---\n\n'
     policy = root / ".agent-memory/policy-reviewer.md"
     policy.write_text(front_matter + "# Review policy\n\nPreserve the public contract.\n", encoding="utf-8")
     unrelated = root / ".agent-memory/fact-reviewer.md"
     unrelated.write_text(front_matter.replace("Kind: HARD_CONSTRAINT\n", "Kind: MEMORY\n") + "# Unrelated fact\n\nAn implementation observation.\n", encoding="utf-8")
     index = root / ".agent-memory/INDEX.md"
     index.write_text(index.read_text(encoding="utf-8") + "\n- [review policy](policy-reviewer.md)\n- [unrelated fact](fact-reviewer.md)\n", encoding="utf-8")
-    _, stateless = run(capsys, root, "prepare", "review-memory", "--role", "terra-reviewer")
+    _, stateless = run(capsys, root, "prepare", "review-memory", "--role", "reviewer")
     stateless_ids = {ref["id"] for ref in stateless["Evidence refs"]}
     assert "memory:.agent-memory/policy-reviewer.md" in stateless_ids
     assert "memory:.agent-memory/fact-reviewer.md" not in stateless_ids
     run(capsys, root, "task-start", "review-memory")
 
-    _, review = run(capsys, root, "prepare", "--role", "terra-reviewer")
+    _, review = run(capsys, root, "prepare", "--role", "reviewer")
     ids = {ref["id"] for ref in review["Evidence refs"]}
     assert "memory:.agent-memory/policy-reviewer.md" in ids
     assert "memory:.agent-memory/fact-reviewer.md" not in ids
@@ -781,17 +781,17 @@ def test_test_runtime_evidence_requires_fresh_bound_sources(tmp_path, capsys):
     claim = {"text": "targeted test passed", "evidence_refs": ["test"]}
     code, made = task_input(root, capsys, {"evidence_refs": [source_ref, test_ref], "supported_evidence": [claim]}, "task-start", "verify")
     assert code == 0
-    _, fresh = run(capsys, root, "prepare", "--role", "sol-high")
+    _, fresh = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert fresh["Supported Evidence"] == [claim]
     assert {ref["id"] for ref in fresh["Evidence refs"]} == {"src", "test"}
     other.write_text("still unrelated", encoding="utf-8")
-    _, unrelated = run(capsys, root, "prepare", "--role", "sol-high")
+    _, unrelated = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert unrelated["Supported Evidence"] == [claim]
     source.write_text("two", encoding="utf-8")
-    _, stale = run(capsys, root, "prepare", "--role", "sol-high")
+    _, stale = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert stale["Supported Evidence"] == []
     assert stale["Unknowns"][0]["text"].startswith("stale supported evidence")
-    code, updated = task_input(root, capsys, {"changed_surface": ["src.txt"]}, "task-update", "--role", "terra-implementer", "--base-revision", "1")
+    code, updated = task_input(root, capsys, {"changed_surface": ["src.txt"]}, "task-update", "--role", "implementer", "--base-revision", "1")
     assert code == 0 and updated["revision"] == 2
 
     bad = {"id": "run", "kind": "runtime", "locator": "manual", "summary": "observed", "confidence": "SUPPORTED", "source_refs": []}
@@ -809,7 +809,7 @@ def test_stale_test_ref_demotes_claim_even_with_another_fresh_ref(tmp_path, caps
     claim = {"text": "test passed for this source", "evidence_refs": ["test", "stable"]}
     task_input(root, capsys, {"evidence_refs": [source_ref, stable_ref, test_ref], "supported_evidence": [claim]}, "task-start", "verify")
     source.write_text("two", encoding="utf-8")
-    _, pack = run(capsys, root, "prepare", "--role", "sol-high")
+    _, pack = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert claim not in pack["Supported Evidence"] and any(item["text"].startswith("stale supported evidence") for item in pack["Unknowns"])
 
 
@@ -818,20 +818,20 @@ def test_project_hard_constraint_bypasses_lexical_routing_but_audience_and_memor
     source = root / "policy.txt"; source.write_text("stable", encoding="utf-8")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     constraint = root / ".agent-memory/global.md"
-    constraint.write_text(f'---\nEvidence: file:policy.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: HARD_CONSTRAINT\nAudience: ["sol-high"]\nTopics: ["python compatibility"]\nSymbols: []\n---\n\n# Compatibility\n\nSupport Python 3.11; unknown future versions require review.\n', encoding="utf-8")
+    constraint.write_text(f'---\nEvidence: file:policy.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: HARD_CONSTRAINT\nAudience: ["reasoning-specialist"]\nTopics: ["python compatibility"]\nSymbols: []\n---\n\n# Compatibility\n\nSupport Python 3.11; unknown future versions require review.\n', encoding="utf-8")
     ordinary = root / ".agent-memory/ordinary.md"
-    ordinary.write_text(f'---\nEvidence: file:policy.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: MEMORY\nAudience: ["sol-high"]\nTopics: ["python compatibility"]\nSymbols: []\n---\n\n# Ordinary\n\nOnly lexical recall.\n', encoding="utf-8")
+    ordinary.write_text(f'---\nEvidence: file:policy.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: MEMORY\nAudience: ["reasoning-specialist"]\nTopics: ["python compatibility"]\nSymbols: []\n---\n\n# Ordinary\n\nOnly lexical recall.\n', encoding="utf-8")
     index = root / ".agent-memory/INDEX.md"
     index.write_text(index.read_text(encoding="utf-8") + "\n- [global](global.md)\n- [ordinary](ordinary.md)\n", encoding="utf-8")
-    _, sol = run(capsys, root, "prepare", "rename the checkout flow", "--role", "sol-high")
+    _, sol = run(capsys, root, "prepare", "rename the checkout flow", "--role", "reasoning-specialist")
     assert any(item["source"].endswith("global.md") for item in sol["Hard Constraints"])
     assert not any(item.get("source", "").endswith("ordinary.md") for item in sol["Supported Evidence"])
-    _, luna = run(capsys, root, "prepare", "rename the checkout flow", "--role", "luna")
-    assert not any(ref["locator"].endswith("global.md") for ref in luna["Evidence refs"])
+    _, investigator = run(capsys, root, "prepare", "rename the checkout flow", "--role", "investigator")
+    assert not any(ref["locator"].endswith("global.md") for ref in investigator["Evidence refs"])
 
-    constraint.write_text(constraint.read_text(encoding="utf-8").replace('Audience: ["sol-high"]', 'Audience: ["luna"]'), encoding="utf-8")
-    _, luna = run(capsys, root, "prepare", "rename the checkout flow", "--role", "luna")
-    assert any(item["source"].endswith("global.md") for item in luna["Hard Constraints"])
+    constraint.write_text(constraint.read_text(encoding="utf-8").replace('Audience: ["reasoning-specialist"]', 'Audience: ["investigator"]'), encoding="utf-8")
+    _, investigator = run(capsys, root, "prepare", "rename the checkout flow", "--role", "investigator")
+    assert any(item["source"].endswith("global.md") for item in investigator["Hard Constraints"])
 
 
 def test_reviewer_findings_are_structured_and_never_projected(tmp_path, capsys):
@@ -840,12 +840,12 @@ def test_reviewer_findings_are_structured_and_never_projected(tmp_path, capsys):
     ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "inspection", "confidence": "SUPPORTED"}
     run(capsys, root, "task-start", "review")
     finding = {"issue": "missing boundary check", "impact": "can change public behavior", "evidence_refs": ["src"]}
-    code, _ = task_input(root, capsys, {"evidence_refs": [ref], "review_findings": [finding]}, "task-update", "--role", "terra-reviewer", "--base-revision", "1")
+    code, _ = task_input(root, capsys, {"evidence_refs": [ref], "review_findings": [finding]}, "task-update", "--role", "reviewer", "--base-revision", "1")
     assert code == 0
-    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
-    _, review = run(capsys, root, "prepare", "--role", "terra-reviewer")
+    _, sol = run(capsys, root, "prepare", "--role", "reasoning-specialist")
+    _, review = run(capsys, root, "prepare", "--role", "reviewer")
     assert "missing boundary check" not in json.dumps(sol) and "missing boundary check" not in json.dumps(review)
-    code, bad = task_input(root, capsys, {"review_findings": [{"issue": "bad", "impact": "bad", "evidence_refs": []}]}, "task-update", "--role", "terra-reviewer", "--base-revision", "2")
+    code, bad = task_input(root, capsys, {"review_findings": [{"issue": "bad", "impact": "bad", "evidence_refs": []}]}, "task-update", "--role", "reviewer", "--base-revision", "2")
     assert code == 2 and "review finding" in bad["error"]
 
 
@@ -871,7 +871,7 @@ def test_prepare_demotes_changed_native_confirmed_evidence(tmp_path, capsys):
     code, _ = task_input(root, capsys, {"evidence_refs": [evidence], "confirmed_facts": [fact]}, "task-start", "check")
     assert code == 0
     source.write_text("two", encoding="utf-8")
-    _, pack = run(capsys, root, "prepare", "--role", "sol-high")
+    _, pack = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert pack["Confirmed Facts"] == []
     assert pack["Unknowns"][0]["evidence_refs"] == ["file1"]
 
@@ -889,34 +889,34 @@ def test_investigation_curation_is_bounded_traceable_and_isolated_from_sol(tmp_p
     ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "inspection", "confidence": "SUPPORTED"}
     supported = {"kind": "SUPPORTED", "text": "likely behavior", "evidence_refs": ["src"]}
     unknown = {"kind": "UNKNOWN", "text": "remaining edge case", "evidence_refs": []}
-    code, _ = task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [supported, unknown]}, "task-update", "--role", "luna-investigator", "--base-revision", "1")
+    code, _ = task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [supported, unknown]}, "task-update", "--role", "investigator", "--base-revision", "1")
     assert code == 0
 
-    _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
+    _, curator = run(capsys, root, "prepare", "--role", "curator")
     assert curator["Uncovered Investigation Findings"] == [supported, unknown]
     assert curator["Current Investigation Snapshot"] == []
     snapshot = [{"id": "S1", "kind": "SUPPORTED", "text": "compact behavior", "derived_from": [0], "supersedes": [], "evidence_refs": ["src"]}]
-    code, curated = task_input(root, capsys, {"investigation_snapshot": snapshot}, "task-update", "--role", "luna-curator", "--base-revision", "2")
+    code, curated = task_input(root, capsys, {"investigation_snapshot": snapshot}, "task-update", "--role", "curator", "--base-revision", "2")
     assert code == 0 and curated["revision"] == 3 and state_of(root)["investigation_findings"] == [supported, unknown]
 
-    _, investigator = run(capsys, root, "prepare", "--role", "luna-investigator")
+    _, investigator = run(capsys, root, "prepare", "--role", "investigator")
     assert investigator["Investigation Snapshot"] == snapshot
-    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
+    _, sol = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert "Investigation Findings" not in sol and "Investigation Snapshot" not in sol
     assert "compact behavior" not in json.dumps(sol)
 
     replacement = [{"id": "S2", "kind": "SUPPORTED", "text": "deduplicated behavior", "derived_from": [0], "supersedes": ["S1"], "evidence_refs": ["src"]}]
-    code, rewritten = task_input(root, capsys, {"investigation_snapshot": replacement}, "task-update", "--role", "luna-curator", "--base-revision", "3")
+    code, rewritten = task_input(root, capsys, {"investigation_snapshot": replacement}, "task-update", "--role", "curator", "--base-revision", "3")
     assert code == 0 and rewritten["revision"] == 4 and state_of(root)["investigation_snapshot"] == replacement
     promoted = [{"id": "S3", "kind": "CONFIRMED", "text": "not proven", "derived_from": [0], "supersedes": ["S2"], "evidence_refs": ["src"]}]
-    code, failed = task_input(root, capsys, {"investigation_snapshot": promoted}, "task-update", "--role", "luna-curator", "--base-revision", "4")
+    code, failed = task_input(root, capsys, {"investigation_snapshot": promoted}, "task-update", "--role", "curator", "--base-revision", "4")
     assert code == 2 and ("cannot promote" in failed["error"] or "fresh native" in failed["error"])
 
     oversized = [{"id": f"B{index}", "kind": "UNKNOWN", "text": "x" * 1000, "derived_from": [1], "supersedes": [], "evidence_refs": []} for index in range(40)]
-    code, failed = task_input(root, capsys, {"investigation_snapshot": oversized}, "task-update", "--role", "luna-curator", "--base-revision", "4")
+    code, failed = task_input(root, capsys, {"investigation_snapshot": oversized}, "task-update", "--role", "curator", "--base-revision", "4")
     assert code == 2 and "32768 bytes" in failed["error"]
     too_many = [{"id": f"C{index}", "kind": "UNKNOWN", "text": "x", "derived_from": [1], "supersedes": [], "evidence_refs": []} for index in range(65)]
-    code, failed = task_input(root, capsys, {"investigation_snapshot": too_many}, "task-update", "--role", "luna-curator", "--base-revision", "4")
+    code, failed = task_input(root, capsys, {"investigation_snapshot": too_many}, "task-update", "--role", "curator", "--base-revision", "4")
     assert code == 2 and "64 items" in failed["error"]
 
 
@@ -926,29 +926,29 @@ def test_investigator_and_reviewer_updates_append_without_rewriting_history(tmp_
     ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "source", "confidence": "SUPPORTED"}
     first = {"kind": "SUPPORTED", "text": "first finding", "evidence_refs": ["src"]}
     second = {"kind": "UNKNOWN", "text": "second finding", "evidence_refs": []}
-    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [first]}, "task-update", "--role", "luna", "--base-revision", "1")
-    code, appended = task_input(root, capsys, {"investigation_findings": [second]}, "task-update", "--role", "luna", "--base-revision", "2")
+    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [first]}, "task-update", "--role", "investigator", "--base-revision", "1")
+    code, appended = task_input(root, capsys, {"investigation_findings": [second]}, "task-update", "--role", "investigator", "--base-revision", "2")
     assert code == 0 and appended["revision"] == 3 and state_of(root)["investigation_findings"] == [first, second]
     state_path = root / ".context/state.json"; before = state_path.read_bytes()
-    code, failed = task_input(root, capsys, {"investigation_findings": [first]}, "task-update", "--role", "luna", "--base-revision", "3")
+    code, failed = task_input(root, capsys, {"investigation_findings": [first]}, "task-update", "--role", "investigator", "--base-revision", "3")
     assert code == 2 and "append-only" in failed["error"] and state_path.read_bytes() == before
 
     review = {"issue": "missing guard", "impact": "behavior can escape scope", "evidence_refs": ["src"]}
-    code, reviewed = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "3")
+    code, reviewed = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "reviewer", "--base-revision", "3")
     assert code == 0 and reviewed["revision"] == 4 and state_of(root)["review_findings"] == [review]
     before = state_path.read_bytes()
-    code, failed = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "4")
+    code, failed = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "reviewer", "--base-revision", "4")
     assert code == 2 and "append-only" in failed["error"] and state_path.read_bytes() == before
 
 
 def test_curator_and_sol_high_cannot_write_control_or_decision_state(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "reason")
     forbidden = (
-        ("sol-high", {"verification_target": "pytest"}),
-        ("sol-high", {"evidence_refs": []}),
-        ("sol-high", {"architectural_intent": "new design"}),
-        ("luna-curator", {"decisions": []}),
-        ("luna-curator", {"investigation_findings": []}),
+        ("reasoning-specialist", {"verification_target": "pytest"}),
+        ("reasoning-specialist", {"evidence_refs": []}),
+        ("reasoning-specialist", {"architectural_intent": "new design"}),
+        ("curator", {"decisions": []}),
+        ("curator", {"investigation_findings": []}),
     )
     state_path = root / ".context/state.json"; original = state_path.read_bytes()
     for role, update in forbidden:
@@ -961,7 +961,7 @@ def test_new_confirmed_finding_requires_fresh_native_confirmed_evidence(tmp_path
     source = root / "src.txt"; source.write_text("observed", encoding="utf-8")
     ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "inspection", "confidence": "SUPPORTED"}
     finding = {"kind": "CONFIRMED", "text": "overstated", "evidence_refs": ["src"]}
-    code, failed = task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [finding]}, "task-update", "--role", "luna-investigator", "--base-revision", "1")
+    code, failed = task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [finding]}, "task-update", "--role", "investigator", "--base-revision", "1")
     assert code == 2 and "CONFIRMED" in failed["error"]
 
 
@@ -971,19 +971,19 @@ def test_controller_projection_is_bounded_and_curator_receives_only_uncovered_su
     ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "source", "confidence": "SUPPORTED"}
     first = {"kind": "SUPPORTED", "text": "first", "evidence_refs": ["src"]}
     second = {"kind": "UNKNOWN", "text": "second", "evidence_refs": []}
-    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [first, second]}, "task-update", "--role", "luna", "--base-revision", "1")
+    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [first, second]}, "task-update", "--role", "investigator", "--base-revision", "1")
     snapshot = [{"id": "S1", "kind": "SUPPORTED", "text": "compact", "derived_from": [0], "supersedes": [], "evidence_refs": ["src"]}]
-    task_input(root, capsys, {"investigation_snapshot": snapshot, "investigation_covered_through": 1}, "task-update", "--role", "luna-curator", "--base-revision", "2")
+    task_input(root, capsys, {"investigation_snapshot": snapshot, "investigation_covered_through": 1}, "task-update", "--role", "curator", "--base-revision", "2")
     _, controller = run(capsys, root, "prepare", "--role", "controller")
     assert controller["Task"]["goal"] == "investigate"
     assert "Investigation Findings" not in controller and "Investigation Snapshot" not in controller and "first" not in json.dumps(controller)
-    _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
+    _, curator = run(capsys, root, "prepare", "--role", "curator")
     assert curator["Uncovered Investigation Findings"] == [second]
-    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
+    _, sol = run(capsys, root, "prepare", "--role", "reasoning-specialist")
     assert sol["Investigation Readiness"]["status"] == "PENDING"
     assert "compact" not in json.dumps(sol) and "second" not in json.dumps(sol)
     review = {"issue": "review gap", "impact": "needs decision", "evidence_refs": ["src"]}
-    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "3")
+    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "reviewer", "--base-revision", "3")
     _, controller = run(capsys, root, "prepare", "--role", "controller")
     assert "Review Readiness" not in controller
     code, _ = task_input(root, capsys, {"review_handled_through": 1}, "task-update", "--role", "controller", "--base-revision", "4")
@@ -995,14 +995,14 @@ def test_raw_provenance_and_evidence_identity_are_immutable_for_controller(tmp_p
     source = root / "src.txt"; source.write_text("one", encoding="utf-8")
     ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{hashlib.sha256(source.read_bytes()).hexdigest()}", "summary": "source", "confidence": "SUPPORTED"}
     finding = {"kind": "SUPPORTED", "text": "raw", "evidence_refs": ["src"]}
-    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [finding]}, "task-update", "--role", "luna", "--base-revision", "1")
+    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [finding]}, "task-update", "--role", "investigator", "--base-revision", "1")
     code, bad = task_input(root, capsys, {"investigation_findings": [finding]}, "task-update", "--role", "controller", "--base-revision", "2")
     assert code == 2 and "append-only" in bad["error"]
     rebound = ref | {"summary": "different"}
     code, bad = task_input(root, capsys, {"evidence_refs": [rebound]}, "task-update", "--role", "controller", "--base-revision", "2")
     assert code == 2 and "append-only" in bad["error"]
     review = {"issue": "issue", "impact": "impact", "evidence_refs": ["src"]}
-    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "2")
+    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "reviewer", "--base-revision", "2")
     code, bad = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "controller", "--base-revision", "3")
     assert code == 2 and "append-only" in bad["error"]
 
@@ -1027,11 +1027,11 @@ def test_memory_index_failure_fails_closed_and_stale_snapshot_is_unknown(tmp_pat
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     ref = {"id": "src", "kind": "file", "locator": f"file:src.txt#{digest}", "summary": "source", "confidence": "CONFIRMED"}
     finding = {"kind": "CONFIRMED", "text": "confirmed", "evidence_refs": ["src"]}
-    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [finding]}, "task-update", "--role", "luna", "--base-revision", "1")
+    task_input(root, capsys, {"evidence_refs": [ref], "investigation_findings": [finding]}, "task-update", "--role", "investigator", "--base-revision", "1")
     snapshot = [{"id": "S1", "kind": "CONFIRMED", "text": "compact", "derived_from": [0], "supersedes": [], "evidence_refs": ["src"]}]
-    task_input(root, capsys, {"investigation_snapshot": snapshot}, "task-update", "--role", "luna-curator", "--base-revision", "2")
+    task_input(root, capsys, {"investigation_snapshot": snapshot}, "task-update", "--role", "curator", "--base-revision", "2")
     source.write_text("changed", encoding="utf-8")
-    _, investigator = run(capsys, root, "prepare", "--role", "luna-investigator")
+    _, investigator = run(capsys, root, "prepare", "--role", "investigator")
     assert investigator["Investigation Snapshot"][0]["kind"] == "UNKNOWN"
     assert investigator["Investigation Snapshot"][0]["recorded_kind"] == "CONFIRMED"
     (root / ".agent-memory/INDEX.md").write_text("not markdown", encoding="utf-8")
@@ -1050,13 +1050,13 @@ def test_effective_stale_projections_cover_contradictions_snapshot_derivation_re
         {"kind": "SUPPORTED", "text": "fresh supported", "evidence_refs": ["fresh"]},
         {"kind": "CONTRADICTION", "text": "old contradiction", "evidence_refs": ["stale"]},
     ]
-    task_input(root, capsys, {"evidence_refs": [stale_ref, fresh_ref], "investigation_findings": raw}, "task-update", "--role", "luna", "--base-revision", "1")
+    task_input(root, capsys, {"evidence_refs": [stale_ref, fresh_ref], "investigation_findings": raw}, "task-update", "--role", "investigator", "--base-revision", "1")
     snapshot = [{"id": "S1", "kind": "SUPPORTED", "text": "mixed compact", "derived_from": [0, 1], "supersedes": [], "evidence_refs": ["fresh"]}]
-    task_input(root, capsys, {"investigation_snapshot": snapshot, "investigation_covered_through": 0}, "task-update", "--role", "luna-curator", "--base-revision", "2")
+    task_input(root, capsys, {"investigation_snapshot": snapshot, "investigation_covered_through": 0}, "task-update", "--role", "curator", "--base-revision", "2")
     review = {"issue": "review gap", "impact": "needs handling", "evidence_refs": ["fresh"]}
-    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "3")
+    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "reviewer", "--base-revision", "3")
     stale_file.write_text("two", encoding="utf-8")
-    _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
+    _, curator = run(capsys, root, "prepare", "--role", "curator")
     assert curator["Current Investigation Snapshot"][0]["kind"] == "UNKNOWN"
     assert curator["Current Investigation Snapshot"][0]["recorded_kind"] == "SUPPORTED"
     assert curator["Uncovered Investigation Findings"][2]["kind"] == "UNKNOWN"
@@ -1072,23 +1072,23 @@ def test_memory_index_nested_traversal_and_fail_closed_missing_cycle_and_unindex
     root = repo(tmp_path); run(capsys, root, "init")
     source = root / "src.txt"; source.write_text("one", encoding="utf-8")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    front = f'---\nEvidence: file:src.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: MEMORY\nAudience: ["sol-high"]\nTopics: ["needle"]\nSymbols: []\n---\n\n'
+    front = f'---\nEvidence: file:src.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: SUPPORTED\nKind: MEMORY\nAudience: ["reasoning-specialist"]\nTopics: ["needle"]\nSymbols: []\n---\n\n'
     nested = root / ".agent-memory/nested"; nested.mkdir()
     (nested / "INDEX.md").write_text(front + "# Nested index\n\n- [Nested fact](fact.md)\n", encoding="utf-8")
     (nested / "fact.md").write_text(front + "# Nested fact\n\nNested recall.\n", encoding="utf-8")
     root_index = root / ".agent-memory/INDEX.md"
     root_index.write_text(root_index.read_text(encoding="utf-8") + "\n- [Nested](nested/INDEX.md)\n", encoding="utf-8")
-    _, nested_pack = run(capsys, root, "prepare", "needle", "--role", "sol-high")
+    _, nested_pack = run(capsys, root, "prepare", "needle", "--role", "reasoning-specialist")
     assert any(item.get("source", "").endswith("nested/fact.md") for item in nested_pack["Supported Evidence"])
     (root / ".agent-memory/unindexed.md").write_text(front + "# Unindexed\n\nneedle hidden.\n", encoding="utf-8")
-    _, unindexed = run(capsys, root, "prepare", "needle hidden", "--role", "sol-high")
+    _, unindexed = run(capsys, root, "prepare", "needle hidden", "--role", "reasoning-specialist")
     assert not any(item.get("source", "").endswith("unindexed.md") for item in unindexed["Supported Evidence"])
     root_index.write_text(root_index.read_text(encoding="utf-8") + "\n- [Missing](missing.md)\n", encoding="utf-8")
-    _, missing = run(capsys, root, "prepare", "needle", "--role", "sol-high")
+    _, missing = run(capsys, root, "prepare", "needle", "--role", "reasoning-specialist")
     assert any("link missing" in item["text"] for item in missing["Unknowns"])
     root_index.write_text(root_index.read_text(encoding="utf-8").replace("\n- [Missing](missing.md)\n", ""), encoding="utf-8")
     (nested / "INDEX.md").write_text(front + "# Nested index\n\n- [Self](INDEX.md)\n", encoding="utf-8")
-    _, cycle = run(capsys, root, "prepare", "needle", "--role", "sol-high")
+    _, cycle = run(capsys, root, "prepare", "needle", "--role", "reasoning-specialist")
     assert any("cycle" in item["text"] for item in cycle["Unknowns"])
 
 
@@ -1097,12 +1097,12 @@ def test_task_input_evidence_is_supported_without_being_misclassified_as_stale(t
     task_ref = {"id": "request", "kind": "task-input", "locator": "user request", "summary": "stated requirement", "confidence": "SUPPORTED"}
     task_input(root, capsys, {"evidence_refs": [task_ref]}, "task-start", "inspect")
     raw = {"kind": "SUPPORTED", "text": "request requires guard", "evidence_refs": ["request"]}
-    task_input(root, capsys, {"investigation_findings": [raw]}, "task-update", "--role", "luna", "--base-revision", "1")
+    task_input(root, capsys, {"investigation_findings": [raw]}, "task-update", "--role", "investigator", "--base-revision", "1")
     snapshot = [{"id": "S1", "kind": "SUPPORTED", "text": "compact guard", "derived_from": [0], "supersedes": [], "evidence_refs": ["request"]}]
-    task_input(root, capsys, {"investigation_snapshot": snapshot, "investigation_covered_through": 0}, "task-update", "--role", "luna-curator", "--base-revision", "2")
+    task_input(root, capsys, {"investigation_snapshot": snapshot, "investigation_covered_through": 0}, "task-update", "--role", "curator", "--base-revision", "2")
     review = {"issue": "missing guard", "impact": "request can fail", "evidence_refs": ["request"]}
-    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "3")
-    _, curator = run(capsys, root, "prepare", "--role", "luna-curator")
+    task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "reviewer", "--base-revision", "3")
+    _, curator = run(capsys, root, "prepare", "--role", "curator")
     assert curator["Uncovered Investigation Findings"][0]["kind"] == "SUPPORTED"
     assert curator["Current Investigation Snapshot"][0]["kind"] == "SUPPORTED"
     _, controller = run(capsys, root, "prepare", "--role", "controller")
@@ -1125,10 +1125,10 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     _, packet = run(capsys, root, "task-status")
     assert packet["Task"]["revision"] == 2 and packet["Active Work"] == ["implement packet"]
     assert packet["Artifact Refs"][0]["path"] == "docs/handoff.md"
-    for role in ("luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"):
+    for role in ("investigator", "curator", "reasoning-specialist", "implementer", "reviewer"):
         _, role_pack = run(capsys, root, "prepare", "--role", role)
         assert "Artifact Refs" not in role_pack
-        if role == "terra-reviewer":
+        if role == "reviewer":
             assert "docs/handoff.md" in role_pack["Changed Surface"]
         else:
             assert "docs/handoff.md" not in json.dumps(role_pack)
@@ -1138,10 +1138,10 @@ def test_controller_status_is_bounded_and_task_artifacts_are_path_safe(tmp_path,
     code, failed = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "escape", "--path", "../outside.md", "--summary", "bad")
     assert code == 2 and "path" in failed["error"]
     (root / "docs/child.md").write_text("child notes", encoding="utf-8")
-    code, registered = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "child-artifact", "--path", "docs/child.md", "--summary", "child handoff", "--producer-role", "luna-investigator")
+    code, registered = run(capsys, root, "task-artifact", "--base-revision", "2", "--id", "child-artifact", "--path", "docs/child.md", "--summary", "child handoff", "--producer-role", "investigator")
     assert code == 0 and registered["revision"] == 3
     state = state_of(root)
-    assert state["artifact_refs"][-1]["producer_role"] == "luna-investigator"
+    assert state["artifact_refs"][-1]["producer_role"] == "investigator"
     assert "registered_by" not in state["artifact_refs"][-1]
     for private_path in (".context/state.json", ".context/audit/runtime.json", ".git/config", ".agent-memory/INDEX.md"):
         code, failed = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "private-" + private_path.split("/")[0].replace(".", ""), "--path", private_path, "--summary", "bad")
@@ -1167,12 +1167,12 @@ def test_reviewer_sees_changed_artifact_path_without_artifact_contents(tmp_path,
     subprocess.run(["git", "add", "src/example.py"], cwd=root, check=True)
     subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
     source.write_text("detailed artifact-only content\n", encoding="utf-8")
-    code, _ = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "handoff", "--path", "src/example.py", "--summary", "bounded notes", "--producer-role", "luna-investigator")
+    code, _ = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "handoff", "--path", "src/example.py", "--summary", "bounded notes", "--producer-role", "investigator")
     assert code == 0
-    _, reviewer = run(capsys, root, "prepare", "--role", "terra-reviewer")
+    _, reviewer = run(capsys, root, "prepare", "--role", "reviewer")
     assert "src/example.py" in reviewer["Changed Surface"]
     assert "detailed artifact-only content" not in json.dumps(reviewer)
-    _, stateless_reviewer = run(capsys, root, "prepare", "review artifact boundary", "--role", "terra-reviewer")
+    _, stateless_reviewer = run(capsys, root, "prepare", "review artifact boundary", "--role", "reviewer")
     assert "src/example.py" in stateless_reviewer["Changed Surface"]
     assert "detailed artifact-only content" not in json.dumps(stateless_reviewer)
 
@@ -1188,8 +1188,8 @@ def test_milestone_projection_rejects_symlinked_files(tmp_path, capsys):
         scope.symlink_to(external)
     except OSError:
         pytest.skip("symlink creation unavailable")
-    _, sol = run(capsys, root, "prepare", "--role", "sol-high")
-    _, implementer = run(capsys, root, "prepare", "--role", "terra-implementer")
+    _, sol = run(capsys, root, "prepare", "--role", "reasoning-specialist")
+    _, implementer = run(capsys, root, "prepare", "--role", "implementer")
     assert "EXTERNAL_MILESTONE_MARKER" not in json.dumps(sol)
     assert "EXTERNAL_MILESTONE_MARKER" not in json.dumps(implementer)
     assert "Milestone Scope" not in sol
@@ -1204,9 +1204,9 @@ def test_milestone_projection_rejects_symlinked_files(tmp_path, capsys):
 def test_large_artifact_pointer_is_accepted_without_reading_contents(tmp_path, capsys):
     root = repo(tmp_path); run(capsys, root, "init"); run(capsys, root, "task-start", "large artifact")
     artifact = root / "large-notes.bin"; artifact.write_bytes(b"x" * (4 * 1024 * 1024 + 1))
-    code, registered = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "large", "--path", "large-notes.bin", "--summary", "large notes", "--producer-role", "luna-investigator")
+    code, registered = run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "large", "--path", "large-notes.bin", "--summary", "large notes", "--producer-role", "investigator")
     assert code == 0 and registered["revision"] == 2
-    assert state_of(root)["artifact_refs"] == [{"id": "large", "path": "large-notes.bin", "summary": "large notes", "producer_role": "luna-investigator"}]
+    assert state_of(root)["artifact_refs"] == [{"id": "large", "path": "large-notes.bin", "summary": "large notes", "producer_role": "investigator"}]
 
 
 def test_missing_registered_artifact_does_not_invalidate_task_state(tmp_path, capsys):
@@ -1232,9 +1232,9 @@ def test_controller_mutation_responses_never_leak_raw_working_set(tmp_path, caps
     responses = []
     _, started = task_input(root, capsys, {"evidence_refs": [evidence]}, "task-start", "bounded lifecycle")
     responses.append(started)
-    _, updated = task_input(root, capsys, {"investigation_findings": [finding]}, "task-update", "--role", "luna", "--base-revision", "1")
+    _, updated = task_input(root, capsys, {"investigation_findings": [finding]}, "task-update", "--role", "investigator", "--base-revision", "1")
     responses.append(updated)
-    _, reviewed = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "terra-reviewer", "--base-revision", "2")
+    _, reviewed = task_input(root, capsys, {"review_findings": [review]}, "task-update", "--role", "reviewer", "--base-revision", "2")
     responses.append(reviewed)
     _, artifact = run(capsys, root, "task-artifact", "--base-revision", "3", "--id", "handoff", "--path", "source.txt", "--summary", marker)
     responses.append(artifact)
@@ -1262,3 +1262,4 @@ def test_ab_fixture_reports_unavailable_native_metrics():
     fixture = json.loads((Path(__file__).parent / "fixtures" / "workflow_ab.json").read_text(encoding="utf-8"))
     assert fixture["schema_version"] == 1 and set(fixture["workflows"]) == {"A", "B"}
     assert fixture["metrics"]["native_run"]["status"] == "UNAVAILABLE"
+

@@ -7,8 +7,8 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from . import codex_adapter
-from .core import milestone_check, prepare, rollback, stale, task_artifact, task_promote, task_show, task_status, task_update
+from .core import init, migrate, milestone_check, prepare, rollback, stale, uninstall, task_artifact, task_close, task_promote, task_show, task_start, task_status, task_update
+from .doctor import report
 
 
 class _Parser(argparse.ArgumentParser):
@@ -18,7 +18,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = _Parser(prog="context", description="Thaliris: Git-native context packs for Codex workflows")
+    p = _Parser(prog="context", description="Thaliris: Git-native context packs for runtime workflows")
     p.add_argument("--pretty", action="store_true")
     p.add_argument("--root", type=Path, default=Path.cwd())
     sub = p.add_subparsers(dest="command", required=True)
@@ -26,14 +26,13 @@ def _parser() -> argparse.ArgumentParser:
         sub.add_parser(name)
     q = sub.add_parser("prepare")
     q.add_argument("task", nargs="?")
-    q.add_argument("--role", required=True, choices=("controller", "sol-high", "luna", "luna-investigator", "luna-curator", "terra-implementer", "terra-reviewer"))
+    q.add_argument("--role", required=True, choices=("controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"))
     q = sub.add_parser("task-start")
     q.add_argument("goal")
     q.add_argument("--milestone")
     q.add_argument("--input")
-    q.add_argument("--intent-capture-id")
     q = sub.add_parser("task-update")
-    q.add_argument("--role", required=True, choices=("controller", "sol-high", "luna", "luna-investigator", "luna-curator", "terra-implementer", "terra-reviewer"))
+    q.add_argument("--role", required=True, choices=("controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"))
     q.add_argument("--base-revision", required=True, type=int)
     q.add_argument("--input", required=True)
     sub.add_parser("task-show")
@@ -43,7 +42,7 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--id", required=True)
     q.add_argument("--path", required=True)
     q.add_argument("--summary", required=True)
-    q.add_argument("--producer-role", choices=("luna", "luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"))
+    q.add_argument("--producer-role", choices=("investigator", "curator", "reasoning-specialist", "implementer", "reviewer"))
     q = sub.add_parser("task-close")
     q.add_argument("--base-revision", required=True, type=int)
     q = sub.add_parser(
@@ -52,14 +51,12 @@ def _parser() -> argparse.ArgumentParser:
         description="Promote explicit semantic records using the ACTIVE task evidence only.",
         epilog='Order: task-start -> task updates/review -> Controller decision -> task-promote -> task-close. Minimal JSON: {"records":[{"type":"decision","id":"D-001","title":"Use X","text":"Adopt X.","evidence_refs":["e1"],"confidence":"SUPPORTED"}]}',
     )
-    q.add_argument("--role", required=True, choices=("controller", "sol-high", "luna", "luna-investigator", "luna-curator", "terra-implementer", "terra-reviewer"))
+    q.add_argument("--role", required=True, choices=("controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"))
     q.add_argument("--base-revision", required=True, type=int)
     q.add_argument("--input", required=True)
     q = sub.add_parser("rollback")
     q.add_argument("backup")
     sub.add_parser("version")
-    q = sub.add_parser("audit-hook", help=argparse.SUPPRESS)
-    q.add_argument("event", choices=("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"))
     return p
 
 
@@ -73,32 +70,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = _parser().parse_args(argv)
         root = args.root.resolve()
-        if args.command == "audit-hook":
-            try:
-                payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                payload = None
-            response = codex_adapter.audit_hook(root, args.event, payload)
-            if response:
-                sys.stdout.write(response)
-            return 0
-        if args.command == "init": out = codex_adapter.init(root)
-        elif args.command == "migrate": out = codex_adapter.migrate(root)
-        elif args.command == "doctor": out = codex_adapter.doctor(root)
+        if args.command == "init": out = init(root)
+        elif args.command == "migrate": out = migrate(root)
+        elif args.command == "doctor": out = report(root)
         elif args.command == "stale": out = stale(root)
         elif args.command == "memory-status":
             data = stale(root); out = {"ok": data["ok"], "entries": len(data["entries"]), "stale": data["stale"]}
         elif args.command == "milestone-check": out = milestone_check(root)
         elif args.command == "prepare": out = prepare(root, args.task, args.role)
-        elif args.command == "task-start": out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.intent_capture_id)
+        elif args.command == "task-start": out = task_start(root, args.goal, args.milestone, args.input)
         elif args.command == "task-update": out = task_update(root, args.role, args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
         elif args.command == "task-status": out = task_status(root)
         elif args.command == "task-artifact": out = task_artifact(root, args.base_revision, args.id, args.path, args.summary, producer_role=getattr(args, "producer_role", None))
-        elif args.command == "task-close": out = codex_adapter.task_close(root, args.base_revision)
+        elif args.command == "task-close": out = task_close(root, args.base_revision)
         elif args.command == "task-promote": out = task_promote(root, args.role, args.base_revision, args.input)
         elif args.command == "rollback": out = rollback(root, args.backup)
-        elif args.command == "uninstall": out = codex_adapter.uninstall(root)
+        elif args.command == "uninstall": out = uninstall(root)
         else: out = {"ok": True, "version": __version__}
         print(json.dumps(out, sort_keys=True, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
         return 0 if out.get("ok", False) else 3
@@ -109,3 +97,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

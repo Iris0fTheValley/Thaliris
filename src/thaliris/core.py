@@ -18,23 +18,20 @@ import uuid
 from .markdown import Entry, evidence_status, parse
 from .models import ContextConfig
 
-MANAGED_START = "<!-- thaliris:begin -->"
-MANAGED_END = "<!-- thaliris:end -->"
 IGNORE_START = "# thaliris:begin"
 IGNORE_END = "# thaliris:end"
 # Accepted only so repositories initialized before the rename can be upgraded
 # or uninstalled without losing content outside the managed block.
-LEGACY_MANAGED_START = "<!-- codex-context:begin -->"
-LEGACY_MANAGED_END = "<!-- codex-context:end -->"
 LEGACY_IGNORE_START = "# codex-context:begin"
 LEGACY_IGNORE_END = "# codex-context:end"
 IGNORE_RULES = (".context/backups/", ".context/state.json", ".context/context.lock")
 # Keep the generated instruction surface small. Detailed policy lives in the
 # role-pack document and is loaded only when a task needs it.
-MANAGED = f"""{MANAGED_START}
+MANAGED = ""
+'''{MANAGED_START}
 ## Thaliris Router
 
-Codex remains the runtime. Thaliris stores bounded task control and pointers; it has no worker, scheduler, polling loop, or authority to decide correctness.
+runtime remains the runtime. Thaliris stores bounded task control and pointers; it has no worker, scheduler, polling loop, or authority to decide correctness.
 
 Controller uses `context task-status` or `context prepare --role controller` for bounded packets. `context task-show` is explicit raw diagnostics; `context task-artifact` passes pointers, not contents. Controller registers ordinary task-local pointers; `--producer-role` records the child producer. Pointers are not auto-injected.
 
@@ -46,12 +43,12 @@ Controller uses `context task-status` or `context prepare --role controller` for
 - Query `task-status` only after a known task mutation, a state/revision change, or recovery is required; do not repeat an unchanged revision.
 - Use `send_message` only for a new constraint, correction, or material evidence. Do not use it to ask for progress or to say “continue”.
 
-During an ACTIVE task, the persistent Controller is control-plane-only. The Controller MUST NOT perform repository investigation or source mutation at any time, before or after child dispatch. A successful child dispatch never changes those permissions. `task-close` requires a successful child dispatch. Repository investigation and source mutation belong only to fresh execution children using `fork_turns="none"`. The Controller may perform only bounded routing/state operations and deterministic acceptance checks. Root actions are mechanically guarded at PreToolUse; PostToolUse records dispatch evidence. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+During an ACTIVE task, the persistent Controller is control-plane-only. The Controller MUST NOT perform repository investigation or source mutation at any time, before or after child dispatch. A successful child dispatch never changes those permissions. `task-close` requires a successful child dispatch. Repository investigation and source mutation belong only to fresh execution children using `fork_turns="none"`. The Controller may perform only bounded routing/state operations and deterministic acceptance checks. Root actions are mechanically guarded at PreToolUse; PostToolUse records dispatch evidence. runtime owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
 Every new root child must use `fork_turns="none"`; this never unlocks root investigation or mutation.
 
 Read detailed role packs only when needed. Keep raw findings, evidence, transcripts, logs, and tool output outside Controller packets and durable memory; promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress.
 {MANAGED_END}
-"""
+'''
 
 ROLE_PACKS = """# Thaliris Role Packs
 
@@ -84,7 +81,7 @@ Specialists receive accepted decisions rather than raw history; Implementers rec
 the explicit Modification Boundary, including out-of-scope exclusions and required
 verification; reviewers return independent findings. If bounded findings contain an
 unresolved architecture, provenance, or cross-module decision, route only that
-Decision Context to `sol-high` rather than investigating at root. Promote only
+Decision Context to `reasoning-specialist` rather than investigating at root. Promote only
 reusable decisions, constraints, invariants, failure modes, or material milestone
 progress/verification. `task-artifact` records a bounded normalized external pointer. Artifact registration is Controller-only, may record a separate producer role, and excludes private control paths such as `.context/`, `.git/`, `.agent-memory/`, and `.milestones/`; artifact contents are never automatically injected into later roles.
 Reviewer `Changed Surface` remains Git truth even when a changed path is also registered as an artifact; registration isolates contents, not repository state visibility.
@@ -448,14 +445,13 @@ _CONTROLLER_FIELDS = _STATE_FIELDS - {
 }
 _ROLE_FIELDS = {
     "controller": _CONTROLLER_FIELDS,
-    "luna": {"investigation_findings", "evidence_refs"},
-    "luna-investigator": {"investigation_findings", "evidence_refs"},
-    "luna-curator": {"investigation_snapshot", "investigation_covered_through"},
-    "sol-high": set(),
-    "terra-implementer": {"changed_surface", "evidence_refs"},
-    "terra-reviewer": {"review_findings", "evidence_refs"},
+    "investigator": {"investigation_findings", "evidence_refs"},
+    "curator": {"investigation_snapshot", "investigation_covered_through"},
+    "reasoning-specialist": set(),
+    "implementer": {"changed_surface", "evidence_refs"},
+    "reviewer": {"review_findings", "evidence_refs"},
 }
-_PACK_ROLES = {"controller", "sol-high", "luna", "luna-investigator", "luna-curator", "terra-implementer", "terra-reviewer"}
+_PACK_ROLES = {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}
 
 
 def _state_path(root: Path) -> Path:
@@ -801,7 +797,7 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
         new_investigation: list[dict[str, object]] = []
         # Raw provenance is immutable for every role, including Controller.
         # Inputs are additions rather than a replacement of the stored prefix.
-        for key, additions_role in (("investigation_findings", {"luna", "luna-investigator"}), ("review_findings", {"terra-reviewer"})):
+        for key, additions_role in (("investigation_findings", {"investigator"}), ("review_findings", {"reviewer"})):
             if key not in partial:
                 continue
             if role not in additions_role:
@@ -817,10 +813,10 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
             proposed = partial["investigation_snapshot"]
             if not isinstance(proposed, list) or any(not set(item.get("supersedes", [])) <= previous_ids for item in proposed if isinstance(item, dict)):
                 raise ValueError("snapshot supersedes must reference the previous snapshot")
-            if role == "luna-curator" and "investigation_covered_through" not in partial:
+            if role == "curator" and "investigation_covered_through" not in partial:
                 # A fresh curator consumes the supplied uncovered suffix by default.
                 partial = partial | {"investigation_covered_through": len(state["investigation_findings"])}
-        if role == "luna-curator" and "investigation_covered_through" in partial and partial["investigation_covered_through"] < state["investigation_covered_through"]:
+        if role == "curator" and "investigation_covered_through" in partial and partial["investigation_covered_through"] < state["investigation_covered_through"]:
             raise ValueError("curator coverage cannot move backwards")
         if "evidence_refs" in partial:
             additions = partial["evidence_refs"]
@@ -921,7 +917,7 @@ _PROMOTION_TYPES = {"decision", "invariant", "failure_mode", "constraint"}
 _PROMOTION_RECORD_KEYS = {"type", "id", "title", "text", "evidence_refs", "confidence", "audience", "topics", "symbols", "applicability"}
 _PROMOTION_MILESTONE_KEYS = {"id", "progress", "verification", "evidence_refs", "confidence"}
 _PROMOTION_ID = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")
-_PROMOTION_AUDIENCE = {"all", "controller", "sol-high", "luna", "terra-implementer", "terra-reviewer"}
+_PROMOTION_AUDIENCE = {"all", "controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}
 
 
 def _promotion_text(value: object, field: str, *, maximum: int = 2000) -> str:
@@ -1314,8 +1310,7 @@ def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, ob
         return _controller_packet(state)
     milestone = _milestone_slice(root, state["current_milestone"])
     query = " ".join([state["goal"], *state["relevant_symbols"], *state["relevant_files"]])
-    memory_role = "luna" if role == "luna-investigator" else role
-    memory = _memory_context(root, query, memory_role) if role != "luna-curator" else {"confirmed": [], "supported": [], "constraints": [], "decisions": [], "unknowns": [], "evidence": [], "files": [], "symbols": []}
+    memory = _memory_context(root, query, role) if role != "curator" else {"confirmed": [], "supported": [], "constraints": [], "decisions": [], "unknowns": [], "evidence": [], "files": [], "symbols": []}
     registry = {ref["id"]: ref for ref in state["evidence_refs"]}
     effective_raw = _effective_findings(root, state["investigation_findings"], registry)
     effective_snapshot = _effective_snapshot(root, state["investigation_snapshot"], effective_raw, registry)
@@ -1354,26 +1349,26 @@ def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, ob
     review_pending = len(state["review_findings"]) - state["review_handled_through"]
     readiness = {"raw_finding_count": len(state["investigation_findings"]), "covered_through": state["investigation_covered_through"], "pending_findings": investigation_pending, "status": "PENDING" if investigation_pending else "READY"}
     review_status = {"finding_count": len(state["review_findings"]), "handled_through": state["review_handled_through"], "pending_findings": review_pending, "status": "PENDING" if review_pending else "READY"}
-    if role == "luna-curator":
+    if role == "curator":
         suffix = effective_raw[state["investigation_covered_through"]:]
         payload = {"Goal": state["goal"], "Current Investigation Snapshot": effective_snapshot, "Uncovered Investigation Findings": suffix, "Investigation Readiness": readiness}
         return meta | payload | {"Evidence refs": refs_for(effective_snapshot, suffix)}
-    if role == "sol-high":
+    if role == "reasoning-specialist":
         facts, supported = confirmed + memory["confirmed"], supported + memory["supported"]
         constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"]
         payload = {"Goal": state["goal"], "Confirmed Facts": facts, "Supported Evidence": supported, "Hard Constraints": constraints, "Decisions": decisions, "Unknowns": state["unknowns"] + demoted + demoted_supported + memory["unknowns"], "Contradictions": state["contradictions"], "Investigation Readiness": readiness, "Review Readiness": review_status, "Milestone Scope": milestone.get("Scope"), "Milestone Decisions": milestone.get("Decisions")}
         return meta | payload | {"Evidence refs": refs_for(facts, supported, constraints, decisions, payload["Unknowns"], payload["Contradictions"])}
-    if role in {"luna", "luna-investigator"}:
+    if role == "investigator":
         unknowns = state["unknowns"] + demoted + demoted_supported + memory["unknowns"]
         constraints = state["constraints"] + memory["constraints"]
         payload = {"Goal": state["goal"], "Investigation Target": state["verification_target"] or state["goal"], "Investigation Snapshot": effective_snapshot, "Relevant Files": list(dict.fromkeys(state["relevant_files"] + memory["files"])), "Relevant Symbols": list(dict.fromkeys(state["relevant_symbols"] + memory["symbols"])), "Hard Constraints": constraints, "Unknowns": unknowns, "Contradictions": state["contradictions"], "Verification Target": state["verification_target"] or milestone.get("Verification"), "Milestone Verification": milestone.get("Verification"), "Investigation Readiness": readiness}
         return meta | payload | {"Evidence refs": refs_for(constraints, unknowns, state["contradictions"], effective_snapshot)}
-    if role == "terra-implementer":
+    if role == "implementer":
         facts, supported = confirmed + memory["confirmed"], supported + memory["supported"]
         constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"]
         payload = {"Goal": state["goal"], "Confirmed Facts": facts, "Supported Evidence": supported, "Hard Constraints": constraints, "Decisions": decisions, "Relevant Files": list(dict.fromkeys(state["relevant_files"] + memory["files"])), "Modification Boundary": state["modification_boundary"], "Required Verification": state["verification_target"], "Milestone Scope": milestone.get("Scope"), "Implementation Constraints": milestone.get("Decisions")}
         return meta | payload | {"Evidence refs": refs_for(facts, supported, constraints, decisions, state["modification_boundary"])}
-    if role == "terra-reviewer":
+    if role == "reviewer":
         changed = list(dict.fromkeys(state["changed_surface"] + _changed_files(root)))
         intent = state["architectural_intent"] or milestone.get("Scope")
         constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"] + ([milestone["Decisions"]] if "Decisions" in milestone else [])
@@ -1394,15 +1389,14 @@ def prepare(root: Path, task: str | None, role: str) -> dict[str, object]:
     if task is None:
         root = _repo_root(root)
         return _state_pack(root, _load_state(root, active=True), role)
-    if role == "luna-curator": raise ValueError("luna-curator requires current task state")
+    if role == "curator": raise ValueError("curator requires current task state")
     if role == "controller":
         return {"ok": True, "schema_version": 1, "role": "controller", "Task": {"id": None, "goal": task, "status": "UNBOUND", "revision": None, "milestone": None}, "Active Work": [], "Pending Results": [], "Unresolved Questions": [], "Artifact Refs": [], "Accepted Constraints": [], "Accepted Decisions": []}
-    memory_role = "luna" if role == "luna-investigator" else role
-    memory = _memory_context(root, task, memory_role)
+    memory = _memory_context(root, task, role)
     common = {"ok": True, "schema_version": 1, "task_id": None, "state_revision": None, "role": role, "Goal": task, "Evidence refs": memory["evidence"]}
-    if role == "sol-high": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Unknowns": memory["unknowns"], "Contradictions": [], "Investigation Readiness": {"raw_finding_count": 0, "covered_through": 0, "pending_findings": 0, "status": "READY"}, "Review Readiness": {"finding_count": 0, "handled_through": 0, "pending_findings": 0, "status": "READY"}}
-    if role in {"luna", "luna-investigator"}: return common | {"Investigation Target": task, "Investigation Snapshot": [], "Relevant Files": memory["files"], "Relevant Symbols": memory["symbols"], "Hard Constraints": memory["constraints"], "Unknowns": memory["unknowns"], "Contradictions": [], "Verification Target": task}
-    if role == "terra-implementer": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Relevant Files": memory["files"], "Modification Boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "Required Verification": None}
+    if role == "reasoning-specialist": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Unknowns": memory["unknowns"], "Contradictions": [], "Investigation Readiness": {"raw_finding_count": 0, "covered_through": 0, "pending_findings": 0, "status": "READY"}, "Review Readiness": {"finding_count": 0, "handled_through": 0, "pending_findings": 0, "status": "READY"}}
+    if role == "investigator": return common | {"Investigation Target": task, "Investigation Snapshot": [], "Relevant Files": memory["files"], "Relevant Symbols": memory["symbols"], "Hard Constraints": memory["constraints"], "Unknowns": memory["unknowns"], "Contradictions": [], "Verification Target": task}
+    if role == "implementer": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Relevant Files": memory["files"], "Modification Boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "Required Verification": None}
     visible = memory["constraints"] + memory["decisions"]
     used = {ref_id for item in visible for ref_id in item["evidence_refs"]}
     evidence = [ref for ref in memory["evidence"] if ref["id"] in used]
@@ -1428,3 +1422,4 @@ def milestone_check(root: Path) -> dict[str, object]:
             except ValueError as exc: errors.append(str(exc))
         checked.append(link)
     return {"ok": not errors, "checked": checked, "errors": errors}
+

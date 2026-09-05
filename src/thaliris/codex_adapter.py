@@ -13,6 +13,10 @@ CODEX_ROLE_MAP = {
     "luna-curator": "curator", "sol-high": "reasoning-specialist",
     "terra-implementer": "implementer", "terra-reviewer": "reviewer",
 }
+# The adapter accepts the Core vocabulary as well as Codex's concrete aliases.
+# This is a CLI ingress contract, not a second role registry: every value is
+# immediately normalized by semantic_role() before it reaches Core.
+ROLE_CHOICES = tuple(sorted(core._PACK_ROLES | set(CODEX_ROLE_MAP)))
 
 
 def semantic_role(runtime_role: str) -> str:

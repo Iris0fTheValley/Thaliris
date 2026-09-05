@@ -153,7 +153,7 @@ def test_flattened_v2_runtime_evidence_records_pre_and_post_hooks(tmp_path):
     evidence = json.loads(runtime[0].read_text(encoding="utf-8"))
     assert evidence["events_observed"] == {"PreToolUse": True, "PostToolUse": True}
     assert evidence["tool_names_observed"] == ["collaborationspawn_agent", "collaborationsend_message"]
-    assert evidence["pre_dispatch_isolation"] == "REJECTED"
+    assert evidence["pre_dispatch_isolation"] == "NONCOMPLIANT"
     assert evidence["tools_observed"] == ["spawn_agent", "send_message"]
     assert _context_isolation(root)["observed"] == {
         "pre_dispatch_hook_supported": "YES",
@@ -762,6 +762,7 @@ def test_controller_guard_allows_only_fixed_active_root_control_plane_commands(t
         "node -e \"process.stdout.write('x')\"",
         "unknown-executable --version",
         "git diff",
+        "git hash-object src/main.py",
         "git log -1 --oneline",
         "cat harmless.txt",
         "rg harmless .",
@@ -902,6 +903,14 @@ def test_successful_spawn_evidence_is_scoped_to_the_active_task(tmp_path):
     for command in ("pytest -q tests/test_target.py", "context task-close --base-revision 1"):
         response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    # A completed noncompliant spawn is not qualifying evidence for Task B.
+    handle_hook(
+        root,
+        "PostToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "all"}, tool_response={"task_name": "/root/noncompliant-child"}),
+    )
+    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})))
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
     handle_hook(
         root,
         "PostToolUse",

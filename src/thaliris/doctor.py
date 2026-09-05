@@ -11,8 +11,8 @@ import tomllib
 
 from .models import ContextConfig
 from .core import entries, milestone_check, _load_state
-from .codex_adapter import _effective_agents_path, _managed_span
-from .intent_audit import hooks_health, is_managed_handler, managed_hook_spec_hash
+from .codex_adapter import _effective_root_instruction_path, _managed_span
+from .intent_audit import child_identity_corroboration, hooks_health, is_managed_handler, managed_hook_spec_hash
 
 UNKNOWN = "UNKNOWN"
 
@@ -120,6 +120,7 @@ def _context_isolation(root: Path) -> dict[str, object]:
             "pre_dispatch_enforcement": UNKNOWN,
             "post_dispatch_observation": "YES" if post_observed else UNKNOWN,
             "current_hook_hash_observed": "YES" if (pre_observed or post_observed) else ("STALE" if stale else UNKNOWN),
+            "pretool_child_identity_corroborated": child_identity_corroboration(root),
             "hook_trust_runtime_status": UNKNOWN,
         },
     }
@@ -194,7 +195,7 @@ def report(root: Path) -> dict[str, object]:
         milestone_state["structure"] = "YES" if milestone_check(root)["ok"] else "NO"
     else:
         milestone_state["structure"] = "NO"
-    agents = _effective_agents_path(root)
+    agents = _effective_root_instruction_path(root, raw)
     if agents.is_file():
         try:
             agents_text = agents.read_text(encoding="utf-8")

@@ -70,6 +70,14 @@ _SOURCE_MUTATION = re.compile(
     r"(?i)(?:apply_patch|git\s+(?:apply|commit|reset|checkout|restore|rebase)|(?:set|add|clear|out|remove|move|copy|rename|new)-content|(?:set|add|remove|move|copy|rename|new)-item|\b(?:ni|mkdir)\b|(?<![<>])>{1,2}(?![&]))"
 )
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
+_ACCEPTANCE_COMMAND = re.compile(
+    r"^(?:"
+    r"pytest|python\s+-m\s+pytest|uv\s+run\s+(?:python\s+-m\s+)?pytest|"
+    r"npm\s+(?:test|run\s+test)|pnpm\s+(?:test|run\s+test)|yarn\s+test|"
+    r"cargo\s+test|go\s+test|dotnet\s+test"
+    r")(?:\s+[A-Za-z0-9_./:@=+\-]+)*$",
+    re.IGNORECASE,
+)
 ALLOWED_FINDINGS = {
     "requirement_omission",
     "constraint_weakening",
@@ -98,8 +106,20 @@ def hook_spec() -> dict[str, Any]:
 
 
 def managed_hook_spec_hash() -> str:
-    """Fingerprint only Thaliris's deterministic managed hook fragment."""
-    encoded = json.dumps(hook_spec(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    """Fingerprint the logical managed fragment, not a local executable path."""
+    logical = hook_spec()
+    hooks = logical.get("hooks")
+    if isinstance(hooks, dict):
+        for event, entries in hooks.items():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                    continue
+                for handler in entry["hooks"]:
+                    if isinstance(handler, dict) and handler.get("type") == "command":
+                        handler["command"] = f"{HOOK_COMMAND_PREFIX} {event}"
+    encoded = json.dumps(logical, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -244,6 +264,7 @@ def hooks_health(root: Path) -> dict[str, str]:
         "runner_resolution": _runner_resolution(),
         "runner_freshness": "YES" if observed["audit_runs"] == "YES" else "UNKNOWN",
         "current_hook_hash_observed": observed["current_hook_hash_observed"],
+        "pretool_child_identity_corroborated": child_identity_corroboration(root),
         "hook_trust_runtime_status": "UNKNOWN",
     }
 
@@ -540,6 +561,9 @@ def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str)
     """Persist only bounded child execution categories, never tool payloads."""
     if event != "PreToolUse":
         return
+    agent_id = payload.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id:
+        return
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
         return
@@ -551,11 +575,13 @@ def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str)
         command = _bash_command(payload)
         if command and (_BROAD_INVESTIGATION.search(command) or re.search(r"(?i)^git\s+diff\b", command)):
             action = "BROAD_INVESTIGATION"
-    if action is None:
-        return
     path = _session_dir(root, payload) / "runtime.json"
     state = _load_runtime(path)
     state["managed_hook_spec_hash"] = managed_hook_spec_hash()
+    _bounded_append(state, "pretool_child_agent_id_hashes", _identity_hash(agent_id))
+    if action is None:
+        _write_capture(path, state)
+        return
     tools = state.setdefault("child_tools_observed", [])
     if normalized not in tools and len(tools) < 16:
         tools.append(normalized)
@@ -574,13 +600,41 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> None:
     agent_type = payload.get("agent_type")
     turn_id = payload.get("turn_id")
     if isinstance(agent_id, str) and agent_id:
-        state["subagent_start_agent_id_hash"] = _identity_hash(agent_id)
+        _bounded_append(state, "subagent_start_agent_id_hashes", _identity_hash(agent_id))
     if isinstance(agent_type, str) and agent_type:
-        state["subagent_start_agent_type"] = agent_type[:80]
+        _bounded_append(state, "subagent_start_agent_types", agent_type[:80])
     if isinstance(turn_id, str) and turn_id:
-        state["subagent_start_turn_id_hash"] = _identity_hash(turn_id)
+        _bounded_append(state, "subagent_start_turn_id_hashes", _identity_hash(turn_id))
     state.setdefault("events_observed", {})["SubagentStart"] = True
     _write_capture(path, state)
+
+
+def _bounded_append(state: dict[str, Any], key: str, value: str | None) -> None:
+    if not value:
+        return
+    values = state.setdefault(key, [])
+    if isinstance(values, list) and value not in values and len(values) < 16:
+        values.append(value)
+
+
+def child_identity_corroboration(root: Path) -> str:
+    """Return YES only for an in-record SubagentStart/PreTool identity match."""
+    expected = managed_hook_spec_hash()
+    for path in (root / ".context" / "audit").glob("*/runtime.json"):
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(state, dict) or state.get("managed_hook_spec_hash") != expected:
+            continue
+        starts = state.get("subagent_start_agent_id_hashes")
+        pretools = state.get("pretool_child_agent_id_hashes")
+        if isinstance(starts, list) and isinstance(pretools, list):
+            start_hashes = {item for item in starts if isinstance(item, str)}
+            pretool_hashes = {item for item in pretools if isinstance(item, str)}
+            if start_hashes & pretool_hashes:
+                return "YES"
+    return "UNKNOWN"
 
 
 def _bash_command(payload: dict[str, Any]) -> str | None:
@@ -683,7 +737,7 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
             if not _successful_spawn_observed(root, payload):
                 return "TASK_CLOSE_NO_CHILD"
             continue
-        if re.match(r"^(?:pytest|python\s+-m\s+pytest|uv\s+run\s+(?:python\s+-m\s+)?pytest)\b", lowered):
+        if _ACCEPTANCE_COMMAND.fullmatch(value):
             if not _successful_spawn_observed(root, payload):
                 return "ACCEPTANCE_BEFORE_CHILD"
             target = _active_verification_target(root)

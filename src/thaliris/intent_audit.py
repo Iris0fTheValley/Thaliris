@@ -18,7 +18,7 @@ import time
 from typing import Any
 
 HOOK_COMMAND_PREFIX = "context audit-hook"
-HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop")
+HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "Stop")
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed intent-audit hooks"
 AUDIT_INTERVAL = 5
 MAX_AUDIT_RESULTS = 32
@@ -58,7 +58,7 @@ _CONTROLLER_MUTATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in
 # collaboration names (for compatibility/observation), and root shell
 # execution.  The latter is intentionally explicit: a broad matcher would
 # also intercept unrelated tools whose payload cannot be classified safely.
-PRE_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN}|{_CONTROLLER_MUTATION_TOOL_PATTERN})$"
+PRE_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN}|{_CONTROLLER_MUTATION_TOOL_PATTERN}|mcp__.*)$"
 _DELEGATION_TOOL_NAMES = frozenset({"spawn_agent", "Agent", "followup_task", "send_input", "send_message"})
 _CONTROLLER_BOUNDARY_REASON = "THALIRIS_CONTROLLER_BOUNDARY: delegate investigation and edits to a fresh child; root may run only bounded control-plane or acceptance checks."
 _CONTROLLER_CLOSE_REASON = "THALIRIS_CONTROLLER_BOUNDARY: dispatch a fresh child before task-close."
@@ -95,6 +95,12 @@ def hook_spec() -> dict[str, Any]:
             entry["matcher"] = PRE_TOOL_MATCHER
         hooks[event] = [entry]
     return {"hooks": hooks}
+
+
+def managed_hook_spec_hash() -> str:
+    """Fingerprint only Thaliris's deterministic managed hook fragment."""
+    encoded = json.dumps(hook_spec(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _managed_handler(event: str) -> dict[str, Any]:
@@ -237,6 +243,8 @@ def hooks_health(root: Path) -> dict[str, str]:
         "runner_available": runner,
         "runner_resolution": _runner_resolution(),
         "runner_freshness": "YES" if observed["audit_runs"] == "YES" else "UNKNOWN",
+        "current_hook_hash_observed": observed["current_hook_hash_observed"],
+        "hook_trust_runtime_status": "UNKNOWN",
     }
 
 
@@ -289,8 +297,9 @@ def _resolve_runner() -> str | None:
 def _observed_health(root: Path) -> dict[str, str]:
     base = root / ".context" / "audit"
     observed = classification = fidelity = runs = "UNKNOWN"
+    current_hash = "UNKNOWN"
     if not base.is_dir():
-        return {"runtime_observed": observed, "root_classification": classification, "payload_fidelity": fidelity, "audit_runs": runs}
+        return {"runtime_observed": observed, "root_classification": classification, "payload_fidelity": fidelity, "audit_runs": runs, "current_hook_hash_observed": current_hash}
     states = []
     for path in base.glob("*/*/capture.json"):
         try:
@@ -299,17 +308,29 @@ def _observed_health(root: Path) -> dict[str, str]:
                 states.append(value)
         except (OSError, json.JSONDecodeError):
             continue
-    runtime_files = list(base.glob("*/runtime.json"))
-    if states or runtime_files:
+    expected = managed_hook_spec_hash()
+    runtime_files = []
+    stale = False
+    for path in base.glob("*/runtime.json"):
+        try:
+            runtime = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(runtime, dict) and runtime.get("managed_hook_spec_hash") == expected:
+            runtime_files.append(path)
+        else:
+            stale = True
+    if runtime_files:
         observed = "YES"
-        # Absence of agent_id is the documented topology signal, but remains
-        # UNKNOWN until an external live probe validates that runtime contract.
+        # Current Codex builds have exposed this signal, but PreToolUse does
+        # not formally guarantee it across versions; it remains probe-bound.
         classification = "UNKNOWN"
         # Hook strings are available evidence, not a live attestation that the
         # runtime supplied plaintext faithfully on every execution path.
         fidelity = "UNKNOWN"
         runs = "YES" if any(state.get("fresh_verified") is True for state in states) else "UNKNOWN"
-    return {"runtime_observed": observed, "root_classification": classification, "payload_fidelity": fidelity, "audit_runs": runs}
+    current_hash = "YES" if runtime_files else ("STALE" if stale else "UNKNOWN")
+    return {"runtime_observed": observed, "root_classification": classification, "payload_fidelity": fidelity, "audit_runs": runs, "current_hook_hash_observed": current_hash}
 
 
 def handle_hook(root: Path, event: str, payload: object) -> str:
@@ -322,6 +343,9 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
         if os.environ.get(AUDIT_ENV) == "1" or event not in HOOK_EVENTS or not isinstance(payload, dict):
             return ""
         root = _hook_repository_root(root, payload)
+        if event == "SubagentStart":
+            _record_subagent_start(root, payload)
+            return ""
         if payload.get("agent_id") is not None:
             tool = payload.get("tool_name") or payload.get("tool")
             if event == "PreToolUse" and isinstance(tool, str) and _tool_basename(tool) in _DELEGATION_TOOL_NAMES:
@@ -445,7 +469,7 @@ def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
     state = _load_runtime(path)
     if payload.get("source") in {"startup", "clear"}:
         state.pop("expected_continuation_sha256", None)
-    state.update({"version": 3, "session_start_observed": True, "root_classification": "UNKNOWN"})
+    state.update({"version": 3, "session_start_observed": True, "root_classification": "UNKNOWN", "managed_hook_spec_hash": managed_hook_spec_hash()})
     _write_capture(path, state)
 
 
@@ -453,6 +477,7 @@ def _record_runtime_event(root: Path, payload: dict[str, Any], event: str, tool:
     """Persist bounded evidence that a root hook event reached this adapter."""
     path = _session_dir(root, payload) / "runtime.json"
     state = _load_runtime(path)
+    state["managed_hook_spec_hash"] = managed_hook_spec_hash()
     observed = state.setdefault("events_observed", {})
     observed[event] = True
     tools = state.setdefault("tools_observed", [])
@@ -483,6 +508,7 @@ def _record_runtime_event(root: Path, payload: dict[str, Any], event: str, tool:
             task_id = _active_task_id(root)
             if task_id is not None:
                 state["successful_spawn_task_id_hash"] = _task_key(task_id)
+                state["successful_spawn_hook_spec_hash"] = managed_hook_spec_hash()
     _write_capture(path, state)
 
 
@@ -490,6 +516,7 @@ def _record_controller_guard_event(root: Path, payload: dict[str, Any], action: 
     """Persist only bounded action/decision evidence for the root guard."""
     path = _session_dir(root, payload) / "runtime.json"
     state = _load_runtime(path)
+    state["managed_hook_spec_hash"] = managed_hook_spec_hash()
     state.setdefault("events_observed", {})["PreToolUse"] = True
     tool = payload.get("tool_name") or payload.get("tool")
     normalized = _tool_basename(tool) if isinstance(tool, str) else "UNKNOWN"
@@ -528,12 +555,31 @@ def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str)
         return
     path = _session_dir(root, payload) / "runtime.json"
     state = _load_runtime(path)
+    state["managed_hook_spec_hash"] = managed_hook_spec_hash()
     tools = state.setdefault("child_tools_observed", [])
     if normalized not in tools and len(tools) < 16:
         tools.append(normalized)
     actions = state.setdefault("child_actions_observed", [])
     if action not in actions and len(actions) < 16:
         actions.append(action)
+    _write_capture(path, state)
+
+
+def _record_subagent_start(root: Path, payload: dict[str, Any]) -> None:
+    """Keep bounded identity corroboration; never alter child context or routing."""
+    path = _session_dir(root, payload) / "runtime.json"
+    state = _load_runtime(path)
+    state["managed_hook_spec_hash"] = managed_hook_spec_hash()
+    agent_id = payload.get("agent_id")
+    agent_type = payload.get("agent_type")
+    turn_id = payload.get("turn_id")
+    if isinstance(agent_id, str) and agent_id:
+        state["subagent_start_agent_id_hash"] = _identity_hash(agent_id)
+    if isinstance(agent_type, str) and agent_type:
+        state["subagent_start_agent_type"] = agent_type[:80]
+    if isinstance(turn_id, str) and turn_id:
+        state["subagent_start_turn_id_hash"] = _identity_hash(turn_id)
+    state.setdefault("events_observed", {})["SubagentStart"] = True
     _write_capture(path, state)
 
 
@@ -556,6 +602,7 @@ def _successful_spawn_observed(root: Path, payload: dict[str, Any]) -> bool:
         isinstance(value, dict)
         and task_id is not None
         and value.get("successful_spawn_task_id_hash") == _task_key(task_id)
+        and value.get("successful_spawn_hook_spec_hash") == managed_hook_spec_hash()
     )
 
 
@@ -584,6 +631,24 @@ def _post_tool_succeeded(response: object) -> bool:
     return True
 
 
+def _controller_roles(command: str) -> list[str]:
+    """Extract only argparse's real long ``--role`` spelling from a fixed CLI."""
+    return re.findall(r"(?:^|\s)--role(?:=|\s+)([a-z][a-z0-9-]*)\b", command.lower())
+
+
+def _active_verification_target(root: Path) -> str | None:
+    try:
+        value = json.loads((root / ".context" / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    target = value.get("verification_target") if value.get("status") == "ACTIVE" else None
+    return target if isinstance(target, str) and target.strip() else None
+
+
+def _normalized_command(value: str) -> str:
+    return " ".join(value.split())
+
+
 def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | None:
     """Allow only fixed control-plane and acceptance commands for an ACTIVE root."""
     if _active_task_id(root) is None:
@@ -604,12 +669,16 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
             continue
         if re.fullmatch(r"context\s+prepare\s+--role(?:=|\s+)controller", lowered):
             continue
-        if re.match(r"^context\s+task-update\b", lowered) and re.search(r"(?:--role|-role)(?:=|\s+)controller\b", lowered):
-            continue
+        if re.match(r"^context\s+task-update\b", lowered):
+            if _controller_roles(value) == ["controller"]:
+                continue
+            return "ROOT_COMMAND_NOT_ALLOWED"
         if re.match(r"^context\s+task-artifact\b", lowered):
             continue
-        if re.match(r"^context\s+task-promote\b", lowered) and re.search(r"(?:--role|-role)(?:=|\s+)controller\b", lowered):
-            continue
+        if re.match(r"^context\s+task-promote\b", lowered):
+            if _controller_roles(value) == ["controller"]:
+                continue
+            return "ROOT_COMMAND_NOT_ALLOWED"
         if re.match(r"^context\s+task-close\b", lowered):
             if not _successful_spawn_observed(root, payload):
                 return "TASK_CLOSE_NO_CHILD"
@@ -617,7 +686,10 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
         if re.match(r"^(?:pytest|python\s+-m\s+pytest|uv\s+run\s+(?:python\s+-m\s+)?pytest)\b", lowered):
             if not _successful_spawn_observed(root, payload):
                 return "ACCEPTANCE_BEFORE_CHILD"
-            continue
+            target = _active_verification_target(root)
+            if target is not None and _normalized_command(value) == _normalized_command(target):
+                continue
+            return "ACCEPTANCE_TARGET_REQUIRED"
         if re.fullmatch(r"git\s+status\s+--short", lowered):
             continue
         if re.fullmatch(r"git\s+diff\s+--(?:check|stat|name-only)", lowered):
@@ -1123,6 +1195,12 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
         return ""
+    if tool.startswith("mcp__"):
+        root = _hook_repository_root(root or Path.cwd(), payload)
+        if _active_task_id(root) is None:
+            return ""
+        _record_controller_guard_event(root, payload, "MCP_ROOT_NOT_ALLOWED", "blocked")
+        return _permission_deny(_CONTROLLER_BOUNDARY_REASON)
     if _tool_basename(tool) in _CONTROLLER_MUTATION_TOOL_NAMES:
         root = _hook_repository_root(root or Path.cwd(), payload)
         if _active_task_id(root) is None:

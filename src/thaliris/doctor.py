@@ -11,21 +11,25 @@ import tomllib
 
 from .models import ContextConfig
 from .core import entries, milestone_check, _load_state
-from .codex_adapter import _managed_span
-from .intent_audit import hooks_health, is_managed_handler
+from .codex_adapter import _effective_agents_path, _managed_span
+from .intent_audit import hooks_health, is_managed_handler, managed_hook_spec_hash
 
 UNKNOWN = "UNKNOWN"
 
 
-def _runtime_hook_evidence(root: Path) -> tuple[bool, bool, bool]:
+def _runtime_hook_evidence(root: Path) -> tuple[bool, bool, bool, bool]:
     """Read only private runtime markers emitted by the hook adapter."""
-    pre = post = spawn = False
+    pre = post = spawn = stale = False
+    expected = managed_hook_spec_hash()
     for path in (root / ".context" / "audit").glob("*/runtime.json"):
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError):
             continue
         if not isinstance(value, dict):
+            continue
+        if value.get("managed_hook_spec_hash") != expected:
+            stale = True
             continue
         events = value.get("events_observed")
         if isinstance(events, dict):
@@ -34,18 +38,21 @@ def _runtime_hook_evidence(root: Path) -> tuple[bool, bool, bool]:
         tools = value.get("tools_observed")
         if isinstance(tools, list):
             spawn = spawn or "spawn_agent" in tools
-    return pre, post, spawn
+    return pre, post, spawn, stale
 
 
 def _controller_boundary_evidence(root: Path) -> dict[str, str]:
     """Report only observed root-guard events from private runtime markers."""
     guard = blocked = child = False
+    expected = managed_hook_spec_hash()
     for path in (root / ".context" / "audit").glob("*/runtime.json"):
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError):
             continue
         if not isinstance(value, dict):
+            continue
+        if value.get("managed_hook_spec_hash") != expected:
             continue
         counters = value.get("controller_guard")
         if isinstance(counters, dict):
@@ -54,7 +61,10 @@ def _controller_boundary_evidence(root: Path) -> dict[str, str]:
                 blocked = blocked or int(counters.get("blocked", 0) or 0) > 0
             except (TypeError, ValueError):
                 pass
-        child = child or isinstance(value.get("successful_spawn_task_id_hash"), str)
+        child = child or (
+            isinstance(value.get("successful_spawn_task_id_hash"), str)
+            and value.get("successful_spawn_hook_spec_hash") == expected
+        )
     return {
         "root_action_guard": "YES" if guard else UNKNOWN,
         "blocked_root_action": "YES" if blocked else UNKNOWN,
@@ -95,12 +105,13 @@ def _context_isolation(root: Path) -> dict[str, object]:
                         post = "YES"
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         policy = pre = post = UNKNOWN
-    pre_observed, post_observed, spawn_observed = _runtime_hook_evidence(root)
+    pre_observed, post_observed, spawn_observed, stale = _runtime_hook_evidence(root)
     return {
         "configured": {
             "policy_present": policy,
             "pre_dispatch_hook": pre,
             "post_dispatch_hook": post,
+            "managed_hook_spec_hash": managed_hook_spec_hash(),
         },
         "observed": {
             "pre_dispatch_hook_supported": "YES" if pre_observed else UNKNOWN,
@@ -108,6 +119,8 @@ def _context_isolation(root: Path) -> dict[str, object]:
             "input_rewrite_supported": UNKNOWN,
             "pre_dispatch_enforcement": UNKNOWN,
             "post_dispatch_observation": "YES" if post_observed else UNKNOWN,
+            "current_hook_hash_observed": "YES" if (pre_observed or post_observed) else ("STALE" if stale else UNKNOWN),
+            "hook_trust_runtime_status": UNKNOWN,
         },
     }
 
@@ -181,11 +194,11 @@ def report(root: Path) -> dict[str, object]:
         milestone_state["structure"] = "YES" if milestone_check(root)["ok"] else "NO"
     else:
         milestone_state["structure"] = "NO"
-    agents = root / "AGENTS.md"
+    agents = _effective_agents_path(root)
     if agents.is_file():
         try:
             agents_text = agents.read_text(encoding="utf-8")
-            span = _managed_span(agents_text, "AGENTS.md")
+            span = _managed_span(agents_text, agents.name)
             agents_state = "YES" if span is not None else "NO"
         except ValueError:
             agents_state = "NO"
@@ -204,11 +217,21 @@ def report(root: Path) -> dict[str, object]:
         except OSError:
             pass
     task_state_valid = task["valid"] if task["present"] == "YES" else "YES"
+    configured_budget = raw.get("project_doc_max_bytes") if isinstance(raw.get("project_doc_max_bytes"), int) else 32 * 1024
+    if agents_state == "YES":
+        try:
+            router_within_budget = "YES" if _managed_span(agents_text, agents.name)[1] <= configured_budget else "NO"
+        except (TypeError, ValueError):
+            router_within_budget = UNKNOWN
+    else:
+        router_within_budget = UNKNOWN
     routing_ready = "YES" if all(value == "YES" for value in (context_config, agents_state, task_state_valid)) else "NO"
     routing = {
         "command_executed": "YES",
         "configuration_valid": context_config,
         "managed_agents_present": agents_state,
+        "managed_router_effective_file": agents.name,
+        "managed_router_within_configured_budget": router_within_budget,
         "task_state_valid": task_state_valid,
         "role_routing_ready": routing_ready,
     }

@@ -10,8 +10,9 @@ import sys
 
 import pytest
 
-from thaliris.codex_adapter import init, task_close, task_start, uninstall
+from thaliris.codex_adapter import LEGACY_ROLE_PACKS, ROLE_PACKS, init, task_close, task_start, uninstall
 from thaliris.doctor import _context_isolation
+import thaliris.doctor as doctor_module
 import thaliris.core as core_module
 import thaliris.intent_audit as audit_module
 from thaliris.intent_audit import handle_hook, hooks_health
@@ -161,6 +162,8 @@ def test_flattened_v2_runtime_evidence_records_pre_and_post_hooks(tmp_path):
         "input_rewrite_supported": "UNKNOWN",
         "pre_dispatch_enforcement": "UNKNOWN",
         "post_dispatch_observation": "YES",
+        "current_hook_hash_observed": "YES",
+        "hook_trust_runtime_status": "UNKNOWN",
     }
 
 
@@ -611,6 +614,44 @@ def test_hooks_merge_idempotent_uninstall_preserves_users_and_malformed_is_fail_
     assert bad.read_text(encoding="utf-8") == "{bad"
 
 
+def test_effective_agents_override_and_role_pack_migration_are_not_silent(tmp_path):
+    root = repo(tmp_path)
+    agents = root / "AGENTS.md"
+    override = root / "AGENTS.override.md"
+    agents.write_text("legacy user instructions\n", encoding="utf-8")
+    override.write_text("override user instructions\n", encoding="utf-8")
+    first = init(root)
+    assert first["ok"] and "AGENTS.override.md" in first["files"]
+    assert "<!-- thaliris:begin -->" not in agents.read_text(encoding="utf-8")
+    assert override.read_text(encoding="utf-8").startswith("<!-- thaliris:begin -->")
+
+    packs = root / "docs" / "thaliris-role-packs.md"
+    packs.parent.mkdir(exist_ok=True)
+    packs.write_text(LEGACY_ROLE_PACKS, encoding="utf-8")
+    migrated = init(root)
+    assert "docs/thaliris-role-packs.md" in migrated["files"]
+    assert packs.read_text(encoding="utf-8") == ROLE_PACKS
+    current = init(root)
+    assert "docs/thaliris-role-packs.md" not in current["files"]
+    packs.write_text("user-owned role notes\n", encoding="utf-8")
+    manual = init(root)
+    assert "docs/thaliris-role-packs.md" in manual["manual_migration_required"]
+    assert packs.read_text(encoding="utf-8") == "user-owned role notes\n"
+
+
+def test_managed_router_is_rendered_at_effective_file_prefix_and_hook_hash_is_fresh(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    agents = root / "AGENTS.md"
+    agents.write_text("x" * (40 * 1024), encoding="utf-8")
+    init(root)
+    assert agents.read_text(encoding="utf-8").startswith("<!-- thaliris:begin -->")
+    handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}))
+    assert _context_isolation(root)["observed"]["current_hook_hash_observed"] == "YES"
+    monkeypatch.setattr(audit_module, "managed_hook_spec_hash", lambda: "next-definition")
+    monkeypatch.setattr(doctor_module, "managed_hook_spec_hash", lambda: "next-definition")
+    assert _context_isolation(root)["observed"]["current_hook_hash_observed"] == "STALE"
+
+
 def test_audit_is_ignored_and_absent_from_state_and_role_packs(tmp_path, capsys, monkeypatch):
     from thaliris.cli import main
 
@@ -820,6 +861,43 @@ def test_controller_guard_blocks_child_projection_update_and_raw_task_show(tmp_p
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-status"})) == ""
 
 
+def test_controller_role_guard_requires_exactly_one_real_controller_role(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "role argv", None, None)
+    for command in (
+        "context task-update --role controller --base-revision 1 --input update.json",
+        "context task-promote --role=controller --base-revision 1 --input promotion.json",
+    ):
+        assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})) == ""
+    for command in (
+        "context task-update --role controller --role investigator --base-revision 1 --input update.json",
+        "context task-update --role investigator --role controller --base-revision 1 --input update.json",
+        "context task-update --role controller --role controller --base-revision 1 --input update.json",
+        "context task-promote --role controller --role reviewer --base-revision 1 --input promotion.json",
+        "context task-update -role controller --base-revision 1 --input update.json",
+    ):
+        response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_active_root_mcp_is_denied_but_child_mcp_is_not_reclassified(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "mcp boundary", None, None)
+    for tool in ("mcp__filesystem__read_file", "mcp__git__status"):
+        response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name=tool, tool_input={"path": "README.md"})))
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name=tool, tool_input={"path": "README.md"})) == ""
+
+
+def test_subagent_start_is_bounded_identity_corroboration_only(tmp_path):
+    root = repo(tmp_path)
+    assert handle_hook(root, "SubagentStart", payload(agent_id="child-private", agent_type="worker", turn="turn-private")) == ""
+    runtime = next((root / ".context" / "audit").glob("*/runtime.json"))
+    evidence = json.loads(runtime.read_text(encoding="utf-8"))
+    assert evidence["events_observed"]["SubagentStart"] is True
+    assert evidence["subagent_start_agent_id_hash"] == hashlib.sha256(b"child-private").hexdigest()
+    assert evidence["subagent_start_agent_type"] == "worker"
+    assert "child-private" not in json.dumps(evidence)
+
+
 def test_child_delegation_is_denied_only_with_explicit_identity(tmp_path):
     root = repo(tmp_path); init(root); task_start(root, "child delegation", None, None)
     response = json.loads(handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name="spawn_agent", tool_input={"fork_turns": "none"})))
@@ -879,7 +957,9 @@ def test_apply_patch_without_active_task_fails_open(tmp_path):
 def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path):
     root = repo(tmp_path)
     init(root)
-    task_start(root, "guard lifecycle", None, None)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/test_target.py"}), encoding="utf-8")
+    task_start(root, "guard lifecycle", None, str(task_input))
     blocked = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
     assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
     handle_hook(root, "PostToolUse", payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "none", "message": "bounded child"}, tool_response={"task_name": "/root/child"}))
@@ -890,7 +970,9 @@ def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path
 def test_successful_spawn_evidence_is_scoped_to_the_active_task(tmp_path):
     root = repo(tmp_path)
     init(root)
-    first = task_start(root, "first task", None, None)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/test_target.py"}), encoding="utf-8")
+    first = task_start(root, "first task", None, str(task_input))
     handle_hook(
         root,
         "PostToolUse",
@@ -899,7 +981,7 @@ def test_successful_spawn_evidence_is_scoped_to_the_active_task(tmp_path):
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
     core_module.task_close(root, first["revision"], expected_task_id=first["task_id"])
 
-    second = task_start(root, "second task", None, None)
+    second = task_start(root, "second task", None, str(task_input))
     for command in ("pytest -q tests/test_target.py", "context task-close --base-revision 1"):
         response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
@@ -924,13 +1006,39 @@ def test_successful_spawn_evidence_is_scoped_to_the_active_task(tmp_path):
 def test_controller_guard_accepts_opaque_native_spawn_post_result(tmp_path):
     root = repo(tmp_path)
     init(root)
-    task_start(root, "guard opaque response", None, None)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/test_target.py"}), encoding="utf-8")
+    task_start(root, "guard opaque response", None, str(task_input))
     handle_hook(
         root,
         "PostToolUse",
         payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "none"}, tool_response="/root/child"),
     )
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
+
+
+def test_qualifying_spawn_evidence_expires_with_the_managed_hook_definition(tmp_path, monkeypatch):
+    root = repo(tmp_path); init(root)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
+    task_start(root, "current hook evidence", None, str(task_input))
+    handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"success": True}))
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})) == ""
+    monkeypatch.setattr(audit_module, "managed_hook_spec_hash", lambda: "different-definition")
+    denied = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_acceptance_requires_exact_verification_target_after_qualifying_child(tmp_path):
+    root = repo(tmp_path); init(root)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
+    task_start(root, "acceptance target", None, str(task_input))
+    handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"success": True}))
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})) == ""
+    for command in ("pytest", "pytest --pdb", "pytest -q tests/other.py"):
+        response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_auditor_rubric_is_separate_from_untrusted_stdin_evidence(monkeypatch):

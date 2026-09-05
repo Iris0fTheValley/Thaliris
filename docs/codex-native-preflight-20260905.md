@@ -56,3 +56,7 @@ Subsequent source review identified untested enforcement edge cases around
 cross-task dispatch evidence, unsafe fork rewriting, and arbitrary root shell
 commands. Those are separate from the observations recorded above; the
 historical probe remains valid for the native surfaces it explicitly exercised.
+
+Later compatibility hardening changed the managed hook definition. Historical
+observations do not attest to that new hook hash; a fresh native revalidation is
+required before treating current-hook runtime evidence as observed.

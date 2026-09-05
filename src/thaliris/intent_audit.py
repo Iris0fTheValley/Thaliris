@@ -466,7 +466,7 @@ def _record_runtime_event(root: Path, payload: dict[str, Any], event: str, tool:
         tool_input = _delegation_input(payload)
         state.pop("pre_dispatch_rewrite", None)
         state["pre_dispatch_isolation"] = (
-            "EXPLICIT" if tool_input.get("fork_turns") == "none" else "REJECTED"
+            "EXPLICIT" if tool_input.get("fork_turns") == "none" else "NONCOMPLIANT"
         )
     if event == "PostToolUse" and _tool_basename(tool) == "spawn_agent":
         # Codex has emitted both a structured response object and a
@@ -474,8 +474,9 @@ def _record_runtime_event(root: Path, payload: dict[str, Any], event: str, tool:
         # event itself is the completion boundary; only an explicit failure
         # marker should prevent the Controller from recognizing that a child
         # dispatch completed.  Do not inspect encrypted V2 message content.
+        tool_input = _delegation_input(payload)
         response = _post_tool_response(payload)
-        if _post_tool_succeeded(response):
+        if tool_input.get("fork_turns") == "none" and _post_tool_succeeded(response):
             # Dispatch eligibility belongs to one ACTIVE task, not the whole
             # native session. Legacy session-level booleans intentionally do
             # not satisfy a later task.
@@ -621,7 +622,7 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
             continue
         if re.fullmatch(r"git\s+diff\s+--(?:check|stat|name-only)", lowered):
             continue
-        if re.fullmatch(r"git\s+(?:rev-parse|hash-object)(?:\s+[a-z0-9_./:@=\-]+)+", lowered):
+        if re.fullmatch(r"git\s+rev-parse(?:\s+[a-z0-9_./:@=\-]+)+", lowered):
             continue
         return "ROOT_COMMAND_NOT_ALLOWED"
     return None

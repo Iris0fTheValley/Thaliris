@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "source": "Codex session JSONL; root sessions only, child sessions are retained for separate child-input accounting",
+  "runs": [
+    {"run": "C_T2", "root_file": "rollout-2026-09-01T19-27-04-01a05cb9-032c-7f80-ae81-965b2854e39e.jsonl"},
+    {"run": "C_T3", "root_file": "rollout-2026-09-01T19-30-52-01a05cbc-7e30-7082-822d-ef26cc8a1674.jsonl"},
+    {"run": "D_T2", "root_file": "rollout-2026-09-01T19-35-57-01a05cc1-250b-7eb1-b107-a99c866b1c65.jsonl"},
+    {"run": "D_T3", "root_file": "rollout-2026-09-01T19-40-07-01a05cc4-f94d-7970-b40c-b65df617338e.jsonl"}
+  ],
+  "notes": "Root session JSONL for the v7 orchestration-policy rerun. Child sessions are discovered by parent_thread_id and are intentionally not listed here."
+}

@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "protocol": "native_calibration_luna_first",
+  "tasks": [
+    "editorconfig-checker__editorconfig-checker-360"
+  ],
+  "runs": [
+    {
+      "task": "editorconfig-checker__editorconfig-checker-360",
+      "model": "luna",
+      "index": 1,
+      "run": "editorconfig-checker__editorconfig-checker-360-LUNA1",
+      "dependency": {
+        "status": "PASS",
+        "kind": "go",
+        "gomodcache": "C:\\Users\\12298\\AppData\\Local\\Temp\\thaliris-native-0b39f904099d4f4eb74c93af1d5b1e11\\dependencies\\editorconfig-checker__editorconfig-checker-360\\gomodcache",
+        "reason": ""
+      },
+      "network_enforcement": "UNVERIFIED",
+      "installation_enforcement": "UNVERIFIED",
+      "fixture": {
+        "synthetic_commit": "a78a87bbf6c2c9c7b99061b14f89353ca9f541d0",
+        "source_tree": "aaf46ce6126fc6f88707e4b3360117d9927853a3"
+      },
+      "gate": "SEALED_PASS",
+      "model_process": {
+        "exit_code": 0,
+        "timeout": false,
+        "duration_seconds": 543.81,
+        "stderr_tail": "2026-09-02T11:02:16.546984Z  WARN codex_core_plugins::manager: remote installed plugin bundle sync failed error=chatgpt authentication required for remote plugin catalog; api key auth is not supported\n2026-09-02T11:02:16.593035Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-09-02T11:02:16.593059Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-09-02T11:02:16.600933Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for powershell: Shell snapshot not supported yet for PowerShell\n2026-09-02T11:02:17.563938Z  WARN codex_core_plugins::manager: failed to warm featured plugin ids cache error=remote featured plugin request to https://chatgpt.com/backend-api/plugins/featured?platform=codex failed with status 401 Unauthorized: {\"detail\":\"Unauthorized\"}\n2026-09-02T11:02:18.336985Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt[0]: prompt must be at most 128 characters path=file:///C:/Users/12298/.codex/.tmp/plugins/plugins/ngs-analysis/.codex-plugin/plugin.json\n2026-09-02T11:02:18.347588Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt[0]: prompt must be at most 128 characters path=file:///C:/Users/12298/.codex/.tmp/plugins/plugins/ngs-analysis/.codex-plugin/plugin.json\n"
+      },
+      "telemetry": {
+        "model_reported": null,
+        "usage": {
+          "input_tokens": 729893,
+          "cached_input_tokens": 681216,
+          "output_tokens": 11187,
+          "reasoning_tokens": 6870,
+          "uncached_input_tokens": 48677
+        },
+        "model_calls": 1,
+        "peak_context": 729893,
+        "timeline": [
+          {
+            "call": 1,
+            "input_tokens": 729893,
+            "cached_input_tokens": 681216,
+            "output_tokens": 11187,
+            "reasoning_tokens": 6870,
+            "preceding_action": "initial"
+          }
+        ]
+      },
+      "scope": {
+        "status": "PASS",
+        "changed_files": [
+          "pkg/error/error.go"
+        ],
+        "untracked_files": [],
+        "gold_file_allowlist": [
+          ".gitignore",
+          "README.md",
+          "cmd/editorconfig-checker/main.go",
+          "go.mod",
+          "go.sum",
+          "pkg/error/error.go",
+          "pkg/logger/logger.go"
+        ],
+        "violations": []
+      },
+      "evaluation": {
+        "model": {
+          "kind": "model",
+          "status": "FAIL",
+          "run": {
+            "exit_code": 1,
+            "timeout": false,
+            "duration_seconds": 3.53,
+            "stdout": "FAIL\tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/error [setup failed]\n?   \tgithub.com/editorconfig-checker/editorconfig-checker/v3/cmd/editorconfig-checker\t[no test files]\nFAIL\tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/logger [build failed]\n=== RUN   TestNewConfig\n--- PASS: TestNewConfig (0.00s)\n=== RUN   TestGetExcludesAsRegularExpression\n--- PASS: TestGetExcludesAsRegularExpression (0.00s)\n=== RUN   TestMerge\n--- PASS: TestMerge (0.00s)\n=== RUN   TestParse\n--- PASS: TestParse (0.00s)\n=== RUN   TestSave\n--- PASS: TestSave (0.00s)\n=== RUN   TestGetAsString\n--- PASS: TestGetAsString (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/config\t0.054s\n=== RUN   TestDecodeBytesText\n--- PASS: TestDecodeBytesText (0.08s)\n=== RUN   TestIsBinaryFile\n--- PASS: TestIsBinaryFile (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/encoding\t0.132s\n=== RUN   TestGetContentType\n--- PASS: TestGetContentType (0.00s)\n=== RUN   TestIsAllowedContentType\n--- PASS: TestIsAllowedContentType (0.00s)\n=== RUN   TestPathExists\n--- PASS: TestPathExists (0.00s)\n=== RUN   TestGetRelativePath\n    files_test.go:107: Windows fails if current directory is deleted\n--- SKIP: TestGetRelativePath (0.00s)\n=== RUN   TestAddToFiles\n--- PASS: TestAddToFiles (0.00s)\n=== RUN   TestGetFiles\n--- PASS: TestGetFiles (0.09s)\n=== RUN   TestGetContentTypeFiles\n--- PASS: TestGetContentTypeFiles (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/files\t0.147s\n=== RUN   TestGetEolChar\n--- PASS: TestGetEolChar (0.00s)\n=== RUN   TestIsRegularFile\n--- PASS: TestIsRegularFile (0.00s)\n=== RUN   TestIsDirectory\n--- PASS: TestIsDirectory (0.00s)\n=== RUN   TestFileExists\n--- PASS: TestFileExists (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/utils\t0.047s\n=== RUN   TestProcessValidation\n--- PASS: TestProcessValidation (0.01s)\n=== RUN   TestValidateFile\n--- PASS: TestValidateFile (0.02s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation\t0.092s\n=== RUN   TestFinalNewline\n--- PASS: TestFinalNewline (0.00s)\n=== RUN   TestLineEnding\n--- PASS: TestLineEnding (0.00s)\n=== RUN   TestIndentation\n--- PASS: TestIndentation (0.00s)\n=== RUN   TestSpace\n--- PASS: TestSpace (0.00s)\n=== RUN   TestTab\n--- PASS: TestTab (0.00s)\n=== RUN   TestTrailingWhitespace\n--- PASS: TestTrailingWhitespace (0.00s)\n=== RUN   TestMaxLineLength\n--- PASS: TestMaxLineLength (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation/validators\t0.029s\nFAIL\n",
+            "stderr": "# github.com/editorconfig-checker/editorconfig-checker/v3/pkg/error\npkg\\error\\error_test.go:11:2: no required module provides package github.com/gkampitakis/go-snaps/snaps; to add it:\n\tgo get github.com/gkampitakis/go-snaps/snaps\n# github.com/editorconfig-checker/editorconfig-checker/v3/pkg/logger [github.com/editorconfig-checker/editorconfig-checker/v3/pkg/logger.test]\npkg\\logger\\logger_test.go:71:16: undefined: LogMessage\npkg\\logger\\logger_test.go:79:9: logger.PrintLogMessages undefined (type Logger has no field or method PrintLogMessages)\n"
+          },
+          "actions": [
+            {
+              "model_patch": {
+                "path": "C:\\Users\\12298\\AppData\\Local\\Temp\\thaliris-native-0b39f904099d4f4eb74c93af1d5b1e11\\model-patches\\editorconfig-checker__editorconfig-checker-360-LUNA1.patch",
+                "exit_code": 0,
+                "stderr": ""
+              }
+            },
+            {
+              "test_patch": {
+                "path": "I:\\AI PROJECT\\abcd-screening\\readiness-20260902\\evaluator-patches\\editorconfig-checker__editorconfig-checker-360\\test.patch",
+                "exit_code": 0,
+                "stderr": ""
+              }
+            }
+          ]
+        },
+        "no_edit": {
+          "kind": "no_edit",
+          "status": "FAIL",
+          "run": {
+            "exit_code": 1,
+            "timeout": false,
+            "duration_seconds": 2.35,
+            "stdout": "FAIL\tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/error [setup failed]\n?   \tgithub.com/editorconfig-checker/editorconfig-checker/v3/cmd/editorconfig-checker\t[no test files]\nFAIL\tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/logger [build failed]\n=== RUN   TestNewConfig\n--- PASS: TestNewConfig (0.00s)\n=== RUN   TestGetExcludesAsRegularExpression\n--- PASS: TestGetExcludesAsRegularExpression (0.00s)\n=== RUN   TestMerge\n--- PASS: TestMerge (0.00s)\n=== RUN   TestParse\n--- PASS: TestParse (0.00s)\n=== RUN   TestSave\n--- PASS: TestSave (0.00s)\n=== RUN   TestGetAsString\n--- PASS: TestGetAsString (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/config\t(cached)\n=== RUN   TestDecodeBytesText\n--- PASS: TestDecodeBytesText (0.08s)\n=== RUN   TestIsBinaryFile\n--- PASS: TestIsBinaryFile (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/encoding\t(cached)\n=== RUN   TestGetContentType\n--- PASS: TestGetContentType (0.00s)\n=== RUN   TestIsAllowedContentType\n--- PASS: TestIsAllowedContentType (0.00s)\n=== RUN   TestPathExists\n--- PASS: TestPathExists (0.00s)\n=== RUN   TestGetRelativePath\n    files_test.go:107: Windows fails if current directory is deleted\n--- SKIP: TestGetRelativePath (0.00s)\n=== RUN   TestAddToFiles\n--- PASS: TestAddToFiles (0.00s)\n=== RUN   TestGetFiles\n--- PASS: TestGetFiles (0.09s)\n=== RUN   TestGetContentTypeFiles\n--- PASS: TestGetContentTypeFiles (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/files\t(cached)\n=== RUN   TestGetEolChar\n--- PASS: TestGetEolChar (0.00s)\n=== RUN   TestIsRegularFile\n--- PASS: TestIsRegularFile (0.00s)\n=== RUN   TestIsDirectory\n--- PASS: TestIsDirectory (0.00s)\n=== RUN   TestFileExists\n--- PASS: TestFileExists (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/utils\t(cached)\n=== RUN   TestProcessValidation\n--- PASS: TestProcessValidation (0.00s)\n=== RUN   TestValidateFile\n--- PASS: TestValidateFile (0.03s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation\t0.071s\n=== RUN   TestFinalNewline\n--- PASS: TestFinalNewline (0.00s)\n=== RUN   TestLineEnding\n--- PASS: TestLineEnding (0.00s)\n=== RUN   TestIndentation\n--- PASS: TestIndentation (0.00s)\n=== RUN   TestSpace\n--- PASS: TestSpace (0.00s)\n=== RUN   TestTab\n--- PASS: TestTab (0.00s)\n=== RUN   TestTrailingWhitespace\n--- PASS: TestTrailingWhitespace (0.00s)\n=== RUN   TestMaxLineLength\n--- PASS: TestMaxLineLength (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation/validators\t(cached)\nFAIL\n",
+            "stderr": "# github.com/editorconfig-checker/editorconfig-checker/v3/pkg/error\npkg\\error\\error_test.go:11:2: no required module provides package github.com/gkampitakis/go-snaps/snaps; to add it:\n\tgo get github.com/gkampitakis/go-snaps/snaps\n# github.com/editorconfig-checker/editorconfig-checker/v3/pkg/logger [github.com/editorconfig-checker/editorconfig-checker/v3/pkg/logger.test]\npkg\\logger\\logger_test.go:71:16: undefined: LogMessage\npkg\\logger\\logger_test.go:79:9: logger.PrintLogMessages undefined (type Logger has no field or method PrintLogMessages)\n"
+          },
+          "actions": [
+            {
+              "test_patch": {
+                "path": "I:\\AI PROJECT\\abcd-screening\\readiness-20260902\\evaluator-patches\\editorconfig-checker__editorconfig-checker-360\\test.patch",
+                "exit_code": 0,
+                "stderr": ""
+              }
+            }
+          ]
+        },
+        "gold": {
+          "kind": "gold",
+          "status": "PASS",
+          "run": {
+            "exit_code": 0,
+            "timeout": false,
+            "duration_seconds": 8.31,
+            "stdout": "?   \tgithub.com/editorconfig-checker/editorconfig-checker/v3/cmd/editorconfig-checker\t[no test files]\n=== RUN   TestNewConfig\n--- PASS: TestNewConfig (0.00s)\n=== RUN   TestGetExcludesAsRegularExpression\n--- PASS: TestGetExcludesAsRegularExpression (0.00s)\n=== RUN   TestMerge\n--- PASS: TestMerge (0.00s)\n=== RUN   TestParse\n--- PASS: TestParse (0.00s)\n=== RUN   TestSave\n--- PASS: TestSave (0.00s)\n=== RUN   TestGetAsString\n--- PASS: TestGetAsString (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/config\t0.099s\n=== RUN   TestDecodeBytesText\n--- PASS: TestDecodeBytesText (0.08s)\n=== RUN   TestIsBinaryFile\n--- PASS: TestIsBinaryFile (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/encoding\t(cached)\n=== RUN   TestGetErrorCount\n--- PASS: TestGetErrorCount (0.00s)\n=== RUN   TestValidationErrorEqual\n--- PASS: TestValidationErrorEqual (0.00s)\n=== RUN   TestConsolidateErrors\n--- PASS: TestConsolidateErrors (0.00s)\n=== RUN   TestConsolidatingInterleavedErrors\n    error_test.go:183: Consolidating non-consecutive errors is not supported by the current implementation\n--- SKIP: TestConsolidatingInterleavedErrors (0.00s)\n=== RUN   TestFormatErrors\n--- PASS: TestFormatErrors (0.00s)\nPASS\n\nSnapshot Summary\n\n✓ 3 snapshots passed\n\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/error\t0.132s\n=== RUN   TestGetContentType\n--- PASS: TestGetContentType (0.00s)\n=== RUN   TestIsAllowedContentType\n--- PASS: TestIsAllowedContentType (0.00s)\n=== RUN   TestPathExists\n--- PASS: TestPathExists (0.00s)\n=== RUN   TestGetRelativePath\n    files_test.go:107: Windows fails if current directory is deleted\n--- SKIP: TestGetRelativePath (0.00s)\n=== RUN   TestAddToFiles\n--- PASS: TestAddToFiles (0.00s)\n=== RUN   TestGetFiles\n--- PASS: TestGetFiles (0.10s)\n=== RUN   TestGetContentTypeFiles\n--- PASS: TestGetContentTypeFiles (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/files\t0.195s\n=== RUN   TestLoggerDebug\nhello\n--- PASS: TestLoggerDebug (0.00s)\n=== RUN   TestLoggerVerbose\nhello\n--- PASS: TestLoggerVerbose (0.00s)\n=== RUN   TestLoggerWarning\n\u001b[33;1mblahey\u001b[33;0m\nblahey\n--- PASS: TestLoggerWarning (0.00s)\n=== RUN   TestWarning\n\u001b[33;1mblahey\u001b[33;0m\n--- PASS: TestWarning (0.00s)\n=== RUN   TestLoggerOutput\nblahey\n--- PASS: TestLoggerOutput (0.00s)\n=== RUN   TestOutput\nblahey\n--- PASS: TestOutput (0.00s)\n=== RUN   TestLoggerError\n\u001b[31;1mblahey\u001b[33;0m\nblahey\n--- PASS: TestLoggerError (0.00s)\n=== RUN   TestError\n\u001b[31;1mblahey\u001b[33;0m\n--- PASS: TestError (0.00s)\n=== RUN   TestPrintColor\n\u001b[31;1mHello\u001b[33;0m--- PASS: TestPrintColor (0.00s)\n=== RUN   TestPrint\nHello--- PASS: TestPrint (0.00s)\n=== RUN   TestPrintLogMessage\n\u001b[33;1mwarning message\u001b[33;0m\n\u001b[31;1merror message\u001b[33;0m\nnormal message\n--- PASS: TestPrintLogMessage (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/logger\t0.132s\n=== RUN   TestGetEolChar\n--- PASS: TestGetEolChar (0.00s)\n=== RUN   TestIsRegularFile\n--- PASS: TestIsRegularFile (0.00s)\n=== RUN   TestIsDirectory\n--- PASS: TestIsDirectory (0.00s)\n=== RUN   TestFileExists\n--- PASS: TestFileExists (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/utils\t(cached)\n=== RUN   TestProcessValidation\n--- PASS: TestProcessValidation (0.01s)\n=== RUN   TestValidateFile\n--- PASS: TestValidateFile (0.03s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation\t0.170s\n=== RUN   TestFinalNewline\n--- PASS: TestFinalNewline (0.00s)\n=== RUN   TestLineEnding\n--- PASS: TestLineEnding (0.00s)\n=== RUN   TestIndentation\n--- PASS: TestIndentation (0.00s)\n=== RUN   TestSpace\n--- PASS: TestSpace (0.00s)\n=== RUN   TestTab\n--- PASS: TestTab (0.00s)\n=== RUN   TestTrailingWhitespace\n--- PASS: TestTrailingWhitespace (0.00s)\n=== RUN   TestMaxLineLength\n--- PASS: TestMaxLineLength (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation/validators\t0.128s\n",
+            "stderr": "go: downloading github.com/gkampitakis/go-snaps v0.5.7\ngo: downloading github.com/gkampitakis/go-diff v1.3.2\ngo: downloading github.com/maruel/natural v1.1.1\ngo: downloading github.com/tidwall/pretty v1.2.1\ngo: downloading github.com/tidwall/gjson v1.17.0\ngo: downloading github.com/gkampitakis/ciinfo v0.3.0\ngo: downloading github.com/tidwall/sjson v1.2.5\ngo: downloading github.com/kr/pretty v0.3.1\ngo: downloading github.com/kr/text v0.2.0\ngo: downloading github.com/rogpeppe/go-internal v1.12.0\ngo: downloading github.com/tidwall/match v1.1.1\n"
+          },
+          "actions": [
+            {
+              "test_patch": {
+                "path": "I:\\AI PROJECT\\abcd-screening\\readiness-20260902\\evaluator-patches\\editorconfig-checker__editorconfig-checker-360\\test.patch",
+                "exit_code": 0,
+                "stderr": ""
+              }
+            },
+            {
+              "gold_patch": {
+                "path": "I:\\AI PROJECT\\abcd-screening\\readiness-20260902\\evaluator-patches\\editorconfig-checker__editorconfig-checker-360\\gold.patch",
+                "exit_code": 0,
+                "stderr": ""
+              }
+            }
+          ]
+        },
+        "gold_repeat": [
+          {
+            "kind": "gold_repeat_1",
+            "status": "PASS",
+            "run": {
+              "exit_code": 0,
+              "timeout": false,
+              "duration_seconds": 3.47,
+              "stdout": "?   \tgithub.com/editorconfig-checker/editorconfig-checker/v3/cmd/editorconfig-checker\t[no test files]\n=== RUN   TestNewConfig\n--- PASS: TestNewConfig (0.00s)\n=== RUN   TestGetExcludesAsRegularExpression\n--- PASS: TestGetExcludesAsRegularExpression (0.00s)\n=== RUN   TestMerge\n--- PASS: TestMerge (0.00s)\n=== RUN   TestParse\n--- PASS: TestParse (0.00s)\n=== RUN   TestSave\n--- PASS: TestSave (0.00s)\n=== RUN   TestGetAsString\n--- PASS: TestGetAsString (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/config\t(cached)\n=== RUN   TestDecodeBytesText\n--- PASS: TestDecodeBytesText (0.08s)\n=== RUN   TestIsBinaryFile\n--- PASS: TestIsBinaryFile (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/encoding\t(cached)\n=== RUN   TestGetErrorCount\n--- PASS: TestGetErrorCount (0.00s)\n=== RUN   TestValidationErrorEqual\n--- PASS: TestValidationErrorEqual (0.00s)\n=== RUN   TestConsolidateErrors\n--- PASS: TestConsolidateErrors (0.00s)\n=== RUN   TestConsolidatingInterleavedErrors\n    error_test.go:183: Consolidating non-consecutive errors is not supported by the current implementation\n--- SKIP: TestConsolidatingInterleavedErrors (0.00s)\n=== RUN   TestFormatErrors\n--- PASS: TestFormatErrors (0.00s)\nPASS\n\nSnapshot Summary\n\n✓ 3 snapshots passed\n\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/error\t0.039s\n=== RUN   TestGetContentType\n--- PASS: TestGetContentType (0.00s)\n=== RUN   TestIsAllowedContentType\n--- PASS: TestIsAllowedContentType (0.00s)\n=== RUN   TestPathExists\n--- PASS: TestPathExists (0.00s)\n=== RUN   TestGetRelativePath\n    files_test.go:107: Windows fails if current directory is deleted\n--- SKIP: TestGetRelativePath (0.00s)\n=== RUN   TestAddToFiles\n--- PASS: TestAddToFiles (0.00s)\n=== RUN   TestGetFiles\n--- PASS: TestGetFiles (0.10s)\n=== RUN   TestGetContentTypeFiles\n--- PASS: TestGetContentTypeFiles (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/files\t(cached)\n=== RUN   TestLoggerDebug\nhello\n--- PASS: TestLoggerDebug (0.00s)\n=== RUN   TestLoggerVerbose\nhello\n--- PASS: TestLoggerVerbose (0.00s)\n=== RUN   TestLoggerWarning\n\u001b[33;1mblahey\u001b[33;0m\nblahey\n--- PASS: TestLoggerWarning (0.00s)\n=== RUN   TestWarning\n\u001b[33;1mblahey\u001b[33;0m\n--- PASS: TestWarning (0.00s)\n=== RUN   TestLoggerOutput\nblahey\n--- PASS: TestLoggerOutput (0.00s)\n=== RUN   TestOutput\nblahey\n--- PASS: TestOutput (0.00s)\n=== RUN   TestLoggerError\n\u001b[31;1mblahey\u001b[33;0m\nblahey\n--- PASS: TestLoggerError (0.00s)\n=== RUN   TestError\n\u001b[31;1mblahey\u001b[33;0m\n--- PASS: TestError (0.00s)\n=== RUN   TestPrintColor\n\u001b[31;1mHello\u001b[33;0m--- PASS: TestPrintColor (0.00s)\n=== RUN   TestPrint\nHello--- PASS: TestPrint (0.00s)\n=== RUN   TestPrintLogMessage\n\u001b[33;1mwarning message\u001b[33;0m\n\u001b[31;1merror message\u001b[33;0m\nnormal message\n--- PASS: TestPrintLogMessage (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/logger\t(cached)\n=== RUN   TestGetEolChar\n--- PASS: TestGetEolChar (0.00s)\n=== RUN   TestIsRegularFile\n--- PASS: TestIsRegularFile (0.00s)\n=== RUN   TestIsDirectory\n--- PASS: TestIsDirectory (0.00s)\n=== RUN   TestFileExists\n--- PASS: TestFileExists (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/utils\t(cached)\n=== RUN   TestProcessValidation\n--- PASS: TestProcessValidation (0.01s)\n=== RUN   TestValidateFile\n--- PASS: TestValidateFile (0.03s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation\t0.110s\n=== RUN   TestFinalNewline\n--- PASS: TestFinalNewline (0.00s)\n=== RUN   TestLineEnding\n--- PASS: TestLineEnding (0.00s)\n=== RUN   TestIndentation\n--- PASS: TestIndentation (0.00s)\n=== RUN   TestSpace\n--- PASS: TestSpace (0.00s)\n=== RUN   TestTab\n--- PASS: TestTab (0.00s)\n=== RUN   TestTrailingWhitespace\n--- PASS: TestTrailingWhitespace (0.00s)\n=== RUN   TestMaxLineLength\n--- PASS: TestMaxLineLength (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation/validators\t(cached)\n",
+              "stderr": ""
+            },
+            "actions": [
+              {
+                "test_patch": {
+                  "path": "I:\\AI PROJECT\\abcd-screening\\readiness-20260902\\evaluator-patches\\editorconfig-checker__editorconfig-checker-360\\test.patch",
+                  "exit_code": 0,
+                  "stderr": ""
+                }
+              },
+              {
+                "gold_patch": {
+                  "path": "I:\\AI PROJECT\\abcd-screening\\readiness-20260902\\evaluator-patches\\editorconfig-checker__editorconfig-checker-360\\gold.patch",
+                  "exit_code": 0,
+                  "stderr": ""
+                }
+              }
+            ]
+          },
+          {
+            "kind": "gold_repeat_2",
+            "status": "PASS",
+            "run": {
+              "exit_code": 0,
+              "timeout": false,
+              "duration_seconds": 2.7,
+              "stdout": "?   \tgithub.com/editorconfig-checker/editorconfig-checker/v3/cmd/editorconfig-checker\t[no test files]\n=== RUN   TestNewConfig\n--- PASS: TestNewConfig (0.00s)\n=== RUN   TestGetExcludesAsRegularExpression\n--- PASS: TestGetExcludesAsRegularExpression (0.00s)\n=== RUN   TestMerge\n--- PASS: TestMerge (0.00s)\n=== RUN   TestParse\n--- PASS: TestParse (0.00s)\n=== RUN   TestSave\n--- PASS: TestSave (0.00s)\n=== RUN   TestGetAsString\n--- PASS: TestGetAsString (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/config\t(cached)\n=== RUN   TestDecodeBytesText\n--- PASS: TestDecodeBytesText (0.08s)\n=== RUN   TestIsBinaryFile\n--- PASS: TestIsBinaryFile (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/encoding\t(cached)\n=== RUN   TestGetErrorCount\n--- PASS: TestGetErrorCount (0.00s)\n=== RUN   TestValidationErrorEqual\n--- PASS: TestValidationErrorEqual (0.00s)\n=== RUN   TestConsolidateErrors\n--- PASS: TestConsolidateErrors (0.00s)\n=== RUN   TestConsolidatingInterleavedErrors\n    error_test.go:183: Consolidating non-consecutive errors is not supported by the current implementation\n--- SKIP: TestConsolidatingInterleavedErrors (0.00s)\n=== RUN   TestFormatErrors\n--- PASS: TestFormatErrors (0.00s)\nPASS\n\nSnapshot Summary\n\n✓ 3 snapshots passed\n\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/error\t0.037s\n=== RUN   TestGetContentType\n--- PASS: TestGetContentType (0.00s)\n=== RUN   TestIsAllowedContentType\n--- PASS: TestIsAllowedContentType (0.00s)\n=== RUN   TestPathExists\n--- PASS: TestPathExists (0.00s)\n=== RUN   TestGetRelativePath\n    files_test.go:107: Windows fails if current directory is deleted\n--- SKIP: TestGetRelativePath (0.00s)\n=== RUN   TestAddToFiles\n--- PASS: TestAddToFiles (0.00s)\n=== RUN   TestGetFiles\n--- PASS: TestGetFiles (0.10s)\n=== RUN   TestGetContentTypeFiles\n--- PASS: TestGetContentTypeFiles (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/files\t(cached)\n=== RUN   TestLoggerDebug\nhello\n--- PASS: TestLoggerDebug (0.00s)\n=== RUN   TestLoggerVerbose\nhello\n--- PASS: TestLoggerVerbose (0.00s)\n=== RUN   TestLoggerWarning\n\u001b[33;1mblahey\u001b[33;0m\nblahey\n--- PASS: TestLoggerWarning (0.00s)\n=== RUN   TestWarning\n\u001b[33;1mblahey\u001b[33;0m\n--- PASS: TestWarning (0.00s)\n=== RUN   TestLoggerOutput\nblahey\n--- PASS: TestLoggerOutput (0.00s)\n=== RUN   TestOutput\nblahey\n--- PASS: TestOutput (0.00s)\n=== RUN   TestLoggerError\n\u001b[31;1mblahey\u001b[33;0m\nblahey\n--- PASS: TestLoggerError (0.00s)\n=== RUN   TestError\n\u001b[31;1mblahey\u001b[33;0m\n--- PASS: TestError (0.00s)\n=== RUN   TestPrintColor\n\u001b[31;1mHello\u001b[33;0m--- PASS: TestPrintColor (0.00s)\n=== RUN   TestPrint\nHello--- PASS: TestPrint (0.00s)\n=== RUN   TestPrintLogMessage\n\u001b[33;1mwarning message\u001b[33;0m\n\u001b[31;1merror message\u001b[33;0m\nnormal message\n--- PASS: TestPrintLogMessage (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/logger\t(cached)\n=== RUN   TestGetEolChar\n--- PASS: TestGetEolChar (0.00s)\n=== RUN   TestIsRegularFile\n--- PASS: TestIsRegularFile (0.00s)\n=== RUN   TestIsDirectory\n--- PASS: TestIsDirectory (0.00s)\n=== RUN   TestFileExists\n--- PASS: TestFileExists (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/utils\t(cached)\n=== RUN   TestProcessValidation\n--- PASS: TestProcessValidation (0.01s)\n=== RUN   TestValidateFile\n--- PASS: TestValidateFile (0.02s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation\t0.072s\n=== RUN   TestFinalNewline\n--- PASS: TestFinalNewline (0.00s)\n=== RUN   TestLineEnding\n--- PASS: TestLineEnding (0.00s)\n=== RUN   TestIndentation\n--- PASS: TestIndentation (0.00s)\n=== RUN   TestSpace\n--- PASS: TestSpace (0.00s)\n=== RUN   TestTab\n--- PASS: TestTab (0.00s)\n=== RUN   TestTrailingWhitespace\n--- PASS: TestTrailingWhitespace (0.00s)\n=== RUN   TestMaxLineLength\n--- PASS: TestMaxLineLength (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation/validators\t(cached)\n",
+              "stderr": ""
+            },
+            "actions": [
+              {
+                "test_patch": {
+                  "path": "I:\\AI PROJECT\\abcd-screening\\readiness-20260902\\evaluator-patches\\editorconfig-checker__editorconfig-checker-360\\test.patch",
+                  "exit_code": 0,
+                  "stderr": ""
+                }
+              },
+              {
+                "gold_patch": {
+                  "path": "I:\\AI PROJECT\\abcd-screening\\readiness-20260902\\evaluator-patches\\editorconfig-checker__editorconfig-checker-360\\gold.patch",
+                  "exit_code": 0,
+                  "stderr": ""
+                }
+              }
+            ]
+          },
+          {
+            "kind": "gold_repeat_3",
+            "status": "PASS",
+            "run": {
+              "exit_code": 0,
+              "timeout": false,
+              "duration_seconds": 3.0,
+              "stdout": "?   \tgithub.com/editorconfig-checker/editorconfig-checker/v3/cmd/editorconfig-checker\t[no test files]\n=== RUN   TestNewConfig\n--- PASS: TestNewConfig (0.00s)\n=== RUN   TestGetExcludesAsRegularExpression\n--- PASS: TestGetExcludesAsRegularExpression (0.00s)\n=== RUN   TestMerge\n--- PASS: TestMerge (0.00s)\n=== RUN   TestParse\n--- PASS: TestParse (0.00s)\n=== RUN   TestSave\n--- PASS: TestSave (0.00s)\n=== RUN   TestGetAsString\n--- PASS: TestGetAsString (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/config\t(cached)\n=== RUN   TestDecodeBytesText\n--- PASS: TestDecodeBytesText (0.08s)\n=== RUN   TestIsBinaryFile\n--- PASS: TestIsBinaryFile (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/encoding\t(cached)\n=== RUN   TestGetErrorCount\n--- PASS: TestGetErrorCount (0.00s)\n=== RUN   TestValidationErrorEqual\n--- PASS: TestValidationErrorEqual (0.00s)\n=== RUN   TestConsolidateErrors\n--- PASS: TestConsolidateErrors (0.00s)\n=== RUN   TestConsolidatingInterleavedErrors\n    error_test.go:183: Consolidating non-consecutive errors is not supported by the current implementation\n--- SKIP: TestConsolidatingInterleavedErrors (0.00s)\n=== RUN   TestFormatErrors\n--- PASS: TestFormatErrors (0.00s)\nPASS\n\nSnapshot Summary\n\n✓ 3 snapshots passed\n\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/error\t0.036s\n=== RUN   TestGetContentType\n--- PASS: TestGetContentType (0.00s)\n=== RUN   TestIsAllowedContentType\n--- PASS: TestIsAllowedContentType (0.00s)\n=== RUN   TestPathExists\n--- PASS: TestPathExists (0.00s)\n=== RUN   TestGetRelativePath\n    files_test.go:107: Windows fails if current directory is deleted\n--- SKIP: TestGetRelativePath (0.00s)\n=== RUN   TestAddToFiles\n--- PASS: TestAddToFiles (0.00s)\n=== RUN   TestGetFiles\n--- PASS: TestGetFiles (0.10s)\n=== RUN   TestGetContentTypeFiles\n--- PASS: TestGetContentTypeFiles (0.01s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/files\t(cached)\n=== RUN   TestLoggerDebug\nhello\n--- PASS: TestLoggerDebug (0.00s)\n=== RUN   TestLoggerVerbose\nhello\n--- PASS: TestLoggerVerbose (0.00s)\n=== RUN   TestLoggerWarning\n\u001b[33;1mblahey\u001b[33;0m\nblahey\n--- PASS: TestLoggerWarning (0.00s)\n=== RUN   TestWarning\n\u001b[33;1mblahey\u001b[33;0m\n--- PASS: TestWarning (0.00s)\n=== RUN   TestLoggerOutput\nblahey\n--- PASS: TestLoggerOutput (0.00s)\n=== RUN   TestOutput\nblahey\n--- PASS: TestOutput (0.00s)\n=== RUN   TestLoggerError\n\u001b[31;1mblahey\u001b[33;0m\nblahey\n--- PASS: TestLoggerError (0.00s)\n=== RUN   TestError\n\u001b[31;1mblahey\u001b[33;0m\n--- PASS: TestError (0.00s)\n=== RUN   TestPrintColor\n\u001b[31;1mHello\u001b[33;0m--- PASS: TestPrintColor (0.00s)\n=== RUN   TestPrint\nHello--- PASS: TestPrint (0.00s)\n=== RUN   TestPrintLogMessage\n\u001b[33;1mwarning message\u001b[33;0m\n\u001b[31;1merror message\u001b[33;0m\nnormal message\n--- PASS: TestPrintLogMessage (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/logger\t(cached)\n=== RUN   TestGetEolChar\n--- PASS: TestGetEolChar (0.00s)\n=== RUN   TestIsRegularFile\n--- PASS: TestIsRegularFile (0.00s)\n=== RUN   TestIsDirectory\n--- PASS: TestIsDirectory (0.00s)\n=== RUN   TestFileExists\n--- PASS: TestFileExists (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/utils\t(cached)\n=== RUN   TestProcessValidation\n--- PASS: TestProcessValidation (0.00s)\n=== RUN   TestValidateFile\n--- PASS: TestValidateFile (0.02s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation\t0.058s\n=== RUN   TestFinalNewline\n--- PASS: TestFinalNewline (0.00s)\n=== RUN   TestLineEnding\n--- PASS: TestLineEnding (0.00s)\n=== RUN   TestIndentation\n--- PASS: TestIndentation (0.00s)\n=== RUN   TestSpace\n--- PASS: TestSpace (0.00s)\n=== RUN   TestTab\n--- PASS: TestTab (0.00s)\n=== RUN   TestTrailingWhitespace\n--- PASS: TestTrailingWhitespace (0.00s)\n=== RUN   TestMaxLineLength\n--- PASS: TestMaxLineLength (0.00s)\nPASS\nok  \tgithub.com/editorconfig-checker/editorconfig-checker/v3/pkg/validation/validators\t(cached)\n",
+              "stderr": ""
+            },
+            "actions": [
+              {
+                "test_patch": {
+                  "path": "I:\\AI PROJECT\\abcd-screening\\readiness-20260902\\evaluator-patches\\editorconfig-checker__editorconfig-checker-360\\test.patch",
+                  "exit_code": 0,
+                  "stderr": ""
+                }
+              },
+              {
+                "gold_patch": {
+                  "path": "I:\\AI PROJECT\\abcd-screening\\readiness-20260902\\evaluator-patches\\editorconfig-checker__editorconfig-checker-360\\gold.patch",
+                  "exit_code": 0,
+                  "stderr": ""
+                }
+              }
+            ]
+          }
+        ],
+        "model_pass": false,
+        "no_edit_expected_fail": true,
+        "gold_pass": true,
+        "test_command": "\"I:\\AI PROJECT\\abcd-screening\\readiness-20260902\\tools\\go\\bin\\go.exe\" test -v ./..."
+      },
+      "quality": "FAIL",
+      "failure_mode": "evaluator/model failure"
+    }
+  ]
+}

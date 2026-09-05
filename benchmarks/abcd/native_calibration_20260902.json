@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "protocol": "native_calibration_luna_first",
+  "commit": "6d44bd74c1658123248c0195769a2000886bdccf",
+  "cli": "codex-cli 0.146.0-alpha.3.1",
+  "reasoning_effort": "high",
+  "network_enforcement": "UNVERIFIED",
+  "installation_enforcement": "UNVERIFIED",
+  "overlay_sequencing": "committed harness writes evaluator overlays post-model; historical runs pre-hardening, no observed leakage",
+  "runs": [
+    {"task":"reata__sqllineage-524","model":"luna","run":"LUNA1","result":"FAIL","failure_mode":"scope_violation","scope":"FAIL","model_pass":false,"gold_pass":true,"input":1272057,"cached":1194496,"uncached":77561,"output":10864,"reasoning":5197,"model_calls":1,"root_peak":1272057},
+    {"task":"reata__sqllineage-524","model":"luna","run":"LUNA2","result":"FAIL","failure_mode":"scope_violation","scope":"FAIL","model_pass":false,"gold_pass":true,"input":1678100,"cached":1588480,"uncached":89620,"output":11832,"reasoning":5261,"model_calls":1,"root_peak":1678100},
+    {"task":"reata__sqllineage-524","model":"luna","run":"LUNA3","result":"FAIL","failure_mode":"scope_violation","scope":"FAIL","model_pass":false,"gold_pass":true,"input":1669953,"cached":1585152,"uncached":84801,"output":10620,"reasoning":4454,"model_calls":1,"root_peak":1669953},
+    {"task":"reata__sqllineage-524","model":"sol","run":"SOL1","result":"FAIL","failure_mode":"scope_violation","scope":"FAIL","model_pass":false,"gold_pass":true,"input":1279952,"cached":1193472,"uncached":86480,"output":11287,"reasoning":5085,"model_calls":1,"root_peak":1279952},
+    {"task":"reata__sqllineage-524","model":"sol","run":"SOL2","result":"FAIL","failure_mode":"scope_violation","scope":"FAIL","model_pass":false,"gold_pass":true,"input":1160016,"cached":1085696,"uncached":74320,"output":11136,"reasoning":5150,"model_calls":1,"root_peak":1160016},
+    {"task":"reata__sqllineage-524","model":"sol","run":"SOL3","result":"FAIL","failure_mode":"scope_violation","scope":"FAIL","model_pass":false,"gold_pass":true,"input":907258,"cached":833280,"uncached":73978,"output":10882,"reasoning":4907,"model_calls":1,"root_peak":907258},
+    {"task":"mozilla-services__cliquet-203","model":"luna","run":"LUNA1","result":"FAIL","failure_mode":"semantic_contract_failure","scope":"PASS","model_pass":false,"gold_pass":true,"input":545258,"cached":486912,"uncached":58346,"output":8587,"reasoning":6504,"model_calls":1,"root_peak":545258},
+    {"task":"mozilla-services__cliquet-203","model":"luna","run":"LUNA2","result":"FAIL","failure_mode":"semantic_contract_failure","scope":"PASS","model_pass":false,"gold_pass":true,"input":420429,"cached":374784,"uncached":45645,"output":6389,"reasoning":4499,"model_calls":1,"root_peak":420429},
+    {"task":"mozilla-services__cliquet-203","model":"luna","run":"LUNA3","result":"FAIL","failure_mode":"semantic_contract_failure","scope":"PASS","model_pass":false,"gold_pass":true,"input":420451,"cached":375808,"uncached":44643,"output":7278,"reasoning":5354,"model_calls":1,"root_peak":420451},
+    {"task":"mozilla-services__cliquet-203","model":"sol","run":"SOL1","result":"PASS","failure_mode":null,"scope":"PASS","model_pass":true,"gold_pass":true,"input":281847,"cached":248576,"uncached":33271,"output":5626,"reasoning":3728,"model_calls":1,"root_peak":281847},
+    {"task":"mozilla-services__cliquet-203","model":"sol","run":"SOL2","result":"PASS","failure_mode":null,"scope":"PASS","model_pass":true,"gold_pass":true,"input":360950,"cached":309760,"uncached":51190,"output":7343,"reasoning":5123,"model_calls":1,"root_peak":360950},
+    {"task":"mozilla-services__cliquet-203","model":"sol","run":"SOL3","result":"PASS","failure_mode":null,"scope":"PASS","model_pass":true,"gold_pass":true,"input":700262,"cached":649728,"uncached":50534,"output":11970,"reasoning":7927,"model_calls":1,"root_peak":700262},
+    {"task":"editorconfig-checker__editorconfig-checker-360","model":"luna","run":"LUNA1","result":"FAIL","failure_mode":"semantic_contract_failure","scope":"PASS","model_pass":false,"gold_pass":true,"input":462368,"cached":414720,"uncached":47648,"output":5640,"reasoning":3634,"model_calls":1,"root_peak":462368},
+    {"task":"editorconfig-checker__editorconfig-checker-360","model":"luna","run":"LUNA2","result":"FAIL","failure_mode":"semantic_contract_failure","scope":"PASS","model_pass":false,"gold_pass":true,"input":292766,"cached":252672,"uncached":40094,"output":5858,"reasoning":4039,"model_calls":1,"root_peak":292766},
+    {"task":"editorconfig-checker__editorconfig-checker-360","model":"luna","run":"LUNA3","result":"FAIL","failure_mode":"semantic_contract_failure","scope":"PASS","model_pass":false,"gold_pass":true,"input":643986,"cached":546816,"uncached":97170,"output":8107,"reasoning":5228,"model_calls":1,"root_peak":643986},
+    {"task":"editorconfig-checker__editorconfig-checker-360","model":"sol","run":"SOL1","result":"FAIL","failure_mode":"semantic_contract_failure","scope":"PASS","model_pass":false,"gold_pass":true,"input":551610,"cached":507136,"uncached":44474,"output":5936,"reasoning":3202,"model_calls":1,"root_peak":551610},
+    {"task":"editorconfig-checker__editorconfig-checker-360","model":"sol","run":"SOL2","result":"FAIL","failure_mode":"semantic_contract_failure","scope":"PASS","model_pass":false,"gold_pass":true,"input":545144,"cached":488192,"uncached":56952,"output":6481,"reasoning":4146,"model_calls":1,"root_peak":545144},
+    {"task":"editorconfig-checker__editorconfig-checker-360","model":"sol","run":"SOL3","result":"FAIL","failure_mode":"semantic_contract_failure","scope":"PASS","model_pass":false,"gold_pass":true,"input":586846,"cached":539904,"uncached":46942,"output":6694,"reasoning":4097,"model_calls":1,"root_peak":586846},
+    {"task":"reata__sqllineage-565","model":"luna","run":"LUNA1","result":"PASS","failure_mode":null,"scope":"PASS","model_pass":true,"gold_pass":true,"input":590832,"cached":523264,"uncached":67568,"output":5025,"reasoning":1567,"model_calls":1,"root_peak":590832},
+    {"task":"reata__sqllineage-565","model":"luna","run":"LUNA2","result":"PASS","failure_mode":null,"scope":"PASS","model_pass":true,"gold_pass":true,"input":615597,"cached":552448,"uncached":63149,"output":5722,"reasoning":1933,"model_calls":1,"root_peak":615597},
+    {"task":"reata__sqllineage-565","model":"luna","run":"LUNA3","result":"PASS","failure_mode":null,"scope":"PASS","model_pass":true,"gold_pass":true,"input":900429,"cached":830720,"uncached":69709,"output":6602,"reasoning":1863,"model_calls":1,"root_peak":900429},
+    {"task":"databacker__mysql-backup-266","model":"luna","run":"LUNA1","result":"PASS","failure_mode":null,"scope":"PASS","model_pass":true,"gold_pass":true,"input":188390,"cached":165888,"uncached":22502,"output":1989,"reasoning":684,"model_calls":1,"root_peak":188390},
+    {"task":"databacker__mysql-backup-266","model":"luna","run":"LUNA2","result":"PASS","failure_mode":null,"scope":"PASS","model_pass":true,"gold_pass":true,"input":272188,"cached":249344,"uncached":22844,"output":2693,"reasoning":931,"model_calls":1,"root_peak":272188},
+    {"task":"databacker__mysql-backup-266","model":"luna","run":"LUNA3","result":"PASS","failure_mode":null,"scope":"PASS","model_pass":true,"gold_pass":true,"input":236178,"cached":206848,"uncached":29330,"output":3268,"reasoning":1739,"model_calls":1,"root_peak":236178}
+  ],
+  "pools": {
+    "SEPARATION_POOL": ["mozilla-services__cliquet-203"],
+    "NEGATIVE_CONTROLS": ["reata__sqllineage-565", "databacker__mysql-backup-266"],
+    "BOTH_WEAK": ["reata__sqllineage-524", "editorconfig-checker__editorconfig-checker-360"]
+  }
+}

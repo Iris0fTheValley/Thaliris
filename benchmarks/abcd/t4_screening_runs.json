@@ -1,0 +1,257 @@
+[
+  {
+    "task": "python-telegram-bot__python-telegram-bot-4617",
+    "source": "SWE-bench-Live lite",
+    "source_url": "https://github.com/microsoft/SWE-bench-Live",
+    "revision": "f57dd52100aafc4640891493ba43ad527433232f",
+    "readiness": "ENVIRONMENT_INCONCLUSIVE",
+    "checks": {
+      "checkout_exact": "PASS",
+      "dependencies_import": "PASS",
+      "focused_evaluator_starts": "PASS",
+      "baseline_expected_failure": "ENVIRONMENT_INCONCLUSIVE",
+      "pass_to_pass_evaluator": "PARTIAL",
+      "network_or_cache_archaeology_required": "NO",
+      "historical_fix_or_prior_artifact_available": "NO"
+    },
+    "B1_result": "NOT_RUN",
+    "A1_result": "NOT_RUN",
+    "B2_result": "NOT_RUN",
+    "input_tokens": "UNAVAILABLE",
+    "cached_input_tokens": "UNAVAILABLE",
+    "uncached_input_tokens": "UNAVAILABLE",
+    "output_tokens": "UNAVAILABLE",
+    "reasoning_tokens": "UNAVAILABLE",
+    "model_turns": "UNAVAILABLE",
+    "wall_clock": "UNAVAILABLE",
+    "changed_files": [],
+    "scope_result": "NOT_RUN",
+    "FAIL_TO_PASS": [
+      "tests/test_bot.py::TestBotWithRequest::test_set_game_score_and_high_scores"
+    ],
+    "PASS_TO_PASS_count": 6236,
+    "failure_mode": "evaluator_environment: network-backed fixture reaches Telegram API but embedded fallback bot returns 401 Unauthorized",
+    "notes": "Isolated venv repaired pytest/flaky/asyncio/pytz/cryptography dependencies. Do not infer model capability or run B1 without a valid authorized test fixture; public evaluator was not modified or bypassed."
+  },
+  {
+    "task": "tox-dev__tox-3409",
+    "source": "SWE-bench-Live lite",
+    "repo": "tox-dev/tox",
+    "revision": "f919d0d0d512a755f0f85af540ed75f73140a685",
+    "readiness": "PASS",
+    "fixture_classification": "INVALIDATED_SOLUTION_LEAKAGE",
+    "checks": {
+      "checkout_exact": "PASS",
+      "dependencies_import": "PASS",
+      "focused_evaluator_starts": "PASS",
+      "baseline_expected_failure": "PASS",
+      "pass_to_pass_evaluator": "PASS (selected subset)",
+      "network_or_cache_archaeology_required": "NO",
+      "historical_fix_or_prior_artifact_available": "FAIL: legacy worktrees retained origin/full history; issue-related upstream commits were available",
+      "windows_evaluator_adjustment": "evaluator-only VIRTUALENV_SYMLINK_APP_DATA=0 and VIRTUALENV_SYMLINKS=0 copy mode"
+    },
+    "evaluator": {
+      "FAIL_TO_PASS_count": 9,
+      "PASS_TO_PASS_count": 1645,
+      "model_overlay_result": "B1 0/9, A1 0/9",
+      "failure_mode": "semantic/evaluator contract mismatch: both models produced incomplete dependency-group integration and exact run/error-shape contracts failed"
+    },
+    "B1_result": "FAIL",
+    "A1_result": "FAIL",
+    "B2_result": "NOT_RUN",
+    "B1_usage": {
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "high",
+      "input_tokens": 4476572,
+      "cached_input_tokens": 4327424,
+      "uncached_input_tokens": 149148,
+      "output_tokens": 18487,
+      "reasoning_tokens": 11850,
+      "model_turns": "UNAVAILABLE",
+      "wall_clock": "UNAVAILABLE"
+    },
+    "A1_usage": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "input_tokens": 4418393,
+      "cached_input_tokens": 4299264,
+      "uncached_input_tokens": 119129,
+      "output_tokens": 15204,
+      "reasoning_tokens": 6244,
+      "model_turns": "UNAVAILABLE",
+      "wall_clock": "UNAVAILABLE"
+    },
+    "changed_files": {
+      "B1": ["src/tox/tox_env/python/runner.py", "src/tox/tox_env/python/dependency_groups.py", "tests/tox_env/python/test_python_runner.py"],
+      "A1": ["src/tox/tox_env/python/runner.py", "src/tox/tox_env/python/dependency_groups.py", "docs/config.rst", "tests/tox_env/python/test_dependency_groups.py", "tests/tox_env/python/test_python_runner.py"]
+    },
+    "scope_result": "SCOPED_BUT_EVALUATOR_FAIL",
+    "notes": "Historical result is retained for observation only. Legacy worktrees retained origin and broad upstream history, so the Sol/Luna result cannot be used as sealed capability evidence."
+  },
+  {
+    "task": "modelcontextprotocol__python-sdk-167",
+    "source": "SWE-bench-Live lite",
+    "repo": "modelcontextprotocol/python-sdk",
+    "revision": "08042c3307bdd0d4a66b0dd3200f38222f447b1e",
+    "readiness": "PASS",
+    "fixture_classification": "INVALIDATED_SOLUTION_LEAKAGE",
+    "checks": {
+      "checkout_exact": "PASS",
+      "dependencies_import": "PASS",
+      "focused_evaluator_starts": "PASS",
+      "baseline_expected_failure": "PASS",
+      "pass_to_pass_evaluator": "PASS (selected subset)",
+      "network_or_cache_archaeology_required": "NO",
+      "historical_fix_or_prior_artifact_available": "FAIL: legacy worktrees retained origin and remote refs; exact-base cleanliness is not proven"
+    },
+    "evaluator": {
+      "FAIL_TO_PASS_count": 2,
+      "PASS_TO_PASS_count": 156,
+      "issue_regression": "PASS",
+      "model_overlay_result": "B1 0/2, A1 0/2",
+      "failure_mode": "semantic/evaluator contract mismatch: pending in-flight state was not exposed/cleared as required and cancellation notification timed out"
+    },
+    "B1_result": "FAIL",
+    "A1_result": "FAIL",
+    "B2_result": "NOT_RUN",
+    "invalid_attempt": {
+      "label": "initial B1",
+      "result": "INVALID_PROTOCOL_VIOLATION",
+      "reason": "model used uv/network installation during run; excluded from screening result",
+      "input_tokens": 2541492,
+      "cached_input_tokens": 2436608,
+      "uncached_input_tokens": 104884,
+      "output_tokens": 23990,
+      "reasoning_tokens": 16190
+    },
+    "B1_usage": {
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "high",
+      "input_tokens": 4451793,
+      "cached_input_tokens": 4313088,
+      "uncached_input_tokens": 138705,
+      "output_tokens": 30970,
+      "reasoning_tokens": 20145,
+      "model_turns": "UNAVAILABLE",
+      "wall_clock": "UNAVAILABLE"
+    },
+    "A1_usage": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "input_tokens": 1202931,
+      "cached_input_tokens": 1124608,
+      "uncached_input_tokens": 78323,
+      "output_tokens": 12696,
+      "reasoning_tokens": 7394,
+      "model_turns": "UNAVAILABLE",
+      "wall_clock": "UNAVAILABLE"
+    },
+    "changed_files": {
+      "B1": ["src/mcp/shared/session.py", "src/mcp/server/sse.py", "tests/shared/test_session.py", "tests/shared/test_sse.py"],
+      "A1": ["src/mcp/shared/session.py", "tests/client/test_session.py"]
+    },
+    "scope_result": "SCOPED_BUT_EVALUATOR_FAIL",
+    "notes": "Historical result is retained for observation only. Legacy worktrees retained origin/remote refs and were not sealed v2 fixtures; no Sol/Luna capability claim is permitted. The earlier invalid run remains excluded for its protocol violation."
+  },
+  {
+    "task": "stanfordnlp__dspy-1609",
+    "source": "SWE-bench-Live lite",
+    "repo": "stanfordnlp/dspy",
+    "revision": "16ceaba5f7126ca86e5b50b669975c926b9f8f55",
+    "readiness": "PASS",
+    "fixture_validity": "INVALID_SOLUTION_LEAKAGE",
+    "fixture_classification": "INVALIDATED_SOLUTION_LEAKAGE",
+    "checks": {
+      "checkout_exact": "PASS",
+      "dependencies_import": "PASS",
+      "focused_evaluator_starts": "PASS",
+      "baseline_expected_failure": "PASS",
+      "pass_to_pass_evaluator": "PASS (selected functional/teleprompt subsets)",
+      "network_or_cache_archaeology_required": "NO",
+      "historical_fix_or_prior_artifact_available": "FAIL: origin refs/object database exposed upstream fix 2349c84b and sibling test patch/parquet were parent-readable",
+      "invalid_attempt": "one early B1 setup shadowed third-party datasets via PYTHONPATH; no changes and no completed usage counted"
+    },
+    "evaluator": {
+      "FAIL_TO_PASS_count": 4,
+      "PASS_TO_PASS_count": 257,
+      "model_overlay_result": "OBSERVED ONLY / INVALID: B1 0/4, A1 4/4, B2 0/4, A2 0/4",
+      "failure_mode_B1": "semantic typed-list BootstrapFewShot parsing contract failure",
+      "failure_mode_B2": "same semantic class: _format_field_value lacks field_info/value compatibility"
+    },
+    "B1_result": "FAIL",
+    "A1_result": "PASS",
+    "B2_result": "FAIL",
+    "A2_result": "INVALID_CONTAMINATED_FIXTURE",
+    "observed_results": {
+      "B1": "FAIL 0/4",
+      "A1": "PASS 4/4",
+      "B2": "FAIL 0/4",
+      "A2": "FAIL 0/4 (observed; not counted)"
+    },
+    "B1_usage": {
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "high",
+      "input_tokens": 2426283,
+      "cached_input_tokens": 2321152,
+      "uncached_input_tokens": 105131,
+      "output_tokens": 18157,
+      "reasoning_tokens": 10532,
+      "model_turns": "UNAVAILABLE",
+      "wall_clock": "UNAVAILABLE"
+    },
+    "A1_usage": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "input_tokens": 1616720,
+      "cached_input_tokens": 1533696,
+      "uncached_input_tokens": 83024,
+      "output_tokens": 14223,
+      "reasoning_tokens": 8383,
+      "model_turns": "UNAVAILABLE",
+      "wall_clock": "UNAVAILABLE"
+    },
+    "B2_usage": {
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "high",
+      "input_tokens": 4251775,
+      "cached_input_tokens": 4118272,
+      "uncached_input_tokens": 133503,
+      "output_tokens": 26633,
+      "reasoning_tokens": 17444,
+      "model_turns": "UNAVAILABLE",
+      "wall_clock": "UNAVAILABLE"
+    },
+    "A2_usage": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "high",
+      "input_tokens": 1459158,
+      "cached_input_tokens": 1138064,
+      "uncached_input_tokens": 321094,
+      "output_tokens": 8102,
+      "reasoning_tokens": 4111,
+      "model_turns": "UNAVAILABLE",
+      "wall_clock": "UNAVAILABLE"
+    },
+    "A2_official_evaluator": {
+      "FAIL_TO_PASS_count": 4,
+      "passed": 0,
+      "failed": 4,
+      "failure": "TypeError: _format_field_value() got an unexpected keyword argument 'field_info'",
+      "validity": "NOT_COUNTED_DUE_TO_SOLUTION_LEAKAGE"
+    },
+    "changed_files": {
+      "B1": ["dspy/adapters/chat_adapter.py", "dspy/functional/functional.py", "tests/functional/test_functional.py"],
+      "A1": ["dspy/adapters/chat_adapter.py", "tests/functional/test_functional.py"],
+      "B2": ["dspy/adapters/chat_adapter.py", "tests/functional/test_functional.py"]
+    },
+    "scope_result": "OBSERVED_SCOPED_BUT_INVALIDATED",
+    "leakage_review": {
+      "model_prompt_direct_solution": "NOT_OBSERVED",
+      "remote_refs_or_gold_objects": "FAIL: dspy-1609-A2-sol origin and --all history expose 2349c84b Fix TypedPredictor formatting with list output values (#1609)",
+      "parent_side_channel": "FAIL: dspy-1609-test.patch and swe-live-lite.parquet were readable from I:/AI PROJECT/abcd-screening",
+      "test_patch_in_model_checkout": "ABSENT, but checkout/parent isolation was not sufficient",
+      "status": "INVALID_SOLUTION_LEAKAGE"
+    },
+    "notes": "A2 was run with fresh Sol/high and the independent overlay, but the fixture entry gate failed: model worktrees retained origin/history containing the upstream fix, and parent-side test_patch/parquet artifacts were readable. All A1/B1/B2/A2 outputs are retained as raw observations only. A2's fixed evaluator result was 0/4 with a helper-signature TypeError, but is not a quality verdict. No B3 or formal T4 was run."
+  }
+]

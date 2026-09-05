@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task": "d_sakiko_shared_live2d_medium",
+  "budget_policy": {
+    "pilot": "one fresh high-reasoning root turn per arm",
+    "comparability": "same issue wording, sealed full working set, provider, model-call allowance and isolation; no fixed token cap",
+    "rerun_policy": "future normalized pilot must use an explicit 1-model-call cap and a shared wall-time cap",
+    "token_cap": null,
+    "wall_time_cap_seconds": null
+  },
+  "arms": {
+    "A2": {"input_tokens": 7717195, "output_tokens": 21443, "reasoning_tokens": 8275, "model_calls": 1, "wall_time_seconds": "UNAVAILABLE", "quality": "HIGH_QUALITY_PARTIAL"},
+    "B2": {"input_tokens": 13634124, "output_tokens": 45443, "reasoning_tokens": 20678, "model_calls": 1, "wall_time_seconds": "UNAVAILABLE", "quality": "HIGH_QUALITY_PARTIAL"},
+    "C3": {"input_tokens": 14409860, "output_tokens": 35608, "reasoning_tokens": 14923, "model_calls": 1, "wall_time_seconds": "UNAVAILABLE", "child_count": 1, "wait_count": 1, "quality": "HIGH_QUALITY_PARTIAL"},
+    "D3": {"input_tokens": 13918652, "output_tokens": 42986, "reasoning_tokens": 18824, "model_calls": 1, "wall_time_seconds": "UNAVAILABLE", "child_count": 1, "wait_count": 1, "sol_invocation_count": 0, "decision_context_tokens": "UNAVAILABLE", "quality": "HIGH_QUALITY_PARTIAL_NO_SOL_ESCALATION"}
+  },
+  "normalization": {
+    "evaluator": "d_sakiko_quality_evaluator.py",
+    "contracts": ["shared_behavior", "renderer", "runtime_ingress"],
+    "scoring": "behavioral contract tests plus entry-point discovery; no gold-diff equality",
+    "base": "COLLECTION_FAIL_EXPECTED",
+    "gold": "15/15 PASS, repeat evidence retained from prior preparation"
+  },
+  "exposure": {"sol_exposure_ratio": 0.0, "interpretable": false, "reason": "D3 made no Sol invocation"}
+}

@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-02",
+  "baseline_commit": "14fa403aaf0864fea292e3b09fd4f09b57dd6196",
+  "scope": "managed CLI execution-path readiness only; no SWE task was run",
+  "provider": {
+    "kind": "CC Switch selected external custom Responses provider",
+    "config_source": "current CODEX_HOME config.toml and CC Switch selected-profile metadata",
+    "auth_source": "selected external provider auth materialized only into a fresh local CODEX_HOME",
+    "credentials_recorded": false,
+    "official_oauth_used": false
+  },
+  "root_cause": {
+    "temporary_provider_404": "The earlier temporary home was built from the CC Switch official Codex OAuth profile. It therefore did not inherit the selected external provider auth/config. The original native launcher also used --ignore-user-config, which bypassed the active provider config.",
+    "managed_no_child_c_d": "C/D started a Codex CLI session before context init. Their repository-scoped AGENTS.md and .codex/hooks.json were created during that same session, too late for startup-time instruction/hook registration. They also used the older standalone CLI 0.146.0 rather than the current desktop runner 0.151.0.",
+    "current_luna_blocker": "Resolved on rerun: the current CC Switch external Responses route returned a model response for gpt-5.6-luna in a fresh minimal home. The earlier 404 was transient/provider-profile state, not evidence that Luna is unsupported."
+  },
+  "changes": {
+    "benchmark_only": ["prepare_benchmark_codex_home.py projects only required provider config/auth and optional global AGENTS.md into an empty per-run CODEX_HOME", "regression test proves sessions/cache/plugins are excluded"],
+    "product": ["intent_audit.py adds the Codex 0.151 file_change surface to the explicit PreToolUse matcher and deny path", "guard telemetry records the actual native tool name", "regression tests cover active-root file_change denial and child/no-task fail-open"]
+  },
+  "smokes": [
+    {"check": "External Luna", "result": "PASS", "evidence": "fresh minimal selected-profile home, current desktop CLI 0.151.0, returned LUNA_SMOKE_OK; external custom Responses endpoint; no official fallback"},
+    {"check": "External Sol", "result": "PASS", "evidence": "fresh minimal selected-profile home returned EXTERNAL_SOL_OK using gpt-5.6-sol"},
+    {"check": "managed config loaded", "result": "PASS_DIAGNOSTIC", "evidence": "pre-initialized workspace launched under current 0.151 CLI reported enabled hooks; audit recorded SessionStart/PreToolUse/PostToolUse"},
+    {"check": "root investigation blocked", "result": "PASS", "evidence": "fresh pre-initialized Luna managed smoke returned a PreToolUse block for root Get-Content; command did not execute"},
+    {"check": "root mutation blocked", "result": "PASS", "evidence": "same smoke returned a PreToolUse block for root file_change/Set-Content; target.txt remained unchanged until child mutation"},
+    {"check": "fresh child spawned", "result": "PASS", "evidence": "JSONL recorded one collaborationspawn_agent with a fresh child receiver"},
+    {"check": "fork_turns none", "result": "PASS", "evidence": "spawn prompt and managed hook evidence recorded fork_turns=none / isolated child"},
+    {"check": "child mutation allowed", "result": "PASS", "evidence": "child read initial before and changed target.txt to after"},
+    {"check": "bounded handoff", "result": "PASS", "evidence": "JSONL recorded blocking wait completion and bounded child result consumed by Controller"}
+  ],
+  "verdict": "MANAGED_CLI_PATH_READY",
+  "next_gate": "Managed CLI path is ready for a separately authorized benchmark run. This report does not authorize or start SWE/ABCD work."
+}

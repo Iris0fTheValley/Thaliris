@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "screening_date": "2026-09-04",
+  "task": "d_sakiko_shared_live2d_medium",
+  "repository": "Iris0fTheValley/D_sakiko",
+  "base_revision": "cdb3f5d591e831b503ce53dfd73489d2207b3040",
+  "base_tree": "92ad9a822dc1ea93cfb5559df3f5e224f9d52240",
+  "gold_branch": "pr1/shared-live2d-upstream",
+  "gold_branch_model_visible": false,
+  "upstreams": [
+    {"project":"GPT-SoVITS","url":"https://github.com/RVC-Boss/GPT-SoVITS","revision":"48b1a0169a28582a8984402f82cf438d3bfa6aca","tree":"f24ae1c9e2af77c985eb8a7e691a4660b05ad0dc","tracked_files":241},
+    {"project":"live2d-py","url":"https://github.com/EasyLive2D/live2d-py","revision":"f9512a458e7b67365cd504f94a6d17e419533050","tree":"fed42be8a2a95ad16fef90cfe7f3a9fb584025d5","tracked_files":660}
+  ],
+  "sealed": {"status":"SEALED_PASS","synthetic_commit":"bc32d93bfb1b1a059a03948d248bb16a4bfa64e5","fixture_path":"I:\\AI PROJECT\\abcd-screening\\d-sakiko-20260904\\fixtures\\sealed-medium-base3","evaluator_materialized_pre_model":false},
+  "evaluator_contract": {"gold_tests":15,"gold_pass":15,"base_status":"EXPECTED_FAIL","repeat_runs":1,"normalized_evaluator":"benchmarks/abcd/d_sakiko_quality_evaluator.py","validation":"benchmarks/abcd/d_sakiko_quality_evaluator_validation_20260904.json","scoring_note":"behavior-oriented contract score; no changed-file or gold-diff equality"},
+  "arms": {
+    "A_native_sol": {"model":"gpt-5.6-sol","provider":"official_openai_chatgpt","reasoning_effort":"high","status":"HIGH_QUALITY_PARTIAL","model_turns":1,"input_tokens":7717195,"output_tokens":21443,"reasoning_tokens":8275,"focused_python_tests":3,"hidden_contract_completeness":"PARTIAL"},
+    "B_native_luna": {"model":"gpt-5.6-luna","provider":"official_openai_chatgpt","reasoning_effort":"high","status":"HIGH_QUALITY_PARTIAL","model_turns":1,"input_tokens":13634124,"output_tokens":45443,"reasoning_tokens":20678,"focused_python_tests":3,"frontend_self_report":"tests/build pass"},
+    "C_managed_luna_only": {"model":"gpt-5.6-luna","provider":"official_openai_chatgpt","reasoning_effort":"high","status":"HIGH_QUALITY_PARTIAL","quality_result":"retained","managed_protocol":"INVALID / UNVERIFIED","thaliris_effectiveness":"NOT_INTERPRETABLE","model_turns":1,"input_tokens":14409860,"output_tokens":35608,"reasoning_tokens":14923,"focused_python_tests":4,"child_count":1,"wait_count":1},
+    "D_managed_hybrid": {"model":"gpt-5.6-luna","provider":"official_openai_chatgpt","reasoning_effort":"high","status":"HIGH_QUALITY_PARTIAL_NO_SOL_ESCALATION","quality_result":"retained","managed_protocol":"INVALID / UNVERIFIED","thaliris_effectiveness":"NOT_INTERPRETABLE","model_turns":1,"input_tokens":13918652,"output_tokens":42986,"reasoning_tokens":18824,"focused_python_tests":4,"child_count":1,"wait_count":1,"sol_invocation_count":0,"decision_context_tokens":"UNAVAILABLE"},
+    "D4_managed_hybrid": {"model":"gpt-5.6-luna","provider":"official_openai_chatgpt","reasoning_effort":"high","status":"LOW_VALUE_PROGRESS","quality_result":"LOW_VALUE_PROGRESS","managed_protocol":"MANAGED_PROTOCOL_INVALID","thaliris_effectiveness":"NOT_INTERPRETABLE","model_turns":1,"input_tokens":"UNAVAILABLE","output_tokens":"UNAVAILABLE","reasoning_tokens":"UNAVAILABLE","child_count":"UNAVAILABLE","wait_count":"UNAVAILABLE","sol_invocation_count":0,"decision_context_tokens":"UNAVAILABLE","raw_output":"I:\\AI PROJECT\\abcd-screening\\d-sakiko-20260904\\D4-managed-hybrid-final.txt","raw_jsonl":"I:\\AI PROJECT\\abcd-screening\\d-sakiko-20260904\\D4-managed-hybrid.jsonl","failure_mode":"root performed repository investigation and source mutation; native runtime attestation absent"}
+  },
+  "sol_exposure_ratio": 0.0,
+  "sol_exposure_interpretable": false,
+  "attention_protection_hypothesis": "NOT_SUPPORTED_BY_THIS_PILOT",
+  "budget_policy":{"pilot":"one fresh high-reasoning root turn per arm","future_rerun":"shared 1-model-call cap plus explicit wall-time cap","token_cap":null,"wall_time_cap_seconds":null},
+  "managed_preflight":{"runner":"benchmarks/abcd/managed_protocol_preflight.py","status":"PASS","checks":"all required hard-gate checks PASS","native_surface":"functions.exec_command, file_change, collaborationspawn_agent"},
+  "next_action":"fresh D rerun is permitted only after the hard preflight gate; use explicit comparable budget"
+}

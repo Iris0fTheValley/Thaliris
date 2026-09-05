@@ -1,0 +1,914 @@
+{
+  "runs": [
+    {
+      "children": [
+        {
+          "cwd_leaf": "C_T2",
+          "file": "rollout-2026-09-01T19-27-23-01a05cb9-4eb0-78d2-a98e-ba2e3bc53ff6.jsonl",
+          "model": "gpt-5.6-luna",
+          "model_calls": 21,
+          "parent_thread_id": "01a05cb9-032c-7f80-ae81-965b2854e39e",
+          "peak_context": 34003,
+          "session_id": "01a05cb9-4eb0-78d2-a98e-ba2e3bc53ff6",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 22777,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 24069,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 24474,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 25297,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 25906,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 29767,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 30365,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 30494,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 30637,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 30808,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 30956,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 12,
+              "input_tokens": 31024,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 13,
+              "input_tokens": 31096,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 14,
+              "input_tokens": 31181,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 15,
+              "input_tokens": 31285,
+              "preceding_action": "send_message"
+            },
+            {
+              "call": 16,
+              "input_tokens": 31544,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 17,
+              "input_tokens": 32531,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 18,
+              "input_tokens": 33767,
+              "preceding_action": "send_message"
+            },
+            {
+              "call": 19,
+              "input_tokens": 33905,
+              "preceding_action": "wait_agent"
+            },
+            {
+              "call": 20,
+              "input_tokens": 33961,
+              "preceding_action": "wait_agent"
+            },
+            {
+              "call": 21,
+              "input_tokens": 34003,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 20,
+          "usage": {
+            "cached_input_tokens": 569344,
+            "input_tokens": 629847,
+            "output_tokens": 2379,
+            "reasoning_tokens": 892
+          }
+        }
+      ],
+      "root": {
+        "cwd_leaf": "C_T2",
+        "file": "rollout-2026-09-01T19-27-04-01a05cb9-032c-7f80-ae81-965b2854e39e.jsonl",
+        "model": "gpt-5.6-luna",
+        "model_calls": 12,
+        "parent_thread_id": null,
+        "peak_context": 25210,
+        "session_id": "01a05cb9-032c-7f80-ae81-965b2854e39e",
+        "timeline": [
+          {
+            "call": 1,
+            "input_tokens": 22791,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 2,
+            "input_tokens": 23227,
+            "preceding_action": "spawn_agent"
+          },
+          {
+            "call": 3,
+            "input_tokens": 23472,
+            "preceding_action": "wait_agent"
+          },
+          {
+            "call": 4,
+            "input_tokens": 23751,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 5,
+            "input_tokens": 24048,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 6,
+            "input_tokens": 24211,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 7,
+            "input_tokens": 24289,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 8,
+            "input_tokens": 24509,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 9,
+            "input_tokens": 24582,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 10,
+            "input_tokens": 24676,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 11,
+            "input_tokens": 24930,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 12,
+            "input_tokens": 25210,
+            "preceding_action": "model_turn"
+          }
+        ],
+        "tool_calls": 11,
+        "usage": {
+          "cached_input_tokens": 264192,
+          "input_tokens": 289696,
+          "output_tokens": 1714,
+          "reasoning_tokens": 751
+        }
+      },
+      "run": "C_T2"
+    },
+    {
+      "children": [
+        {
+          "cwd_leaf": "C_T3",
+          "file": "rollout-2026-09-01T19-31-11-01a05cbc-c869-72f1-975b-79e2d4e17cb2.jsonl",
+          "model": "gpt-5.6-luna",
+          "model_calls": 29,
+          "parent_thread_id": "01a05cbc-7e30-7082-822d-ef26cc8a1674",
+          "peak_context": 34885,
+          "session_id": "01a05cbc-c869-72f1-975b-79e2d4e17cb2",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 22806,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 23544,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 24372,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 25088,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 26120,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 29988,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 30735,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 31141,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 31265,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 10,
+              "input_tokens": 31333,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 11,
+              "input_tokens": 31400,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 12,
+              "input_tokens": 31483,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 13,
+              "input_tokens": 31561,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 14,
+              "input_tokens": 31655,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 31754,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 16,
+              "input_tokens": 31821,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 17,
+              "input_tokens": 31880,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 18,
+              "input_tokens": 31966,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 19,
+              "input_tokens": 32108,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 20,
+              "input_tokens": 32354,
+              "preceding_action": "send_message"
+            },
+            {
+              "call": 21,
+              "input_tokens": 32745,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 22,
+              "input_tokens": 32940,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 23,
+              "input_tokens": 33156,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 24,
+              "input_tokens": 33632,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 25,
+              "input_tokens": 33869,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 26,
+              "input_tokens": 34585,
+              "preceding_action": "send_message"
+            },
+            {
+              "call": 27,
+              "input_tokens": 34702,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 28,
+              "input_tokens": 34819,
+              "preceding_action": "send_message"
+            },
+            {
+              "call": 29,
+              "input_tokens": 34885,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 28,
+          "usage": {
+            "cached_input_tokens": 858880,
+            "input_tokens": 899707,
+            "output_tokens": 3102,
+            "reasoning_tokens": 900
+          }
+        }
+      ],
+      "root": {
+        "cwd_leaf": "C_T3",
+        "file": "rollout-2026-09-01T19-30-52-01a05cbc-7e30-7082-822d-ef26cc8a1674.jsonl",
+        "model": "gpt-5.6-luna",
+        "model_calls": 16,
+        "parent_thread_id": null,
+        "peak_context": 25803,
+        "session_id": "01a05cbc-7e30-7082-822d-ef26cc8a1674",
+        "timeline": [
+          {
+            "call": 1,
+            "input_tokens": 22814,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 2,
+            "input_tokens": 23265,
+            "preceding_action": "spawn_agent"
+          },
+          {
+            "call": 3,
+            "input_tokens": 23547,
+            "preceding_action": "wait_agent"
+          },
+          {
+            "call": 4,
+            "input_tokens": 23861,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 5,
+            "input_tokens": 24114,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 6,
+            "input_tokens": 24191,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 7,
+            "input_tokens": 24421,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 8,
+            "input_tokens": 24630,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 9,
+            "input_tokens": 24744,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 10,
+            "input_tokens": 24883,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 11,
+            "input_tokens": 24950,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 12,
+            "input_tokens": 25009,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 13,
+            "input_tokens": 25103,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 14,
+            "input_tokens": 25352,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 15,
+            "input_tokens": 25573,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 16,
+            "input_tokens": 25803,
+            "preceding_action": "model_turn"
+          }
+        ],
+        "tool_calls": 15,
+        "usage": {
+          "cached_input_tokens": 367616,
+          "input_tokens": 392260,
+          "output_tokens": 2184,
+          "reasoning_tokens": 1025
+        }
+      },
+      "run": "C_T3"
+    },
+    {
+      "children": [
+        {
+          "cwd_leaf": "D_T2",
+          "file": "rollout-2026-09-01T19-36-16-01a05cc1-72cd-7453-9c73-a9b9adc0dd7b.jsonl",
+          "model": "gpt-5.6-luna",
+          "model_calls": 19,
+          "parent_thread_id": "01a05cc1-250b-7eb1-b107-a99c866b1c65",
+          "peak_context": 44560,
+          "session_id": "01a05cc1-72cd-7453-9c73-a9b9adc0dd7b",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 22770,
+              "preceding_action": "send_message"
+            },
+            {
+              "call": 2,
+              "input_tokens": 23004,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 28004,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 39218,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 39825,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 42470,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 43196,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 43331,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 43501,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 43595,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 11,
+              "input_tokens": 43663,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 12,
+              "input_tokens": 43736,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 13,
+              "input_tokens": 43803,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 14,
+              "input_tokens": 43904,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 44065,
+              "preceding_action": "send_message"
+            },
+            {
+              "call": 16,
+              "input_tokens": 44352,
+              "preceding_action": "send_message"
+            },
+            {
+              "call": 17,
+              "input_tokens": 44439,
+              "preceding_action": "wait_agent"
+            },
+            {
+              "call": 18,
+              "input_tokens": 44507,
+              "preceding_action": "wait_agent"
+            },
+            {
+              "call": 19,
+              "input_tokens": 44560,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 18,
+          "usage": {
+            "cached_input_tokens": 721152,
+            "input_tokens": 765943,
+            "output_tokens": 2071,
+            "reasoning_tokens": 726
+          }
+        }
+      ],
+      "root": {
+        "cwd_leaf": "D_T2",
+        "file": "rollout-2026-09-01T19-35-57-01a05cc1-250b-7eb1-b107-a99c866b1c65.jsonl",
+        "model": "gpt-5.6-luna",
+        "model_calls": 21,
+        "parent_thread_id": null,
+        "peak_context": 26268,
+        "session_id": "01a05cc1-250b-7eb1-b107-a99c866b1c65",
+        "timeline": [
+          {
+            "call": 1,
+            "input_tokens": 22812,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 2,
+            "input_tokens": 23221,
+            "preceding_action": "spawn_agent"
+          },
+          {
+            "call": 3,
+            "input_tokens": 23456,
+            "preceding_action": "wait_agent"
+          },
+          {
+            "call": 4,
+            "input_tokens": 23639,
+            "preceding_action": "list_agents"
+          },
+          {
+            "call": 5,
+            "input_tokens": 23825,
+            "preceding_action": "wait_agent"
+          },
+          {
+            "call": 6,
+            "input_tokens": 24052,
+            "preceding_action": "list_agents"
+          },
+          {
+            "call": 7,
+            "input_tokens": 24052,
+            "preceding_action": "model_turn"
+          },
+          {
+            "call": 8,
+            "input_tokens": 24052,
+            "preceding_action": "model_turn"
+          },
+          {
+            "call": 9,
+            "input_tokens": 24609,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 10,
+            "input_tokens": 24804,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 11,
+            "input_tokens": 24907,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 12,
+            "input_tokens": 24981,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 13,
+            "input_tokens": 25052,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 14,
+            "input_tokens": 25122,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 15,
+            "input_tokens": 25225,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 16,
+            "input_tokens": 25360,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 17,
+            "input_tokens": 25463,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 18,
+            "input_tokens": 25738,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 19,
+            "input_tokens": 25874,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 20,
+            "input_tokens": 26061,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 21,
+            "input_tokens": 26268,
+            "preceding_action": "model_turn"
+          }
+        ],
+        "tool_calls": 18,
+        "usage": {
+          "cached_input_tokens": 487168,
+          "input_tokens": 518573,
+          "output_tokens": 2376,
+          "reasoning_tokens": 1006
+        }
+      },
+      "run": "D_T2"
+    },
+    {
+      "children": [
+        {
+          "cwd_leaf": "D_T3",
+          "file": "rollout-2026-09-01T19-40-27-01a05cc5-444e-7e23-8757-b85c8bc2da8b.jsonl",
+          "model": "gpt-5.6-luna",
+          "model_calls": 18,
+          "parent_thread_id": "01a05cc4-f94d-7970-b40c-b65df617338e",
+          "peak_context": 36845,
+          "session_id": "01a05cc5-444e-7e23-8757-b85c8bc2da8b",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 22786,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 25013,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 25876,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 26973,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 30623,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 31446,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 34470,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 35385,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 35603,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 35725,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 35905,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 12,
+              "input_tokens": 35975,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 13,
+              "input_tokens": 36043,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 14,
+              "input_tokens": 36110,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 15,
+              "input_tokens": 36181,
+              "preceding_action": "wait"
+            },
+            {
+              "call": 16,
+              "input_tokens": 36290,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 17,
+              "input_tokens": 36535,
+              "preceding_action": "send_message"
+            },
+            {
+              "call": 18,
+              "input_tokens": 36845,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 17,
+          "usage": {
+            "cached_input_tokens": 557568,
+            "input_tokens": 593784,
+            "output_tokens": 2664,
+            "reasoning_tokens": 1062
+          }
+        }
+      ],
+      "root": {
+        "cwd_leaf": "D_T3",
+        "file": "rollout-2026-09-01T19-40-07-01a05cc4-f94d-7970-b40c-b65df617338e.jsonl",
+        "model": "gpt-5.6-luna",
+        "model_calls": 13,
+        "parent_thread_id": null,
+        "peak_context": 25827,
+        "session_id": "01a05cc4-f94d-7970-b40c-b65df617338e",
+        "timeline": [
+          {
+            "call": 1,
+            "input_tokens": 22837,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 2,
+            "input_tokens": 23293,
+            "preceding_action": "spawn_agent"
+          },
+          {
+            "call": 3,
+            "input_tokens": 23566,
+            "preceding_action": "wait_agent"
+          },
+          {
+            "call": 4,
+            "input_tokens": 23858,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 5,
+            "input_tokens": 24502,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 6,
+            "input_tokens": 24580,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 7,
+            "input_tokens": 24648,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 8,
+            "input_tokens": 24795,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 9,
+            "input_tokens": 25084,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 10,
+            "input_tokens": 25270,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 11,
+            "input_tokens": 25446,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 12,
+            "input_tokens": 25619,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 13,
+            "input_tokens": 25827,
+            "preceding_action": "model_turn"
+          }
+        ],
+        "tool_calls": 12,
+        "usage": {
+          "cached_input_tokens": 292608,
+          "input_tokens": 319325,
+          "output_tokens": 2353,
+          "reasoning_tokens": 1047
+        }
+      },
+      "run": "D_T3"
+    }
+  ],
+  "schema_version": 1
+}

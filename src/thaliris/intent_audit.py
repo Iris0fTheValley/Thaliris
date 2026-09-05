@@ -69,7 +69,7 @@ _BROAD_INVESTIGATION = re.compile(
 _SOURCE_MUTATION = re.compile(
     r"(?i)(?:apply_patch|git\s+(?:apply|commit|reset|checkout|restore|rebase)|(?:set|add|clear|out|remove|move|copy|rename|new)-content|(?:set|add|remove|move|copy|rename|new)-item|\b(?:ni|mkdir)\b|(?<![<>])>{1,2}(?![&]))"
 )
-_COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||;)")
+_COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
 ALLOWED_FINDINGS = {
     "requirement_omission",
     "constraint_weakening",
@@ -464,16 +464,24 @@ def _record_runtime_event(root: Path, payload: dict[str, Any], event: str, tool:
         raw_tools.append(tool)
     if event == "PreToolUse":
         tool_input = _delegation_input(payload)
-        state["pre_dispatch_rewrite"] = "NO" if tool_input.get("fork_turns") == "none" else "YES"
+        state.pop("pre_dispatch_rewrite", None)
+        state["pre_dispatch_isolation"] = (
+            "EXPLICIT" if tool_input.get("fork_turns") == "none" else "REJECTED"
+        )
     if event == "PostToolUse" and _tool_basename(tool) == "spawn_agent":
-        # Codex 0.146 has emitted both a structured response object and a
+        # Codex has emitted both a structured response object and a
         # scalar/opaque response for collaboration tools.  The PostToolUse
         # event itself is the completion boundary; only an explicit failure
         # marker should prevent the Controller from recognizing that a child
         # dispatch completed.  Do not inspect encrypted V2 message content.
         response = _post_tool_response(payload)
         if _post_tool_succeeded(response):
-            state["successful_spawn_observed"] = True
+            # Dispatch eligibility belongs to one ACTIVE task, not the whole
+            # native session. Legacy session-level booleans intentionally do
+            # not satisfy a later task.
+            task_id = _active_task_id(root)
+            if task_id is not None:
+                state["successful_spawn_task_id_hash"] = _task_key(task_id)
     _write_capture(path, state)
 
 
@@ -542,7 +550,12 @@ def _successful_spawn_observed(root: Path, payload: dict[str, Any]) -> bool:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return False
-    return isinstance(value, dict) and value.get("successful_spawn_observed") is True
+    task_id = _active_task_id(root)
+    return (
+        isinstance(value, dict)
+        and task_id is not None
+        and value.get("successful_spawn_task_id_hash") == _task_key(task_id)
+    )
 
 
 def _post_tool_response(payload: dict[str, Any]) -> object:
@@ -571,46 +584,46 @@ def _post_tool_succeeded(response: object) -> bool:
 
 
 def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | None:
-    """Classify only well-known shell actions; unknown commands fail open."""
+    """Allow only fixed control-plane and acceptance commands for an ACTIVE root."""
     if _active_task_id(root) is None:
         return None
     command = _bash_command(payload)
     if command is None:
-        return "UNKNOWN"
+        return "ROOT_COMMAND_NOT_ALLOWED"
     for segment in _COMMAND_SEPARATOR.split(command):
         value = segment.strip()
         if not value:
             continue
         lowered = value.lower()
-        if re.match(r"^(?:context|python\s+-m\s+thaliris\.cli)\b", lowered):
-            if re.search(r"\bprepare\b", lowered):
-                role = re.search(r"(?:--role|-role)(?:\s+|=)([a-z0-9_-]+)", lowered)
-                if role and role.group(1) in {"investigator", "curator", "reasoning-specialist", "implementer", "reviewer", "luna", "luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"}:
-                    return "CHILD_PROJECTION"
-                continue
-            if re.search(r"\btask[-_ ]update\b", lowered):
-                role = re.search(r"(?:--role|-role)(?:\s+|=)([a-z0-9_-]+)", lowered)
-                if role and role.group(1) in {"investigator", "curator", "reasoning-specialist", "implementer", "reviewer", "luna", "luna-investigator", "luna-curator", "sol-high", "terra-implementer", "terra-reviewer"}:
-                    return "CHILD_UPDATE"
-            if re.search(r"\btask[-_ ]show\b", lowered):
-                return "BROAD_INVESTIGATION"
-            if re.search(r"\btask[-_ ]close\b", lowered) and not _successful_spawn_observed(root, payload):
+        # Complex shell syntax is outside the fixed command vocabulary.  Do
+        # not try to interpret it: reject it before accepting a prefix.
+        if re.search(r"[`$()<>]", value):
+            return "ROOT_COMMAND_NOT_ALLOWED"
+        if re.fullmatch(r"context\s+task-status", lowered):
+            continue
+        if re.fullmatch(r"context\s+prepare\s+--role(?:=|\s+)controller", lowered):
+            continue
+        if re.match(r"^context\s+task-update\b", lowered) and re.search(r"(?:--role|-role)(?:=|\s+)controller\b", lowered):
+            continue
+        if re.match(r"^context\s+task-artifact\b", lowered):
+            continue
+        if re.match(r"^context\s+task-promote\b", lowered) and re.search(r"(?:--role|-role)(?:=|\s+)controller\b", lowered):
+            continue
+        if re.match(r"^context\s+task-close\b", lowered):
+            if not _successful_spawn_observed(root, payload):
                 return "TASK_CLOSE_NO_CHILD"
             continue
         if re.match(r"^(?:pytest|python\s+-m\s+pytest|uv\s+run\s+(?:python\s+-m\s+)?pytest)\b", lowered):
             if not _successful_spawn_observed(root, payload):
                 return "ACCEPTANCE_BEFORE_CHILD"
             continue
-        if re.match(r"^git\s+status\s+--short\b", lowered):
+        if re.fullmatch(r"git\s+status\s+--short", lowered):
             continue
-        if re.match(r"^git\s+diff\s+--(?:check|stat|name-only)\b", lowered):
+        if re.fullmatch(r"git\s+diff\s+--(?:check|stat|name-only)", lowered):
             continue
-        if re.match(r"^git\s+(?:rev-parse|hash-object)\b", lowered):
+        if re.fullmatch(r"git\s+(?:rev-parse|hash-object)(?:\s+[a-z0-9_./:@=\-]+)+", lowered):
             continue
-        if _SOURCE_MUTATION.search(value):
-            return "SOURCE_MUTATION"
-        if _BROAD_INVESTIGATION.search(value) or re.match(r"^git\s+diff\b", lowered):
-            return "BROAD_INVESTIGATION"
+        return "ROOT_COMMAND_NOT_ALLOWED"
     return None
 
 
@@ -1105,12 +1118,7 @@ def _isolation_classification(tool: str, tool_input: dict[str, Any], _role: str)
 
 
 def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
-    """Rewrite unsafe root spawn input before Codex dispatches it.
-
-    The response uses Codex's stable PreToolUse contract.  It deliberately
-    returns only a fixed reason and the updated invocation, never the prompt
-    or any other task evidence.
-    """
+    """Require an explicit fresh-child spawn before native dispatch."""
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
         return ""
@@ -1126,31 +1134,13 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
         return ""
     tool_input = _delegation_input(payload)
     if not isinstance(tool_input, dict):
-        return json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": "THALIRIS_ISOLATION_INPUT_INVALID",
-            }
-        }, separators=(",", ":"))
+        return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
     fork = tool_input.get("fork_turns")
     if fork == "none":
-        return json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-            }
-        }, separators=(",", ":"))
-    updated = dict(tool_input)
-    updated["fork_turns"] = "none"
-    return json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "permissionDecisionReason": "THALIRIS_ISOLATION_REWRITTEN",
-            "updatedInput": updated,
-        }
-    }, ensure_ascii=False, separators=(",", ":"))
+        # Current Codex treats a bare `allow` without updatedInput as invalid.
+        # A correct primary invocation therefore has no hook control effect.
+        return ""
+    return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
 
 
 def _permission_deny(reason: str) -> str:
@@ -1164,14 +1154,10 @@ def _permission_deny(reason: str) -> str:
 
 
 def _controller_guard_output(payload: dict[str, Any], root: Path | None = None) -> str:
-    """Block only classified root investigation/mutation actions.
-
-    The hook cannot safely reason about arbitrary scripts or non-shell native
-    tools, so unknown actions remain fail-open and are recorded as such.
-    """
+    """Keep an ACTIVE persistent root to its small control-plane allowlist."""
     root = _hook_repository_root(root or Path.cwd(), payload)
     action = _controller_command_action(root, payload)
-    if action in {"SOURCE_MUTATION", "BROAD_INVESTIGATION", "CHILD_PROJECTION", "CHILD_UPDATE", "TASK_CLOSE_NO_CHILD", "ACCEPTANCE_BEFORE_CHILD"}:
+    if action is not None:
         _record_controller_guard_event(root, payload, action, "blocked")
         if action == "TASK_CLOSE_NO_CHILD":
             reason = _CONTROLLER_CLOSE_REASON

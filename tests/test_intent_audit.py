@@ -12,6 +12,7 @@ import pytest
 
 from thaliris.codex_adapter import init, task_close, task_start, uninstall
 from thaliris.doctor import _context_isolation
+import thaliris.core as core_module
 import thaliris.intent_audit as audit_module
 from thaliris.intent_audit import handle_hook, hooks_health
 
@@ -144,14 +145,15 @@ def test_v1_v2_and_namespaced_messages_capture_instruction_text_only(tmp_path):
 def test_flattened_v2_runtime_evidence_records_pre_and_post_hooks(tmp_path):
     root = repo(tmp_path)
     pre = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "2", "message": "encrypted"})))
-    assert pre["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
+    assert pre["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "updatedInput" not in pre["hookSpecificOutput"]
     handle_hook(root, "PostToolUse", payload(tool_name="collaborationsend_message", tool_input={"message": "delegated", "target": "child"}, tool_response={"success": True}))
     runtime = list((root / ".context" / "audit").glob("*/runtime.json"))
     assert len(runtime) == 1
     evidence = json.loads(runtime[0].read_text(encoding="utf-8"))
     assert evidence["events_observed"] == {"PreToolUse": True, "PostToolUse": True}
     assert evidence["tool_names_observed"] == ["collaborationspawn_agent", "collaborationsend_message"]
-    assert evidence["pre_dispatch_rewrite"] == "YES"
+    assert evidence["pre_dispatch_isolation"] == "REJECTED"
     assert evidence["tools_observed"] == ["spawn_agent", "send_message"]
     assert _context_isolation(root)["observed"] == {
         "pre_dispatch_hook_supported": "YES",
@@ -172,7 +174,7 @@ def test_real_cli_audit_hook_accepts_flattened_v2_names(tmp_path):
         capture_output=True,
         check=False,
     )
-    assert pre.returncode == 0 and json.loads(pre.stdout)["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
+    assert pre.returncode == 0 and json.loads(pre.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
     post = subprocess.run(
         [*command, "PostToolUse"],
         input=json.dumps(payload(tool_name="collaborationsend_message", tool_input={"message": "delegated", "target": "child"}, tool_response={"success": True})).encode(),
@@ -661,24 +663,19 @@ def test_post_tool_matcher_uses_regex_for_namespaced_multiagent_tools(tmp_path):
     assert any(any(handler.get("command") == "user-hook" for handler in entry["hooks"]) for entry in entries)
 
 
-def test_pre_tool_isolation_rewrites_before_dispatch_without_agent_type(tmp_path):
+def test_pre_tool_isolation_requires_explicit_fresh_dispatch_without_agent_type(tmp_path):
     root = repo(tmp_path)
-    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"message": "work"})))
-    output = response["hookSpecificOutput"]
-    assert output["hookEventName"] == "PreToolUse" and output["permissionDecision"] == "allow"
-    assert output["updatedInput"]["fork_turns"] == "none"
-
-    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="collaboration.spawn_agent", tool_input={"fork_turns": "all", "message": "work"})))
-    assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
-
-    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "1", "message": "Isolation reason: encrypted V2 text"})))
-    output = response["hookSpecificOutput"]
-    assert output["permissionDecision"] == "allow" and output["updatedInput"]["fork_turns"] == "none"
-
-    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "2", "message": "work"})))
-    assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
-    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": 1, "message": "Isolation reason: wrong native type"})))
-    assert response["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "message": "work"})) == ""
+    for fork_turns in (None, "all", "1", "2", "5", "unexpected", 1):
+        tool_input = {"message": "work"}
+        if fork_turns is not None:
+            tool_input["fork_turns"] = fork_turns
+        response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="collaboration.spawn_agent", tool_input=tool_input)))
+        output = response["hookSpecificOutput"]
+        assert output["hookEventName"] == "PreToolUse"
+        assert output["permissionDecision"] == "deny"
+        assert output["permissionDecisionReason"].startswith("THALIRIS_ISOLATION_REQUIRED:")
+        assert "updatedInput" not in output
     response = json.loads(handle_hook(root, "PreToolUse", payload(agent_id="child", tool_name="spawn_agent", tool_input={"fork_turns": "all"})))
     assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
@@ -742,8 +739,51 @@ def test_controller_guard_blocks_root_broad_investigation_and_mutation(tmp_path)
     runtime = list((root / ".context" / "audit").glob("*/runtime.json"))
     evidence = json.loads(runtime[0].read_text(encoding="utf-8"))
     assert evidence["controller_guard"]["blocked"] == 5
-    assert "BROAD_INVESTIGATION" in evidence["controller_actions_observed"]
-    assert "SOURCE_MUTATION" in evidence["controller_actions_observed"]
+    assert "ROOT_COMMAND_NOT_ALLOWED" in evidence["controller_actions_observed"]
+
+
+def test_controller_guard_allows_only_fixed_active_root_control_plane_commands(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    task_start(root, "root allowlist", None, None)
+    for command in (
+        "context task-status",
+        "context prepare --role controller",
+        "git status --short",
+        "git diff --check",
+        "git diff --stat",
+        "git diff --name-only",
+        "git rev-parse HEAD",
+    ):
+        assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})) == ""
+    for command in (
+        'python -c "print(open(\'harmless.txt\').read())"',
+        'python -c "from pathlib import Path; Path(\'harmless.txt\').write_text(\'x\')"',
+        "node -e \"process.stdout.write('x')\"",
+        "unknown-executable --version",
+        "git diff",
+        "git log -1 --oneline",
+        "cat harmless.txt",
+        "rg harmless .",
+    ):
+        response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert response["hookSpecificOutput"]["permissionDecisionReason"].startswith("THALIRIS_CONTROLLER_BOUNDARY:")
+
+
+def test_child_execution_commands_remain_unrestricted_while_delegation_is_denied(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    task_start(root, "child execution", None, None)
+    for command in (
+        "python -c \"print(open('src/main.py').read())\"",
+        "python -c \"from pathlib import Path; Path('src/main.py').write_text('x')\"",
+        "pytest -q tests/test_target.py",
+    ):
+        assert handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name="Bash", tool_input={"command": command})) == ""
+    for tool in ("spawn_agent", "followup_task", "send_message"):
+        response = json.loads(handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name=tool, tool_input={"fork_turns": "none"})))
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_controller_guard_covers_namespaced_native_shell_surface(tmp_path):
@@ -783,7 +823,7 @@ def test_child_delegation_is_denied_only_with_explicit_identity(tmp_path):
     root = repo(tmp_path); init(root); task_start(root, "child delegation", None, None)
     response = json.loads(handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name="spawn_agent", tool_input={"fork_turns": "none"})))
     assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}))
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"})) == ""
 
 
 def test_controller_guard_blocks_root_apply_patch_without_leaking_payload(tmp_path):
@@ -844,6 +884,32 @@ def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path
     handle_hook(root, "PostToolUse", payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "none", "message": "bounded child"}, tool_response={"task_name": "/root/child"}))
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})) == ""
+
+
+def test_successful_spawn_evidence_is_scoped_to_the_active_task(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    first = task_start(root, "first task", None, None)
+    handle_hook(
+        root,
+        "PostToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"task_name": "/root/child-a"}),
+    )
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
+    core_module.task_close(root, first["revision"], expected_task_id=first["task_id"])
+
+    second = task_start(root, "second task", None, None)
+    for command in ("pytest -q tests/test_target.py", "context task-close --base-revision 1"):
+        response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    handle_hook(
+        root,
+        "PostToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"task_name": "/root/child-b"}),
+    )
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})) == ""
+    assert second["task_id"] != first["task_id"]
 
 
 def test_controller_guard_accepts_opaque_native_spawn_post_result(tmp_path):

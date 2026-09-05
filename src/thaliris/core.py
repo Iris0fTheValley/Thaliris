@@ -696,7 +696,15 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
     if not _state_ignored(root): raise ValueError("task state is not ignored; run context init first")
     if not goal.strip(): raise ValueError("goal must not be empty")
     partial = _read_input(input_file)
-    allowed = _STATE_FIELDS - {"schema_version", "revision", "task_id", "status", "goal", "current_milestone", "durable_promotion_count", "artifact_refs"}
+    # Findings, snapshots, reviews, and their cursors are execution-role
+    # outputs. A Controller may supply semantic task inputs at bootstrap, but
+    # must not fabricate another role's provenance before that role runs.
+    allowed = _STATE_FIELDS - {
+        "schema_version", "revision", "task_id", "status", "goal", "current_milestone",
+        "durable_promotion_count", "artifact_refs", "investigation_findings",
+        "investigation_snapshot", "review_findings", "investigation_covered_through",
+        "review_handled_through",
+    }
     if set(partial) - allowed: raise ValueError("task-start input has forbidden fields")
     with _lock(root):
         if not _state_ignored(root): raise ValueError("task state is not ignored; run context init first")

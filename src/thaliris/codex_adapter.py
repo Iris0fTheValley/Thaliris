@@ -202,16 +202,10 @@ def init(root: Path) -> dict[str, object]:
 
 
 def migrate(root: Path) -> dict[str, object]:
-    root = core._repo_root(root)
-    generic_files, generic_manual, migrated = core._migrate_plan(root)
-    adapter_files, adapter_manual = _install_plan(root)
-    if ".gitignore" in generic_files:
-        adapter_files[".gitignore"] = _audit_ignore(generic_files[".gitignore"].decode("utf-8")).encode("utf-8")
-    files = generic_files | adapter_files
-    manual = sorted(set(generic_manual) | set(adapter_manual))
-    with core._lock(root):
-        backup = core._apply_with_backup(root, files, [], "migrate") if files else None
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup}
+    generic = core.migrate(root)
+    adapter = _install(root)
+    generic.update({"changed": bool(generic["changed"] or adapter["changed"]), "adapter_backup": adapter["backup"], "files": sorted(set(generic.get("files", [])) | set(adapter.get("files", []))), "manual_migration_required": sorted(set(generic.get("manual_migration_required", [])) | set(adapter.get("manual_migration_required", [])))})
+    return generic
 
 
 def _uninstall(root: Path) -> dict[str, object]:

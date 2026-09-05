@@ -33,8 +33,7 @@ def report(root: Path) -> dict[str, object]:
             task.update({"valid": "YES", "status": state["status"], "revision": state["revision"]})
         except (OSError, ValueError):
             task["valid"] = "NO"
-    agents_state = "YES" if (root / "AGENTS.md").is_file() else "NO"
     task_state_valid = task["valid"] if task["present"] == "YES" else "YES"
     routing_ready = "YES" if all(value == "YES" for value in (config_state, task_state_valid)) else "NO"
-    routing = {"command_executed": "YES", "configuration_valid": config_state, "managed_agents_present": agents_state, "task_state_valid": task_state_valid, "role_routing_ready": routing_ready}
-    return {"ok": True, "context": {"config": config_state, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}}
+    routing = {"command_executed": "YES", "configuration_valid": config_state, "task_state_valid": task_state_valid, "role_routing_ready": routing_ready}
+    return {"ok": True, "context": {"config": config_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}}

@@ -25,68 +25,6 @@ IGNORE_END = "# thaliris:end"
 LEGACY_IGNORE_START = "# codex-context:begin"
 LEGACY_IGNORE_END = "# codex-context:end"
 IGNORE_RULES = (".context/backups/", ".context/state.json", ".context/context.lock")
-# Keep the generated instruction surface small. Detailed policy lives in the
-# role-pack document and is loaded only when a task needs it.
-MANAGED = ""
-'''thaliris-core:begin
-## Thaliris Router
-
-runtime remains the runtime. Thaliris stores bounded task control and pointers; it has no worker, scheduler, polling loop, or authority to decide correctness.
-
-Controller uses `context task-status` or `context prepare --role controller` for bounded packets. `context task-show` is explicit raw diagnostics; `context task-artifact` passes pointers, not contents. Controller registers ordinary task-local pointers; `--producer-role` records the child producer. Pointers are not auto-injected.
-
-### Controller orchestration economy
-
-- `task-start` already returns a bounded packet; do not immediately repeat `task-status`.
-- After a spawn, use one bounded native `completion_observation` observation as the normal single-child primitive; avoid polling loops and re-observe only when native state changes or recovery is needed.
-- Do not call `topology_listing` on the normal single-child path. Use it only for topology checks or recovery after an unexpected wait/result.
-- Query `task-status` only after a known task mutation, a state/revision change, or recovery is required; do not repeat an unchanged revision.
-- Use `bounded_message` only for a new constraint, correction, or material evidence. Do not use it to ask for progress or to say “continue”.
-
-During an ACTIVE task, the persistent Controller is control-plane-only. The Controller MUST NOT perform repository investigation or source mutation at any time, before or after child dispatch. A successful child dispatch never changes those permissions. `task-close` requires a successful child dispatch. Repository investigation and source mutation belong only to fresh execution children using `fresh_child="none"`. The Controller may perform only bounded routing/state operations and deterministic acceptance checks. Root actions are mechanically guarded at policy_boundary; observation_boundary records dispatch evidence. runtime owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
-Every new root child must use `fresh_child="none"`; this never unlocks root investigation or mutation.
-
-Read detailed role packs only when needed. Keep raw findings, evidence, transcripts, logs, and tool output outside Controller packets and durable memory; promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress.
-thaliris-core:end
-'''
-
-ROLE_PACKS = """# Thaliris Role Packs
-
-Load this document when the compact managed router is insufficient.
-
-## Controller
-
-Use `context task-status` for task identity/status, active work, pending results,
-unresolved questions, artifact pointers, and accepted constraints/decisions. Raw
-findings, reviews, evidence records, Git state, and broad memory/milestone bodies
-do not belong in normal Controller routing. `context task-show` is diagnostic-only.
-
-Every active task starts with one fresh execution child using `fresh_child="none"`.
-The Controller may then add Investigator, Curator, Reasoning Specialist, or
-Reviewer children only when the bounded result shows that role is needed. A
-one- or two-turn fork is also rewritten to `none`; no encrypted reason is used
-as an exception. The persistent Controller never investigates or mutates source
-before or after dispatch; successful child dispatch does not change those
-permissions. `task-close` requires a successful child dispatch. policy_boundary guards
-root shell investigation/mutation and close-without-child; observation_boundary records native dispatch evidence. Use
-native completion/mailbox observation; there is no Thaliris worker, scheduler,
-polling loop, or retry runtime.
-
-## Work And Retention
-
-For a local microtask, use exactly one fresh Implementer then deterministic
-verification; the persistent Controller never edits source directly.
-Investigators append bounded findings; Curators compact a snapshot; Reasoning
-Specialists receive accepted decisions rather than raw history; Implementers receive
-the explicit Modification Boundary, including out-of-scope exclusions and required
-verification; reviewers return independent findings. If bounded findings contain an
-unresolved architecture, provenance, or cross-module decision, route only that
-Decision Context to `reasoning-specialist` rather than investigating at root. Promote only
-reusable decisions, constraints, invariants, failure modes, or material milestone
-progress/verification. `task-artifact` records a bounded normalized external pointer. Artifact registration is Controller-only, may record a separate producer role, and excludes private control paths such as `.context/`, `.git/`, `.agent-memory/`, and `.milestones/`; artifact contents are never automatically injected into later roles.
-Reviewer `Changed Surface` remains Git truth even when a changed path is also registered as an artifact; registration isolates contents, not repository state visibility.
-"""
-
 
 def _safe(root: Path, relative: str) -> Path:
     if not relative or Path(relative).is_absolute():
@@ -246,21 +184,6 @@ def _managed_span(current: str, start_marker: str, end_marker: str, legacy_start
     if start >= end_start:
         raise ValueError(f"{label} has duplicate, mixed, or damaged managed markers")
     return start, end
-
-
-def _managed_agents(current: str) -> str:
-    span = _managed_span(current, CORE_START, CORE_END, LEGACY_CORE_START, LEGACY_CORE_END, "AGENTS.md")
-    newline = "\r\n" if "\r\n" in current else "\n"
-    block = MANAGED.replace("\n", newline)
-    if span is None:
-        if not current: return block
-        separator = "" if current.endswith(("\n", "\r")) else newline
-        return current + separator + block
-    start, end = span
-    suffix = current[end:]
-    if suffix.startswith("\r\n"): suffix = suffix[2:]
-    elif suffix.startswith("\n"): suffix = suffix[1:]
-    return current[:start] + block + suffix
 
 
 def _managed_gitignore(current: str) -> str:
@@ -1422,6 +1345,3 @@ def milestone_check(root: Path) -> dict[str, object]:
             except ValueError as exc: errors.append(str(exc))
         checked.append(link)
     return {"ok": not errors, "checked": checked, "errors": errors}
-
-
-

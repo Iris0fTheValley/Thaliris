@@ -305,14 +305,14 @@ def init(root: Path) -> dict[str, object]:
         return {"ok": True, "changed": True, "backup": _apply_with_backup(root, files, [], "init"), "files": sorted(files), "manual_migration_required": manual}
 
 
-def migrate(root: Path) -> dict[str, object]:
+def _migrate_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str]]:
     """Migrate only byte-for-byte known generated memory templates.
 
     Normal routing never scans as a fallback.  This bounded scan is deliberately
     migration-only so a user-edited legacy file is reported rather than replaced.
     """
-    result = init(root)
     root = _repo_root(root)
+    files, manual = _init_plan(root)
     current = _template_files()
     historical = (
         _template_files(include_routing=False, include_kind=False, decision_link=False),
@@ -320,21 +320,27 @@ def migrate(root: Path) -> dict[str, object]:
         _template_files(include_routing=True, include_kind=True, decision_link=False),
     )
     writes: dict[str, bytes] = {}
-    manual: list[str] = list(result.get("manual_migration_required", []))
+    base = root / ".agent-memory"
+    if base.is_dir():
+        for path in sorted(base.rglob("*.md")):
+            rel = str(path.relative_to(root)).replace("\\", "/")
+            data = path.read_bytes()
+            normalized = data.replace(b"\r\n", b"\n")
+            if rel in current and any(normalized == version.get(rel) for version in historical):
+                if data != current[rel]: writes[rel] = current[rel]
+            elif b"Audience:" not in data or b"Kind:" not in data:
+                manual.append(rel)
+    files.update(writes)
+    return files, manual, sorted(writes)
+
+
+def migrate(root: Path) -> dict[str, object]:
+    root = _repo_root(root)
     with _lock(root):
-        base = root / ".agent-memory"
-        if base.is_dir():
-            for path in sorted(base.rglob("*.md")):
-                rel = str(path.relative_to(root)).replace("\\", "/")
-                data = path.read_bytes()
-                normalized = data.replace(b"\r\n", b"\n")
-                if rel in current and any(normalized == version.get(rel) for version in historical):
-                    if data != current[rel]: writes[rel] = current[rel]
-                elif b"Audience:" not in data or b"Kind:" not in data:
-                    manual.append(rel)
-        backup = _apply_with_backup(root, writes, [], "migrate") if writes else None
-    result.update({"changed": bool(result.get("changed") or writes), "migration": "v2", "migrated": sorted(writes), "manual_migration_required": manual, "migration_backup": backup})
-    return result
+        files, manual, migrated = _migrate_plan(root)
+        if not files: return {"ok": True, "changed": False, "backup": None, "migration": "v2", "migrated": migrated, "manual_migration_required": manual}
+        backup = _apply_with_backup(root, files, [], "migrate")
+    return {"ok": True, "changed": True, "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup}
 
 
 def rollback(root: Path, backup_id: str) -> dict[str, object]:

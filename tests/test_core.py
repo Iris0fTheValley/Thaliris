@@ -8,6 +8,7 @@ import pytest
 
 from thaliris import core
 from thaliris.cli import main
+from thaliris.markdown import parse
 
 
 def repo(tmp_path: Path) -> Path:
@@ -47,3 +48,13 @@ def test_close_checks_task_identity_and_revision(tmp_path: Path) -> None:
     started = core.task_start(root, "cas", None, None)
     with pytest.raises(ValueError, match="task revision conflict"):
         core.task_close(root, started["revision"], expected_task_id="00000000-0000-0000-0000-000000000001")
+
+
+def test_legacy_memory_audience_is_normalized_on_read(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    path = root / "entry.md"
+    path.write_text(
+        '---\nEvidence: NONE\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: UNVERIFIED\nAudience: ["sol-high", "terra-reviewer"]\n---\n\n# Entry\n\nBody.\n',
+        encoding="utf-8",
+    )
+    assert parse(path).meta["Audience"] == ["reasoning-specialist", "reviewer"]

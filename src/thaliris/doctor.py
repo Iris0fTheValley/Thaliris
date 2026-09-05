@@ -10,7 +10,8 @@ import subprocess
 import tomllib
 
 from .models import ContextConfig
-from .core import LEGACY_MANAGED_END, LEGACY_MANAGED_START, MANAGED_END, MANAGED_START, entries, milestone_check, _load_state, _managed_span
+from .core import entries, milestone_check, _load_state
+from .codex_adapter import _managed_span
 from .intent_audit import hooks_health, is_managed_handler
 
 UNKNOWN = "UNKNOWN"
@@ -184,7 +185,7 @@ def report(root: Path) -> dict[str, object]:
     if agents.is_file():
         try:
             agents_text = agents.read_text(encoding="utf-8")
-            span = _managed_span(agents_text, MANAGED_START, MANAGED_END, LEGACY_MANAGED_START, LEGACY_MANAGED_END, "AGENTS.md")
+            span = _managed_span(agents_text, "AGENTS.md")
             agents_state = "YES" if span is not None else "NO"
         except ValueError:
             agents_state = "NO"

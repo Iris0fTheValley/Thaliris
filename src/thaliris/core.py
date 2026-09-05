@@ -17,7 +17,6 @@ import uuid
 
 from .markdown import Entry, evidence_status, parse
 from .models import ContextConfig
-from .intent_audit import MANAGED_HOOKS_DESCRIPTION, bind_unbound_intent, cleanup_task_audit, merge_hooks, remove_hooks, task_close_audit
 
 MANAGED_START = "<!-- thaliris:begin -->"
 MANAGED_END = "<!-- thaliris:end -->"
@@ -29,7 +28,7 @@ LEGACY_MANAGED_START = "<!-- codex-context:begin -->"
 LEGACY_MANAGED_END = "<!-- codex-context:end -->"
 LEGACY_IGNORE_START = "# codex-context:begin"
 LEGACY_IGNORE_END = "# codex-context:end"
-IGNORE_RULES = (".context/backups/", ".context/state.json", ".context/context.lock", ".context/audit/")
+IGNORE_RULES = (".context/backups/", ".context/state.json", ".context/context.lock")
 # Keep the generated instruction surface small. Detailed policy lives in the
 # role-pack document and is loaded only when a task needs it.
 MANAGED = f"""{MANAGED_START}
@@ -218,7 +217,6 @@ def _template_files(*, include_routing: bool = True, include_kind: bool = True, 
         kind = kwargs.pop("kind")
         return _entry(title, body, include_routing=include_routing, kind=kind if include_kind else None, **kwargs)
     return {
-        "docs/thaliris-role-packs.md": ROLE_PACKS.encode(),
         ".agent-memory/INDEX.md": template("Memory index", "- [Operator](operator.md)\n- [Prompt policy](prompt-policy.md)\n- [Project conventions](project-conventions.md)\n- [Decisions](decisions/INDEX.md)\n- [Lessons](lessons/INDEX.md)", audience=["all"], kind="MEMORY"),
         ".agent-memory/operator.md": template("Operator notes", "Unknown. Record only confirmed operating constraints.", kind="HARD_CONSTRAINT"),
         ".agent-memory/prompt-policy.md": template("Prompt policy", "Use manual recall only. Automatic injection and compression are disabled.", audience=["controller"], kind="HARD_CONSTRAINT"),
@@ -283,36 +281,26 @@ def _managed_gitignore(current: str) -> str:
     return current[:start] + block + suffix
 
 
-def init(root: Path) -> dict[str, object]:
+def _init_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
     root = _repo_root(root)
     # Validate before creating even the operational lock file: corrupt markers
     # must fail without a tool-owned filesystem mutation.
-    pre_agents = _safe(root, "AGENTS.md")
-    _managed_agents(pre_agents.read_bytes().decode("utf-8") if pre_agents.exists() else "")
     pre_ignore = _safe(root, ".gitignore")
     _managed_gitignore(pre_ignore.read_bytes().decode("utf-8") if pre_ignore.exists() else "")
+    files = {path: content for path, content in _template_files().items() if not _safe(root, path).exists()}
+    manual: list[str] = []
+    ignore = _safe(root, ".gitignore"); current_ignore = ignore.read_bytes().decode("utf-8") if ignore.exists() else ""
+    rendered_ignore = _managed_gitignore(current_ignore)
+    if current_ignore != rendered_ignore: files[".gitignore"] = rendered_ignore.encode()
+    if not _safe(root, ".context/config.json").exists(): files[".context/config.json"] = ContextConfig().write(root)
+    return files, manual
+
+
+def init(root: Path) -> dict[str, object]:
+    root = _repo_root(root)
+    _init_plan(root)
     with _lock(root):
-        files = {path: content for path, content in _template_files().items() if not _safe(root, path).exists()}
-        manual: list[str] = []
-        agents = _safe(root, "AGENTS.md"); current = agents.read_bytes().decode("utf-8") if agents.exists() else ""
-        rendered = _managed_agents(current)
-        if current != rendered: files["AGENTS.md"] = rendered.encode()
-        ignore = _safe(root, ".gitignore"); current_ignore = ignore.read_bytes().decode("utf-8") if ignore.exists() else ""
-        rendered_ignore = _managed_gitignore(current_ignore)
-        if current_ignore != rendered_ignore: files[".gitignore"] = rendered_ignore.encode()
-        hooks = _safe(root, ".codex/hooks.json")
-        if hooks.exists():
-            try:
-                hook_data = json.loads(hooks.read_text(encoding="utf-8"))
-                if not isinstance(hook_data, dict): raise ValueError("hooks root must be an object")
-                rendered_hooks, hooks_changed = merge_hooks(hook_data)
-                if hooks_changed: files[".codex/hooks.json"] = (json.dumps(rendered_hooks, ensure_ascii=False, indent=2) + "\n").encode()
-            except (OSError, ValueError, json.JSONDecodeError):
-                manual.append(".codex/hooks.json")
-        else:
-            rendered_hooks, _ = merge_hooks({"description": MANAGED_HOOKS_DESCRIPTION})
-            files[".codex/hooks.json"] = (json.dumps(rendered_hooks, ensure_ascii=False, indent=2) + "\n").encode()
-        if not _safe(root, ".context/config.json").exists(): files[".context/config.json"] = ContextConfig().write(root)
+        files, manual = _init_plan(root)
         if not files: return {"ok": True, "changed": False, "backup": None, "manual_migration_required": manual}
         return {"ok": True, "changed": True, "backup": _apply_with_backup(root, files, [], "init"), "files": sorted(files), "manual_migration_required": manual}
 
@@ -374,14 +362,10 @@ def rollback(root: Path, backup_id: str) -> dict[str, object]:
         return {"ok": True, "rolled_back": True, "backup": backup, "deleted": deletes}
 
 
-def uninstall(root: Path) -> dict[str, object]:
+def _uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str], list[str]]:
     root = _repo_root(root)
     # Validate before acquiring the operational lock: corrupt markers must fail
     # without creating the tool-owned .context directory or lock file.
-    pre_agents = _safe(root, "AGENTS.md")
-    if pre_agents.is_file():
-        current = pre_agents.read_bytes().decode("utf-8")
-        _managed_span(current, MANAGED_START, MANAGED_END, LEGACY_MANAGED_START, LEGACY_MANAGED_END, "AGENTS.md")
     pre_ignore = _safe(root, ".gitignore")
     if pre_ignore.is_file():
         current = pre_ignore.read_bytes().decode("utf-8")
@@ -390,58 +374,32 @@ def uninstall(root: Path) -> dict[str, object]:
         (_safe(root, relative).is_file() or _safe(root, relative).is_dir())
         for relative in (".context/audit", ".context/backups", ".context/state.json", ".context/context.lock")
     )
+    writes: dict[str, bytes] = {}; deletes: list[str] = []; kept: list[str] = []; manual: list[str] = []
+    ignore = _safe(root, ".gitignore")
+    if ignore.is_file() and not private_state_present:
+        current = ignore.read_bytes().decode("utf-8")
+        span = _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
+        if span is not None:
+            start, end = span
+            suffix = current[end:]
+            if suffix.startswith("\r\n"): suffix = suffix[2:]
+            elif suffix.startswith("\n"): suffix = suffix[1:]
+            stripped = current[:start] + suffix
+            if stripped: writes[".gitignore"] = stripped.encode()
+            else: deletes.append(".gitignore")
+    expected = _template_files() | {".context/config.json": ContextConfig().write(root)}
+    for relative, template in expected.items():
+        target = _safe(root, relative)
+        if not target.is_file(): continue
+        if _digest(target.read_bytes()) == _digest(template): deletes.append(relative)
+        else: kept.append(relative)
+    return writes, deletes, kept, manual
+
+
+def uninstall(root: Path) -> dict[str, object]:
+    root = _repo_root(root)
     with _lock(root):
-        writes: dict[str, bytes] = {}; deletes: list[str] = []; kept: list[str] = []; manual: list[str] = []
-        agents = _safe(root, "AGENTS.md")
-        if agents.is_file():
-            current = agents.read_bytes().decode("utf-8")
-            span = _managed_span(current, MANAGED_START, MANAGED_END, LEGACY_MANAGED_START, LEGACY_MANAGED_END, "AGENTS.md")
-            if span is not None:
-                start, end = span
-                suffix = current[end:]
-                if suffix.startswith("\r\n"): suffix = suffix[2:]
-                elif suffix.startswith("\n"): suffix = suffix[1:]
-                stripped = current[:start] + suffix
-                if stripped: writes["AGENTS.md"] = stripped.encode()
-                else: deletes.append("AGENTS.md")
-        ignore = _safe(root, ".gitignore")
-        # Never remove the private-state protection while any audit/state or
-        # backup data remains.  Uninstall is not permission to expose it in
-        # git status; a later explicit cleanup can remove the data safely.
-        if ignore.is_file() and not private_state_present:
-            current = ignore.read_bytes().decode("utf-8")
-            span = _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
-            if span is not None:
-                start, end = span
-                suffix = current[end:]
-                if suffix.startswith("\r\n"): suffix = suffix[2:]
-                elif suffix.startswith("\n"): suffix = suffix[1:]
-                stripped = current[:start] + suffix
-                if stripped: writes[".gitignore"] = stripped.encode()
-                else: deletes.append(".gitignore")
-        expected = _template_files() | {".context/config.json": ContextConfig().write(root)}
-        for relative, template in expected.items():
-            target = _safe(root, relative)
-            if not target.is_file(): continue
-            if _digest(target.read_bytes()) == _digest(template): deletes.append(relative)
-            else: kept.append(relative)
-        hooks = _safe(root, ".codex/hooks.json")
-        if hooks.is_file():
-            try:
-                hook_data = json.loads(hooks.read_text(encoding="utf-8"))
-                if not isinstance(hook_data, dict): raise ValueError("hooks root must be an object")
-                rendered_hooks, hooks_changed = remove_hooks(hook_data)
-                if hooks_changed:
-                    owned_empty = (
-                        hook_data.get("description") == MANAGED_HOOKS_DESCRIPTION
-                        and set(rendered_hooks) <= {"description", "hooks"}
-                        and rendered_hooks.get("description") == MANAGED_HOOKS_DESCRIPTION
-                        and rendered_hooks.get("hooks", {}) == {}
-                    )
-                    if owned_empty: deletes.append(".codex/hooks.json")
-                    else: writes[".codex/hooks.json"] = (json.dumps(rendered_hooks, ensure_ascii=False, indent=2) + "\n").encode()
-            except (OSError, ValueError, json.JSONDecodeError):
-                manual.append(".codex/hooks.json")
+        writes, deletes, kept, manual = _uninstall_plan(root)
         if not writes and not deletes: return {"ok": True, "changed": False, "kept": sorted(set(kept)), "backup": None, "manual_migration_required": manual}
         return {"ok": True, "changed": True, "kept": sorted(set(kept)), "backup": _apply_with_backup(root, writes, deletes, "uninstall"), "deleted": sorted(deletes), "manual_migration_required": manual}
 
@@ -802,7 +760,7 @@ def _load_state(root: Path, *, active: bool = False) -> dict[str, object]:
     return state
 
 
-def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None, intent_capture_id: str | None = None) -> dict[str, object]:
+def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None) -> dict[str, object]:
     root = _repo_root(root)
     if not _state_ignored(root): raise ValueError("task state is not ignored; run context init first")
     if not goal.strip(): raise ValueError("goal must not be empty")
@@ -818,12 +776,6 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
             raise ValueError("initial snapshot cannot supersede prior entries")
         _require_fresh_confirmed_items(root, state["evidence_refs"], state["investigation_findings"] + state["investigation_snapshot"])
         _write_state(root, state)
-        try:
-            # UserPromptSubmit precedes Controller's task-start. Only its
-            # opaque one-time capability may bind the raw root turn.
-            bind_unbound_intent(root, str(state["task_id"]), intent_capture_id)
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
-            pass
     return _controller_ack(state, ["task"], include_packet=True)
 
 
@@ -950,44 +902,12 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
     return _controller_ack(state, ["artifact_refs"])
 
 
-def task_close(root: Path, base_revision: int) -> dict[str, object]:
+def task_close(root: Path, base_revision: int, *, expected_task_id: str | None = None) -> dict[str, object]:
     root = _repo_root(root)
     with _lock(root):
         state = _load_state(root, active=True)
-        if state["revision"] != base_revision: raise ValueError("task revision conflict")
-        task_id = str(state["task_id"])
-    try:
-        # Do not hold the core task lock across the external auditor. A task
-        # update racing this snapshot is detected below and remains ACTIVE.
-        audit = task_close_audit(root, task_id, cleanup=False)
-    except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
-        # Audit is supplemental; task-close remains available when its
-        # private capture plane is damaged or unavailable.
-        audit = {"status": "UNKNOWN", "findings": [], "reason": "audit_capture_failure"}
-    with _lock(root):
-        current = _load_state(root, active=True)
-        if current["revision"] != base_revision or current["task_id"] != task_id:
-            raise ValueError("task revision conflict")
-        state = current
-        if audit.get("status") == "DRIFT":
-            # Preserve raw evidence and ACTIVE state so Controller can correct
-            # the delegation and retry task-close. Never expose model text.
-            return {
-                "ok": False,
-                "task_id": state["task_id"],
-                "revision": state["revision"],
-                "status": state["status"],
-                "changed": [],
-                "intent_audit": {"status": "DRIFT", "finding": "Correct delegation scope before closing this task."},
-            }
-        try:
-            cleanup_task_audit(root, task_id, audit.get("status"))
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
-            # Fail open: a cleanup failure cannot turn normal task-close into
-            # a Controller-visible audit result.
-            audit = {"status": "UNKNOWN", "findings": [], "reason": "audit_cleanup_failure"}
+        if state["revision"] != base_revision or (expected_task_id is not None and state["task_id"] != expected_task_id): raise ValueError("task revision conflict")
         state["status"] = "DONE"; state["revision"] = base_revision + 1; _write_state(root, state, enforce_fresh=False)
-    # PASS and UNKNOWN intentionally stay entirely in the private audit plane.
     return _controller_ack(state, ["status"])
 
 

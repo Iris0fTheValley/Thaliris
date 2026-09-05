@@ -7,9 +7,8 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from .core import init, migrate, milestone_check, prepare, rollback, stale, uninstall, task_artifact, task_close, task_promote, task_show, task_start, task_status, task_update
-from .doctor import report
-from .intent_audit import handle_hook
+from . import codex_adapter
+from .core import milestone_check, prepare, rollback, stale, task_artifact, task_promote, task_show, task_status, task_update
 
 
 class _Parser(argparse.ArgumentParser):
@@ -79,27 +78,27 @@ def main(argv: list[str] | None = None) -> int:
                 payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 payload = None
-            response = handle_hook(root, args.event, payload)
+            response = codex_adapter.audit_hook(root, args.event, payload)
             if response:
                 sys.stdout.write(response)
             return 0
-        if args.command == "init": out = init(root)
-        elif args.command == "migrate": out = migrate(root)
-        elif args.command == "doctor": out = report(root)
+        if args.command == "init": out = codex_adapter.init(root)
+        elif args.command == "migrate": out = codex_adapter.migrate(root)
+        elif args.command == "doctor": out = codex_adapter.doctor(root)
         elif args.command == "stale": out = stale(root)
         elif args.command == "memory-status":
             data = stale(root); out = {"ok": data["ok"], "entries": len(data["entries"]), "stale": data["stale"]}
         elif args.command == "milestone-check": out = milestone_check(root)
         elif args.command == "prepare": out = prepare(root, args.task, args.role)
-        elif args.command == "task-start": out = task_start(root, args.goal, args.milestone, args.input, args.intent_capture_id)
+        elif args.command == "task-start": out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.intent_capture_id)
         elif args.command == "task-update": out = task_update(root, args.role, args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
         elif args.command == "task-status": out = task_status(root)
         elif args.command == "task-artifact": out = task_artifact(root, args.base_revision, args.id, args.path, args.summary, producer_role=getattr(args, "producer_role", None))
-        elif args.command == "task-close": out = task_close(root, args.base_revision)
+        elif args.command == "task-close": out = codex_adapter.task_close(root, args.base_revision)
         elif args.command == "task-promote": out = task_promote(root, args.role, args.base_revision, args.input)
         elif args.command == "rollback": out = rollback(root, args.backup)
-        elif args.command == "uninstall": out = uninstall(root)
+        elif args.command == "uninstall": out = codex_adapter.uninstall(root)
         else: out = {"ok": True, "version": __version__}
         print(json.dumps(out, sort_keys=True, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
         return 0 if out.get("ok", False) else 3

@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from thaliris.core import init, task_close, task_start, uninstall
+from thaliris.codex_adapter import init, task_close, task_start, uninstall
 from thaliris.doctor import _context_isolation
 import thaliris.intent_audit as audit_module
 from thaliris.intent_audit import handle_hook, hooks_health
@@ -252,7 +252,7 @@ def test_checkpoint_does_not_infer_requirement_omission_but_task_close_does(tmp_
     # Only the existing task-close lifecycle gets a complete-history audit.
     final_root = repo(tmp_path / "final")
     init(final_root)
-    from thaliris.core import task_close, task_start
+    from thaliris.codex_adapter import task_close, task_start
     task_start(final_root, "final task", None, None)
     handle_hook(final_root, "UserPromptSubmit", payload(session="s2", prompt="实现功能；不得删除用户文件"))
     handle_hook(final_root, "PostToolUse", payload(session="s2", tool_name="spawn_agent", tool_input={"message": "实现功能"}, tool_response={"success": True}))

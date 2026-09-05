@@ -4,6 +4,15 @@
 
 Thaliris is a deterministic file and routing layer around Codex. It does not execute agents, decide correctness, or replace the repository. The source tree, Git, compiler/type checker, tests, runtime, and freshly verified repo-owned memory are authoritative in that order.
 
+Thaliris Core defines information topology: it stores bounded task state,
+evidence, role projections, artifact pointers, memory, milestones, and explicit
+durable promotion. Core does not execute agents or define a concrete runtime's
+spawn, wait, hook, or lifecycle semantics. The Codex integration maps Core
+projections onto native Codex mechanisms; runtime observations remain UNKNOWN
+when they are not directly observed.
+
+Thaliris Core 定义信息拓扑：决定哪些任务信息属于哪个角色上下文。Core 不执行 Agent，也不规定具体运行时怎样把 context pack 送入模型 session；运行时集成层只负责把 Core projection 映射到原生 runtime 机制。
+
 The system has three deliberately small layers:
 
 1. **Correctness core:** tracked Markdown, current source and Git, deterministic hashes, tests, and runtime evidence.

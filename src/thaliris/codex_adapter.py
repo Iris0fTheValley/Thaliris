@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 from pathlib import Path
 import subprocess
+import tomllib
 
 from . import core
 from .intent_audit import MANAGED_HOOKS_DESCRIPTION, bind_unbound_intent, cleanup_task_audit, handle_hook, merge_hooks, remove_hooks, task_close_audit
@@ -100,6 +103,11 @@ source directly. Larger work adds only the roles needed by risk and unknowns.
 Wait for native completion or mailbox updates; Thaliris has no polling, worker,
 retry, or scheduling runtime.
 
+After a qualifying child dispatch, the Controller may run only the exact
+Verification Target when it is a known test command family: pytest, npm/pnpm/
+yarn test, cargo test, go test, or dotnet test. A target never authorizes an
+arbitrary shell command.
+
 Known local PreToolUse surfaces used by managed mode are mechanically guarded.
 This is automatic projection isolation, not filesystem confidentiality or
 universal tool enforcement: hosted, specialized, and unverified runtime
@@ -140,11 +148,59 @@ modes, and material milestone progress or completed verification through
 do not treat this layer as a scheduler, transcript store, or automatic summary.
 """
 
+# Exact byte hashes for documents emitted by prior adapter releases.  Ownership
+# is deliberately binary: a one-character user edit makes the file user-owned.
+KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
+    "75f6c6804db80995c32cf4902247ae0d78762a15f37b35b677219813c8d17e6a",
+    "4ff409d7aa3d5f2ad2eb0c82b317d9af54426dde7765d8101939dcc578a460c0",
+})
+
+
+def _codex_config() -> dict[str, object]:
+    base = Path(os.environ["CODEX_HOME"]) if os.environ.get("CODEX_HOME") else Path.home() / ".codex"
+    path = base / "config.toml"
+    if not path.is_file():
+        return {}
+    try:
+        value = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _fallback_instruction_names(codex_config: dict[str, object] | None = None) -> tuple[str, ...]:
+    value = (codex_config or _codex_config()).get("project_doc_fallback_filenames")
+    if not isinstance(value, list):
+        return ()
+    names: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item or Path(item).name != item or item in names:
+            continue
+        names.append(item)
+    return tuple(names)
+
+
+def _root_instruction_candidates(root: Path, codex_config: dict[str, object] | None = None) -> tuple[Path, ...]:
+    names = ("AGENTS.override.md", "AGENTS.md", *_fallback_instruction_names(codex_config))
+    return tuple(core._safe(root, name) for name in names)
+
+
+def _effective_root_instruction_path(root: Path, codex_config: dict[str, object] | None = None) -> Path:
+    """Match Codex root discovery: first non-empty candidate wins.
+
+    The adapter intentionally manages only the repository-root layer, not the
+    full root-to-cwd instruction hierarchy.
+    """
+    candidates = _root_instruction_candidates(root, codex_config)
+    for path in candidates:
+        if path.is_file() and _read_text(path).strip():
+            return path
+    return core._safe(root, "AGENTS.md")
+
 
 def _effective_agents_path(root: Path) -> Path:
-    """Return Codex's root instruction winner; never silently write a shadowed file."""
-    override = core._safe(root, "AGENTS.override.md")
-    return override if override.is_file() else core._safe(root, "AGENTS.md")
+    """Compatibility alias for root-instruction callers."""
+    return _effective_root_instruction_path(root)
 
 
 def _strip_managed_agents(current: str) -> str:
@@ -153,6 +209,12 @@ def _strip_managed_agents(current: str) -> str:
         return current
     start, end = span
     suffix = current[end:]
+    if suffix.startswith("\r\n"):
+        suffix = suffix[2:]
+    elif suffix.startswith("\n"):
+        suffix = suffix[1:]
+    # Earlier prefix rendering inserted a second separator after MANAGED's
+    # own trailing newline. Collapse that known generated separator on move.
     if suffix.startswith("\r\n"):
         suffix = suffix[2:]
     elif suffix.startswith("\n"):
@@ -182,27 +244,13 @@ def _managed_agents(current: str) -> str:
     newline = "\r\n" if "\r\n" in current else "\n"
     block = MANAGED.replace("\n", newline)
     user_text = _strip_managed_agents(current) if span is not None else current
-    return block if not user_text else block + newline + user_text
+    return block if not user_text else block + user_text
 
 
 def _role_pack_state(value: bytes) -> str:
-    try:
-        text = value.decode("utf-8").replace("\r\n", "\n")
-    except UnicodeDecodeError:
-        return "user"
-    if text == ROLE_PACKS:
+    if value == ROLE_PACKS.encode("utf-8"):
         return "current"
-    if text == LEGACY_ROLE_PACKS:
-        return "legacy"
-    # This is the previous adapter-owned generated document. Its old fork
-    # rewrite wording identifies it precisely enough to upgrade without
-    # overwriting arbitrary user role notes.
-    if (
-        text.startswith("# Thaliris Role Packs\n")
-        and "A positive fork is rewritten to `none`;" in text
-        and "## Evidence Roles\n" in text
-        and "## State And Retention\n" in text
-    ):
+    if hashlib.sha256(value).hexdigest() in KNOWN_GENERATED_ROLE_PACK_HASHES:
         return "legacy"
     return "user"
 
@@ -244,11 +292,12 @@ def _install(root: Path) -> dict[str, object]:
 def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
     """Plan Codex-owned files without taking a second lock or backup."""
     root = core._repo_root(root)
-    target_agents = _effective_agents_path(root)
-    all_agents = (core._safe(root, "AGENTS.md"), core._safe(root, "AGENTS.override.md"))
-    for agents in all_agents:
-        if agents.is_file():
-            _managed_span(_read_text(agents), agents.name)
+    codex_config = _codex_config()
+    target_agents = _effective_root_instruction_path(root, codex_config)
+    all_agents = _root_instruction_candidates(root, codex_config)
+    for instruction in all_agents:
+        if instruction.is_file():
+            _managed_span(_read_text(instruction), instruction.name)
     ignore = core._safe(root, ".gitignore")
     _audit_ignore(_read_text(ignore) if ignore.is_file() else "")
     writes: dict[str, bytes] = {}
@@ -259,13 +308,13 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
         writes[target_agents.relative_to(root).as_posix()] = rendered_agents.encode("utf-8")
     # If an override became active after an earlier install, remove only our
     # now-shadowed block from the inactive root file.
-    for agents in all_agents:
-        if agents == target_agents or not agents.is_file():
+    for instruction in all_agents:
+        if instruction == target_agents or not instruction.is_file():
             continue
-        current = _read_text(agents)
+        current = _read_text(instruction)
         stripped = _strip_managed_agents(current)
         if stripped != current:
-            writes[agents.relative_to(root).as_posix()] = stripped.encode("utf-8")
+            writes[instruction.relative_to(root).as_posix()] = stripped.encode("utf-8")
     role_packs = core._safe(root, "docs/thaliris-role-packs.md")
     if not role_packs.exists():
         writes["docs/thaliris-role-packs.md"] = ROLE_PACKS.encode("utf-8")
@@ -296,9 +345,9 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
 
 def init(root: Path) -> dict[str, object]:
     resolved = core._repo_root(root)
-    for agents in (core._safe(resolved, "AGENTS.md"), core._safe(resolved, "AGENTS.override.md")):
-        if agents.is_file():
-            _managed_span(_read_text(agents), agents.name)
+    for instruction in _root_instruction_candidates(resolved):
+        if instruction.is_file():
+            _managed_span(_read_text(instruction), instruction.name)
     ignore = core._safe(resolved, ".gitignore")
     if ignore.is_file():
         _audit_ignore(_read_text(ignore))
@@ -405,7 +454,7 @@ def _uninstall(root: Path) -> dict[str, object]:
 
 
 def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str], list[str]]:
-    agent_paths = (core._safe(root, "AGENTS.md"), core._safe(root, "AGENTS.override.md"))
+    agent_paths = _root_instruction_candidates(root)
     ignore = core._safe(root, ".gitignore")
     for agents in agent_paths:
         if agents.is_file():

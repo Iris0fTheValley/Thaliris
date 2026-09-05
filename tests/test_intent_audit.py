@@ -163,6 +163,7 @@ def test_flattened_v2_runtime_evidence_records_pre_and_post_hooks(tmp_path):
         "pre_dispatch_enforcement": "UNKNOWN",
         "post_dispatch_observation": "YES",
         "current_hook_hash_observed": "YES",
+        "pretool_child_identity_corroborated": "UNKNOWN",
         "hook_trust_runtime_status": "UNKNOWN",
     }
 
@@ -627,16 +628,69 @@ def test_effective_agents_override_and_role_pack_migration_are_not_silent(tmp_pa
 
     packs = root / "docs" / "thaliris-role-packs.md"
     packs.parent.mkdir(exist_ok=True)
-    packs.write_text(LEGACY_ROLE_PACKS, encoding="utf-8")
+    packs.write_bytes(LEGACY_ROLE_PACKS.encode("utf-8"))
     migrated = init(root)
     assert "docs/thaliris-role-packs.md" in migrated["files"]
-    assert packs.read_text(encoding="utf-8") == ROLE_PACKS
+    assert packs.read_bytes() == ROLE_PACKS.encode("utf-8")
     current = init(root)
     assert "docs/thaliris-role-packs.md" not in current["files"]
     packs.write_text("user-owned role notes\n", encoding="utf-8")
     manual = init(root)
     assert "docs/thaliris-role-packs.md" in manual["manual_migration_required"]
     assert packs.read_text(encoding="utf-8") == "user-owned role notes\n"
+
+
+def test_effective_instruction_discovery_skips_empty_override_and_uses_fallbacks(tmp_path, monkeypatch):
+    home = tmp_path / "codex-home"; home.mkdir()
+    (home / "config.toml").write_text('project_doc_fallback_filenames = ["TEAM_GUIDE.md"]\n', encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+
+    root = repo(tmp_path / "empty-override")
+    (root / "AGENTS.override.md").write_text("\n", encoding="utf-8")
+    agents = root / "AGENTS.md"; agents.write_text("real user instructions\n", encoding="utf-8")
+    init(root)
+    assert (root / "AGENTS.override.md").read_text(encoding="utf-8") == "\n"
+    assert agents.read_text(encoding="utf-8").startswith("<!-- thaliris:begin -->")
+    assert doctor_module.report(root)["context"]["routing"]["managed_router_effective_file"] == "AGENTS.md"
+
+    fallback = repo(tmp_path / "fallback")
+    guide = fallback / "TEAM_GUIDE.md"; guide.write_text("team instructions\n", encoding="utf-8")
+    init(fallback)
+    assert not (fallback / "AGENTS.md").exists()
+    assert guide.read_text(encoding="utf-8").startswith("<!-- thaliris:begin -->")
+    assert doctor_module.report(fallback)["context"]["routing"]["managed_router_effective_file"] == "TEAM_GUIDE.md"
+
+    empty = repo(tmp_path / "empty")
+    init(empty)
+    assert (empty / "AGENTS.md").read_text(encoding="utf-8").startswith("<!-- thaliris:begin -->")
+
+
+def test_instruction_winner_migration_moves_only_the_managed_block(tmp_path, monkeypatch):
+    home = tmp_path / "codex-home"; home.mkdir()
+    (home / "config.toml").write_text('project_doc_fallback_filenames = ["TEAM_GUIDE.md"]\n', encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    root = repo(tmp_path / "winner-migration")
+    guide = root / "TEAM_GUIDE.md"; guide.write_text("preserve team text\n", encoding="utf-8")
+    init(root)
+    agents = root / "AGENTS.md"; agents.write_text("new higher-priority instructions\n", encoding="utf-8")
+    migrated = init(root)
+    assert "AGENTS.md" in migrated["files"] and "TEAM_GUIDE.md" in migrated["files"]
+    assert agents.read_text(encoding="utf-8").startswith("<!-- thaliris:begin -->")
+    assert guide.read_text(encoding="utf-8") == "preserve team text\n"
+    assert uninstall(root)["ok"]
+    assert agents.read_text(encoding="utf-8") == "new higher-priority instructions\n"
+    assert guide.read_text(encoding="utf-8") == "preserve team text\n"
+
+
+def test_role_pack_migration_requires_exact_generated_ownership(tmp_path):
+    root = repo(tmp_path)
+    packs = root / "docs" / "thaliris-role-packs.md"; packs.parent.mkdir()
+    packs.write_bytes(LEGACY_ROLE_PACKS.encode("utf-8"))
+    assert "docs/thaliris-role-packs.md" in init(root)["files"]
+    packs.write_bytes(LEGACY_ROLE_PACKS.encode("utf-8") + b"\nuser note\n")
+    result = init(root)
+    assert "docs/thaliris-role-packs.md" in result["manual_migration_required"]
+    assert packs.read_bytes().endswith(b"user note\n")
 
 
 def test_managed_router_is_rendered_at_effective_file_prefix_and_hook_hash_is_fresh(tmp_path, monkeypatch):
@@ -893,9 +947,34 @@ def test_subagent_start_is_bounded_identity_corroboration_only(tmp_path):
     runtime = next((root / ".context" / "audit").glob("*/runtime.json"))
     evidence = json.loads(runtime.read_text(encoding="utf-8"))
     assert evidence["events_observed"]["SubagentStart"] is True
-    assert evidence["subagent_start_agent_id_hash"] == hashlib.sha256(b"child-private").hexdigest()
-    assert evidence["subagent_start_agent_type"] == "worker"
+    assert evidence["subagent_start_agent_id_hashes"] == [hashlib.sha256(b"child-private").hexdigest()]
+    assert evidence["subagent_start_agent_types"] == ["worker"]
     assert "child-private" not in json.dumps(evidence)
+
+
+def test_child_pretool_identity_is_corroborated_only_when_it_matches_subagent_start(tmp_path):
+    root = repo(tmp_path / "match")
+    handle_hook(root, "SubagentStart", payload(agent_id="child-a", agent_type="worker"))
+    assert handle_hook(root, "PreToolUse", payload(agent_id="child-a", tool_name="Bash", tool_input={"command": "echo ready"})) == ""
+    evidence = json.loads(next((root / ".context" / "audit").glob("*/runtime.json")).read_text(encoding="utf-8"))
+    assert evidence["pretool_child_agent_id_hashes"] == [hashlib.sha256(b"child-a").hexdigest()]
+    assert _context_isolation(root)["observed"]["pretool_child_identity_corroborated"] == "YES"
+
+    mismatch = repo(tmp_path / "mismatch")
+    handle_hook(mismatch, "SubagentStart", payload(agent_id="child-a", agent_type="worker"))
+    handle_hook(mismatch, "PreToolUse", payload(agent_id="child-b", tool_name="Bash", tool_input={"command": "echo ready"}))
+    assert _context_isolation(mismatch)["observed"]["pretool_child_identity_corroborated"] == "UNKNOWN"
+
+
+def test_managed_hook_hash_is_logical_not_local_executable_path(tmp_path, monkeypatch):
+    first = tmp_path / "first-context"; first.write_text("", encoding="utf-8")
+    second = tmp_path / "second-context"; second.write_text("", encoding="utf-8")
+    monkeypatch.setenv(audit_module.CONTEXT_EXECUTABLE_ENV, str(first))
+    first_hash = audit_module.managed_hook_spec_hash()
+    monkeypatch.setenv(audit_module.CONTEXT_EXECUTABLE_ENV, str(second))
+    assert audit_module.managed_hook_spec_hash() == first_hash
+    monkeypatch.setattr(audit_module, "PRE_TOOL_MATCHER", "^changed$")
+    assert audit_module.managed_hook_spec_hash() != first_hash
 
 
 def test_child_delegation_is_denied_only_with_explicit_identity(tmp_path):
@@ -1039,6 +1118,18 @@ def test_acceptance_requires_exact_verification_target_after_qualifying_child(tm
     for command in ("pytest", "pytest --pdb", "pytest -q tests/other.py"):
         response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_acceptance_allows_only_exact_known_test_targets(tmp_path):
+    for index, target in enumerate(("npm test -- --runInBand", "cargo test -p thaliris", "go test ./...", "dotnet test Project.Tests")):
+        root = repo(tmp_path / f"acceptance-{index}"); init(root)
+        task_input = root / "task.json"; task_input.write_text(json.dumps({"verification_target": target}), encoding="utf-8")
+        task_start(root, "acceptance family", None, str(task_input))
+        handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"success": True}))
+        assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": target})) == ""
+        for command in ("npm run lint", "echo not-a-test", target + " && echo escaped"):
+            response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
+            assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_auditor_rubric_is_separate_from_untrusted_stdin_evidence(monkeypatch):

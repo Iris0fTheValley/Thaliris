@@ -31,6 +31,11 @@ source directly. Larger work adds only the roles needed by risk and unknowns.
 Wait for native completion or mailbox updates; Thaliris has no polling, worker,
 retry, or scheduling runtime.
 
+After a qualifying child dispatch, the Controller may run only the exact
+Verification Target when it is a known test command family: pytest, npm/pnpm/
+yarn test, cargo test, go test, or dotnet test. A target never authorizes an
+arbitrary shell command.
+
 Known local PreToolUse surfaces used by managed mode are mechanically guarded.
 This is automatic projection isolation, not filesystem confidentiality or
 universal tool enforcement: hosted, specialized, and unverified runtime

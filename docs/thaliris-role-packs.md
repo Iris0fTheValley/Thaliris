@@ -1,6 +1,7 @@
+<!-- thaliris-role-packs:v2 -->
 # Thaliris Role Packs
 
-Load this document when the compact managed router is insufficient for the task.
+Load this document when the compact managed router is insufficient.
 
 ## Controller
 
@@ -11,20 +12,18 @@ findings, review bodies, evidence records, Git status, or broad memory/milestone
 bodies as part of normal routing. Use `context task-show` only for an explicit
 diagnostic need.
 
-Every active task starts with one fresh execution child using `fork_turns="none"`.
+Every active task uses serial fresh execution children with `fork_turns="none"`.
 This means no parent-thread history, not an empty Codex context: applicable
 system/developer instructions, AGENTS, custom-agent instructions, environment,
-native tool context, and delegation content may still be present. The child
-loads its own Thaliris role projection directly, performs the assigned role,
-does not create child-to-child workflow, and returns a bounded result to the
-persistent Controller. The Controller must not consume child-only working
-material. A positive fork is rewritten to `none`; an encrypted `Isolation reason:`
-never creates an exception. During an ACTIVE task the persistent Controller never
-performs repository investigation or source mutation, before or after dispatch;
-successful child dispatch does not change those permissions. `task-close` requires
-a successful child dispatch. The PreToolUse hook guards root investigation,
-source mutation, and close-without-child. PostToolUse keeps native dispatch
-evidence auditable.
+native tool context, and delegation content may still be present. A non-none
+fork is denied and must be retried explicitly. The child loads its own Thaliris
+role projection directly, performs the assigned role, does not create
+child-to-child workflow, and returns a bounded result to the persistent
+Controller. The Controller must not consume child-only working material.
+During an ACTIVE task the persistent Controller does not perform repository
+investigation or source mutation; successful child dispatch does not change
+those permissions. `task-close` requires a qualifying successful child
+dispatch. PostToolUse keeps native dispatch evidence auditable.
 
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
@@ -32,11 +31,12 @@ source directly. Larger work adds only the roles needed by risk and unknowns.
 Wait for native completion or mailbox updates; Thaliris has no polling, worker,
 retry, or scheduling runtime.
 
-Hook configuration is separate from current-session observation. A project
-`.codex/hooks.json` proves only configuration; input rewriting, root
-classification, payload fidelity, and semantic task delivery remain `UNKNOWN`
-until observed by a compatible live session. Unknown tools and unverified MCP
-paths remain `UNKNOWN`/fail-open.
+Known local PreToolUse surfaces used by managed mode are mechanically guarded.
+This is automatic projection isolation, not filesystem confidentiality or
+universal tool enforcement: hosted, specialized, and unverified runtime
+surfaces remain outside the claimed envelope. Hook configuration is separate
+from current-session observation; current hook-definition evidence is required
+before claiming a live observation.
 
 ## Evidence Roles
 
@@ -47,8 +47,8 @@ investigation or review history. Implementers receive the explicit Modification
 Boundary, including out-of-scope exclusions and required verification. If bounded
 findings contain an unresolved architecture, provenance, or cross-module decision,
 route only that Decision Context to `sol-high` rather than investigating at root.
-Reviewers receive intent, changed surface, constraints, and decisions;
-their findings are independent evidence, not an automatic implementation loop.
+Reviewers receive intent, changed surface, constraints, and decisions; their
+findings are independent evidence, not an automatic implementation loop.
 
 Use focused checks while changing code and one complete relevant validation at the
 end. Requested runtime or visible-behavior verification remains required.

@@ -134,6 +134,39 @@ def test_task_state_write_ingress_and_role_ownership_are_enforced(tmp_path: Path
         core.task_update(root, "implementer", started["revision"], input_file(root, {"unknowns": []}))
 
 
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("investigation_findings", []),
+        ("investigation_snapshot", []),
+        ("review_findings", []),
+        ("investigation_covered_through", 0),
+        ("review_handled_through", 0),
+    ],
+)
+def test_task_start_rejects_role_owned_execution_outputs(tmp_path: Path, field: str, value: object) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    with pytest.raises(ValueError, match="forbidden"):
+        core.task_start(root, "role provenance", None, input_file(root, {field: value}))
+
+
+def test_task_start_keeps_semantic_bootstrap_inputs(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    started = core.task_start(root, "bootstrap", None, input_file(root, {
+        "constraints": [{"text": "preserve public API", "evidence_refs": []}],
+        "unknowns": [{"text": "test coverage", "evidence_refs": []}],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": ["src"], "excludes": [], "evidence_refs": []},
+        "verification_target": "pytest -q tests",
+        "architectural_intent": "keep Core runtime-neutral",
+    }))
+    packet = core.task_status(root)
+    assert started["revision"] == 1
+    assert packet["Accepted Constraints"] == ["preserve public API"]
+    assert packet["Verification Target"] == "pytest -q tests"
+
+
 def test_findings_and_evidence_ids_are_append_only_with_revision_cas(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.init(root)

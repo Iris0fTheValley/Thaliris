@@ -36,12 +36,15 @@ def test_abcd_t2_bounded_artifact_pointer(tmp_path, capsys):
     assert "investigation_findings" not in packet
 
 
-def test_abcd_t3_real_flattened_spawn_is_rewritten():
+def test_abcd_t3_real_flattened_spawn_requires_explicit_isolation():
     output = json.loads(_pre_tool_output({
         "tool_name": "collaborationspawn_agent",
         "tool_input": {"fork_turns": "all", "message": "inspect the bounded issue"},
     }))
-    assert output["hookSpecificOutput"]["updatedInput"]["fork_turns"] == "none"
+    decision = output["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny"
+    assert decision["permissionDecisionReason"].startswith("THALIRIS_ISOLATION_REQUIRED:")
+    assert "updatedInput" not in decision
 
 
 def test_abcd_t3_legacy_input_payload_is_read():

@@ -182,6 +182,25 @@ def test_findings_and_evidence_ids_are_append_only_with_revision_cas(tmp_path: P
         core.task_update(root, "investigator", started["revision"], input_file(root, {"evidence_refs": []}))
 
 
+def test_investigator_handoff_can_select_rich_semantic_constraints(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    started = core.task_start(root, "rich handoff", None, None)
+    selected = {
+        "investigation_findings": [{
+            "kind": "UNKNOWN",
+            "text": (
+                "Compatibility constraint: preserve the lifecycle invariant; "
+                "architecture ambiguity remains an unresolved contradiction."
+            ),
+            "evidence_refs": [],
+        }],
+    }
+    updated = core.task_update(root, "investigator", started["revision"], input_file(root, selected))
+    assert updated["revision"] == 2
+    assert "Compatibility constraint" in core.task_show(root)["state"]["investigation_findings"][0]["text"]
+
+
 def test_curator_cannot_turn_unknown_raw_finding_into_supported_snapshot(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.init(root)

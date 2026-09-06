@@ -455,7 +455,7 @@ def _best_effort_record(function: Any, *args: Any) -> None:
     """Persist observation without coupling audit availability to policy."""
     try:
         function(*args)
-    except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
+    except Exception:
         pass
 
 

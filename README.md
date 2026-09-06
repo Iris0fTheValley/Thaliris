@@ -10,9 +10,17 @@ projections, evidence freshness, external artifact pointers, project memory,
 milestones, explicit durable promotion, and atomic CAS-backed persistence and
 recovery.
 
-Working set is not handoff set. Retention is not propagation. Normal packets do
-not include raw findings, review bodies, evidence registries, logs, transcripts,
-source dumps, or artifact contents.
+Working set is not handoff set. Retention is not propagation. Availability is
+not injection. Retained parent history, child transcripts, raw findings,
+evidence registries, logs, tool output, memory bodies, and artifact contents do
+not cross a role boundary automatically. They may remain available for an
+explicit, model-selected follow-up, but only information deliberately selected
+for propagation enters the next role's context.
+
+Thaliris constrains propagation paths, not the size or meaning of information a
+model explicitly chooses to send. Core bounds protect persistent state,
+snapshots, packets, promotion records, and other storage structures; they are
+not a semantic payload quota or a handoff-size limit.
 
 Core is runtime-neutral. It does not execute agents or define child creation,
 hooks, wait semantics, transport, or session lifecycle. Runtime-specific

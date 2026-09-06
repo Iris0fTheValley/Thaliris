@@ -8,7 +8,7 @@ import sys
 
 from . import __version__
 from . import codex_adapter
-from .core import milestone_check, prepare, rollback, stale, task_artifact, task_promote, task_show, task_status, task_update
+from .core import milestone_check, prepare, recall, rollback, stale, task_artifact, task_promote, task_show, task_status, task_update
 
 
 class _Parser(argparse.ArgumentParser):
@@ -26,6 +26,9 @@ def _parser() -> argparse.ArgumentParser:
         sub.add_parser(name)
     q = sub.add_parser("prepare")
     q.add_argument("task", nargs="?")
+    q.add_argument("--role", required=True, choices=codex_adapter.ROLE_CHOICES)
+    q = sub.add_parser("recall", help="explicitly search retained durable memory")
+    q.add_argument("query")
     q.add_argument("--role", required=True, choices=codex_adapter.ROLE_CHOICES)
     q = sub.add_parser("task-start")
     q.add_argument("goal")
@@ -90,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
             data = stale(root); out = {"ok": data["ok"], "entries": len(data["entries"]), "stale": data["stale"]}
         elif args.command == "milestone-check": out = milestone_check(root)
         elif args.command == "prepare": out = prepare(root, args.task, codex_adapter.semantic_role(args.role))
+        elif args.command == "recall": out = recall(root, args.query, codex_adapter.semantic_role(args.role))
         elif args.command == "task-start": out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.intent_capture_id)
         elif args.command == "task-update": out = task_update(root, codex_adapter.semantic_role(args.role), args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)

@@ -775,6 +775,26 @@ def test_pre_tool_isolation_requires_explicit_fresh_dispatch_without_agent_type(
     assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
+def test_explicit_large_spawn_payload_is_not_a_handoff_quota(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    task_start(root, "explicit payload", None, None)
+    selected = "selected compatibility detail " * 5000
+    allowed = handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "message": selected}),
+    )
+    assert allowed == ""
+
+    denied = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "all", "message": selected}),
+    ))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
 def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
     matcher = audit_module.hook_spec()["hooks"]["PreToolUse"][0]["matcher"]
     assert re.fullmatch(matcher, "spawn_agent")

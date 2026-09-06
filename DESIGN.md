@@ -1,9 +1,9 @@
 # Design
 
 Thaliris Core is a deterministic, Git-native information topology layer. It
-stores bounded task state and evidence, projects the right facts to each
-semantic role, and preserves useful material without automatically propagating
-every working-set detail.
+stores bounded task state and evidence, provides low-noise default projections
+for semantic roles, and preserves useful material without automatically
+propagating every working-set detail.
 
 ## Core Responsibilities
 
@@ -14,15 +14,25 @@ every working-set detail.
 - evidence confidence and freshness;
 - external artifact pointers whose contents are never implicitly projected;
 - project memory and milestone routing;
-- explicit, bounded durable promotion;
+- explicit durable promotion with bounded persistent records;
 - Git truth for changed surface and deterministic verification.
 
-Working set is not handoff set. Retention is not propagation. A Controller
-packet contains task identity, active work, pending results, unresolved
-questions, accepted constraints and decisions, modification boundary,
-verification target, and artifact pointers. Raw findings, review bodies,
-evidence registries, logs, transcripts, source dumps, and artifact contents are
-explicit diagnostic or external paths, not normal routing data.
+Working set is not handoff set. Retention is not propagation. Availability is
+not injection. A Controller packet contains task identity, active work, pending
+results, unresolved questions, accepted constraints and decisions, modification
+boundary, verification target, and artifact pointers. Retained parent history,
+child transcripts, raw findings, evidence registries, logs, tool output, memory
+bodies, and artifact contents do not cross a role boundary automatically. They
+remain retained or externally addressable until a model explicitly selects what
+the next role needs.
+
+The model decides which retained facts are relevant to the next decision.
+Thaliris constrains propagation paths, not the size or meaning of information a
+model explicitly chooses to send. A large selected payload is valid when it is
+needed for correctness. Core bounds protect persistent state, snapshots,
+packets, promotion records, and other storage structures; they are storage
+invariants, not a semantic payload quota or a handoff-size limit. Artifact
+pointers provide selective access, not a mandatory compression rule.
 
 The model decides which retained facts are relevant to the next decision.
 Thaliris bounds the amount and automatic propagation of a handoff, but does not

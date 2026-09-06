@@ -47,13 +47,17 @@ AUDIT_IGNORE_RULE = ".context/audit/"
 MANAGED = f"""{MANAGED_START}
 ## Thaliris Router
 
-Codex remains the runtime. Thaliris stores bounded task control and pointers; it has no worker, scheduler, polling loop, or authority to decide correctness.
+Codex remains the runtime. Thaliris stores bounded task control and pointers; it has no worker, scheduler, polling loop, or authority to decide correctness. Retain broadly, propagate explicitly, and select semantically: storage bounds are not a semantic payload quota.
 
-Controller uses `context task-status` or `context prepare --role controller` for bounded packets. `context task-show` is explicit raw diagnostics; `context task-artifact` passes pointers, not contents.
+Controller uses `context task-status` or `context prepare --role controller` for the default low-noise context base. `context task-show` is an explicit out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller path. `context task-artifact` passes pointers, not contents.
 
-During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This means no parent-thread history, not an empty Codex context. The child obtains its own Thaliris role projection directly, performs the assigned work, avoids child-to-child delegation, and returns a bounded result to the Controller. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. PostToolUse records dispatch evidence. Use serial managed dispatch unless sibling isolation has been independently observed for the current Codex runtime. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. The child obtains its own Thaliris role projection directly, performs the assigned work, avoids child-to-child delegation, and explicitly selects what to return to the Controller. Large selected information remains valid when needed for correctness. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. PostToolUse records dispatch evidence. Use serial managed dispatch unless sibling isolation has been independently observed for the current Codex runtime. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
 
-Read detailed role packs only when needed. Keep raw findings, evidence, transcripts, logs, and tool output outside Controller packets and durable memory; promote only explicit durable decisions, constraints, invariants, failure modes, or material milestone progress.
+Read detailed role packs only when needed. Raw findings, evidence, transcripts,
+logs, and tool output do not enter Controller packets or durable memory
+automatically; explicitly select any detail needed for the next decision, and
+promote only explicit durable decisions, constraints, invariants, failure modes,
+or material milestone progress.
 {MANAGED_END}
 """
 
@@ -77,21 +81,25 @@ Load this document when the compact managed router is insufficient.
 
 ## Controller
 
-The Controller routes work and accepts completion. It starts from the bounded
-`context task-status` packet and selects the facts, constraints, decisions,
-unknowns, contradictions, and artifact pointers needed for the current step.
-Raw findings, review bodies, evidence records, Git status, and broad
-memory/milestone bodies do not propagate automatically; use `context task-show`
-only when a specific diagnostic detail is needed.
+The Controller routes work and accepts completion. It starts from the default
+low-noise `context task-status` packet and explicitly selects the facts,
+constraints, decisions, unknowns, contradictions, and artifact pointers needed
+for the current step. Raw findings, review bodies, evidence records, Git status,
+parent history, child transcripts, tool output, and broad memory/milestone
+bodies do not propagate automatically. `context task-show` is an explicit
+out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller
+path. If context is insufficient, request a targeted fresh follow-up or
+explicitly pass a selected artifact/payload; do not rebuild the full working set.
 
 Every active task uses serial fresh execution children with `fork_turns=\"none\"`.
-This means no parent-thread history, not an empty Codex context: applicable
+This cuts implicit parent-task-history propagation, not all context: applicable
 system/developer instructions, AGENTS, custom-agent instructions, environment,
 native tool context, and delegation content may still be present. A non-none
 fork is denied and must be retried explicitly. The child loads its own Thaliris
 role projection directly, performs the assigned role, does not create
-child-to-child workflow, and returns a bounded result to the persistent
-Controller. The Controller must not consume child-only working material.
+child-to-child workflow, and explicitly selects the information to return to
+the persistent Controller. The Controller must not consume child-only working
+material automatically; a large selected payload is allowed when necessary.
 During an ACTIVE task the persistent Controller does not perform repository
 investigation or source mutation; successful child dispatch does not change
 those permissions. `task-close` requires a qualifying successful child
@@ -117,20 +125,23 @@ before claiming a live observation.
 
 ## Evidence Roles
 
-Investigators may keep a large private working set, but their handoff is bounded
-and model-selected: surface facts, constraints, contradictions, compatibility or
-lifecycle invariants, evidence summaries, unknowns, and artifact pointers that
-could materially change the next decision. Do not dump the investigation process.
-Curators receive only the bounded material selected for the current snapshot and
-may replace that compact snapshot. Reasoning Specialists receive a bounded
-Decision Context selected for the current unresolved decision, not raw history;
-it may include relevant facts, competing hypotheses, contradictions, evidence
-summaries, compatibility invariants, pointers, and unknowns. If it is insufficient,
+Investigators may keep a large private working set. Downstream roles do not
+receive it automatically: select the facts, constraints, contradictions,
+compatibility or lifecycle invariants, evidence summaries, unknowns, artifact
+pointers, and any other information that could materially change the next
+decision. Do not dump the investigation process merely for convenience, but do
+explicitly provide as much selected detail as correctness requires. Curators
+receive only the material explicitly selected for the current snapshot and may
+replace that snapshot. Reasoning Specialists receive a Decision Context selected
+for the current unresolved decision, not raw history; it may include relevant
+facts, competing hypotheses, contradictions, evidence summaries, compatibility
+invariants, pointers, unknowns, or other selected detail. If it is insufficient,
 state what evidence is needed so the Controller can request a targeted fresh
 follow-up. Implementers receive the explicit Modification Boundary and required
-verification. Reviewers receive bounded intent, changed surface, constraints,
-decisions, and selected evidence, then independently decide what needs deeper
-inspection. Role defaults guide work; they are not semantic firewalls.
+verification. Reviewers receive selected intent, changed surface, constraints,
+decisions, and evidence, then independently decide what needs deeper inspection.
+Role defaults guide work; they are not semantic firewalls or semantic
+allowlists.
 
 Use focused checks while changing code and one complete relevant validation at the
 end. Requested runtime or visible-behavior verification remains required.
@@ -142,7 +153,9 @@ end. Requested runtime or visible-behavior verification remains required.
 to append a path-safe pointer to external work. Only the Controller registers
 the pointer; pass `--producer-role` to record which child produced it. Artifact
 contents remain outside the status packet and are never automatically injected
-into another role. Raw task state remains diagnostic-only in `.context/state.json`.
+into another role. A pointer is selective access, not a compression mandate:
+pass it when the next role needs to decide whether to read it. Raw task state
+remains diagnostic-only in `.context/state.json`.
 
 Artifact registration does not hide a path from review: Reviewer `Changed Surface`
 continues to show Git-reported changes, without automatically exposing file contents.
@@ -542,7 +555,7 @@ def child_bootstrap(role: str) -> str:
     role = semantic_role(role)
     if role not in core._PACK_ROLES or role == "controller":
         raise ValueError("child role must be an execution role")
-    return f"Obtain your Thaliris role context by running `context prepare --role {role}` in this fresh child, then perform the assigned task and return a bounded result. Do not delegate to another child."
+    return f"Obtain your Thaliris role context by running `context prepare --role {role}` in this fresh child, then perform the assigned task and explicitly select the information to return. Large selected details are allowed when needed for correctness. Do not delegate to another child."
 
 
 def prepare_child(root: Path, role: str) -> dict[str, object]:

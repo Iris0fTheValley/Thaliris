@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from .core import init, migrate, milestone_check, prepare, rollback, stale, uninstall, task_artifact, task_close, task_promote, task_show, task_start, task_status, task_update
+from .core import init, migrate, milestone_check, prepare, recall, rollback, stale, uninstall, task_artifact, task_close, task_promote, task_show, task_start, task_status, task_update
 from .doctor import report
 
 
@@ -26,6 +26,9 @@ def _parser() -> argparse.ArgumentParser:
         sub.add_parser(name)
     q = sub.add_parser("prepare")
     q.add_argument("task", nargs="?")
+    q.add_argument("--role", required=True, choices=("controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"))
+    q = sub.add_parser("recall", help="explicitly search retained durable memory")
+    q.add_argument("query")
     q.add_argument("--role", required=True, choices=("controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"))
     q = sub.add_parser("task-start")
     q.add_argument("goal")
@@ -78,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             data = stale(root); out = {"ok": data["ok"], "entries": len(data["entries"]), "stale": data["stale"]}
         elif args.command == "milestone-check": out = milestone_check(root)
         elif args.command == "prepare": out = prepare(root, args.task, args.role)
+        elif args.command == "recall": out = recall(root, args.query, args.role)
         elif args.command == "task-start": out = task_start(root, args.goal, args.milestone, args.input)
         elif args.command == "task-update": out = task_update(root, args.role, args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
@@ -97,5 +101,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 

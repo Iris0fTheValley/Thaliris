@@ -26,6 +26,12 @@ bodies, and artifact contents do not cross a role boundary automatically. They
 remain retained or externally addressable until a model explicitly selects what
 the next role needs.
 
+Durable memory has three distinct stages: retention keeps evidence-backed memory
+available; retrieval occurs only when a model explicitly invokes `context recall`;
+and propagation occurs only when the model explicitly selects information for
+task state or a role handoff. Recall returns routed candidates rather than
+accepted facts, and never writes task state.
+
 The model decides which retained facts are relevant to the next decision.
 Thaliris constrains propagation paths, not the size or meaning of information a
 model explicitly chooses to send. A large selected payload is valid when it is

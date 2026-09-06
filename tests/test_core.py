@@ -79,6 +79,47 @@ def test_role_projections_keep_working_set_bounded(tmp_path: Path) -> None:
     assert "Investigation Findings" not in json.dumps(specialist)
 
 
+def _durable_lifecycle_memory(root: Path) -> Path:
+    index = root / ".agent-memory" / "INDEX.md"
+    index.write_text(index.read_text(encoding="utf-8").replace("- [Operator](operator.md)", "- [Operator](operator.md)\n- [Lifecycle](lifecycle.md)"), encoding="utf-8")
+    evidence = root / "lifecycle-evidence.txt"
+    evidence.write_text("lifecycle evidence", encoding="utf-8")
+    digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    memory = root / ".agent-memory" / "lifecycle.md"
+    memory.write_text(
+        f'---\nEvidence: file:lifecycle-evidence.txt#{digest}\nRevision: 1\nStatus: ACTIVE\nApplicability: PROJECT\nConfidence: CONFIRMED\nKind: MEMORY\nAudience: ["reasoning-specialist"]\nTopics: ["lifecycle", "XYZ"]\nSymbols: ["LifecycleXYZ"]\n---\n\n# Lifecycle invariant\n\npreserve lifecycle invariant XYZ\n',
+        encoding="utf-8",
+    )
+    return memory
+
+
+def test_durable_memory_requires_explicit_recall_and_recall_is_read_only(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    memory = _durable_lifecycle_memory(root)
+    core.task_start(root, "preserve lifecycle XYZ", None, None)
+    before_state = (root / ".context" / "state.json").read_bytes()
+    before_memory = memory.read_bytes()
+
+    pack = core.prepare(root, None, "reasoning-specialist")
+    assert "preserve lifecycle invariant XYZ" not in json.dumps(pack)
+
+    recalled = core.recall(root, "lifecycle XYZ", "reasoning-specialist")
+    assert recalled["routing_errors"] == []
+    assert len(recalled["candidates"]) == 1
+    candidate = recalled["candidates"][0]
+    assert candidate["source"] == ".agent-memory/lifecycle.md"
+    assert candidate["confidence"] == "CONFIRMED"
+    assert candidate["freshness"] == "FRESH"
+    assert candidate["evidence_refs"] == ["memory:.agent-memory/lifecycle.md"]
+    assert "preserve lifecycle invariant XYZ" in candidate["text"]
+    assert (root / ".context" / "state.json").read_bytes() == before_state
+    assert memory.read_bytes() == before_memory
+
+    assert core.recall(root, "unrelated rendering issue", "reasoning-specialist")["candidates"] == []
+    assert "preserve lifecycle invariant XYZ" not in json.dumps(core.prepare(root, None, "reasoning-specialist"))
+
+
 def test_reviewer_sees_git_changed_paths_without_artifact_contents(tmp_path: Path) -> None:
     root = repo(tmp_path)
     main(["--root", str(root), "init"])

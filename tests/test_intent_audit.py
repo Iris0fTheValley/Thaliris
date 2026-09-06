@@ -693,6 +693,44 @@ def test_role_pack_migration_requires_exact_generated_ownership(tmp_path):
     assert packs.read_bytes().endswith(b"user note\n")
 
 
+def test_a909_role_pack_v2_migrates_only_when_byte_exact(tmp_path):
+    root = repo(tmp_path)
+    packs = root / "docs" / "thaliris-role-packs.md"
+    packs.parent.mkdir()
+    historical = subprocess.run(
+        ["git", "show", "a909dfa:docs/thaliris-role-packs.md"],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        check=True,
+    ).stdout
+
+    packs.write_bytes(historical)
+    migrated = init(root)
+    assert "docs/thaliris-role-packs.md" in migrated["files"]
+    assert packs.read_bytes() == ROLE_PACKS.encode("utf-8")
+    assert "<!-- thaliris-role-packs:v3 -->" in packs.read_text(encoding="utf-8")
+
+    current = init(root)
+    assert "docs/thaliris-role-packs.md" not in current.get("files", [])
+
+    modified = repo(tmp_path / "modified")
+    modified_packs = modified / "docs" / "thaliris-role-packs.md"
+    modified_packs.parent.mkdir()
+    modified_packs.write_bytes(historical + b" ")
+    manual = init(modified)
+    assert "docs/thaliris-role-packs.md" in manual["manual_migration_required"]
+    assert modified_packs.read_bytes() == historical + b" "
+    kept = uninstall(modified)
+    assert "docs/thaliris-role-packs.md" in kept["kept"]
+
+    generated = repo(tmp_path / "generated")
+    generated_packs = generated / "docs" / "thaliris-role-packs.md"
+    generated_packs.parent.mkdir()
+    generated_packs.write_bytes(historical)
+    assert "docs/thaliris-role-packs.md" not in uninstall(generated)["kept"]
+    assert not generated_packs.exists()
+
+
 def test_managed_router_is_rendered_at_effective_file_prefix_and_hook_hash_is_fresh(tmp_path, monkeypatch):
     root = repo(tmp_path)
     agents = root / "AGENTS.md"

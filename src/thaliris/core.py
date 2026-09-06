@@ -154,7 +154,7 @@ def _template_files(*, include_routing: bool = True, include_kind: bool = True, 
     return {
         ".agent-memory/INDEX.md": template("Memory index", "- [Operator](operator.md)\n- [Prompt policy](prompt-policy.md)\n- [Project conventions](project-conventions.md)\n- [Decisions](decisions/INDEX.md)\n- [Lessons](lessons/INDEX.md)", audience=["all"], kind="MEMORY"),
         ".agent-memory/operator.md": template("Operator notes", "Unknown. Record only confirmed operating constraints.", kind="HARD_CONSTRAINT"),
-        ".agent-memory/prompt-policy.md": template("Prompt policy", "Use manual recall only. Automatic injection and compression are disabled.", audience=["controller"], kind="HARD_CONSTRAINT"),
+        ".agent-memory/prompt-policy.md": template("Prompt policy", "Use explicit recall only. Retained memory is never automatically merged into role projections. Automatic compression is disabled.", audience=["controller"], kind="HARD_CONSTRAINT"),
         ".agent-memory/project-conventions.md": template("Project conventions", "Unknown. Add conventions only with evidence.", kind="HARD_CONSTRAINT"),
         ".agent-memory/decisions/INDEX.md": template("Decision index", "- [PD-001 decision template](PD-001.md)" if decision_link else "Link each project decision entry here.", kind="MEMORY"),
         ".agent-memory/decisions/PD-001.md": template("PD-001: decision template", "This is an unadopted template, not a project fact.\n\n## Decision\n\nUnknown.\n\n## Rationale\n\nUnknown.", kind="MEMORY"),
@@ -1189,6 +1189,44 @@ def _memory_context(root: Path, task: str, role: str) -> dict[str, object]:
     return {"confirmed": confirmed, "supported": supported, "constraints": constraints, "decisions": decisions, "unknowns": unknowns, "evidence": evidence, "files": list(dict.fromkeys(files)), "symbols": list(dict.fromkeys(symbols))}
 
 
+def _empty_memory_context() -> dict[str, object]:
+    """The default role projection deliberately contains no durable memory."""
+    return {"confirmed": [], "supported": [], "constraints": [], "decisions": [], "unknowns": [], "evidence": [], "files": [], "symbols": []}
+
+
+def recall(root: Path, query: str, role: str) -> dict[str, object]:
+    """Explicitly search retained memory and return unrated candidates.
+
+    Routing only narrows the candidate set.  Nothing is accepted into task
+    state or merged into a role projection by this read-only operation.
+    """
+    if role not in _PACK_ROLES:
+        raise ValueError("invalid role")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("recall query must not be empty")
+    selected, routing_errors = _route(_repo_root(root), query, role)
+    candidates: list[dict[str, object]] = []
+    for entry in selected:
+        state, detail = evidence_status(entry, _repo_root(root))
+        rel = str(entry.path.relative_to(_repo_root(root))).replace("\\", "/")
+        candidates.append({
+            "source": rel,
+            "text": entry.body.strip(),
+            "kind": entry.meta.get("Kind"),
+            "status": entry.meta.get("Status"),
+            "confidence": entry.meta.get("Confidence"),
+            "freshness": state,
+            "freshness_detail": detail,
+            "audience": entry.meta.get("Audience"),
+            "applicability": entry.meta.get("Applicability"),
+            "topics": entry.meta.get("Topics", []),
+            "symbols": entry.meta.get("Symbols", []),
+            "evidence": entry.meta.get("Evidence"),
+            "evidence_refs": [f"memory:{rel}"],
+        })
+    return {"ok": True, "schema_version": 1, "role": role, "query": query, "candidates": candidates, "routing_errors": routing_errors}
+
+
 def _effective_findings(root: Path, items: list[dict[str, object]], registry: dict[str, dict[str, object]]) -> list[dict[str, object]]:
     """Project historical finding records without claiming stale evidence is live."""
     result: list[dict[str, object]] = []
@@ -1246,8 +1284,7 @@ def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, ob
     if role == "controller":
         return _controller_packet(state)
     milestone = _milestone_slice(root, state["current_milestone"])
-    query = " ".join([state["goal"], *state["relevant_symbols"], *state["relevant_files"]])
-    memory = _memory_context(root, query, role) if role != "curator" else {"confirmed": [], "supported": [], "constraints": [], "decisions": [], "unknowns": [], "evidence": [], "files": [], "symbols": []}
+    memory = _empty_memory_context()
     registry = {ref["id"]: ref for ref in state["evidence_refs"]}
     effective_raw = _effective_findings(root, state["investigation_findings"], registry)
     effective_snapshot = _effective_snapshot(root, state["investigation_snapshot"], effective_raw, registry)
@@ -1329,7 +1366,7 @@ def prepare(root: Path, task: str | None, role: str) -> dict[str, object]:
     if role == "curator": raise ValueError("curator requires current task state")
     if role == "controller":
         return {"ok": True, "schema_version": 1, "role": "controller", "Task": {"id": None, "goal": task, "status": "UNBOUND", "revision": None, "milestone": None}, "Active Work": [], "Pending Results": [], "Unresolved Questions": [], "Artifact Refs": [], "Accepted Constraints": [], "Accepted Decisions": []}
-    memory = _memory_context(root, task, role)
+    memory = _empty_memory_context()
     common = {"ok": True, "schema_version": 1, "task_id": None, "state_revision": None, "role": role, "Goal": task, "Evidence refs": memory["evidence"]}
     if role == "reasoning-specialist": return common | {"Confirmed Facts": memory["confirmed"], "Supported Evidence": memory["supported"], "Hard Constraints": memory["constraints"], "Decisions": memory["decisions"], "Unknowns": memory["unknowns"], "Contradictions": [], "Investigation Readiness": {"raw_finding_count": 0, "covered_through": 0, "pending_findings": 0, "status": "READY"}, "Review Readiness": {"finding_count": 0, "handled_through": 0, "pending_findings": 0, "status": "READY"}}
     if role == "investigator": return common | {"Investigation Target": task, "Investigation Snapshot": [], "Relevant Files": memory["files"], "Relevant Symbols": memory["symbols"], "Hard Constraints": memory["constraints"], "Unknowns": memory["unknowns"], "Contradictions": [], "Verification Target": task}

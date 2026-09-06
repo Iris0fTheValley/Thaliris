@@ -17,6 +17,12 @@ not cross a role boundary automatically. They may remain available for an
 explicit, model-selected follow-up, but only information deliberately selected
 for propagation enters the next role's context.
 
+Durable memory is retained, not injected. A model may explicitly run `context
+recall "query" --role ROLE` to search routed, evidence-aware candidates. Recall
+does not accept a candidate into task state or propagate it into any role pack;
+the model selects whether to ignore it, explicitly accept it, or explicitly pass
+it onward.
+
 Thaliris constrains propagation paths, not the size or meaning of information a
 model explicitly chooses to send. Core bounds protect persistent state,
 snapshots, packets, promotion records, and other storage structures; they are

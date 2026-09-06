@@ -933,6 +933,28 @@ def test_controller_role_guard_requires_exactly_one_real_controller_role(tmp_pat
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
+def test_policy_denials_survive_audit_recording_failure(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    init(root)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/test_target.py"}), encoding="utf-8")
+    task_start(root, "audit failure policy", None, str(task_input))
+
+    def fail_record(*args, **kwargs):
+        raise OSError("audit unavailable")
+
+    monkeypatch.setattr(audit_module, "_record_controller_guard_event", fail_record)
+    monkeypatch.setattr(audit_module, "_record_runtime_event", fail_record)
+    denied = []
+    denied.append(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "cat README.md"})))
+    denied.append(handle_hook(root, "PreToolUse", payload(tool_name="mcp__filesystem__read_file", tool_input={"path": "README.md"})))
+    denied.append(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "all"})))
+    denied.append(handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name="spawn_agent", tool_input={"fork_turns": "none"})))
+    denied.append(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
+    denied.append(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})))
+    assert all(json.loads(value)["hookSpecificOutput"]["permissionDecision"] == "deny" for value in denied)
+
+
 def test_active_root_mcp_is_denied_but_child_mcp_is_not_reclassified(tmp_path):
     root = repo(tmp_path); init(root); task_start(root, "mcp boundary", None, None)
     for tool in ("mcp__filesystem__read_file", "mcp__git__status"):

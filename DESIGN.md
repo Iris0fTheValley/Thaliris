@@ -24,6 +24,11 @@ verification target, and artifact pointers. Raw findings, review bodies,
 evidence registries, logs, transcripts, source dumps, and artifact contents are
 explicit diagnostic or external paths, not normal routing data.
 
+The model decides which retained facts are relevant to the next decision.
+Thaliris bounds the amount and automatic propagation of a handoff, but does not
+act as a semantic firewall that excludes an important constraint merely because
+it originated in another role's working set.
+
 ## Runtime Boundary
 
 Core does not execute agents or define a concrete runtime's lifecycle, child

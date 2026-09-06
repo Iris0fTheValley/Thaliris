@@ -77,12 +77,12 @@ Load this document when the compact managed router is insufficient.
 
 ## Controller
 
-The Controller routes work and accepts completion. It reads `context task-status`
-for only task identity, active work, pending results, unresolved questions,
-artifact pointers, and accepted constraints/decisions. It does not request raw
-findings, review bodies, evidence records, Git status, or broad memory/milestone
-bodies as part of normal routing. Use `context task-show` only for an explicit
-diagnostic need.
+The Controller routes work and accepts completion. It starts from the bounded
+`context task-status` packet and selects the facts, constraints, decisions,
+unknowns, contradictions, and artifact pointers needed for the current step.
+Raw findings, review bodies, evidence records, Git status, and broad
+memory/milestone bodies do not propagate automatically; use `context task-show`
+only when a specific diagnostic detail is needed.
 
 Every active task uses serial fresh execution children with `fork_turns=\"none\"`.
 This means no parent-thread history, not an empty Codex context: applicable
@@ -117,15 +117,20 @@ before claiming a live observation.
 
 ## Evidence Roles
 
-Investigators append bounded findings and evidence references. Curators receive a
-current snapshot and uncovered suffix only, then may replace the compact snapshot.
-Reasoning Specialists receive accepted Decision Context rather than raw
-investigation or review history. Implementers receive the explicit Modification
-Boundary, including out-of-scope exclusions and required verification. If bounded
-findings contain an unresolved architecture, provenance, or cross-module decision,
-route only that Decision Context to `sol-high` rather than investigating at root.
-Reviewers receive intent, changed surface, constraints, and decisions; their
-findings are independent evidence, not an automatic implementation loop.
+Investigators may keep a large private working set, but their handoff is bounded
+and model-selected: surface facts, constraints, contradictions, compatibility or
+lifecycle invariants, evidence summaries, unknowns, and artifact pointers that
+could materially change the next decision. Do not dump the investigation process.
+Curators receive only the bounded material selected for the current snapshot and
+may replace that compact snapshot. Reasoning Specialists receive a bounded
+Decision Context selected for the current unresolved decision, not raw history;
+it may include relevant facts, competing hypotheses, contradictions, evidence
+summaries, compatibility invariants, pointers, and unknowns. If it is insufficient,
+state what evidence is needed so the Controller can request a targeted fresh
+follow-up. Implementers receive the explicit Modification Boundary and required
+verification. Reviewers receive bounded intent, changed surface, constraints,
+decisions, and selected evidence, then independently decide what needs deeper
+inspection. Role defaults guide work; they are not semantic firewalls.
 
 Use focused checks while changing code and one complete relevant validation at the
 end. Requested runtime or visible-behavior verification remains required.

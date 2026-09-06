@@ -1,4 +1,4 @@
-<!-- thaliris-role-packs:v2 -->
+<!-- thaliris-role-packs:v3 -->
 # Thaliris Role Packs
 
 Load this document when the compact managed router is insufficient.
@@ -10,7 +10,10 @@ low-noise `context task-status` packet and explicitly selects the facts,
 constraints, decisions, unknowns, contradictions, and artifact pointers needed
 for the current step. Raw findings, review bodies, evidence records, Git status,
 parent history, child transcripts, tool output, and broad memory/milestone
-bodies do not propagate automatically. `context task-show` is an explicit
+bodies do not propagate automatically. Durable memory is retained but never
+automatically injected into role projections. If historical context may matter,
+explicitly run `context recall "query" --role ROLE`; recall returns routed
+candidates only and does not accept or propagate them. `context task-show` is an explicit
 out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller
 path. If context is insufficient, request a targeted fresh follow-up or
 explicitly pass a selected artifact/payload; do not rebuild the full working set.

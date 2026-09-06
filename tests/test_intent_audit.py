@@ -713,6 +713,13 @@ def test_a909_role_pack_v2_migrates_only_when_byte_exact(tmp_path):
     current = init(root)
     assert "docs/thaliris-role-packs.md" not in current.get("files", [])
 
+    current_owned = repo(tmp_path / "current-owned")
+    assert init(current_owned)["ok"]
+    current_packs = current_owned / "docs" / "thaliris-role-packs.md"
+    assert current_packs.read_bytes() == ROLE_PACKS.encode("utf-8")
+    assert "docs/thaliris-role-packs.md" not in uninstall(current_owned)["kept"]
+    assert not current_packs.exists()
+
     modified = repo(tmp_path / "modified")
     modified_packs = modified / "docs" / "thaliris-role-packs.md"
     modified_packs.parent.mkdir()

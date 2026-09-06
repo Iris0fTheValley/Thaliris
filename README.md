@@ -1,9 +1,9 @@
 # Thaliris Core
 
 Thaliris is a small, Git-native context-routing and bounded-retention core for
-agent workflows. It decides which information belongs in each semantic role,
-what remains retained without automatic propagation, and which evidence is
-fresh enough to support a claim.
+agent workflows. It provides a low-noise default projection for each semantic
+role, records what remains retained without automatic propagation, and tracks
+which evidence is fresh enough to support a claim.
 
 The Core provides bounded task state and Controller packets, semantic role
 projections, evidence freshness, external artifact pointers, project memory,

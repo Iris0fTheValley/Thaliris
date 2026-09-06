@@ -1,9 +1,9 @@
 # Design
 
 Thaliris Core is a deterministic, Git-native information topology layer. It
-stores bounded task state and evidence, projects the right facts to each
-semantic role, and preserves useful material without automatically propagating
-every working-set detail.
+stores bounded task state and evidence, provides low-noise default projections
+for semantic roles, and preserves useful material without automatically
+propagating every working-set detail.
 
 ## Core Responsibilities
 

@@ -74,7 +74,7 @@ Every active task starts with one fresh execution child using `fork_turns=\"none
 Codex hook configuration is separate from current-session observation. A project `.codex/hooks.json` proves only configuration; input rewriting, root classification, payload fidelity, and native task delivery remain `UNKNOWN` until a live compatible session observes them. Unknown tools and unverified MCP paths remain `UNKNOWN`/fail-open.
 """
 
-ROLE_PACKS = """<!-- thaliris-role-packs:v2 -->
+ROLE_PACKS = """<!-- thaliris-role-packs:v3 -->
 # Thaliris Role Packs
 
 Load this document when the compact managed router is insufficient.
@@ -86,7 +86,10 @@ low-noise `context task-status` packet and explicitly selects the facts,
 constraints, decisions, unknowns, contradictions, and artifact pointers needed
 for the current step. Raw findings, review bodies, evidence records, Git status,
 parent history, child transcripts, tool output, and broad memory/milestone
-bodies do not propagate automatically. `context task-show` is an explicit
+bodies do not propagate automatically. Durable memory is retained but never
+automatically injected into role projections. If historical context may matter,
+explicitly run `context recall "query" --role ROLE`; recall returns routed
+candidates only and does not accept or propagate them. `context task-show` is an explicit
 out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller
 path. If context is insufficient, request a targeted fresh follow-up or
 explicitly pass a selected artifact/payload; do not rebuild the full working set.
@@ -171,6 +174,7 @@ do not treat this layer as a scheduler, transcript store, or automatic summary.
 KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "75f6c6804db80995c32cf4902247ae0d78762a15f37b35b677219813c8d17e6a",
     "4ff409d7aa3d5f2ad2eb0c82b317d9af54426dde7765d8101939dcc578a460c0",
+    "6e49df8985c52309a6966c5ddd8b6b3b6a2b6bce326c55f327cb999bb6b46e4c",
 })
 
 

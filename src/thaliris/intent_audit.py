@@ -365,18 +365,20 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             return ""
         root = _hook_repository_root(root, payload)
         if event == "SubagentStart":
-            _record_subagent_start(root, payload)
+            _best_effort_record(_record_subagent_start, root, payload)
             return ""
         if payload.get("agent_id") is not None:
             tool = payload.get("tool_name") or payload.get("tool")
             if event == "PreToolUse" and isinstance(tool, str) and _tool_basename(tool) in _DELEGATION_TOOL_NAMES:
                 return _permission_deny("THALIRIS_CHILD_DELEGATION: child-to-child delegation is not permitted.")
-            _record_child_runtime_event(root, payload, event)
+            _best_effort_record(_record_child_runtime_event, root, payload, event)
             return ""
         if event == "PreToolUse":
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) == "spawn_agent":
-                _record_runtime_event(root, payload, event, tool)
+                # Dispatch policy is independent from supplemental evidence.
+                # A broken audit write must never turn an unsafe fork into an allow.
+                _best_effort_record(_record_runtime_event, root, payload, event, tool)
             return _pre_tool_output(payload, root)
         if event == "SessionStart":
             _record_session_start(root, payload)
@@ -399,7 +401,7 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
         if event == "PostToolUse":
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) in _COLLABORATION_TOOL_NAMES:
-                _record_runtime_event(root, payload, event, tool)
+                _best_effort_record(_record_runtime_event, root, payload, event, tool)
             result = _capture_delegation(state, payload)
             if not result:
                 return ""
@@ -447,6 +449,14 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
         return response
     except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
         return ""
+
+
+def _best_effort_record(function: Any, *args: Any) -> None:
+    """Persist observation without coupling audit availability to policy."""
+    try:
+        function(*args)
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
+        pass
 
 
 def _hook_repository_root(root: Path, payload: dict[str, Any]) -> Path:
@@ -1253,13 +1263,13 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
         root = _hook_repository_root(root or Path.cwd(), payload)
         if _active_task_id(root) is None:
             return ""
-        _record_controller_guard_event(root, payload, "MCP_ROOT_NOT_ALLOWED", "blocked")
+        _best_effort_record(_record_controller_guard_event, root, payload, "MCP_ROOT_NOT_ALLOWED", "blocked")
         return _permission_deny(_CONTROLLER_BOUNDARY_REASON)
     if _tool_basename(tool) in _CONTROLLER_MUTATION_TOOL_NAMES:
         root = _hook_repository_root(root or Path.cwd(), payload)
         if _active_task_id(root) is None:
             return ""
-        _record_controller_guard_event(root, payload, "SOURCE_MUTATION", "blocked")
+        _best_effort_record(_record_controller_guard_event, root, payload, "SOURCE_MUTATION", "blocked")
         return _permission_deny(_CONTROLLER_BOUNDARY_REASON)
     if _tool_basename(tool) in _CONTROLLER_EXECUTION_TOOL_NAMES:
         return _controller_guard_output(payload, root)
@@ -1291,7 +1301,7 @@ def _controller_guard_output(payload: dict[str, Any], root: Path | None = None) 
     root = _hook_repository_root(root or Path.cwd(), payload)
     action = _controller_command_action(root, payload)
     if action is not None:
-        _record_controller_guard_event(root, payload, action, "blocked")
+        _best_effort_record(_record_controller_guard_event, root, payload, action, "blocked")
         if action == "TASK_CLOSE_NO_CHILD":
             reason = _CONTROLLER_CLOSE_REASON
         elif action == "ACCEPTANCE_BEFORE_CHILD":
@@ -1305,7 +1315,7 @@ def _controller_guard_output(payload: dict[str, Any], root: Path | None = None) 
                 "permissionDecisionReason": reason,
             }
         }, ensure_ascii=False, separators=(",", ":"))
-    _record_controller_guard_event(root, payload, action or "UNKNOWN", "allowed" if action is None else "unknown")
+    _best_effort_record(_record_controller_guard_event, root, payload, action or "UNKNOWN", "allowed" if action is None else "unknown")
     return ""
 
 

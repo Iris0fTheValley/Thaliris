@@ -17,4 +17,7 @@ and mutation paths; children are not given that root allowlist. Hosted,
 specialized, and unverified surfaces remain outside this enforcement envelope.
 Configuration, current hook-definition observation, payload fidelity, and
 runtime identity compatibility remain `UNKNOWN` without compatible live
-evidence. This is not filesystem confidentiality.
+evidence. This is not filesystem confidentiality. Role packs are bounded
+defaults, not semantic firewalls: the model selects decision-relevant facts,
+constraints, contradictions, unknowns, and artifact pointers for each handoff;
+raw working-set material is never propagated automatically.

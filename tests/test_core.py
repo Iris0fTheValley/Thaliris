@@ -316,12 +316,40 @@ def test_legacy_anonymous_semantic_records_upgrade_without_loss(tmp_path: Path) 
     path.write_text(json.dumps(legacy), encoding="utf-8")
 
     loaded = core.task_show(root)["state"]
-    assert loaded["schema_version"] == 2
+    assert loaded["schema_version"] == 3
     assert loaded["constraints"] == [{"id": "legacy-C-0001", "text": "keep API", "evidence_refs": [], "status": "ACTIVE"}]
     assert core.migrate(root)["changed"]
     persisted = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["schema_version"] == 2
+    assert persisted["schema_version"] == 3
     assert persisted["constraints"] == loaded["constraints"]
+
+
+def test_v2_verification_claims_remain_readable_but_are_not_trusted_results(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    source = root / "source.txt"
+    source.write_text("one", encoding="utf-8")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    started = core.task_start(root, "legacy verification", None, input_file(root, {
+        "evidence_refs": [
+            {"id": "src", "kind": "file", "locator": f"file:source.txt#{digest}", "summary": "source", "confidence": "SUPPORTED"},
+            {"id": "claim", "kind": "test", "locator": "pytest -q", "summary": "passed", "confidence": "SUPPORTED", "source_refs": ["src"]},
+        ],
+    }))
+    path = root / ".context/state.json"
+    legacy = json.loads(path.read_text(encoding="utf-8"))
+    legacy["schema_version"] = 2
+    legacy["verification_evidence"] = ["claim"]
+    legacy.pop("verification_results")
+    legacy.pop("task_surface_baseline")
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    loaded = core.task_show(root)["state"]
+    assert loaded["schema_version"] == 3
+    assert loaded["verification_evidence"] == ["claim"]
+    assert loaded["verification_results"] == []
+    assert loaded["task_surface_baseline"] is None
+    assert loaded["revision"] == started["revision"]
 
 
 def test_semantic_transition_contracts_and_illegal_updates_fail_closed(tmp_path: Path) -> None:
@@ -379,12 +407,11 @@ def test_verification_gate_tracks_artifact_identity_and_current_surface(tmp_path
     registered = core.task_artifact(root, started["revision"], "result", "result.txt", "result artifact")
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     native = {"id": "result-source", "kind": "file", "locator": f"file:result.txt#{digest}", "summary": "result content", "confidence": "SUPPORTED"}
-    check = {"id": "check", "kind": "test", "locator": "pytest tests/test_result.py", "summary": "verification succeeded", "confidence": "SUPPORTED", "source_refs": ["result-source"]}
-    verified = core.task_update(root, "controller", registered["revision"], input_file(root, {
-        "evidence_refs": [native, check],
+    configured = core.task_update(root, "controller", registered["revision"], input_file(root.parent, {
+        "evidence_refs": [native],
         "verification_target": {"description": "result must pass", "artifact_refs": ["result"], "changed_surface": []},
-        "verification_evidence": ["check"],
-    }))
+    }, "verification-config.json"))
+    verified = core.task_record_verification(root, configured["revision"], "check", "test", "PASSED", "verification succeeded", ["result-source"], observed_by="test-runtime")
     assert core.task_close(root, verified["revision"])["status"] == "DONE"
 
     # A historical pointer remains readable after the target changes, but its
@@ -397,8 +424,8 @@ def test_verification_gate_tracks_artifact_identity_and_current_surface(tmp_path
     registered = core.task_artifact(root, started["revision"], "result", "result.txt", "result artifact")
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     native = {"id": "result-source", "kind": "file", "locator": f"file:result.txt#{digest}", "summary": "result content", "confidence": "SUPPORTED"}
-    check = {"id": "check", "kind": "test", "locator": "pytest tests/test_result.py", "summary": "verification succeeded", "confidence": "SUPPORTED", "source_refs": ["result-source"]}
-    verified = core.task_update(root, "controller", registered["revision"], input_file(root, {"evidence_refs": [native, check], "verification_target": {"description": "result must pass", "artifact_refs": ["result"], "changed_surface": []}, "verification_evidence": ["check"]}))
+    configured = core.task_update(root, "controller", registered["revision"], input_file(root.parent, {"evidence_refs": [native], "verification_target": {"description": "result must pass", "artifact_refs": ["result"], "changed_surface": []}}, "verification-config.json"))
+    verified = core.task_record_verification(root, configured["revision"], "check", "test", "PASSED", "verification succeeded", ["result-source"], observed_by="test-runtime")
     artifact.write_text("v2", encoding="utf-8")
     assert core.task_show(root)["state"]["artifact_refs"][0]["content_sha256"] == digest
     assert core.task_status(root)["Artifact Refs"][0]["freshness"] == "STALE"
@@ -411,5 +438,106 @@ def test_verification_target_rejects_bare_model_claim(tmp_path: Path) -> None:
     core.init(root)
     (root / "changed.py").write_text("v1", encoding="utf-8")
     started = core.task_start(root, "verify", None, input_file(root, {"changed_surface": ["changed.py"], "verification_target": "pytest -q"}))
-    with pytest.raises(ValueError, match="successful verification evidence"):
+    with pytest.raises(ValueError, match="trusted successful verification result"):
         core.task_close(root, started["revision"])
+
+
+def _verification_task(root: Path, paths: list[str], *, boundary: list[str] | None = None) -> tuple[dict[str, object], list[dict[str, str]]]:
+    evidence = []
+    for index, path in enumerate(paths, 1):
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"v{index}", encoding="utf-8")
+    started = core.task_start(root, "verification", None, input_file(root.parent, {
+        "changed_surface": paths,
+        "modification_boundary": {"status": "UNVERIFIED", "includes": boundary or [], "excludes": [], "evidence_refs": []},
+        "verification_target": {"description": "verify current files", "artifact_refs": [], "changed_surface": paths},
+    }, "start.json"))
+    for index, path in enumerate(paths, 1):
+        digest = hashlib.sha256((root / path).read_bytes()).hexdigest()
+        evidence.append({"id": f"src-{index}", "kind": "file", "locator": f"file:{path}#{digest}", "summary": path, "confidence": "SUPPORTED"})
+    configured = core.task_update(root, "controller", started["revision"], input_file(root.parent, {"evidence_refs": evidence}, "evidence.json"))
+    return configured, evidence
+
+
+def test_model_authored_test_evidence_never_becomes_trusted_verification(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    configured, evidence = _verification_task(root, ["subject.py"])
+    fake = {"id": "passed", "kind": "test", "locator": "pytest -q tests/test_subject.py", "summary": "passed", "confidence": "SUPPORTED", "source_refs": [evidence[0]["id"]]}
+    with_fake = core.task_update(root, "controller", configured["revision"], input_file(root.parent, {"evidence_refs": [fake]}, "fake.json"))
+    with pytest.raises(ValueError, match="trusted successful verification result"):
+        core.task_close(root, with_fake["revision"])
+    with pytest.raises(ValueError, match="not allowed"):
+        core.task_update(root, "controller", with_fake["revision"], input_file(root.parent, {"verification_evidence": ["passed"]}, "selection.json"))
+
+
+@pytest.mark.parametrize("outcome", ["FAILED", "UNKNOWN"])
+def test_nonpassing_trusted_outcomes_cannot_close(tmp_path: Path, outcome: str) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    configured, evidence = _verification_task(root, ["subject.py"])
+    result = core.task_record_verification(root, configured["revision"], "result", "test", outcome, "observed outcome", [evidence[0]["id"]], observed_by="test-runtime")
+    with pytest.raises(ValueError, match="does not cover"):
+        core.task_close(root, result["revision"])
+
+
+def test_trusted_verification_requires_every_current_surface_path(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    configured, evidence = _verification_task(root, ["a.py", "b.py"])
+    result = core.task_record_verification(root, configured["revision"], "partial", "test", "PASSED", "only a", [evidence[0]["id"]], observed_by="test-runtime")
+    with pytest.raises(ValueError, match="does not cover"):
+        core.task_close(root, result["revision"])
+
+
+def test_new_task_scoped_git_mutation_requires_reverification(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    configured, evidence = _verification_task(root, ["src/a.py"], boundary=["src"])
+    result = core.task_record_verification(root, configured["revision"], "a-pass", "test", "PASSED", "a passed", [evidence[0]["id"]], observed_by="test-runtime")
+    (root / "src/b.py").write_text("new task change", encoding="utf-8")
+    with pytest.raises(ValueError, match="does not cover"):
+        core.task_close(root, result["revision"])
+
+
+def test_unknown_post_start_workspace_mutation_fails_closed_but_baseline_does_not(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    (root / "unrelated-before.txt").write_text("existing user work", encoding="utf-8")
+    configured, evidence = _verification_task(root, ["subject.py"])
+    result = core.task_record_verification(root, configured["revision"], "pass", "test", "PASSED", "subject passed", [evidence[0]["id"]], observed_by="test-runtime")
+    assert core.task_close(root, result["revision"])["status"] == "DONE"
+
+    root = repo(tmp_path / "unknown")
+    core.init(root)
+    configured, evidence = _verification_task(root, ["subject.py"])
+    result = core.task_record_verification(root, configured["revision"], "pass", "test", "PASSED", "subject passed", [evidence[0]["id"]], observed_by="test-runtime")
+    (root / "unattributed.txt").write_text("new unknown writer", encoding="utf-8")
+    with pytest.raises(ValueError, match="attribution is unknown"):
+        core.task_close(root, result["revision"])
+
+
+def test_semantic_projection_marks_stale_provenance_without_rewriting_history(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    source = root / "source.txt"
+    source.write_text("v1", encoding="utf-8")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    native = {"id": "src", "kind": "file", "locator": f"file:source.txt#{digest}", "summary": "source", "confidence": "SUPPORTED"}
+    core.task_start(root, "semantic freshness", None, input_file(root.parent, {
+        "evidence_refs": [native],
+        "constraints": [{"text": "preserve public API", "evidence_refs": ["src"]}],
+        "contradictions": [{"text": "sources disagree", "evidence_refs": ["src"]}],
+        "decisions": [{"text": "use v1", "evidence_refs": ["src"]}],
+        "unknowns": [{"text": "open question", "evidence_refs": []}],
+    }, "semantic-start.json"))
+    source.write_text("v2", encoding="utf-8")
+    pack = core.prepare(root, None, "reasoning-specialist")
+    assert pack["Hard Constraints"][0]["effective_state"] == "STALE_PROVENANCE"
+    assert pack["Contradictions"][0]["effective_state"] == "REVALIDATION_REQUIRED"
+    assert pack["Decisions"][0]["effective_state"] == "REVALIDATION_REQUIRED"
+    assert pack["Unknowns"][0]["text"] == "open question"
+    historical = core.task_show(root)["state"]
+    assert "effective_state" not in historical["constraints"][0]
+    assert historical["constraints"][0]["status"] == "ACTIVE"

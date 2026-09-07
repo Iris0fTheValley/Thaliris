@@ -35,12 +35,21 @@ transition vocabulary: `add`, `resolve`, `reopen`, `adjudicate`, and
 Raw investigation and review findings remain append-only. Curator snapshots
 remain derived from raw findings, retain `supersedes` provenance, and cannot
 promote epistemic status. Effective projections may demote stale evidence but
-never rewrite recorded history.
+never rewrite recorded history. Active constraints remain pinned even when their
+provenance is stale, with `STALE_PROVENANCE` exposed in role projections.
+Active decisions and contradictions with stale evidence receive
+`REVALIDATION_REQUIRED`; unknowns remain open rather than being erased.
 
 Schema-v1 state remains readable. Its anonymous semantic statements are mapped
-deterministically to v2 IDs on load and are persisted as v2 by the next
+deterministically to IDs on load and are persisted as v3 by the next
 successful mutation or explicit `context migrate`; no resolve or supersession
 relationship is inferred during that migration.
+
+Schema-v2 `verification_evidence` is likewise retained for audit during the
+v3 upgrade, but it remains ordinary model-authored evidence and cannot satisfy
+a close gate. A v2 task with a verification target has no trustworthy
+task-surface baseline to reconstruct, so it must be reconciled before closing
+rather than being silently treated as verified.
 
 ## Verification And Artifacts
 
@@ -49,12 +58,21 @@ historical address even when the file later changes or disappears; projections
 report whether the recorded identity is fresh, stale, missing, or legacy.
 
 A task without a verification target can close with the existing CAS rule. A
-task with a target can close only when selected `test` or `runtime` evidence is
-fresh and its existing native `source_refs` cover every explicitly bound
-artifact or changed-surface path. A changed source or artifact makes that
-evidence ineffective automatically. Verification descriptions and command-like
-text are requirements only; they grant no execution authority and a bare model
-claim is never sufficient evidence.
+task with a target requires a trusted, immutable execution result with outcome
+`PASSED`; ordinary model-authored `test` or `runtime` evidence, including a
+`passed` summary or a command-looking locator, cannot close a task. The Core
+does not execute or independently prove arbitrary commands. A trusted runtime
+adapter records an observed result through the adapter-only Core ingress; Core
+then validates its native `source_refs`, outcome, freshness, and coverage.
+
+Task-start records the Git-visible dirty surface as a baseline. At close, an
+explicit target, registered artifacts, declared changed surface, and new or
+changed Git paths inside the modification boundary form the task-attributable
+surface. A changed source or artifact makes the result stale. A new Git change
+outside those signals cannot be safely attributed, so close fails with an
+explicit reconciliation requirement rather than silently treating it as
+verified. Unchanged dirty files present at task start remain baseline workspace
+state and do not automatically become task work.
 
 Working set is not handoff set. Retention is not propagation. Availability is
 not injection. A Controller packet contains task identity, active work, pending

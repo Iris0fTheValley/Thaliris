@@ -302,3 +302,114 @@ def test_test_evidence_is_demoted_when_its_native_source_changes(tmp_path: Path)
     pack = core.prepare(root, None, "reasoning-specialist")
     assert pack["Supported Evidence"] == []
     assert any("stale supported evidence" in item["text"] for item in pack["Unknowns"])
+
+
+def test_legacy_anonymous_semantic_records_upgrade_without_loss(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    core.task_start(root, "legacy", None, input_file(root, {"constraints": [{"text": "keep API", "evidence_refs": []}]}))
+    path = root / ".context/state.json"
+    legacy = json.loads(path.read_text(encoding="utf-8"))
+    legacy["schema_version"] = 1
+    legacy["constraints"] = [{"text": "keep API", "evidence_refs": []}]
+    legacy.pop("verification_evidence")
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    loaded = core.task_show(root)["state"]
+    assert loaded["schema_version"] == 2
+    assert loaded["constraints"] == [{"id": "legacy-C-0001", "text": "keep API", "evidence_refs": [], "status": "ACTIVE"}]
+    assert core.migrate(root)["changed"]
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["schema_version"] == 2
+    assert persisted["constraints"] == loaded["constraints"]
+
+
+def test_semantic_transition_contracts_and_illegal_updates_fail_closed(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    started = core.task_start(root, "semantics", None, input_file(root, {
+        "constraints": [{"text": "preserve API", "evidence_refs": []}],
+        "unknowns": [{"text": "coverage", "evidence_refs": []}],
+        "decisions": [{"text": "use current API", "evidence_refs": []}],
+    }))
+    with pytest.raises(ValueError, match="not allowed"):
+        core.task_update(root, "controller", started["revision"], input_file(root, {"constraints": []}))
+
+    revision = started["revision"]
+    operations = [
+        {"op": "resolve", "type": "unknowns", "id": "legacy-U-0001"},
+        {"op": "reopen", "type": "unknowns", "id": "legacy-U-0001"},
+        {"op": "add", "type": "contradictions", "id": "X-1", "text": "two sources disagree", "evidence_refs": []},
+    ]
+    with pytest.raises(ValueError, match="contradictions require evidence"):
+        core.task_update(root, "controller", revision, input_file(root, {"semantic_operations": operations}))
+
+    source = root / "source.txt"
+    source.write_text("evidence", encoding="utf-8")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    evidence = {"id": "src", "kind": "file", "locator": f"file:source.txt#{digest}", "summary": "source", "confidence": "SUPPORTED"}
+    updated = core.task_update(root, "controller", revision, input_file(root, {"evidence_refs": [evidence], "semantic_operations": [
+        {"op": "resolve", "type": "unknowns", "id": "legacy-U-0001"},
+        {"op": "reopen", "type": "unknowns", "id": "legacy-U-0001"},
+        {"op": "add", "type": "constraints", "id": "C-2", "text": "keep transition history", "evidence_refs": []},
+        {"op": "add", "type": "contradictions", "id": "X-1", "text": "two sources disagree", "evidence_refs": ["src"]},
+        {"op": "adjudicate", "type": "contradictions", "id": "X-1"},
+        {"op": "supersede", "type": "decisions", "id": "D-2", "text": "use revised API", "evidence_refs": [], "supersedes": ["legacy-D-0001"]},
+    ]}))
+    state = core.task_show(root)["state"]
+    assert state["unknowns"][0]["status"] == "OPEN"
+    assert state["contradictions"][0]["status"] == "ADJUDICATED"
+    assert state["decisions"][0]["status"] == "SUPERSEDED"
+    assert state["decisions"][0]["superseded_by"] == "D-2"
+    assert state["decisions"][1]["status"] == "ACTIVE"
+    assert core.task_status(root)["Accepted Constraints"] == ["preserve API", "keep transition history"]
+    assert core.task_status(root)["Accepted Decisions"] == ["use revised API"]
+    with pytest.raises(ValueError, match="revision conflict"):
+        core.task_update(root, "controller", revision, input_file(root, {"semantic_operations": [{"op": "resolve", "type": "unknowns", "id": "legacy-U-0001"}]}))
+    with pytest.raises(ValueError, match="illegal semantic adjudicate"):
+        core.task_update(root, "controller", updated["revision"], input_file(root, {"semantic_operations": [{"op": "adjudicate", "type": "contradictions", "id": "X-1"}]}))
+
+
+def test_verification_gate_tracks_artifact_identity_and_current_surface(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    artifact = root / "result.txt"
+    artifact.write_text("v1", encoding="utf-8")
+    started = core.task_start(root, "verify artifact", None, None)
+    registered = core.task_artifact(root, started["revision"], "result", "result.txt", "result artifact")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    native = {"id": "result-source", "kind": "file", "locator": f"file:result.txt#{digest}", "summary": "result content", "confidence": "SUPPORTED"}
+    check = {"id": "check", "kind": "test", "locator": "pytest tests/test_result.py", "summary": "verification succeeded", "confidence": "SUPPORTED", "source_refs": ["result-source"]}
+    verified = core.task_update(root, "controller", registered["revision"], input_file(root, {
+        "evidence_refs": [native, check],
+        "verification_target": {"description": "result must pass", "artifact_refs": ["result"], "changed_surface": []},
+        "verification_evidence": ["check"],
+    }))
+    assert core.task_close(root, verified["revision"])["status"] == "DONE"
+
+    # A historical pointer remains readable after the target changes, but its
+    # recorded identity is visibly stale and can no longer satisfy a close.
+    root = repo(tmp_path / "stale")
+    core.init(root)
+    artifact = root / "result.txt"
+    artifact.write_text("v1", encoding="utf-8")
+    started = core.task_start(root, "verify stale artifact", None, None)
+    registered = core.task_artifact(root, started["revision"], "result", "result.txt", "result artifact")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    native = {"id": "result-source", "kind": "file", "locator": f"file:result.txt#{digest}", "summary": "result content", "confidence": "SUPPORTED"}
+    check = {"id": "check", "kind": "test", "locator": "pytest tests/test_result.py", "summary": "verification succeeded", "confidence": "SUPPORTED", "source_refs": ["result-source"]}
+    verified = core.task_update(root, "controller", registered["revision"], input_file(root, {"evidence_refs": [native, check], "verification_target": {"description": "result must pass", "artifact_refs": ["result"], "changed_surface": []}, "verification_evidence": ["check"]}))
+    artifact.write_text("v2", encoding="utf-8")
+    assert core.task_show(root)["state"]["artifact_refs"][0]["content_sha256"] == digest
+    assert core.task_status(root)["Artifact Refs"][0]["freshness"] == "STALE"
+    with pytest.raises(ValueError, match="artifact is no longer current"):
+        core.task_close(root, verified["revision"])
+
+
+def test_verification_target_rejects_bare_model_claim(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    (root / "changed.py").write_text("v1", encoding="utf-8")
+    started = core.task_start(root, "verify", None, input_file(root, {"changed_surface": ["changed.py"], "verification_target": "pytest -q"}))
+    with pytest.raises(ValueError, match="successful verification evidence"):
+        core.task_close(root, started["revision"])

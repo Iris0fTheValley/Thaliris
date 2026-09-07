@@ -17,6 +17,45 @@ propagating every working-set detail.
 - explicit durable promotion with bounded persistent records;
 - Git truth for changed surface and deterministic verification.
 
+## Semantic State
+
+Task semantic records use stable identities. Constraints, unknowns,
+contradictions, and decisions are retained as historical records rather than
+replaceable anonymous statement lists. Ordinary task updates cannot replace
+those collections. The Controller may propose only a small Core-validated
+transition vocabulary: `add`, `resolve`, `reopen`, `adjudicate`, and
+`supersede`.
+
+- constraints stay active until an explicit resolve transition;
+- unknowns stay open until resolve and may be explicitly reopened;
+- contradictions stay open until resolve or adjudicate;
+- decisions stay active until an explicit supersession, which links the prior
+  decision to its replacement without deleting either identity.
+
+Raw investigation and review findings remain append-only. Curator snapshots
+remain derived from raw findings, retain `supersedes` provenance, and cannot
+promote epistemic status. Effective projections may demote stale evidence but
+never rewrite recorded history.
+
+Schema-v1 state remains readable. Its anonymous semantic statements are mapped
+deterministically to v2 IDs on load and are persisted as v2 by the next
+successful mutation or explicit `context migrate`; no resolve or supersession
+relationship is inferred during that migration.
+
+## Verification And Artifacts
+
+An artifact pointer records a SHA-256 content identity at registration. It is a
+historical address even when the file later changes or disappears; projections
+report whether the recorded identity is fresh, stale, missing, or legacy.
+
+A task without a verification target can close with the existing CAS rule. A
+task with a target can close only when selected `test` or `runtime` evidence is
+fresh and its existing native `source_refs` cover every explicitly bound
+artifact or changed-surface path. A changed source or artifact makes that
+evidence ineffective automatically. Verification descriptions and command-like
+text are requirements only; they grant no execution authority and a bare model
+claim is never sufficient evidence.
+
 Working set is not handoff set. Retention is not propagation. Availability is
 not injection. A Controller packet contains task identity, active work, pending
 results, unresolved questions, accepted constraints and decisions, modification

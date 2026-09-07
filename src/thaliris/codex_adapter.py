@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import tomllib
 
-from . import core
+from . import core, intent_audit
 from .intent_audit import MANAGED_HOOKS_DESCRIPTION, bind_unbound_intent, cleanup_task_audit, handle_hook, merge_hooks, remove_hooks, task_close_audit
 
 CODEX_ROLE_MAP = {
@@ -594,9 +594,21 @@ def audit_hook(root: Path, event: str, payload: object) -> str:
 def doctor(root: Path) -> dict[str, object]:
     from .doctor import report
     result = report(root)
+    observations: list[dict[str, object]] = []
+    expected = intent_audit.managed_hook_spec_hash()
+    for path in (root / ".context" / "audit").glob("*/runtime.json"):
+        try:
+            runtime = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        samples = runtime.get("execution_observations") if isinstance(runtime, dict) and runtime.get("managed_hook_spec_hash") == expected else None
+        if isinstance(samples, list):
+            observations.extend(item for item in samples if isinstance(item, dict))
+    latest = observations[-1] if observations else None
     result["verification_attestation"] = {
         "configured": "YES",
-        "observed": "UNKNOWN",
+        "observed": "YES" if latest is not None else "UNKNOWN",
+        "outcome": latest.get("outcome") if latest is not None else "UNKNOWN",
         "detail": "A compatible PostToolUse execution payload is required before Codex can attest an acceptance result.",
     }
     return result

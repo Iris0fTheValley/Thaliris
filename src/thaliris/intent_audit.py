@@ -48,7 +48,7 @@ _COLLABORATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _COLL
 # Codex 0.146 exposes shell execution to hooks as ``Bash``.  The controller
 # guard uses that native surface for deterministic action classification while
 # retaining the historical aliases for runtimes that expose a different name.
-_CONTROLLER_EXECUTION_TOOL_NAMES = ("Bash", "Shell", "exec_command", "command_execution", "functions.exec_command")
+_CONTROLLER_EXECUTION_TOOL_NAMES = ("Bash", "Shell", "exec", "exec_command", "command_execution", "functions.exec_command")
 _CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_EXECUTION_TOOL_NAMES) + ")"
 _CONTROLLER_MUTATION_TOOL_NAMES = ("apply_patch", "file_change", "functions.apply_patch", "functions.file_change")
 _CONTROLLER_MUTATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_MUTATION_TOOL_NAMES) + ")"
@@ -405,6 +405,7 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             if isinstance(tool, str) and _tool_basename(tool) in _COLLABORATION_TOOL_NAMES:
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
             if isinstance(tool, str) and _tool_basename(tool) in _CONTROLLER_EXECUTION_TOOL_NAMES:
+                _best_effort_record(_record_execution_observation, root, payload)
                 _best_effort_record(_acceptance_execution_observed, root, payload)
             result = _capture_delegation(state, payload)
             if not result:
@@ -680,6 +681,31 @@ def _post_tool_response(payload: dict[str, Any]) -> object:
         if key in payload:
             return payload[key]
     return None
+
+
+def _record_execution_observation(root: Path, payload: dict[str, Any]) -> None:
+    """Keep a privacy-preserving native payload-shape sample for doctor/probes."""
+    tool = payload.get("tool_name") or payload.get("tool")
+    response_field = next((key for key in ("tool_response", "tool_result", "result", "output") if key in payload), None)
+    response = payload.get(response_field) if response_field is not None else None
+    item: dict[str, Any] = {
+        "tool": _tool_basename(tool) if isinstance(tool, str) else "UNKNOWN",
+        "response_field": response_field,
+        "response_type": type(response).__name__,
+        "outcome": _execution_outcome(response),
+    }
+    if isinstance(response, dict):
+        item["response_keys"] = sorted(str(key) for key in response)[:16]
+        nested = response.get("result")
+        if isinstance(nested, dict):
+            item["nested_result_keys"] = sorted(str(key) for key in nested)[:16]
+    path = _session_dir(root, payload) / "runtime.json"
+    state = _load_runtime(path)
+    state["managed_hook_spec_hash"] = managed_hook_spec_hash()
+    observed = state.setdefault("execution_observations", [])
+    if isinstance(observed, list) and len(observed) < 8:
+        observed.append(item)
+    _write_capture(path, state)
 
 
 def _post_tool_succeeded(response: object) -> bool:

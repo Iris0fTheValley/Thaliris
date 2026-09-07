@@ -33,7 +33,19 @@ not create trusted proof. It asks Core for the current target-bound surface and
 lets Core record fresh native source identities atomically; a PreToolUse allow,
 command string, summary, or locator is never a pass.
 
-This bridge is configured for the explicit local execution matcher and covered
-by payload-shape tests. It is not a universal Codex guarantee: a runtime build
-without a compatible PostToolUse completion payload remains `UNKNOWN` in
-`context doctor`, and targeted tasks fail closed at `task-close`.
+Automatic acceptance execution applies only to an executable string target
+accepted by the local command allowlist. A structured Core target is still a
+Core requirement, not a shell command, and needs another trusted runtime
+observation path.
+
+This bridge is configured for explicit local execution matchers, including the
+native `exec` surface observed in Codex CLI 0.153.4, and payload-shape tests
+cover its contract. A native probe on that build invoked `exec` for requested
+success and failure commands, but this Windows installation could not start
+its Bash/WSL transport and no matching `PostToolUse` callback reached the
+adapter. Thus no native completion payload, including an exit code, has been
+observed by the adapter on this build. `context doctor` correctly remains
+`UNKNOWN` until a compatible callback is actually observed; synthetic tests
+show how an explicit result would be handled, not that this runtime supplies
+one. Targeted tasks therefore fail closed at `task-close` rather than gaining a
+trusted `PASSED` result from command text or formatted output.

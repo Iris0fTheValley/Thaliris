@@ -13,6 +13,7 @@ import pytest
 from thaliris.codex_adapter import LEGACY_ROLE_PACKS, ROLE_PACKS, init, task_close, task_start, uninstall
 from thaliris.doctor import _context_isolation
 import thaliris.doctor as doctor_module
+import thaliris.codex_adapter as codex_adapter
 import thaliris.core as core_module
 import thaliris.intent_audit as audit_module
 from thaliris.intent_audit import handle_hook, hooks_health
@@ -1270,6 +1271,28 @@ def test_posttool_failed_or_incomplete_completion_never_creates_pass(tmp_path):
     _started, _subject, command = _acceptance_task(root)
     handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"isError": False}))
     assert core_module.task_show(root)["state"]["verification_results"][0]["outcome"] == "UNKNOWN"
+
+
+def test_execution_observation_records_payload_shape_without_output(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    handle_hook(root, "PostToolUse", payload(
+        tool_name="exec",
+        tool_input={"command": "echo private command"},
+        tool_response={"exit_code": 0, "stdout": "private output"},
+    ))
+    runtime = next((root / ".context" / "audit").glob("*/runtime.json"))
+    recorded = json.loads(runtime.read_text(encoding="utf-8"))["execution_observations"]
+    assert recorded == [{
+        "tool": "exec", "response_field": "tool_response", "response_type": "dict",
+        "response_keys": ["exit_code", "stdout"], "outcome": "PASSED",
+    }]
+    assert "private command" not in runtime.read_text(encoding="utf-8")
+    assert "private output" not in runtime.read_text(encoding="utf-8")
+    assert codex_adapter.doctor(root)["verification_attestation"] == {
+        "configured": "YES", "observed": "YES", "outcome": "PASSED",
+        "detail": "A compatible PostToolUse execution payload is required before Codex can attest an acceptance result.",
+    }
 
 
 def test_adapter_attested_pass_becomes_stale_before_close(tmp_path, monkeypatch):

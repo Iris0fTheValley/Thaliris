@@ -605,7 +605,7 @@ def test_forged_or_different_target_fingerprint_cannot_satisfy_close(tmp_path: P
     recorded = core.task_record_verification(root, configured["revision"], "bound", "test", "PASSED", "observed", [evidence[0]["id"]], observed_by="runtime")
     path = root / ".context/state.json"
     forged = json.loads(path.read_text(encoding="utf-8"))
-    forged["verification_results"][0]["target_fingerprint"] = "0" * 64
+    forged["verification_target"] = {"description": "target B", "artifact_refs": [], "changed_surface": ["subject.py"]}
     path.write_text(json.dumps(forged), encoding="utf-8")
     with pytest.raises(ValueError, match="does not cover"):
         core.task_close(root, recorded["revision"])

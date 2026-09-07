@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
 
 import pytest
 
@@ -57,6 +58,11 @@ def capture_id(response: str) -> str:
 
 
 def completed_child(root: Path, identifier: str = "managed-child") -> None:
+    assert handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}),
+    ) == ""
     assert handle_hook(root, "SubagentStart", payload(agent_id=identifier, agent_type="worker"))
     assert handle_hook(root, "SubagentStop", payload(agent_id=identifier)) == ""
 
@@ -266,6 +272,7 @@ def test_checkpoint_does_not_infer_requirement_omission_but_task_close_does(tmp_
     init(final_root)
     from thaliris.codex_adapter import task_close, task_start
     task_start(final_root, "final task", None, None)
+    assert handle_hook(final_root, "PreToolUse", payload(session="s2", tool_name="spawn_agent", tool_input={"fork_turns": "none"})) == ""
     handle_hook(final_root, "UserPromptSubmit", payload(session="s2", prompt="实现功能；不得删除用户文件"))
     handle_hook(final_root, "PostToolUse", payload(session="s2", tool_name="spawn_agent", tool_input={"message": "实现功能"}, tool_response={"success": True}))
     handle_hook(final_root, "SubagentStart", payload(session="s2", agent_id="audit-final", agent_type="worker"))
@@ -863,6 +870,94 @@ def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
     assert not re.fullmatch(matcher, "shell-script")
 
 
+def test_subagent_start_hook_requests_unlimited_managed_projection_only():
+    hooks = audit_module.hook_spec()["hooks"]
+    start = hooks["SubagentStart"][0]["hooks"][0]
+    assert start["additionalContextLimit"] == 0
+    for event, entries in hooks.items():
+        if event != "SubagentStart":
+            assert all("additionalContextLimit" not in handler for entry in entries for handler in entry["hooks"])
+
+
+def test_unauthorized_subagent_start_and_stop_never_satisfy_managed_completion(tmp_path):
+    root = repo(tmp_path); init(root)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
+    task_start(root, "unauthorized lifecycle", None, str(task_input))
+    assert handle_hook(root, "SubagentStart", payload(agent_id="observed-only", agent_type="thaliris-reviewer")) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id="observed-only")) == ""
+    assert audit_module.qualifying_child_completed(root) is False
+    denied = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_only_one_pending_authorized_spawn_can_be_consumed(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "one pending spawn", None, None)
+    for _ in range(2):
+        assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"})) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id="managed", agent_type="worker"))
+    assert handle_hook(root, "SubagentStop", payload(agent_id="managed")) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id="unmanaged", agent_type="worker")) == ""
+    lifecycle = next((root / ".context" / "audit" / "lifecycle").glob("*.json"))
+    children = json.loads(lifecycle.read_text(encoding="utf-8"))["children"]
+    assert [child["managed"] for child in children] == [True, False]
+
+
+def test_completed_child_cannot_mask_a_later_active_managed_child(tmp_path):
+    root = repo(tmp_path); init(root)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
+    task_start(root, "active child lifecycle", None, str(task_input))
+    completed_child(root, "first")
+    assert audit_module.qualifying_child_completed(root) is True
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"})) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id="second", agent_type="thaliris-reviewer"))
+    assert audit_module.qualifying_child_completed(root) is False
+    denied = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert handle_hook(root, "SubagentStop", payload(agent_id="second")) == ""
+    assert audit_module.qualifying_child_completed(root) is True
+
+
+def test_generated_agent_profiles_match_codex_schema_and_native_role_mapping(tmp_path):
+    root = repo(tmp_path)
+    result = init(root)
+    assert result["agent_profile_changed"] is True
+    expected = {
+        "thaliris-investigator": "investigator",
+        "thaliris-curator": "curator",
+        "thaliris-reasoning-specialist": "reasoning-specialist",
+        "thaliris-implementer": "implementer",
+        "thaliris-reviewer": "reviewer",
+    }
+    for name, role in expected.items():
+        profile = tomllib.loads((root / ".codex" / "agents" / f"{name}.toml").read_text(encoding="utf-8"))
+        assert profile["name"] == name
+        assert isinstance(profile["description"], str) and profile["description"]
+        assert isinstance(profile["developer_instructions"], str) and profile["developer_instructions"]
+        assert audit_module._NATIVE_AGENT_ROLES[name] == role
+
+
+def test_task_start_does_not_claim_current_codex_session_is_managed(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    started = task_start(root, "readiness", None, None)
+    assert started["managed_readiness"]["status"] == "UNKNOWN"
+    assert codex_adapter.doctor(root)["managed_readiness"]["CURRENT_SESSION_OBSERVED"] == "UNKNOWN"
+
+
+def test_modified_generated_agent_profile_requires_manual_migration_and_is_preserved(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    profile = root / ".codex" / "agents" / "thaliris-reviewer.toml"
+    profile.write_text(profile.read_text(encoding="utf-8") + "# user customization\n", encoding="utf-8")
+    migrated = init(root)
+    assert ".codex/agents/thaliris-reviewer.toml" in migrated["manual_migration_required"]
+    assert profile.read_text(encoding="utf-8").endswith("# user customization\n")
+    removed = uninstall(root)
+    assert ".codex/agents/thaliris-reviewer.toml" in removed["kept"]
+
+
 def test_controller_guard_blocks_current_cli_file_change_surface(tmp_path):
     root = repo(tmp_path)
     init(root)
@@ -1039,6 +1134,7 @@ def test_active_root_mcp_is_denied_but_child_mcp_is_not_reclassified(tmp_path):
 def test_subagent_start_records_hashed_lifecycle_and_injects_role_projection(tmp_path):
     root = repo(tmp_path)
     init(root); task_start(root, "child", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"})) == ""
     response = json.loads(handle_hook(root, "SubagentStart", payload(agent_id="child-private", agent_type="worker", turn="turn-private")))
     assert response["hookSpecificOutput"]["hookEventName"] == "SubagentStart"
     runtime = next((root / ".context" / "audit").glob("*/runtime.json"))
@@ -1052,6 +1148,7 @@ def test_subagent_start_records_hashed_lifecycle_and_injects_role_projection(tmp
 def test_child_pretool_identity_is_corroborated_only_when_it_matches_subagent_start(tmp_path):
     root = repo(tmp_path / "match")
     init(root); task_start(root, "child", None, None)
+    handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}))
     handle_hook(root, "SubagentStart", payload(agent_id="child-a", agent_type="worker"))
     assert handle_hook(root, "PreToolUse", payload(agent_id="child-a", tool_name="Bash", tool_input={"command": "echo ready"})) == ""
     evidence = json.loads(next((root / ".context" / "audit").glob("*/runtime.json")).read_text(encoding="utf-8"))
@@ -1060,6 +1157,7 @@ def test_child_pretool_identity_is_corroborated_only_when_it_matches_subagent_st
 
     mismatch = repo(tmp_path / "mismatch")
     init(mismatch); task_start(mismatch, "child", None, None)
+    handle_hook(mismatch, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}))
     handle_hook(mismatch, "SubagentStart", payload(agent_id="child-a", agent_type="worker"))
     handle_hook(mismatch, "PreToolUse", payload(agent_id="child-b", tool_name="Bash", tool_input={"command": "echo ready"}))
     assert _context_isolation(mismatch)["observed"]["pretool_child_identity_corroborated"] == "UNKNOWN"
@@ -1267,13 +1365,13 @@ def test_pretool_acceptance_does_not_create_a_verification_result(tmp_path):
 
 def test_codex_bash_posttool_never_infers_trusted_pass(tmp_path, monkeypatch):
     root = repo(tmp_path)
-    started, subject, command = _acceptance_task(root)
+    started, _subject, command = _acceptance_task(root)
     assert handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"exit_code": 0})) == ""
     state = core_module.task_show(root)["state"]
-    result = state["verification_results"]
-    assert len(result) == 1 and result[0]["outcome"] == "UNKNOWN"
+    assert state["verification_results"] == []
+    assert state["revision"] == started["revision"]
     monkeypatch.setattr("thaliris.codex_adapter.task_close_audit", lambda *_args, **_kwargs: {"status": "UNKNOWN"})
-    with pytest.raises(ValueError, match="does not cover"):
+    with pytest.raises(ValueError, match="trusted successful"):
         task_close(root, state["revision"])
 
 
@@ -1281,7 +1379,7 @@ def test_posttool_failed_or_incomplete_completion_never_creates_pass(tmp_path):
     root = repo(tmp_path / "failed")
     _started, _subject, command = _acceptance_task(root)
     handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"exit_code": 2}))
-    assert core_module.task_show(root)["state"]["verification_results"][0]["outcome"] == "UNKNOWN"
+    assert core_module.task_show(root)["state"]["verification_results"] == []
 
 
 @pytest.mark.parametrize("response", ["10 passed", "", {"status": "completed"}, {"success": True}, {"exit_code": 0}])
@@ -1290,7 +1388,7 @@ def test_codex_bash_text_and_generic_status_never_attest_pass(tmp_path, response
     _started, _subject, command = _acceptance_task(root)
     handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response=response))
     results = core_module.task_show(root)["state"]["verification_results"]
-    assert len(results) == 1 and results[0]["outcome"] == "UNKNOWN"
+    assert results == []
 
 
 def test_historical_exec_exit_code_is_observation_not_codex_trusted_pass(tmp_path):
@@ -1302,6 +1400,7 @@ def test_historical_exec_exit_code_is_observation_not_codex_trusted_pass(tmp_pat
 
 def test_subagent_start_projection_and_stop_gate_serial_children(tmp_path):
     root = repo(tmp_path); init(root); task_start(root, "projection", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"})) == ""
     injected = json.loads(handle_hook(root, "SubagentStart", payload(agent_id="child-one", agent_type="worker")))
     context = json.loads(injected["hookSpecificOutput"]["additionalContext"])
     assert context["thaliris_role"] == "implementer"
@@ -1314,7 +1413,7 @@ def test_subagent_start_projection_and_stop_gate_serial_children(tmp_path):
     root = repo(tmp_path / "unknown")
     _started, _subject, command = _acceptance_task(root)
     handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"isError": False}))
-    assert core_module.task_show(root)["state"]["verification_results"][0]["outcome"] == "UNKNOWN"
+    assert core_module.task_show(root)["state"]["verification_results"] == []
 
 
 def test_execution_observation_records_payload_shape_without_output(tmp_path):
@@ -1343,7 +1442,7 @@ def test_adapter_bash_unknown_cannot_close_after_source_changes(tmp_path, monkey
     subject.write_text("changed after test", encoding="utf-8")
     state = core_module.task_show(root)["state"]
     monkeypatch.setattr("thaliris.codex_adapter.task_close_audit", lambda *_args, **_kwargs: {"status": "UNKNOWN"})
-    with pytest.raises(ValueError, match="does not cover"):
+    with pytest.raises(ValueError, match="trusted successful"):
         task_close(root, state["revision"])
 
 

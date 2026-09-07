@@ -41,12 +41,12 @@ Active decisions and contradictions with stale evidence receive
 `REVALIDATION_REQUIRED`; unknowns remain open rather than being erased.
 
 Schema-v1 state remains readable. Its anonymous semantic statements are mapped
-deterministically to IDs on load and are persisted as v4 by the next
+deterministically to IDs on load and are persisted as v5 by the next
 successful mutation or explicit `context migrate`; no resolve or supersession
 relationship is inferred during that migration.
 
 Schema-v2 `verification_evidence` is likewise retained for audit during the
-v4 upgrade, but it remains ordinary model-authored evidence and cannot satisfy
+v5 upgrade, but it remains ordinary model-authored evidence and cannot satisfy
 a close gate. A v2 task with a verification target has no trustworthy
 task-surface baseline to reconstruct, so it must be reconciled before closing
 rather than being silently treated as verified.
@@ -71,9 +71,10 @@ Each new verification result is recorded only while a target exists and carries
 a deterministic canonical fingerprint of that target plus its observation state
 revision. Close accepts only a fresh `PASSED` result whose fingerprint equals
 the current immutable target; Core does not infer target identity from a
-summary, locator, or command text. Pre-v4 trusted results remain readable but
-have no retroactively guessed target binding, so they cannot close a targeted
-task.
+summary, locator, or command text. Results created before v5 remain readable
+but have no retroactively guessed `covered_surface`, so they cannot prove a
+non-regular surface or close a targeted task. The v4-to-v5 migration preserves
+their recorded facts and deliberately does not invent surface identities.
 
 Task-start records the Git-visible dirty surface as a baseline. At close, an
 explicit target, verification-target artifact bindings, declared changed surface, and new or
@@ -87,7 +88,10 @@ state and do not automatically become task work.
 The v4 baseline records a task-start `HEAD` and distinguishes absent paths from
 deleted files, regular-file content/mode, symlinks, and unsafe or special Git
 paths without following a link. A Git-reported path is never silently skipped:
-unsupported identity remains visible and fails attribution safely. When `HEAD`
+unsupported identity remains visible and fails attribution safely. Trusted
+verification may bind deleted files and symlinks through Core-computed surface
+identity; `SPECIAL`, `UNSAFE`, and legacy shapes require reconciliation rather
+than receiving an invented content identity. When `HEAD`
 changes, Core uses only the task-start-to-current Git interval to identify paths
 that need attribution; it does not claim to distinguish concurrent human commits
 from task commits automatically.

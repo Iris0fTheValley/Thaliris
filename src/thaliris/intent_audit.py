@@ -55,10 +55,15 @@ _CONTROLLER_EXECUTION_TOOL_NAMES = _OBSERVED_EXECUTION_TOOL_NAMES
 _CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _OBSERVED_EXECUTION_TOOL_NAMES) + ")"
 _NATIVE_AGENT_ROLES = {
     "investigator": "investigator", "luna": "investigator", "luna-investigator": "investigator", "explorer": "investigator",
+    "thaliris-investigator": "investigator",
     "curator": "curator", "luna-curator": "curator",
+    "thaliris-curator": "curator",
     "reasoning-specialist": "reasoning-specialist", "sol-high": "reasoning-specialist",
+    "thaliris-reasoning-specialist": "reasoning-specialist",
     "implementer": "implementer", "terra-implementer": "implementer", "worker": "implementer",
+    "thaliris-implementer": "implementer",
     "reviewer": "reviewer", "terra-reviewer": "reviewer",
+    "thaliris-reviewer": "reviewer",
 }
 _CONTROLLER_MUTATION_TOOL_NAMES = ("apply_patch", "file_change", "functions.apply_patch", "functions.file_change")
 _CONTROLLER_MUTATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_MUTATION_TOOL_NAMES) + ")"
@@ -103,9 +108,12 @@ def hook_spec() -> dict[str, Any]:
     hooks: dict[str, list[dict[str, Any]]] = {}
     prefix = _hook_command_prefix()
     for event in HOOK_EVENTS:
-        entry: dict[str, Any] = {
-            "hooks": [{"type": "command", "command": f"{prefix} {event}", "timeout": 60}]
-        }
+        handler: dict[str, Any] = {"type": "command", "command": f"{prefix} {event}", "timeout": 60}
+        if event == "SubagentStart":
+            # Core already bounds the projection.  Do not ask Codex to apply
+            # another opaque truncation to this managed child-only context.
+            handler["additionalContextLimit"] = 0
+        entry: dict[str, Any] = {"hooks": [handler]}
         if event == "PostToolUse":
             # Codex treats a matcher made only of word characters and `|` as
             # an exact-name set.  Regex anchors and escaping deliberately opt
@@ -136,7 +144,10 @@ def managed_hook_spec_hash() -> str:
 
 
 def _managed_handler(event: str) -> dict[str, Any]:
-    return {"type": "command", "command": f"{_hook_command_prefix()} {event}", "timeout": 60}
+    handler = {"type": "command", "command": f"{_hook_command_prefix()} {event}", "timeout": 60}
+    if event == "SubagentStart":
+        handler["additionalContextLimit"] = 0
+    return handler
 
 
 def _hook_command_prefix() -> str:
@@ -154,7 +165,7 @@ def is_managed_handler(value: object, event: str) -> bool:
         return True
     # Permit upgrading an older PATH-relative hook to a pinned executable
     # without creating duplicate handlers during merge.
-    return isinstance(value, dict) and value.get("type") == "command" and value.get("command", "").endswith(f" audit-hook {event}") and value.get("timeout") == 60
+    return isinstance(value, dict) and value.get("type") == "command" and value.get("command", "").endswith(f" audit-hook {event}") and value.get("timeout") == 60 and (event != "SubagentStart" or value.get("additionalContextLimit") in {None, 0})
 
 
 def merge_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -197,7 +208,20 @@ def merge_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
                         changed = True
                     normalized_entries.append(copied)
             else:
-                normalized_entries.append(entry)
+                if event == "SubagentStart":
+                    user_handlers = [item for item in entry["hooks"] if not is_managed_handler(item, event)]
+                    if user_handlers:
+                        copied = dict(entry)
+                        copied["hooks"] = user_handlers
+                        normalized_entries.append(copied)
+                        normalized_entries.append(wanted_entries[0])
+                    elif entry != wanted_entries[0]:
+                        normalized_entries.append(wanted_entries[0])
+                    else:
+                        normalized_entries.append(entry)
+                    changed = changed or entry != wanted_entries[0]
+                else:
+                    normalized_entries.append(entry)
         if not present:
             normalized_entries.append(wanted_entries[0])
             changed = True
@@ -390,9 +414,11 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
         if event == "PreToolUse":
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) == "spawn_agent":
-                # Dispatch policy is independent from supplemental evidence.
-                # A broken audit write must never turn an unsafe fork into an allow.
+                decision = _pre_tool_output(payload, root)
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
+                if not decision and _delegation_input(payload).get("fork_turns") == "none":
+                    _best_effort_record(_record_authorized_spawn, root, payload)
+                return decision
             return _pre_tool_output(payload, root)
         if event == "SessionStart":
             _record_session_start(root, payload)
@@ -626,11 +652,40 @@ def _lifecycle_path(root: Path, task_id: str) -> Path:
 
 def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     if not path.is_file():
-        return {"version": 1, "task_id_hash": _task_key(task_id), "children": [], "sequence": 0}
+        return {"version": 2, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawns": 0, "sequence": 0}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") != 1 or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
+    if not isinstance(value, dict) or value.get("version") not in {1, 2} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
         raise ValueError("invalid lifecycle runtime state")
+    if value.get("version") == 1:
+        value["version"] = 2
+        value.setdefault("pending_authorized_spawns", 0)
+        for child in value["children"]:
+            if isinstance(child, dict):
+                child.setdefault("managed", False)
+    if type(value.get("pending_authorized_spawns")) is not int or not 0 <= value["pending_authorized_spawns"] <= 1:
+        raise ValueError("invalid lifecycle authorized spawns")
     return value
+
+
+def _record_authorized_spawn(root: Path, payload: dict[str, Any]) -> None:
+    """Store only one bounded task-local authorization, never a prompt or child ID."""
+    task_id = _active_task_id(root)
+    if task_id is None:
+        return
+    with core._lock(root):
+        path = _lifecycle_path(root, task_id)
+        state = _load_lifecycle(path, task_id)
+        active = any(
+            isinstance(child, dict)
+            and child.get("managed") is True
+            and child.get("stopped") is None
+            for child in state["children"]
+        )
+        if active or state["pending_authorized_spawns"]:
+            return
+        state["pending_authorized_spawns"] = 1
+        _runtime_metadata(state, payload)
+        _write_capture(path, state)
 
 
 def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
@@ -647,9 +702,12 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
         state["sequence"] = int(state.get("sequence", 0)) + 1
         child_hash = _identity_hash(agent_id)
         children = state["children"]
+        authorized = int(state["pending_authorized_spawns"]) > 0
+        if authorized:
+            state["pending_authorized_spawns"] -= 1
         prior = next((item for item in children if item.get("agent_id_hash") == child_hash), None)
         if prior is None:
-            children.append({"agent_id_hash": child_hash, "role": role, "started": state["sequence"], "stopped": None})
+            children.append({"agent_id_hash": child_hash, "role": role, "managed": authorized, "started": state["sequence"], "stopped": None})
         _runtime_metadata(state, payload)
         _write_capture(path, state)
     # Keep only the old bounded identity-corroboration sample for diagnostics;
@@ -662,7 +720,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
         _bounded_append(runtime, "subagent_start_agent_types", agent_type[:80] if isinstance(agent_type, str) else None)
         runtime.setdefault("events_observed", {})["SubagentStart"] = True
         _write_capture(runtime_path, runtime)
-    return role
+    return role if authorized else None
 
 
 def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> None:
@@ -745,7 +803,8 @@ def qualifying_child_completed(root: Path) -> bool:
         and value.get("task_id_hash") == _task_key(task_id)
         and value.get("managed_hook_spec_hash") == managed_hook_spec_hash()
         and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
-        and any(isinstance(child, dict) and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
+        and not _managed_child_active(root)
+        and any(isinstance(child, dict) and child.get("managed") is True and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
     )
 
 
@@ -757,7 +816,7 @@ def _managed_child_active(root: Path) -> bool:
         value = json.loads(_lifecycle_path(root, task_id).read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return False
-    return isinstance(value, dict) and value.get("managed_hook_spec_hash") == managed_hook_spec_hash() and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION and any(isinstance(child, dict) and child.get("stopped") is None for child in value.get("children", []))
+    return isinstance(value, dict) and value.get("managed_hook_spec_hash") == managed_hook_spec_hash() and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION and any(isinstance(child, dict) and child.get("managed") is True and child.get("stopped") is None for child in value.get("children", []))
 
 
 def _post_tool_response(payload: dict[str, Any]) -> object:
@@ -846,6 +905,11 @@ def _acceptance_execution_observed(root: Path, payload: dict[str, Any]) -> None:
     if command is None or target is None or _normalized_command(command) != _normalized_command(target) or not qualifying_child_completed(root):
         return
     outcome = _codex_bash_outcome(_post_tool_response(payload))
+    if outcome == "UNKNOWN":
+        # Codex 0.153.4 exposes no version-pinned Bash terminal-result fact.
+        # Retain only the bounded diagnostic observation; do not churn Core
+        # state with an execution result that cannot prove anything.
+        return
     try:
         requirements = core.task_verification_requirements(root)
         material = json.dumps({"task": requirements["task_id"], "revision": requirements["revision"], "command": command, "outcome": outcome}, sort_keys=True, separators=(",", ":")).encode("utf-8")

@@ -340,11 +340,11 @@ def test_legacy_anonymous_semantic_records_upgrade_without_loss(tmp_path: Path) 
     path.write_text(json.dumps(legacy), encoding="utf-8")
 
     loaded = core.task_show(root)["state"]
-    assert loaded["schema_version"] == 4
+    assert loaded["schema_version"] == 5
     assert loaded["constraints"] == [{"id": "legacy-C-0001", "text": "keep API", "evidence_refs": [], "status": "ACTIVE"}]
     assert core.migrate(root)["changed"]
     persisted = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["schema_version"] == 4
+    assert persisted["schema_version"] == 5
     assert persisted["constraints"] == loaded["constraints"]
 
 
@@ -369,7 +369,7 @@ def test_v2_verification_claims_remain_readable_but_are_not_trusted_results(tmp_
     path.write_text(json.dumps(legacy), encoding="utf-8")
 
     loaded = core.task_show(root)["state"]
-    assert loaded["schema_version"] == 4
+    assert loaded["schema_version"] == 5
     assert loaded["verification_evidence"] == ["claim"]
     assert loaded["verification_results"] == []
     assert loaded["task_surface_baseline"] is None
@@ -527,7 +527,7 @@ def test_new_task_scoped_git_mutation_requires_reverification(tmp_path: Path) ->
         core.task_close(root, result["revision"])
 
 
-def test_trusted_verification_binds_deleted_surface_without_fabricated_file_ref(tmp_path: Path) -> None:
+def test_v5_verification_binds_deleted_surface_without_inventing_file_evidence(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.init(root)
     removed = root / "removed.py"
@@ -542,8 +542,67 @@ def test_trusted_verification_binds_deleted_surface_without_fabricated_file_ref(
     recorded = core.task_record_verification(root, started["revision"], "remove-pass", "test", "PASSED", "observed removal", observed_by="runtime", source_paths=["removed.py"])
     result = core.task_show(root)["state"]["verification_results"][0]
     assert result["source_refs"] == []
-    assert result["covered_surface"][0]["state"] == "DELETED"
+    assert result["covered_surface"] == [{"path": "removed.py", "state": "DELETED", "identity": None, "mode": None, "git_status": " D"}]
     assert core.task_close(root, recorded["revision"])["status"] == "DONE"
+
+
+def test_v5_verification_binds_symlink_surface_and_detects_a_later_change(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    (root / "first-target").write_text("first", encoding="utf-8")
+    link = root / "linked-target"
+    try:
+        link.symlink_to("first-target")
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this host")
+    commit(root)
+    started = core.task_start(root, "change link", None, input_file(root.parent, {
+        "changed_surface": ["linked-target"],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": ["linked-target"], "excludes": [], "evidence_refs": []},
+        "verification_target": {"description": "verify link", "artifact_refs": [], "changed_surface": ["linked-target"]},
+    }, "link-start.json"))
+    link.unlink()
+    link.symlink_to("second-target")
+    recorded = core.task_record_verification(root, started["revision"], "link-pass", "test", "PASSED", "observed link", observed_by="runtime", source_paths=["linked-target"])
+    observed = core.task_show(root)["state"]["verification_results"][0]["covered_surface"][0]
+    assert observed["state"] == "SYMLINK" and observed["identity"] is not None
+    link.unlink()
+    link.symlink_to("third-target")
+    with pytest.raises(ValueError, match="does not cover"):
+        core.task_close(root, recorded["revision"])
+
+
+def test_v5_special_surface_is_visible_but_fails_closed_without_a_native_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    started = core.task_start(root, "special surface", None, input_file(root.parent, {
+        "changed_surface": ["submodule"],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": ["submodule"], "excludes": [], "evidence_refs": []},
+        "verification_target": {"description": "verify special", "artifact_refs": [], "changed_surface": ["submodule"]},
+    }, "special-start.json"))
+    special = {"path": "submodule", "state": "SPECIAL", "identity": None, "mode": 0o160000, "git_status": " M"}
+    baseline = core.task_show(root)["state"]["task_surface_baseline"]
+    monkeypatch.setattr(core, "_surface_snapshot", lambda _root: [*baseline, special])
+    assert core._verification_surface(root, {"submodule"}) == [special]
+    with pytest.raises(ValueError, match="unsupported special path"):
+        core.task_record_verification(root, started["revision"], "special-pass", "test", "PASSED", "observed special", observed_by="runtime", source_paths=["submodule"])
+
+
+def test_v4_verification_result_migrates_without_invented_surface(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    configured, evidence = _verification_task(root, ["subject.py"])
+    recorded = core.task_record_verification(root, configured["revision"], "old-result", "test", "PASSED", "old result", [evidence[0]["id"]], observed_by="runtime")
+    path = root / ".context/state.json"
+    legacy = json.loads(path.read_text(encoding="utf-8"))
+    legacy["schema_version"] = 4
+    legacy["verification_results"][0].pop("covered_surface")
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+    loaded = core.task_show(root)["state"]
+    assert loaded["schema_version"] == 5
+    assert "covered_surface" not in loaded["verification_results"][0]
+    with pytest.raises(ValueError, match="does not cover"):
+        core.task_close(root, recorded["revision"])
 
 
 def test_unknown_post_start_workspace_mutation_fails_closed_but_baseline_does_not(tmp_path: Path) -> None:

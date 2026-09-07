@@ -15,6 +15,9 @@ CODEX_ROLE_MAP = {
     "luna": "investigator", "luna-investigator": "investigator",
     "luna-curator": "curator", "sol-high": "reasoning-specialist",
     "terra-implementer": "implementer", "terra-reviewer": "reviewer",
+    "thaliris-investigator": "investigator", "thaliris-curator": "curator",
+    "thaliris-reasoning-specialist": "reasoning-specialist",
+    "thaliris-implementer": "implementer", "thaliris-reviewer": "reviewer",
     # Codex built-in profile compatibility aliases; these are not Core roles.
     "worker": "implementer", "explorer": "investigator",
 }
@@ -23,7 +26,6 @@ CODEX_ROLE_MAP = {
 # immediately normalized by semantic_role() before it reaches Core.
 ROLE_CHOICES = tuple(sorted(core._PACK_ROLES | set(CODEX_ROLE_MAP)))
 
-_AGENT_PROFILE_HEADER = "# thaliris-codex-agent:v1\n"
 _AGENT_PROFILES = {
     "thaliris-investigator.toml": ("gpt-5.6-luna", "medium", "investigator"),
     "thaliris-curator.toml": ("gpt-5.6-luna", "medium", "curator"),
@@ -31,20 +33,33 @@ _AGENT_PROFILES = {
     "thaliris-implementer.toml": ("gpt-5.6-terra", "medium", "implementer"),
     "thaliris-reviewer.toml": ("gpt-5.6-terra", "high", "reviewer"),
 }
+_KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
+    "0720619c1d0b85b80a2981597fcd60086a1bddc7f03f48f88cc8f75c1128d872",
+    "8026959290edeb86d66ee86f9b5db286e7fb31c28c95ec2c42ec8be7f2cda515",
+    "7e596a38e95606b684b17f25cc0eecb3163aef7d65d36110f6496b3ab7d53692",
+    "a91e41c67930071db4d6eb45342526cbbf67af6d4fda13d1c847d18f28816a35",
+    "ae56701985a1d27a2daea326819fa0e93b4350eb6e65d1a299daf198126a7a9a",
+})
 
 
-def _agent_profile(role: str, model: str, effort: str) -> bytes:
-    return (_AGENT_PROFILE_HEADER + f'model = "{model}"\nmodel_reasoning_effort = "{effort}"\ndeveloper_instructions = "Thaliris semantic role: {role}. Work only inside your assigned role and return selected evidence-backed results."\n').encode("utf-8")
+def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
+    return (
+        f'name = "{name}"\n'
+        f'description = "Thaliris {role} execution role"\n'
+        f'model = "{model}"\n'
+        f'model_reasoning_effort = "{effort}"\n'
+        f'developer_instructions = "Thaliris semantic role: {role}. Work only inside your assigned role and return selected evidence-backed results."\n'
+    ).encode("utf-8")
 
 
 def _agent_profile_state(value: bytes, name: str) -> str:
     profile = _AGENT_PROFILES.get(name)
     if profile is None:
         return "user"
-    expected = _agent_profile(profile[2], profile[0], profile[1])
+    expected = _agent_profile(name.removesuffix(".toml"), profile[2], profile[0], profile[1])
     if value == expected:
         return "current"
-    return "generated" if value.startswith(_AGENT_PROFILE_HEADER.encode("utf-8")) else "user"
+    return "legacy" if hashlib.sha256(value).hexdigest() in _KNOWN_GENERATED_AGENT_PROFILE_HASHES else "user"
 
 
 def semantic_role(runtime_role: str) -> str:
@@ -74,7 +89,7 @@ Codex remains the runtime. Thaliris stores bounded task control and pointers; it
 
 Controller uses `context task-status` or `context prepare --role controller` for the default low-noise context base. `context task-show` is an explicit out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller path. `context task-artifact` passes pointers, not contents.
 
-During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. The child receives its Thaliris role projection at `SubagentStart`, performs the assigned work, avoids child-to-child delegation, and explicitly selects what to return to the Controller. Large selected information remains valid when needed for correctness. A matching `SubagentStart` and `SubagentStop` is required before acceptance or task-close; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. Use serial managed dispatch unless sibling isolation has been independently observed for the current Codex runtime. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn authorizes the next matching native `SubagentStart`; that managed child receives its Thaliris role projection there, performs the assigned work, avoids child-to-child delegation, and explicitly selects what to return to the Controller. Large selected information remains valid when needed for correctness. The authorized spawn plus matching `SubagentStart` and `SubagentStop` is required before acceptance or task-close; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. Use serial managed dispatch unless sibling isolation has been independently observed for the current Codex runtime. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
 
 Read detailed role packs only when needed. Raw findings, evidence, transcripts,
 logs, and tool output do not enter Controller packets or durable memory
@@ -129,7 +144,8 @@ material automatically; a large selected payload is allowed when necessary.
 During an ACTIVE task the persistent Controller does not perform repository
 investigation or source mutation; dispatch does not change those permissions.
 `task-close` and acceptance require a matching child `SubagentStart` and
-`SubagentStop` for the active task. PostToolUse records dispatch only; it is
+`SubagentStop` for the active task. The lifecycle must follow an allowed
+`fork_turns=\"none\"` root spawn; PostToolUse records dispatch only; it is
 not a completion signal.
 
 For a local, obvious microtask, that one fresh Implementer is still required,
@@ -374,8 +390,8 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
     for name, (model, effort, role) in _AGENT_PROFILES.items():
         relative = f".codex/agents/{name}"
         profile = core._safe(root, relative)
-        rendered = _agent_profile(role, model, effort)
-        if not profile.exists() or _agent_profile_state(profile.read_bytes(), name) == "generated":
+        rendered = _agent_profile(name.removesuffix(".toml"), role, model, effort)
+        if not profile.exists() or _agent_profile_state(profile.read_bytes(), name) == "legacy":
             writes[relative] = rendered
         elif _agent_profile_state(profile.read_bytes(), name) == "user":
             manual.append(relative)
@@ -556,7 +572,7 @@ def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], li
         if not profile.is_file():
             continue
         state = _agent_profile_state(profile.read_bytes(), name)
-        if state in {"current", "generated"}:
+        if state in {"current", "legacy"}:
             deletes.append(relative)
         else:
             kept.append(relative)
@@ -595,6 +611,12 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
         bind_unbound_intent(core._repo_root(root), str(result["task_id"]), intent_capture_id)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         pass
+    # A task is a Core object.  Starting one cannot prove that this already
+    # running Codex session reloaded project hooks, AGENTS, or agent profiles.
+    result["managed_readiness"] = {
+        "status": "UNKNOWN",
+        "reason": "current Codex session hook/profile activation has not been observed",
+    }
     return result
 
 
@@ -677,7 +699,10 @@ def doctor(root: Path) -> dict[str, object]:
     result["verification_attestation"] = {
         "hook_definition_present": health["hooks_configured"],
         "hook_definition_current": health["hooks_configured"],
-        "current_session_observed": health["runtime_observed"],
+        # Stored observations are intentionally useful diagnostics, but they
+        # cannot prove that the session asking for this doctor report loaded
+        # the current project definitions.
+        "current_session_observed": "UNKNOWN",
         "adapter_protocol_current": "YES" if events or latest is not None else "UNKNOWN",
         "verification_shell_surface": "Bash",
         "verification_terminal_status": "UNAVAILABLE",
@@ -689,6 +714,7 @@ def doctor(root: Path) -> dict[str, object]:
         "CORE_READY": "YES",
         "CODEX_DEFINITION_PRESENT": health["hooks_configured"],
         "CODEX_RUNTIME_OBSERVED": health["runtime_observed"],
+        "CURRENT_SESSION_OBSERVED": "UNKNOWN",
         "CODEX_MANAGED_READY": "UNKNOWN",
         "spawn_pretool_observed": "YES" if "PreToolUse" in events else "UNKNOWN",
         "subagent_start_observed": "YES" if lifecycle_start else "UNKNOWN",

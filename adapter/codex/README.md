@@ -10,7 +10,9 @@ history-fork default. It cuts implicit parent-task-history propagation; it does
 not mean an empty context. A fresh child still has applicable instructions,
 tools, environment, and native delegation content. `SubagentStart` is the
 managed projection boundary: the adapter maps the native profile to a Core role
-and returns that bounded role projection as hook `additionalContext`. The
+and returns that bounded role projection as hook `additionalContext` with
+`additionalContextLimit = 0`, so Codex does not impose a second opaque
+truncation. The
 Controller never receives child-only projections. `child_bootstrap()` remains a
 manual/legacy fallback, not the managed correctness path.
 
@@ -28,21 +30,26 @@ payloads remain valid; raw working-set material is never propagated
 automatically. Artifact pointers provide selective access, not mandatory
 compression.
 
-Core v4 distinguishes an ordinary model-authored test report from an observed
-execution result. `spawn_agent` PostToolUse only records dispatch observation;
-`SubagentStart` followed by matching `SubagentStop` is the lifecycle condition
-for acceptance and `task-close`. Stop proves lifecycle completion, not work
-correctness. Managed root children are serial while a started child remains
-unstopped.
+Core v5 distinguishes an ordinary model-authored test report from an observed
+execution result and binds a trusted result to the target and current Core
+surface identity. An allowed root `spawn_agent(fork_turns="none")` authorizes
+the next matching `SubagentStart`; only that managed start followed by its
+matching `SubagentStop` is the lifecycle condition for acceptance and
+`task-close`. PostToolUse records dispatch observation only. Stop proves
+lifecycle completion, not work correctness. Managed root children are serial
+while a started child remains unstopped.
 
 The current trusted shell candidate is exactly Codex stable `Bash`. Codex CLI
 0.153.4 does not document a terminal exit/status field in its Bash PostToolUse
-payload, so every such shell outcome remains `UNKNOWN`. A PreToolUse allow,
+payload, so every such shell outcome remains unavailable for attestation. A
+PreToolUse allow,
 command string, summary, locator, formatted output, generic `status`, or
 generic `success` is never a pass. The adapter can record a `PASSED` only if a
 future version-pinned Codex contract supplies an explicit terminal-result fact.
-Core then binds the result to the target fingerprint and Core-computed current
-surface identity, including deleted files and symlinks.
+Core binds such a result to the target fingerprint and Core-computed current
+surface identity, including deleted files and symlinks. Until then the adapter
+records only a bounded diagnostic observation and does not mutate Core
+verification state.
 
 Automatic acceptance execution applies only to an executable string target
 accepted by the local command allowlist. A structured Core target is still a
@@ -54,5 +61,6 @@ diagnostic observations only and cannot enter Core's trusted verification
 ingress. Doctor reports definition presence, current-protocol observation,
 lifecycle/projection observations, the trusted shell surface, and terminal
 status availability separately. A configured hook file is not proof that the
-current Codex session loaded or trusted it. Current native observation remains
-`UNKNOWN` until it is seen under the matching hook-spec and adapter protocol.
+current Codex session loaded or trusted it. Historical compatible observations
+do not prove current-session readiness, which remains `UNKNOWN` until a
+matching hook-spec and adapter protocol are observed in that session.

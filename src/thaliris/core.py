@@ -364,7 +364,7 @@ def stale(root: Path) -> dict[str, object]:
 # bookkeeping, but task-promote includes it with durable writes in its existing
 # backup mutation.
 _STATE_NAME = ".context/state.json"
-_STATE_SCHEMA_VERSION = 4
+_STATE_SCHEMA_VERSION = 5
 _STATE_FIELDS = {
     "schema_version", "revision", "task_id", "status", "goal", "current_milestone",
     "confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints",
@@ -734,8 +734,8 @@ def _verification_result(value: object, registry: dict[str, dict[str, object]]) 
         raise ValueError("verification result requires native source_refs")
     covered_surface = value.get("covered_surface")
     if covered_surface is None:
-        # v4 results remain readable, but cannot prove a non-regular current
-        # surface at close time.  Never reconstruct a missing observation.
+        # v4 observations are retained but never retroactively assigned a
+        # deletion/link/special-path identity they did not actually observe.
         if not source_refs:
             raise ValueError("verification result requires native source_refs")
     else:
@@ -755,7 +755,7 @@ def _target_fingerprint(target: object) -> str:
 def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -> dict[str, object]:
     _check_json(state)
     # v1 used anonymous replaceable semantic statements.  Upgrade them in
-    # memory with deterministic IDs; the next successful mutation persists v4.
+    # memory with deterministic IDs; the next successful mutation persists v5.
     if isinstance(state, dict) and state.get("schema_version") == 1:
         state.setdefault("investigation_findings", [])
         state.setdefault("investigation_snapshot", [])
@@ -797,6 +797,12 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
             if isinstance(result, dict):
                 result.setdefault("target_fingerprint", None)
                 result.setdefault("observed_at_revision", None)
+        state["schema_version"] = _STATE_SCHEMA_VERSION
+    elif isinstance(state, dict) and state.get("schema_version") == 4:
+        # v4 had no surface identity in a verification result.  Keep results
+        # readable, but deliberately omit covered_surface rather than guessing
+        # that an old regular-file observation covered a deleted/link surface.
+        state.setdefault("verification_results", [])
         state["schema_version"] = _STATE_SCHEMA_VERSION
     elif isinstance(state, dict) and state.get("schema_version") == _STATE_SCHEMA_VERSION:
         state.setdefault("verification_results", [])
@@ -1279,7 +1285,7 @@ def task_verification_requirements(root: Path) -> dict[str, object]:
 
 
 def _verification_surface(root: Path, paths: set[str]) -> list[dict[str, object]]:
-    """Freeze Core's current task-surface identity without trusting an adapter hash."""
+    """Freeze Core's current task-surface identity without adapter-supplied hashes."""
     current = {item["path"]: item for item in _surface_snapshot(root)}
     return [current.get(path, _surface_identity(root, path, "  ")) for path in sorted(paths)]
 
@@ -1292,9 +1298,8 @@ def _native_verification_sources(root: Path, state: dict[str, object], paths: li
     for path in paths:
         _valid_relative(root, path)
         target = _safe(root, path)
-        # Deletions, links, and special Git-visible paths are bound by
-        # covered_surface below.  Only regular files also receive a native
-        # file-evidence reference; an adapter cannot invent either identity.
+        # Non-regular Git-visible paths are bound by covered_surface.  The
+        # Core, not a runtime adapter, computes both identities.
         if target.is_symlink() or not target.is_file():
             continue
         digest = hashlib.sha256(target.read_bytes()).hexdigest()
@@ -1340,11 +1345,13 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
         if source_paths is not None:
             covered_paths = required_surface
         else:
-            # Explicit native source references retain their historical
-            # partial-coverage semantics.  Only the trusted adapter's
-            # source_paths path asks Core to bind the entire required surface.
             covered_paths = {path for source in source_refs for path in [_source_path(registry.get(source, {}))] if path in required_surface}
         covered_surface = _verification_surface(root, covered_paths)
+        if any(item["state"] in {"SPECIAL", "UNSAFE", "LEGACY"} for item in covered_surface):
+            # Git reported the path, but Core has no stable native content
+            # identity for this shape.  Keep it visible and require explicit
+            # reconciliation instead of pretending a PASS bound it.
+            raise ValueError("verification surface contains an unsupported special path; reconcile before recording")
         proposed = {"id": result_id, "kind": kind, "outcome": outcome, "summary": summary, "source_refs": source_refs, "observed_by": observed_by, "target_fingerprint": _target_fingerprint(target), "observed_at_revision": base_revision, "covered_surface": covered_surface}
         _verification_result(proposed, registry)
         if result_id in {result["id"] for result in state["verification_results"]}:

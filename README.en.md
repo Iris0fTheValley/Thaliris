@@ -23,7 +23,7 @@ With the Codex adapter, Codex is the runtime and controller. With any adapter, s
 
 ---
 
-## Why Thaliris
+## Why this project exists
 
 Long coding tasks tend to accumulate context.
 
@@ -60,6 +60,17 @@ Thaliris is built around a simple idea:
 > **Preserve useful information without forcing every role to carry every piece of information.**
 
 The project therefore treats context boundaries as part of the engineering architecture.
+
+---
+
+## Why Thaliris
+
+**Thaliris** combines **Thalamus** and **Iris**.
+
+The thalamus filters and routes information entering cognition; the iris
+regulates how much light reaches vision. The name is an image for agent
+context: control what reaches a reasoning path, preserve evidence-backed
+information, and isolate unrelated working sets.
 
 ---
 

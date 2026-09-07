@@ -1232,8 +1232,14 @@ def _task_attributable_surface(root: Path, state: dict[str, object], bindings: s
     attributable = set(declared)
     unknown: list[str] = []
     changed_paths: set[str] = set()
-    for path, identity in current.items():
-        if before.get(path) == identity:
+    absent = object()
+    # The snapshot intentionally contains only Git-visible dirty paths.  An
+    # entry which was dirty at task start can therefore disappear when it is
+    # restored or removed.  Compare both maps with an explicit absent sentinel
+    # so absence is never confused with a DELETED identity (whose identity is
+    # legitimately ``None``).
+    for path in set(before) | set(current):
+        if before.get(path, absent) == current.get(path, absent):
             continue
         changed_paths.add(path)
     interval = _git_interval_paths(root, state["task_base_head"], _git_head(root))

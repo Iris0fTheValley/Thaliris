@@ -670,3 +670,63 @@ def test_head_change_outside_task_boundary_is_unknown(tmp_path: Path) -> None:
     commit(root, "unattributed head change")
     with pytest.raises(ValueError, match="surface attribution is unknown"):
         core.task_close(root, recorded["revision"])
+
+
+def _baseline_dirty_task(root: Path, path: str, *, boundary: list[str] | None = None) -> dict[str, object]:
+    return core.task_start(root, "baseline dirty surface", None, input_file(root.parent, {
+        "changed_surface": [],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": boundary or [], "excludes": [], "evidence_refs": []},
+    }, f"{path.replace('/', '-')}-start.json"))
+
+
+def _attributable_paths(root: Path) -> set[str]:
+    return core._task_attributable_surface(root, core.task_show(root)["state"], set())
+
+
+def test_baseline_dirty_tracked_file_restored_to_clean_is_attributable(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    target = root / "subject.py"
+    target.write_text("clean", encoding="utf-8")
+    commit(root)
+    target.write_text("dirty before task", encoding="utf-8")
+    _baseline_dirty_task(root, "subject.py", boundary=["subject.py"])
+    subprocess.run(["git", "restore", "subject.py"], cwd=root, check=True)
+    assert "subject.py" in _attributable_paths(root)
+
+
+def test_baseline_untracked_file_disappearance_is_attributable(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    target = root / "scratch.py"
+    target.write_text("untracked before task", encoding="utf-8")
+    _baseline_dirty_task(root, "scratch.py", boundary=["scratch.py"])
+    target.unlink()
+    assert "scratch.py" in _attributable_paths(root)
+
+
+def test_baseline_dirty_file_changed_again_is_attributable_but_unchanged_is_not(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    target = root / "subject.py"
+    target.write_text("clean", encoding="utf-8")
+    commit(root)
+    target.write_text("dirty before task", encoding="utf-8")
+    _baseline_dirty_task(root, "subject.py")
+    assert _attributable_paths(root) == set()
+    target.write_text("different dirty task content", encoding="utf-8")
+    with pytest.raises(ValueError, match="surface attribution is unknown"):
+        _attributable_paths(root)
+
+
+def test_baseline_dirty_change_outside_boundary_fails_closed(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    target = root / "subject.py"
+    target.write_text("clean", encoding="utf-8")
+    commit(root)
+    target.write_text("dirty before task", encoding="utf-8")
+    _baseline_dirty_task(root, "subject.py", boundary=["other.py"])
+    target.write_text("different dirty task content", encoding="utf-8")
+    with pytest.raises(ValueError, match="surface attribution is unknown"):
+        _attributable_paths(root)

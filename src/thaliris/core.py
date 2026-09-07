@@ -573,7 +573,15 @@ def _snapshot_item(value: object, ids: set[str], findings: list[dict[str, object
 def _valid_relative(root: Path, value: object) -> None:
     if not isinstance(value, str) or "\\" in value or not value or value.startswith("/") or any(part in {"", ".", ".."} for part in value.split("/")):
         raise ValueError("path must be normalized POSIX repo-relative")
-    _safe(root, value)
+    # Git tracks a final symlink as a repository object even when its target
+    # escapes the checkout. State paths may name that object; callers that
+    # need to read a regular file still use _safe() and reject it there.
+    target = root.joinpath(*value.split("/"))
+    parent = root
+    for part in value.split("/"):
+        parent = parent / part
+        if parent.is_symlink() and parent != target:
+            raise ValueError("path traverses a symlink")
 
 
 def _bounded_lines(value: object, field: str) -> None:
@@ -1299,14 +1307,8 @@ def _native_verification_sources(root: Path, state: dict[str, object], paths: li
         # A task-surface symlink is itself a Git-visible object.  Do not
         # resolve its final component here: that could read an external target
         # and turn the link target's bytes into evidence for the link.
-        if not isinstance(path, str) or "\\" in path or not path or path.startswith("/") or any(part in {"", ".", ".."} for part in path.split("/")):
-            raise ValueError("path must be normalized POSIX repo-relative")
+        _valid_relative(root, path)
         target = root.joinpath(*path.split("/"))
-        parent = root
-        for part in path.split("/"):
-            parent = parent / part
-            if parent.is_symlink() and parent != target:
-                raise ValueError("verification source path traverses a symlink")
         # Non-regular Git-visible paths are bound by covered_surface.  The
         # Core, not a runtime adapter, computes both identities.
         if target.is_symlink() or not target.is_file():

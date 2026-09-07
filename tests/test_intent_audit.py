@@ -1268,7 +1268,7 @@ def test_posttool_failed_or_incomplete_completion_never_creates_pass(tmp_path):
 
     root = repo(tmp_path / "unknown")
     _started, _subject, command = _acceptance_task(root)
-    handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={}))
+    handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"isError": False}))
     assert core_module.task_show(root)["state"]["verification_results"][0]["outcome"] == "UNKNOWN"
 
 

@@ -714,8 +714,6 @@ def _execution_outcome(response: object) -> str:
             return "PASSED"
         if response.get(key) is False:
             return "FAILED"
-    if response.get("isError") is False:
-        return "PASSED"
     status = response.get("status")
     if isinstance(status, str):
         normalized = status.strip().lower()

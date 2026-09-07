@@ -527,6 +527,25 @@ def test_new_task_scoped_git_mutation_requires_reverification(tmp_path: Path) ->
         core.task_close(root, result["revision"])
 
 
+def test_trusted_verification_binds_deleted_surface_without_fabricated_file_ref(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    removed = root / "removed.py"
+    removed.write_text("before", encoding="utf-8")
+    commit(root)
+    started = core.task_start(root, "remove file", None, input_file(root.parent, {
+        "changed_surface": ["removed.py"],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": ["removed.py"], "excludes": [], "evidence_refs": []},
+        "verification_target": {"description": "verify removal", "artifact_refs": [], "changed_surface": ["removed.py"]},
+    }, "remove-start.json"))
+    removed.unlink()
+    recorded = core.task_record_verification(root, started["revision"], "remove-pass", "test", "PASSED", "observed removal", observed_by="runtime", source_paths=["removed.py"])
+    result = core.task_show(root)["state"]["verification_results"][0]
+    assert result["source_refs"] == []
+    assert result["covered_surface"][0]["state"] == "DELETED"
+    assert core.task_close(root, recorded["revision"])["status"] == "DONE"
+
+
 def test_unknown_post_start_workspace_mutation_fails_closed_but_baseline_does_not(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.init(root)

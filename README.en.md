@@ -23,7 +23,7 @@ With the Codex adapter, Codex is the runtime and controller. With any adapter, s
 
 ---
 
-## Why this project exists
+## Why Thaliris
 
 Long coding tasks tend to accumulate context.
 

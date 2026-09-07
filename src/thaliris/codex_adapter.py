@@ -23,6 +23,29 @@ CODEX_ROLE_MAP = {
 # immediately normalized by semantic_role() before it reaches Core.
 ROLE_CHOICES = tuple(sorted(core._PACK_ROLES | set(CODEX_ROLE_MAP)))
 
+_AGENT_PROFILE_HEADER = "# thaliris-codex-agent:v1\n"
+_AGENT_PROFILES = {
+    "thaliris-investigator.toml": ("gpt-5.6-luna", "medium", "investigator"),
+    "thaliris-curator.toml": ("gpt-5.6-luna", "medium", "curator"),
+    "thaliris-reasoning-specialist.toml": ("gpt-5.6-sol", "xhigh", "reasoning-specialist"),
+    "thaliris-implementer.toml": ("gpt-5.6-terra", "medium", "implementer"),
+    "thaliris-reviewer.toml": ("gpt-5.6-terra", "high", "reviewer"),
+}
+
+
+def _agent_profile(role: str, model: str, effort: str) -> bytes:
+    return (_AGENT_PROFILE_HEADER + f'model = "{model}"\nmodel_reasoning_effort = "{effort}"\ndeveloper_instructions = "Thaliris semantic role: {role}. Work only inside your assigned role and return selected evidence-backed results."\n').encode("utf-8")
+
+
+def _agent_profile_state(value: bytes, name: str) -> str:
+    profile = _AGENT_PROFILES.get(name)
+    if profile is None:
+        return "user"
+    expected = _agent_profile(profile[2], profile[0], profile[1])
+    if value == expected:
+        return "current"
+    return "generated" if value.startswith(_AGENT_PROFILE_HEADER.encode("utf-8")) else "user"
+
 
 def semantic_role(runtime_role: str) -> str:
     if runtime_role in {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}:
@@ -51,7 +74,7 @@ Codex remains the runtime. Thaliris stores bounded task control and pointers; it
 
 Controller uses `context task-status` or `context prepare --role controller` for the default low-noise context base. `context task-show` is an explicit out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller path. `context task-artifact` passes pointers, not contents.
 
-During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. The child obtains its own Thaliris role projection directly, performs the assigned work, avoids child-to-child delegation, and explicitly selects what to return to the Controller. Large selected information remains valid when needed for correctness. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. PostToolUse records dispatch evidence. Use serial managed dispatch unless sibling isolation has been independently observed for the current Codex runtime. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. The child receives its Thaliris role projection at `SubagentStart`, performs the assigned work, avoids child-to-child delegation, and explicitly selects what to return to the Controller. Large selected information remains valid when needed for correctness. A matching `SubagentStart` and `SubagentStop` is required before acceptance or task-close; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. Use serial managed dispatch unless sibling isolation has been independently observed for the current Codex runtime. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
 
 Read detailed role packs only when needed. Raw findings, evidence, transcripts,
 logs, and tool output do not enter Controller packets or durable memory
@@ -104,9 +127,10 @@ child-to-child workflow, and explicitly selects the information to return to
 the persistent Controller. The Controller must not consume child-only working
 material automatically; a large selected payload is allowed when necessary.
 During an ACTIVE task the persistent Controller does not perform repository
-investigation or source mutation; successful child dispatch does not change
-those permissions. `task-close` requires a qualifying successful child
-dispatch. PostToolUse keeps native dispatch evidence auditable.
+investigation or source mutation; dispatch does not change those permissions.
+`task-close` and acceptance require a matching child `SubagentStart` and
+`SubagentStop` for the active task. PostToolUse records dispatch only; it is
+not a completion signal.
 
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
@@ -114,7 +138,7 @@ source directly. Larger work adds only the roles needed by risk and unknowns.
 Wait for native completion or mailbox updates; Thaliris has no polling, worker,
 retry, or scheduling runtime.
 
-After a qualifying child dispatch, the Controller may run only the exact
+After a qualifying completed child, the Controller may run only the exact
 Verification Target when it is a known test command family: pytest, npm/pnpm/
 yarn test, cargo test, go test, or dotnet test. A target never authorizes an
 arbitrary shell command.
@@ -172,6 +196,7 @@ do not treat this layer as a scheduler, transcript store, or automatic summary.
 # Exact byte hashes for documents emitted by prior adapter releases.  Ownership
 # is deliberately binary: a one-character user edit makes the file user-owned.
 KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
+    "242d1c6420139434425a2d6883011c2c44e34f1f3280267cb09243bdc0155f09",
     "75f6c6804db80995c32cf4902247ae0d78762a15f37b35b677219813c8d17e6a",
     "4ff409d7aa3d5f2ad2eb0c82b317d9af54426dde7765d8101939dcc578a460c0",
     "6e49df8985c52309a6966c5ddd8b6b3b6a2b6bce326c55f327cb999bb6b46e4c",
@@ -306,9 +331,11 @@ def _install(root: Path) -> dict[str, object]:
     writes, manual = _install_plan(root)
     with core._lock(root):
         if not writes:
-            return {"ok": True, "changed": False, "backup": None, "files": [], "manual_migration_required": manual, "hook_definition_changed": False, "hook_trust_required": False}
+            return {"ok": True, "changed": False, "backup": None, "files": [], "manual_migration_required": manual, "instruction_definition_changed": False, "hook_definition_changed": False, "agent_profile_changed": False, "session_restart_required": False, "hook_trust_required": False}
         hook_changed = ".codex/hooks.json" in writes
-        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, [], "codex-init"), "files": sorted(writes), "manual_migration_required": manual, "hook_definition_changed": hook_changed, "hook_trust_required": hook_changed}
+        instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in writes)
+        profile_changed = any(path.startswith(".codex/agents/") for path in writes)
+        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, [], "codex-init"), "files": sorted(writes), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed}
 
 
 def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
@@ -344,6 +371,14 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
         writes["docs/thaliris-role-packs.md"] = ROLE_PACKS.encode("utf-8")
     elif _role_pack_state(role_packs.read_bytes()) == "user":
         manual.append("docs/thaliris-role-packs.md")
+    for name, (model, effort, role) in _AGENT_PROFILES.items():
+        relative = f".codex/agents/{name}"
+        profile = core._safe(root, relative)
+        rendered = _agent_profile(role, model, effort)
+        if not profile.exists() or _agent_profile_state(profile.read_bytes(), name) == "generated":
+            writes[relative] = rendered
+        elif _agent_profile_state(profile.read_bytes(), name) == "user":
+            manual.append(relative)
     current_ignore = _read_text(ignore) if ignore.is_file() else ""
     rendered_ignore = _audit_ignore(current_ignore)
     if current_ignore != rendered_ignore:
@@ -385,7 +420,9 @@ def init(root: Path) -> dict[str, object]:
     with core._lock(root):
         backup = core._apply_with_backup(root, files, [], "init") if files else None
     hook_changed = ".codex/hooks.json" in files
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_migration_required": manual, "hook_definition_changed": hook_changed, "hook_trust_required": hook_changed}
+    instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
+    profile_changed = any(path.startswith(".codex/agents/") for path in files)
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed}
 
 
 def migrate(root: Path) -> dict[str, object]:
@@ -399,7 +436,9 @@ def migrate(root: Path) -> dict[str, object]:
     with core._lock(root):
         backup = core._apply_with_backup(root, files, [], "migrate") if files else None
     hook_changed = ".codex/hooks.json" in files
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup, "hook_definition_changed": hook_changed, "hook_trust_required": hook_changed}
+    instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
+    profile_changed = any(path.startswith(".codex/agents/") for path in files)
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed}
 
 
 def _uninstall(root: Path) -> dict[str, object]:
@@ -511,6 +550,16 @@ def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], li
             deletes.append("docs/thaliris-role-packs.md")
         else:
             kept.append("docs/thaliris-role-packs.md")
+    for name in _AGENT_PROFILES:
+        relative = f".codex/agents/{name}"
+        profile = core._safe(root, relative)
+        if not profile.is_file():
+            continue
+        state = _agent_profile_state(profile.read_bytes(), name)
+        if state in {"current", "generated"}:
+            deletes.append(relative)
+        else:
+            kept.append(relative)
     hooks = core._safe(root, ".codex/hooks.json")
     if hooks.is_file():
         try:
@@ -573,6 +622,8 @@ def prepare_child(root: Path, role: str) -> dict[str, object]:
 def task_close(root: Path, base_revision: int) -> dict[str, object]:
     state = core.task_show(root)["state"]
     task_id = str(state["task_id"])
+    if not intent_audit.qualifying_child_completed(core._repo_root(root)):
+        raise ValueError("task-close requires a matching managed child SubagentStart and SubagentStop")
     try:
         audit = task_close_audit(core._repo_root(root), task_id, cleanup=False)
     except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
@@ -594,21 +645,65 @@ def audit_hook(root: Path, event: str, payload: object) -> str:
 def doctor(root: Path) -> dict[str, object]:
     from .doctor import report
     result = report(root)
-    observations: list[dict[str, object]] = []
+    observations: list[tuple[int, int, dict[str, object]]] = []
+    events: set[str] = set()
     expected = intent_audit.managed_hook_spec_hash()
     for path in (root / ".context" / "audit").glob("*/runtime.json"):
         try:
             runtime = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError):
             continue
-        samples = runtime.get("execution_observations") if isinstance(runtime, dict) and runtime.get("managed_hook_spec_hash") == expected else None
+        current = isinstance(runtime, dict) and runtime.get("managed_hook_spec_hash") == expected and runtime.get("adapter_protocol_version") == intent_audit.CODEX_ADAPTER_PROTOCOL_VERSION
+        samples = runtime.get("execution_observations") if current else None
+        if current and isinstance(runtime.get("events_observed"), dict):
+            events.update(name for name, observed in runtime["events_observed"].items() if observed is True)
         if isinstance(samples, list):
-            observations.extend(item for item in samples if isinstance(item, dict))
-    latest = observations[-1] if observations else None
+            observations.extend((int(runtime.get("observed_at_ns", 0)), int(runtime.get("observation_sequence", 0)), item) for item in samples if isinstance(item, dict))
+    latest = max(observations, default=None, key=lambda item: (item[0], item[1]))
+    latest_item = latest[2] if latest is not None else None
+    health = intent_audit.hooks_health(root)
+    lifecycle_start = lifecycle_stop = False
+    for path in (root / ".context" / "audit" / "lifecycle").glob("*.json"):
+        try:
+            lifecycle = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(lifecycle, dict) or lifecycle.get("managed_hook_spec_hash") != expected or lifecycle.get("adapter_protocol_version") != intent_audit.CODEX_ADAPTER_PROTOCOL_VERSION:
+            continue
+        for child in lifecycle.get("children", []):
+            if isinstance(child, dict) and isinstance(child.get("started"), int):
+                lifecycle_start = True
+                lifecycle_stop = lifecycle_stop or isinstance(child.get("stopped"), int)
     result["verification_attestation"] = {
-        "configured": "YES",
-        "observed": "YES" if latest is not None else "UNKNOWN",
-        "outcome": latest.get("outcome") if latest is not None else "UNKNOWN",
-        "detail": "A compatible PostToolUse execution payload is required before Codex can attest an acceptance result.",
+        "hook_definition_present": health["hooks_configured"],
+        "hook_definition_current": health["hooks_configured"],
+        "current_session_observed": health["runtime_observed"],
+        "adapter_protocol_current": "YES" if events or latest is not None else "UNKNOWN",
+        "verification_shell_surface": "Bash",
+        "verification_terminal_status": "UNAVAILABLE",
+        "observed_outcome": latest_item.get("outcome") if latest_item is not None else "UNKNOWN",
+        "hook_trust": "UNKNOWN",
+        "detail": "Codex 0.153.4 Bash output has no version-pinned terminal-status contract; no automatic PASSED attestation is emitted.",
     }
+    result["managed_readiness"] = {
+        "CORE_READY": "YES",
+        "CODEX_DEFINITION_PRESENT": health["hooks_configured"],
+        "CODEX_RUNTIME_OBSERVED": health["runtime_observed"],
+        "CODEX_MANAGED_READY": "UNKNOWN",
+        "spawn_pretool_observed": "YES" if "PreToolUse" in events else "UNKNOWN",
+        "subagent_start_observed": "YES" if lifecycle_start else "UNKNOWN",
+        "subagent_stop_observed": "YES" if lifecycle_stop else "UNKNOWN",
+        # A hook response was emitted locally, but only a native child probe
+        # can show that Codex delivered additionalContext to the child.
+        "role_projection_injection_observed": "UNKNOWN",
+    }
+    task = result.get("context", {}).get("task_state", {}) if isinstance(result.get("context"), dict) else {}
+    target = task.get("verification_target") if isinstance(task, dict) else None
+    if isinstance(target, str) and intent_audit._ACCEPTANCE_COMMAND.fullmatch(target):
+        target_capability = "TARGET_EXECUTABLE_BY_CODEX"
+    elif target is not None:
+        target_capability = "TARGET_REQUIRES_EXTERNAL_ATTESTATION"
+    else:
+        target_capability = "UNKNOWN"
+    result["verification_capability"] = {"target": target_capability, "terminal_status": "TERMINAL_STATUS_UNAVAILABLE"}
     return result

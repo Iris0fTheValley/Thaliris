@@ -56,6 +56,11 @@ def capture_id(response: str) -> str:
     return match.group(1)
 
 
+def completed_child(root: Path, identifier: str = "managed-child") -> None:
+    assert handle_hook(root, "SubagentStart", payload(agent_id=identifier, agent_type="worker"))
+    assert handle_hook(root, "SubagentStop", payload(agent_id=identifier)) == ""
+
+
 def test_root_prompt_and_child_prompt_are_not_mixed(tmp_path):
     root = repo(tmp_path)
     raw = "  用户原文\n保持空白  "
@@ -263,6 +268,8 @@ def test_checkpoint_does_not_infer_requirement_omission_but_task_close_does(tmp_
     task_start(final_root, "final task", None, None)
     handle_hook(final_root, "UserPromptSubmit", payload(session="s2", prompt="实现功能；不得删除用户文件"))
     handle_hook(final_root, "PostToolUse", payload(session="s2", tool_name="spawn_agent", tool_input={"message": "实现功能"}, tool_response={"success": True}))
+    handle_hook(final_root, "SubagentStart", payload(session="s2", agent_id="audit-final", agent_type="worker"))
+    handle_hook(final_root, "SubagentStop", payload(session="s2", agent_id="audit-final"))
     closed = task_close(final_root, 1)
     assert closed["status"] == "ACTIVE" and "state" not in closed
     assert closed["intent_audit"] == {"status": "DRIFT", "finding": "Correct delegation scope before closing this task."}
@@ -1029,9 +1036,11 @@ def test_active_root_mcp_is_denied_but_child_mcp_is_not_reclassified(tmp_path):
         assert handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name=tool, tool_input={"path": "README.md"})) == ""
 
 
-def test_subagent_start_is_bounded_identity_corroboration_only(tmp_path):
+def test_subagent_start_records_hashed_lifecycle_and_injects_role_projection(tmp_path):
     root = repo(tmp_path)
-    assert handle_hook(root, "SubagentStart", payload(agent_id="child-private", agent_type="worker", turn="turn-private")) == ""
+    init(root); task_start(root, "child", None, None)
+    response = json.loads(handle_hook(root, "SubagentStart", payload(agent_id="child-private", agent_type="worker", turn="turn-private")))
+    assert response["hookSpecificOutput"]["hookEventName"] == "SubagentStart"
     runtime = next((root / ".context" / "audit").glob("*/runtime.json"))
     evidence = json.loads(runtime.read_text(encoding="utf-8"))
     assert evidence["events_observed"]["SubagentStart"] is True
@@ -1042,6 +1051,7 @@ def test_subagent_start_is_bounded_identity_corroboration_only(tmp_path):
 
 def test_child_pretool_identity_is_corroborated_only_when_it_matches_subagent_start(tmp_path):
     root = repo(tmp_path / "match")
+    init(root); task_start(root, "child", None, None)
     handle_hook(root, "SubagentStart", payload(agent_id="child-a", agent_type="worker"))
     assert handle_hook(root, "PreToolUse", payload(agent_id="child-a", tool_name="Bash", tool_input={"command": "echo ready"})) == ""
     evidence = json.loads(next((root / ".context" / "audit").glob("*/runtime.json")).read_text(encoding="utf-8"))
@@ -1049,6 +1059,7 @@ def test_child_pretool_identity_is_corroborated_only_when_it_matches_subagent_st
     assert _context_isolation(root)["observed"]["pretool_child_identity_corroborated"] == "YES"
 
     mismatch = repo(tmp_path / "mismatch")
+    init(mismatch); task_start(mismatch, "child", None, None)
     handle_hook(mismatch, "SubagentStart", payload(agent_id="child-a", agent_type="worker"))
     handle_hook(mismatch, "PreToolUse", payload(agent_id="child-b", tool_name="Bash", tool_input={"command": "echo ready"}))
     assert _context_isolation(mismatch)["observed"]["pretool_child_identity_corroborated"] == "UNKNOWN"
@@ -1121,7 +1132,7 @@ def test_apply_patch_without_active_task_fails_open(tmp_path):
     ) == ""
 
 
-def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path):
+def test_controller_guard_requires_a_completed_child_before_task_close(tmp_path):
     root = repo(tmp_path)
     init(root)
     task_input = root / "task.json"
@@ -1130,6 +1141,9 @@ def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path
     blocked = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
     assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
     handle_hook(root, "PostToolUse", payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "none", "message": "bounded child"}, tool_response={"task_name": "/root/child"}))
+    blocked = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
+    assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
+    completed_child(root)
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})) == ""
 
@@ -1147,6 +1161,7 @@ def test_successful_spawn_evidence_is_scoped_to_the_active_task(tmp_path):
         "PostToolUse",
         payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"task_name": "/root/child-a"}),
     )
+    completed_child(root, "child-a")
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     verification_input = tmp_path.parent / "verification.json"
@@ -1172,6 +1187,8 @@ def test_successful_spawn_evidence_is_scoped_to_the_active_task(tmp_path):
         "PostToolUse",
         payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"task_name": "/root/child-b"}),
     )
+    completed_child(root, "child-b")
+    completed_child(root)
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})) == ""
     assert second["task_id"] != first["task_id"]
@@ -1188,6 +1205,7 @@ def test_controller_guard_accepts_opaque_native_spawn_post_result(tmp_path):
         "PostToolUse",
         payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "none"}, tool_response="/root/child"),
     )
+    completed_child(root)
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
 
 
@@ -1196,7 +1214,7 @@ def test_qualifying_spawn_evidence_expires_with_the_managed_hook_definition(tmp_
     task_input = root / "task.json"
     task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
     task_start(root, "current hook evidence", None, str(task_input))
-    handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"success": True}))
+    completed_child(root)
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})) == ""
     monkeypatch.setattr(audit_module, "managed_hook_spec_hash", lambda: "different-definition")
     denied = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})))
@@ -1208,7 +1226,7 @@ def test_acceptance_requires_exact_verification_target_after_qualifying_child(tm
     task_input = root / "task.json"
     task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
     task_start(root, "acceptance target", None, str(task_input))
-    handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"success": True}))
+    completed_child(root)
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})) == ""
     for command in ("pytest", "pytest --pdb", "pytest -q tests/other.py"):
         response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
@@ -1220,7 +1238,7 @@ def test_acceptance_allows_only_exact_known_test_targets(tmp_path):
         root = repo(tmp_path / f"acceptance-{index}"); init(root)
         task_input = root / "task.json"; task_input.write_text(json.dumps({"verification_target": target}), encoding="utf-8")
         task_start(root, "acceptance family", None, str(task_input))
-        handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"success": True}))
+        completed_child(root)
         assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": target})) == ""
         for command in ("npm run lint", "echo not-a-test", target + " && echo escaped"):
             response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
@@ -1235,7 +1253,7 @@ def _acceptance_task(root: Path) -> tuple[dict[str, object], Path, str]:
     task_input = root / "acceptance-task.json"
     task_input.write_text(json.dumps({"changed_surface": ["subject.py"], "verification_target": command}), encoding="utf-8")
     started = task_start(root, "acceptance observation", None, str(task_input))
-    handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"success": True}))
+    completed_child(root)
     return started, subject, command
 
 
@@ -1247,25 +1265,51 @@ def test_pretool_acceptance_does_not_create_a_verification_result(tmp_path):
     assert core_module.task_show(root)["state"]["revision"] == started["revision"]
 
 
-def test_posttool_acceptance_completion_records_trusted_pass_and_closes(tmp_path, monkeypatch):
+def test_codex_bash_posttool_never_infers_trusted_pass(tmp_path, monkeypatch):
     root = repo(tmp_path)
     started, subject, command = _acceptance_task(root)
     assert handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"exit_code": 0})) == ""
     state = core_module.task_show(root)["state"]
     result = state["verification_results"]
-    assert len(result) == 1 and result[0]["outcome"] == "PASSED"
-    assert result[0]["target_fingerprint"] == core_module._target_fingerprint(state["verification_target"])
-    source = state["evidence_refs"][-1]
-    assert source["kind"] == "file" and source["locator"].endswith(hashlib.sha256(subject.read_bytes()).hexdigest())
+    assert len(result) == 1 and result[0]["outcome"] == "UNKNOWN"
     monkeypatch.setattr("thaliris.codex_adapter.task_close_audit", lambda *_args, **_kwargs: {"status": "UNKNOWN"})
-    assert task_close(root, state["revision"])["status"] == "DONE"
+    with pytest.raises(ValueError, match="does not cover"):
+        task_close(root, state["revision"])
 
 
 def test_posttool_failed_or_incomplete_completion_never_creates_pass(tmp_path):
     root = repo(tmp_path / "failed")
     _started, _subject, command = _acceptance_task(root)
     handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"exit_code": 2}))
-    assert core_module.task_show(root)["state"]["verification_results"][0]["outcome"] == "FAILED"
+    assert core_module.task_show(root)["state"]["verification_results"][0]["outcome"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize("response", ["10 passed", "", {"status": "completed"}, {"success": True}, {"exit_code": 0}])
+def test_codex_bash_text_and_generic_status_never_attest_pass(tmp_path, response):
+    root = repo(tmp_path)
+    _started, _subject, command = _acceptance_task(root)
+    handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response=response))
+    results = core_module.task_show(root)["state"]["verification_results"]
+    assert len(results) == 1 and results[0]["outcome"] == "UNKNOWN"
+
+
+def test_historical_exec_exit_code_is_observation_not_codex_trusted_pass(tmp_path):
+    root = repo(tmp_path)
+    _started, _subject, command = _acceptance_task(root)
+    handle_hook(root, "PostToolUse", payload(tool_name="exec", tool_input={"command": command}, tool_response={"exit_code": 0}))
+    assert core_module.task_show(root)["state"]["verification_results"] == []
+
+
+def test_subagent_start_projection_and_stop_gate_serial_children(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "projection", None, None)
+    injected = json.loads(handle_hook(root, "SubagentStart", payload(agent_id="child-one", agent_type="worker")))
+    context = json.loads(injected["hookSpecificOutput"]["additionalContext"])
+    assert context["thaliris_role"] == "implementer"
+    assert "investigation_findings" not in json.dumps(context)
+    denied = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"})))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert handle_hook(root, "SubagentStop", payload(agent_id="child-one")) == ""
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"})) == ""
 
     root = repo(tmp_path / "unknown")
     _started, _subject, command = _acceptance_task(root)
@@ -1289,13 +1333,10 @@ def test_execution_observation_records_payload_shape_without_output(tmp_path):
     }]
     assert "private command" not in runtime.read_text(encoding="utf-8")
     assert "private output" not in runtime.read_text(encoding="utf-8")
-    assert codex_adapter.doctor(root)["verification_attestation"] == {
-        "configured": "YES", "observed": "YES", "outcome": "PASSED",
-        "detail": "A compatible PostToolUse execution payload is required before Codex can attest an acceptance result.",
-    }
+    assert codex_adapter.doctor(root)["verification_attestation"]["verification_terminal_status"] == "UNAVAILABLE"
 
 
-def test_adapter_attested_pass_becomes_stale_before_close(tmp_path, monkeypatch):
+def test_adapter_bash_unknown_cannot_close_after_source_changes(tmp_path, monkeypatch):
     root = repo(tmp_path)
     _started, subject, command = _acceptance_task(root)
     handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"exit_code": 0}))
@@ -1351,6 +1392,7 @@ def test_task_start_binds_first_root_prompt_and_close_retries_drift(tmp_path, mo
     token = capture_id(handle_hook(root, "UserPromptSubmit", payload(turn="a", prompt="first root")))
     task_start(root, "complete history", None, None, token)
     handle_hook(root, "PostToolUse", payload(turn="a", tool_name="spawn_agent", tool_input={"message": "first delegation"}, tool_response={"success": True}))
+    completed_child(root, "first")
     result = task_close(root, 1)
     assert result["status"] == "ACTIVE" and "state" not in result
     assert result["intent_audit"] == {"status": "DRIFT", "finding": "Correct delegation scope before closing this task."}
@@ -1361,6 +1403,7 @@ def test_task_start_binds_first_root_prompt_and_close_retries_drift(tmp_path, mo
 
     # Controller corrects the delegation, then a retry may close the task.
     handle_hook(root, "PostToolUse", payload(turn="a", tool_name="spawn_agent", tool_input={"message": "first delegation; preserve all requirements"}, tool_response={"success": True}))
+    completed_child(root, "second")
     passed = task_close(root, 1)
     assert passed["status"] == "DONE" and "state" not in passed and "intent_audit" not in passed
     assert len(requests) == 2 and requests[1][1] == "task-final"
@@ -1394,6 +1437,7 @@ def test_invalid_and_reused_capture_ids_fail_open(tmp_path):
     first = task_start(root, "first task", None, None, token)
     capability_dir = root / ".context" / "audit" / "capture-capabilities"
     assert not list(capability_dir.glob("*.json"))
+    completed_child(root)
     assert task_close(root, 1)["status"] == "DONE"
     second = task_start(root, "second task", None, None, token)
     second_hash = hashlib.sha256(str(second["task_id"]).encode("utf-8")).hexdigest()
@@ -1419,6 +1463,7 @@ def test_task_close_hides_unknown_from_controller(tmp_path):
     root = repo(tmp_path)
     init(root)
     task_start(root, "unknown audit", None, None)
+    completed_child(root)
     closed = task_close(root, 1)
     assert closed["status"] == "DONE" and "state" not in closed and "intent_audit" not in closed
 
@@ -1429,6 +1474,7 @@ def test_task_scoped_intent_does_not_cross_task_boundaries(tmp_path, monkeypatch
     task_start(root, "task one", None, None)
     monkeypatch.setattr(audit_module, "_invoke_fresh_auditor", lambda request, mode: (json.dumps({"status": "PASS", "findings": []}), False))
     handle_hook(root, "UserPromptSubmit", payload(session="same", turn="same", prompt="secret task one"))
+    completed_child(root)
     task_close(root, 1)
     task_start(root, "task two", None, None)
     handle_hook(root, "UserPromptSubmit", payload(session="same", turn="same", prompt="task two only"))

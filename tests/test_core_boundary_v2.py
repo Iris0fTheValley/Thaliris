@@ -11,11 +11,17 @@ import pytest
 
 from thaliris import core
 from thaliris import codex_adapter
+from thaliris.intent_audit import handle_hook
 
 
 def repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     return tmp_path
+
+
+def completed_child(root: Path) -> None:
+    assert handle_hook(root, "SubagentStart", {"session_id": "boundary", "turn_id": "boundary", "agent_id": "child", "agent_type": "worker"})
+    assert handle_hook(root, "SubagentStop", {"session_id": "boundary", "turn_id": "boundary", "agent_id": "child"}) == ""
 
 
 def test_core_has_no_codex_adapter_import() -> None:
@@ -50,6 +56,7 @@ def test_adapter_close_rejects_task_identity_change_during_audit(tmp_path: Path,
     root = repo(tmp_path)
     codex_adapter.init(root)
     started = codex_adapter.task_start(root, "race", None, None)
+    completed_child(root)
 
     def audit_with_task_switch(*_args, **_kwargs):
         state = json.loads((root / ".context/state.json").read_text(encoding="utf-8"))
@@ -74,6 +81,7 @@ def test_adapter_close_does_not_treat_model_test_report_as_execution_result(tmp_
         "verification_target": {"description": "run subject tests", "artifact_refs": [], "changed_surface": ["subject.py"]},
     }), encoding="utf-8")
     started = codex_adapter.task_start(root, "verification", None, str(start_input))
+    completed_child(root)
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     fake_input = tmp_path.parent / "adapter-fake.json"
     fake_input.write_text(json.dumps({"evidence_refs": [

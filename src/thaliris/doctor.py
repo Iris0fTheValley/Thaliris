@@ -12,7 +12,7 @@ import tomllib
 from .models import ContextConfig
 from .core import entries, milestone_check, _load_state
 from .codex_adapter import _effective_root_instruction_path, _managed_span
-from .intent_audit import child_identity_corroboration, hooks_health, is_managed_handler, managed_hook_spec_hash
+from .intent_audit import CODEX_ADAPTER_PROTOCOL_VERSION, child_identity_corroboration, hooks_health, is_managed_handler, managed_hook_spec_hash
 
 UNKNOWN = "UNKNOWN"
 
@@ -61,14 +61,17 @@ def _controller_boundary_evidence(root: Path) -> dict[str, str]:
                 blocked = blocked or int(counters.get("blocked", 0) or 0) > 0
             except (TypeError, ValueError):
                 pass
-        child = child or (
-            isinstance(value.get("successful_spawn_task_id_hash"), str)
-            and value.get("successful_spawn_hook_spec_hash") == expected
-        )
+    for path in (root / ".context" / "audit" / "lifecycle").glob("*.json"):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict) and value.get("managed_hook_spec_hash") == expected and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION:
+            child = child or any(isinstance(item, dict) and isinstance(item.get("started"), int) for item in value.get("children", []))
     return {
         "root_action_guard": "YES" if guard else UNKNOWN,
         "blocked_root_action": "YES" if blocked else UNKNOWN,
-        "child_dispatch_observed": "YES" if child else UNKNOWN,
+        "child_lifecycle_observed": "YES" if child else UNKNOWN,
     }
 
 

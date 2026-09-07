@@ -527,6 +527,48 @@ def test_v5_verification_binds_deleted_surface_without_inventing_file_evidence(t
     assert core.task_close(root, recorded["revision"])["status"] == "DONE"
 
 
+def test_v5_verification_binds_symlink_surface_and_detects_a_later_change(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    (root / "first-target").write_text("first", encoding="utf-8")
+    link = root / "linked-target"
+    try:
+        link.symlink_to("first-target")
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this host")
+    commit(root)
+    started = core.task_start(root, "change link", None, input_file(root.parent, {
+        "changed_surface": ["linked-target"],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": ["linked-target"], "excludes": [], "evidence_refs": []},
+        "verification_target": {"description": "verify link", "artifact_refs": [], "changed_surface": ["linked-target"]},
+    }, "link-start.json"))
+    link.unlink()
+    link.symlink_to("second-target")
+    recorded = core.task_record_verification(root, started["revision"], "link-pass", "test", "PASSED", "observed link", observed_by="runtime", source_paths=["linked-target"])
+    observed = core.task_show(root)["state"]["verification_results"][0]["covered_surface"][0]
+    assert observed["state"] == "SYMLINK" and observed["identity"] is not None
+    link.unlink()
+    link.symlink_to("third-target")
+    with pytest.raises(ValueError, match="does not cover"):
+        core.task_close(root, recorded["revision"])
+
+
+def test_v5_special_surface_is_visible_but_fails_closed_without_a_native_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    started = core.task_start(root, "special surface", None, input_file(root.parent, {
+        "changed_surface": ["submodule"],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": ["submodule"], "excludes": [], "evidence_refs": []},
+        "verification_target": {"description": "verify special", "artifact_refs": [], "changed_surface": ["submodule"]},
+    }, "special-start.json"))
+    special = {"path": "submodule", "state": "SPECIAL", "identity": None, "mode": 0o160000, "git_status": " M"}
+    baseline = core.task_show(root)["state"]["task_surface_baseline"]
+    monkeypatch.setattr(core, "_surface_snapshot", lambda _root: [*baseline, special])
+    assert core._verification_surface(root, {"submodule"}) == [special]
+    with pytest.raises(ValueError, match="unsupported special path"):
+        core.task_record_verification(root, started["revision"], "special-pass", "test", "PASSED", "observed special", observed_by="runtime", source_paths=["submodule"])
+
+
 def test_v4_verification_result_migrates_without_invented_surface(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.init(root)

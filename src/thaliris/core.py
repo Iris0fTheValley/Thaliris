@@ -1346,7 +1346,13 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
             covered_paths = required_surface
         else:
             covered_paths = {path for source in source_refs for path in [_source_path(registry.get(source, {}))] if path in required_surface}
-        proposed = {"id": result_id, "kind": kind, "outcome": outcome, "summary": summary, "source_refs": source_refs, "observed_by": observed_by, "target_fingerprint": _target_fingerprint(target), "observed_at_revision": base_revision, "covered_surface": _verification_surface(root, covered_paths)}
+        covered_surface = _verification_surface(root, covered_paths)
+        if any(item["state"] in {"SPECIAL", "UNSAFE", "LEGACY"} for item in covered_surface):
+            # Git reported the path, but Core has no stable native content
+            # identity for this shape. Keep it visible and require explicit
+            # reconciliation instead of pretending a PASS bound it.
+            raise ValueError("verification surface contains an unsupported special path; reconcile before recording")
+        proposed = {"id": result_id, "kind": kind, "outcome": outcome, "summary": summary, "source_refs": source_refs, "observed_by": observed_by, "target_fingerprint": _target_fingerprint(target), "observed_at_revision": base_revision, "covered_surface": covered_surface}
         _verification_result(proposed, registry)
         if result_id in {result["id"] for result in state["verification_results"]}:
             raise ValueError("verification result id already exists")

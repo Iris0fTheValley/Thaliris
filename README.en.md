@@ -6,6 +6,8 @@ A lightweight, Git-native context and orchestration layer for Codex.
 
 Thaliris helps multi-agent coding workflows keep the right information in the right reasoning context without turning the repository into an agent framework.
 
+It manages the conditions under which information enters a reasoning path, not agents as a general-purpose lifecycle system. Evidence, freshness, memory, and adapter safeguards exist only to prevent incorrect, stale, irrelevant, or role-mismatched information from being propagated. Lower cost is a possible result, never a reason to discard necessary context.
+
 It provides:
 
 * role-specific context packs;
@@ -60,6 +62,17 @@ Thaliris is built around a simple idea:
 > **Preserve useful information without forcing every role to carry every piece of information.**
 
 The project therefore treats context boundaries as part of the engineering architecture.
+
+---
+
+## Why Thaliris
+
+**Thaliris** combines **Thalamus** and **Iris**.
+
+The thalamus filters and routes information entering cognition; the iris
+regulates how much light reaches vision. The name is an image for agent
+context: control what reaches a reasoning path, preserve evidence-backed
+information, and isolate unrelated working sets.
 
 ---
 

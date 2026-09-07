@@ -5,6 +5,10 @@ stores bounded task state and evidence, provides low-noise default projections
 for semantic roles, and preserves useful material without automatically
 propagating every working-set detail.
 
+Its boundary is information routing: every Core invariant exists to help place
+the correct, current, role-appropriate information in a reasoning context, not
+to manage agents, schedules, or generic workflows.
+
 ## Core Responsibilities
 
 - task state with revision-checked CAS and atomic recovery;
@@ -118,6 +122,11 @@ needed for correctness. Core bounds protect persistent state, snapshots,
 packets, promotion records, and other storage structures; they are storage
 invariants, not a semantic payload quota or a handoff-size limit. Artifact
 pointers provide selective access, not a mandatory compression rule.
+
+The model decides which retained facts are relevant to the next decision.
+Thaliris bounds the amount and automatic propagation of a handoff, but does not
+act as a semantic firewall that excludes an important constraint merely because
+it originated in another role's working set.
 
 ## Runtime Boundary
 

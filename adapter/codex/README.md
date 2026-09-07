@@ -25,11 +25,15 @@ payloads remain valid; raw working-set material is never propagated
 automatically. Artifact pointers provide selective access, not mandatory
 compression.
 
-Core v3 distinguishes an ordinary model-authored test report from an observed
-execution result. The current Codex hook audit records dispatch and policy
-events, not trustworthy test outcomes or native source identities, so it does
-not create Core verification attestations. A future Codex execution-observer
-bridge must submit an observed `PASSED`/`FAILED`/`UNKNOWN` result through the
-non-CLI Core registration boundary with fresh source references. Until then,
-tasks with a Core verification target fail closed at `task-close`; a command
-string or hook permission is not proof that the command succeeded.
+Core v4 distinguishes an ordinary model-authored test report from an observed
+execution result. The adapter observes an authorized acceptance command only at
+`PostToolUse`: an explicit native exit/tool-success fact becomes `PASSED` or
+`FAILED`, while absent or incomplete completion payloads are `UNKNOWN` and do
+not create trusted proof. It asks Core for the current target-bound surface and
+lets Core record fresh native source identities atomically; a PreToolUse allow,
+command string, summary, or locator is never a pass.
+
+This bridge is configured for the explicit local execution matcher and covered
+by payload-shape tests. It is not a universal Codex guarantee: a runtime build
+without a compatible PostToolUse completion payload remains `UNKNOWN` in
+`context doctor`, and targeted tasks fail closed at `task-close`.

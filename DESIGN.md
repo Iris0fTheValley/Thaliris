@@ -41,12 +41,12 @@ Active decisions and contradictions with stale evidence receive
 `REVALIDATION_REQUIRED`; unknowns remain open rather than being erased.
 
 Schema-v1 state remains readable. Its anonymous semantic statements are mapped
-deterministically to IDs on load and are persisted as v3 by the next
+deterministically to IDs on load and are persisted as v4 by the next
 successful mutation or explicit `context migrate`; no resolve or supersession
 relationship is inferred during that migration.
 
 Schema-v2 `verification_evidence` is likewise retained for audit during the
-v3 upgrade, but it remains ordinary model-authored evidence and cannot satisfy
+v4 upgrade, but it remains ordinary model-authored evidence and cannot satisfy
 a close gate. A v2 task with a verification target has no trustworthy
 task-surface baseline to reconstruct, so it must be reconciled before closing
 rather than being silently treated as verified.
@@ -67,6 +67,14 @@ then validates its native `source_refs`, outcome, freshness, and coverage.
 Once set, a verification target cannot be removed or replaced by ordinary task
 update.
 
+Each new verification result is recorded only while a target exists and carries
+a deterministic canonical fingerprint of that target plus its observation state
+revision. Close accepts only a fresh `PASSED` result whose fingerprint equals
+the current immutable target; Core does not infer target identity from a
+summary, locator, or command text. Pre-v4 trusted results remain readable but
+have no retroactively guessed target binding, so they cannot close a targeted
+task.
+
 Task-start records the Git-visible dirty surface as a baseline. At close, an
 explicit target, verification-target artifact bindings, declared changed surface, and new or
 changed Git paths inside the modification boundary form the task-attributable
@@ -75,6 +83,14 @@ outside those signals cannot be safely attributed, so close fails with an
 explicit reconciliation requirement rather than silently treating it as
 verified. Unchanged dirty files present at task start remain baseline workspace
 state and do not automatically become task work.
+
+The v4 baseline records a task-start `HEAD` and distinguishes absent paths from
+deleted files, regular-file content/mode, symlinks, and unsafe or special Git
+paths without following a link. A Git-reported path is never silently skipped:
+unsupported identity remains visible and fails attribution safely. When `HEAD`
+changes, Core uses only the task-start-to-current Git interval to identify paths
+that need attribution; it does not claim to distinguish concurrent human commits
+from task commits automatically.
 
 Working set is not handoff set. Retention is not propagation. Availability is
 not injection. A Controller packet contains task identity, active work, pending

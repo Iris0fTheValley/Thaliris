@@ -364,7 +364,7 @@ def stale(root: Path) -> dict[str, object]:
 # bookkeeping, but task-promote includes it with durable writes in its existing
 # backup mutation.
 _STATE_NAME = ".context/state.json"
-_STATE_SCHEMA_VERSION = 3
+_STATE_SCHEMA_VERSION = 4
 _STATE_FIELDS = {
     "schema_version", "revision", "task_id", "status", "goal", "current_milestone",
     "confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints",
@@ -373,7 +373,7 @@ _STATE_FIELDS = {
     "investigation_findings", "investigation_snapshot", "review_findings",
     "investigation_covered_through", "review_handled_through", "durable_promotion_count",
     "active_work", "pending_results", "artifact_refs", "verification_evidence",
-    "verification_results", "task_surface_baseline",
+    "verification_results", "task_surface_baseline", "task_base_head",
 }
 _SEMANTIC_FIELDS = {"unknowns", "contradictions", "constraints", "decisions"}
 _LIST_STATEMENTS = {"confirmed_facts", "supported_evidence"}
@@ -383,7 +383,7 @@ _PROMOTION_BUDGET = 16
 _CONTROLLER_FIELDS = _STATE_FIELDS - {
     "schema_version", "revision", "task_id", "status", "goal", "durable_promotion_count",
     "investigation_findings", "investigation_snapshot", "review_findings",
-    "artifact_refs", "verification_evidence", "verification_results", "task_surface_baseline",
+    "artifact_refs", "verification_evidence", "verification_results", "task_surface_baseline", "task_base_head",
 } - _SEMANTIC_FIELDS
 _ROLE_FIELDS = {
     "controller": _CONTROLLER_FIELDS | {"semantic_operations"},
@@ -640,21 +640,36 @@ def _artifact_freshness(root: Path, artifact: dict[str, object]) -> str:
     return "FRESH" if _digest(target.read_bytes()) == identity else "STALE"
 
 
-def _surface_snapshot(root: Path) -> list[dict[str, object]]:
-    """Capture only Git-visible dirt present when a task begins.
+def _surface_path(value: object) -> str:
+    """Validate Git's spelling without resolving a potentially unsafe link."""
+    if not isinstance(value, str) or "\\" in value or not value or value.startswith("/") or any(part in {"", ".", ".."} for part in value.split("/")):
+        raise ValueError("git reported an unsafe changed path")
+    return value
 
-    It is a baseline, not an ownership claim.  Later unfamiliar changes are
-    deliberately surfaced as unknown rather than attributed to a model.
-    """
-    records: list[dict[str, object]] = []
-    for path in _changed_files(root):
-        try:
-            target = _safe(root, path)
-        except ValueError:
-            continue
-        content = target.read_bytes() if target.is_file() and not target.is_symlink() else None
-        records.append({"path": path, "content_sha256": _digest(content)})
-    return records
+
+def _surface_identity(root: Path, path: str, status: str) -> dict[str, object]:
+    raw = root.joinpath(*path.split("/"))
+    candidate = root
+    for part in path.split("/"):
+        candidate = candidate / part
+        if candidate.is_symlink():
+            if candidate != raw:
+                return {"path": path, "state": "UNSAFE", "identity": None, "mode": None, "git_status": status}
+            try:
+                link = os.readlink(candidate)
+            except OSError:
+                link = None
+            return {"path": path, "state": "SYMLINK", "identity": _digest(link.encode("utf-8")) if link is not None else None, "mode": candidate.lstat().st_mode & 0o7777, "git_status": status}
+    if not raw.exists():
+        return {"path": path, "state": "DELETED", "identity": None, "mode": None, "git_status": status}
+    if not raw.is_file():
+        return {"path": path, "state": "SPECIAL", "identity": None, "mode": raw.lstat().st_mode & 0o7777, "git_status": status}
+    return {"path": path, "state": "PRESENT", "identity": _digest(raw.read_bytes()), "mode": raw.stat().st_mode & 0o7777, "git_status": status}
+
+
+def _surface_snapshot(root: Path) -> list[dict[str, object]]:
+    """Capture every Git-reported dirty path without following symlinks."""
+    return [_surface_identity(root, _surface_path(item["path"]), item["status"]) for item in _changed_entries(root)]
 
 
 def _surface_baseline(value: object, root: Path) -> None:
@@ -664,10 +679,10 @@ def _surface_baseline(value: object, root: Path) -> None:
         raise ValueError("invalid task_surface_baseline")
     paths: set[str] = set()
     for item in value:
-        if not isinstance(item, dict) or set(item) != {"path", "content_sha256"}:
+        if not isinstance(item, dict) or set(item) != {"path", "state", "identity", "mode", "git_status"}:
             raise ValueError("invalid task_surface_baseline")
-        _valid_relative(root, item.get("path"))
-        if item["path"] in paths or item["content_sha256"] is not None and (not isinstance(item["content_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", item["content_sha256"])):
+        _surface_path(item.get("path"))
+        if item["path"] in paths or item["state"] not in {"PRESENT", "DELETED", "SYMLINK", "SPECIAL", "UNSAFE", "LEGACY"} or item["identity"] is not None and (not isinstance(item["identity"], str) or not re.fullmatch(r"[0-9a-f]{64}", item["identity"])) or item["mode"] is not None and type(item["mode"]) is not int or not isinstance(item["git_status"], str) or not re.fullmatch(r"[ MADRCU?!]{2}", item["git_status"]):
             raise ValueError("invalid task_surface_baseline")
         paths.add(item["path"])
 
@@ -710,18 +725,28 @@ def _require_fresh_confirmed_items(root: Path, refs: list[dict[str, object]], it
 
 
 def _verification_result(value: object, registry: dict[str, dict[str, object]]) -> None:
-    required = {"id", "kind", "outcome", "summary", "source_refs", "observed_by"}
+    required = {"id", "kind", "outcome", "summary", "source_refs", "observed_by", "target_fingerprint", "observed_at_revision"}
     if not isinstance(value, dict) or set(value) != required or not _semantic_id(value.get("id")) or value.get("kind") not in {"test", "runtime"} or value.get("outcome") not in {"PASSED", "FAILED", "UNKNOWN"} or not isinstance(value.get("summary"), str) or not value["summary"].strip() or _bad_text(value["summary"]) or not isinstance(value.get("observed_by"), str) or not value["observed_by"].strip() or _bad_text(value["observed_by"]):
         raise ValueError("invalid verification result")
     source_refs = value["source_refs"]
     if not isinstance(source_refs, list) or not source_refs or len(set(source_refs)) != len(source_refs) or not all(isinstance(source, str) and source in registry and registry[source]["kind"] in {"file", "git"} for source in source_refs):
         raise ValueError("verification result requires native source_refs")
+    fingerprint = value["target_fingerprint"]
+    if fingerprint is not None and (not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)):
+        raise ValueError("invalid verification target fingerprint")
+    if value["observed_at_revision"] is not None and (type(value["observed_at_revision"]) is not int or value["observed_at_revision"] < 1):
+        raise ValueError("invalid verification observation revision")
+
+
+def _target_fingerprint(target: object) -> str:
+    """Fingerprint the Core target contract, never a runtime command meaning."""
+    return hashlib.sha256(json.dumps(target, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -> dict[str, object]:
     _check_json(state)
     # v1 used anonymous replaceable semantic statements.  Upgrade them in
-    # memory with deterministic IDs; the next successful mutation persists v3.
+    # memory with deterministic IDs; the next successful mutation persists v4.
     if isinstance(state, dict) and state.get("schema_version") == 1:
         state.setdefault("investigation_findings", [])
         state.setdefault("investigation_snapshot", [])
@@ -741,6 +766,7 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
         state.setdefault("verification_evidence", [])
         state.setdefault("verification_results", [])
         state.setdefault("task_surface_baseline", None)
+        state.setdefault("task_base_head", None)
         state["schema_version"] = _STATE_SCHEMA_VERSION
     elif isinstance(state, dict) and state.get("schema_version") == 2:
         state.setdefault("verification_evidence", [])
@@ -748,6 +774,20 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
         # diagnostically, but never reinterpret it as a trusted execution.
         state.setdefault("verification_results", [])
         state.setdefault("task_surface_baseline", None)
+        state.setdefault("task_base_head", None)
+        state["schema_version"] = _STATE_SCHEMA_VERSION
+    elif isinstance(state, dict) and state.get("schema_version") == 3:
+        baseline = state.get("task_surface_baseline")
+        if isinstance(baseline, list):
+            state["task_surface_baseline"] = [
+                {"path": item.get("path"), "state": "LEGACY", "identity": item.get("content_sha256"), "mode": None, "git_status": "??"}
+                for item in baseline if isinstance(item, dict)
+            ]
+        state.setdefault("task_base_head", None)
+        for result in state.get("verification_results", []):
+            if isinstance(result, dict):
+                result.setdefault("target_fingerprint", None)
+                result.setdefault("observed_at_revision", None)
         state["schema_version"] = _STATE_SCHEMA_VERSION
     elif isinstance(state, dict) and state.get("schema_version") == _STATE_SCHEMA_VERSION:
         state.setdefault("verification_results", [])
@@ -863,6 +903,8 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
     if state["architectural_intent"] is not None and not isinstance(state["architectural_intent"], str):
         raise ValueError("invalid architectural_intent")
     _surface_baseline(state["task_surface_baseline"], root)
+    if state["task_base_head"] is not None and (not isinstance(state["task_base_head"], str) or not re.fullmatch(r"[0-9a-f]{40,64}", state["task_base_head"])):
+        raise ValueError("invalid task_base_head")
     verification_evidence = state["verification_evidence"]
     if not isinstance(verification_evidence, list) or len(set(verification_evidence)) != len(verification_evidence) or not all(isinstance(ref, str) and ref in registry and registry[ref]["kind"] in {"test", "runtime"} for ref in verification_evidence):
         raise ValueError("verification_evidence must name test/runtime evidence")
@@ -903,10 +945,16 @@ def _milestone_exists(root: Path, milestone: str) -> bool:
     return f"]({milestone}/INDEX.md)" in body
 
 
+def _git_head(root: Path) -> str | None:
+    proc = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=root, capture_output=True, text=True, check=False)
+    value = proc.stdout.strip().lower()
+    return value if proc.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", value) else None
+
+
 def _blank_state(root: Path, goal: str, milestone: str | None) -> dict[str, object]:
     if milestone is not None and not _milestone_exists(root, milestone): raise ValueError("milestone is not linked by the top-level milestone index")
     return {"schema_version": _STATE_SCHEMA_VERSION, "revision": 1, "task_id": str(uuid.uuid4()), "status": "ACTIVE", "goal": goal,
-            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "investigation_findings": [], "investigation_snapshot": [], "review_findings": [], "investigation_covered_through": 0, "review_handled_through": 0, "durable_promotion_count": 0, "active_work": [], "pending_results": [], "artifact_refs": [], "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "verification_evidence": [], "verification_results": [], "task_surface_baseline": _surface_snapshot(root), "architectural_intent": None}
+            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "investigation_findings": [], "investigation_snapshot": [], "review_findings": [], "investigation_covered_through": 0, "review_handled_through": 0, "durable_promotion_count": 0, "active_work": [], "pending_results": [], "artifact_refs": [], "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "verification_evidence": [], "verification_results": [], "task_surface_baseline": _surface_snapshot(root), "task_base_head": _git_head(root), "architectural_intent": None}
 
 
 def _read_input(value: str | None) -> dict[str, object]:
@@ -941,7 +989,7 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
         "schema_version", "revision", "task_id", "status", "goal", "current_milestone",
         "durable_promotion_count", "artifact_refs", "investigation_findings",
         "investigation_snapshot", "review_findings", "investigation_covered_through",
-        "review_handled_through", "verification_evidence", "verification_results", "task_surface_baseline",
+        "review_handled_through", "verification_evidence", "verification_results", "task_surface_baseline", "task_base_head",
     }
     if set(partial) - allowed: raise ValueError("task-start input has forbidden fields")
     with _lock(root):
@@ -1142,20 +1190,57 @@ def _verification_bindings(root: Path, state: dict[str, object]) -> set[str]:
     return paths
 
 
+def _git_interval_paths(root: Path, base: str | None, current: str | None) -> set[str] | None:
+    if base == current:
+        return set()
+    if base is None or current is None:
+        return None
+    proc = subprocess.run(["git", "diff", "--name-status", "-z", base, current], cwd=root, capture_output=True, text=True, check=False)
+    if proc.returncode:
+        return None
+    records = proc.stdout.split("\0")
+    paths: set[str] = set()
+    index = 0
+    while index < len(records):
+        status = records[index]
+        if not status:
+            break
+        index += 1
+        if index >= len(records) or not records[index]:
+            return None
+        paths.add(_surface_path(records[index].replace("\\", "/")))
+        index += 1
+        if status[:1] in {"R", "C"}:
+            if index >= len(records) or not records[index]:
+                return None
+            paths.add(_surface_path(records[index].replace("\\", "/")))
+            index += 1
+    return paths
+
+
 def _task_attributable_surface(root: Path, state: dict[str, object], bindings: set[str]) -> set[str]:
     """Return current task surface or fail closed when provenance is ambiguous."""
     baseline = state["task_surface_baseline"]
     if baseline is None:
         raise ValueError("task surface attribution is unavailable; reconcile before close")
-    before = {item["path"]: item["content_sha256"] for item in baseline}
-    current = {item["path"]: item["content_sha256"] for item in _surface_snapshot(root)}
+    if any(item["state"] == "LEGACY" for item in baseline):
+        raise ValueError("task surface attribution is unavailable; reconcile before close")
+    before = {item["path"]: item for item in baseline}
+    current = {item["path"]: item for item in _surface_snapshot(root)}
     declared = set(state["changed_surface"]) | bindings
     boundary = state["modification_boundary"]
     attributable = set(declared)
     unknown: list[str] = []
+    changed_paths: set[str] = set()
     for path, identity in current.items():
         if before.get(path) == identity:
             continue
+        changed_paths.add(path)
+    interval = _git_interval_paths(root, state["task_base_head"], _git_head(root))
+    if interval is None:
+        raise ValueError("task Git interval attribution is unknown; reconcile before close")
+    changed_paths.update(interval)
+    for path in changed_paths:
         if path in declared or _path_in_scope(path, boundary["includes"]):
             attributable.add(path)
         else:
@@ -1165,7 +1250,47 @@ def _task_attributable_surface(root: Path, state: dict[str, object], bindings: s
     return attributable
 
 
-def task_record_verification(root: Path, base_revision: int, result_id: str, kind: str, outcome: str, summary: str, source_refs: list[str], *, observed_by: str) -> dict[str, object]:
+def task_verification_requirements(root: Path) -> dict[str, object]:
+    """Expose current Core bindings to a trusted runtime observer only."""
+    root = _repo_root(root)
+    with _lock(root):
+        state = _load_state(root, active=True)
+        target = state["verification_target"]
+        if target is None:
+            raise ValueError("verification target is not configured")
+        bindings = _verification_bindings(root, state)
+        required = _task_attributable_surface(root, state, bindings)
+        return {"task_id": state["task_id"], "revision": state["revision"], "target_fingerprint": _target_fingerprint(target), "paths": sorted(required)}
+
+
+def _native_verification_sources(root: Path, state: dict[str, object], paths: list[str]) -> list[str]:
+    if not isinstance(paths, list) or not paths or len(set(paths)) != len(paths):
+        raise ValueError("verification source paths must be a non-empty unique list")
+    registry = {ref["id"]: ref for ref in state["evidence_refs"]}
+    source_refs: list[str] = []
+    for path in paths:
+        _valid_relative(root, path)
+        target = _safe(root, path)
+        if target.is_symlink() or not target.is_file():
+            raise ValueError("verification source path must be a current regular file")
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        locator = f"file:{path}#{digest}"
+        existing = next((ref["id"] for ref in registry.values() if ref["kind"] == "file" and ref["locator"] == locator), None)
+        if existing is not None:
+            source_refs.append(existing)
+            continue
+        seed = hashlib.sha256(f"{path}\0{digest}".encode("utf-8")).hexdigest()
+        identifier = f"verification-source-{seed[:32]}"
+        if identifier in registry:
+            raise ValueError("verification source identity collision")
+        record = {"id": identifier, "kind": "file", "locator": locator, "summary": f"verification source: {path}", "confidence": "SUPPORTED"}
+        state["evidence_refs"].append(record)
+        registry[identifier] = record
+        source_refs.append(identifier)
+    return source_refs
+
+
+def task_record_verification(root: Path, base_revision: int, result_id: str, kind: str, outcome: str, summary: str, source_refs: list[str] | None = None, *, observed_by: str, source_paths: list[str] | None = None) -> dict[str, object]:
     """Adapter-only ingress for an observed execution result.
 
     This function intentionally has no CLI command and is not part of normal
@@ -1173,12 +1298,21 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
     validates the resulting contract and never infers success from prose.
     """
     root = _repo_root(root)
-    proposed = {"id": result_id, "kind": kind, "outcome": outcome, "summary": summary, "source_refs": source_refs, "observed_by": observed_by}
     with _lock(root):
         state = _load_state(root, active=True)
         if state["revision"] != base_revision:
             raise ValueError("task revision conflict")
+        target = state["verification_target"]
+        if target is None:
+            raise ValueError("verification target is not configured")
+        if source_paths is not None:
+            if source_refs is not None:
+                raise ValueError("provide verification source refs or source paths, not both")
+            source_refs = _native_verification_sources(root, state, source_paths)
+        if source_refs is None:
+            raise ValueError("verification result requires source refs")
         registry = {ref["id"]: ref for ref in state["evidence_refs"]}
+        proposed = {"id": result_id, "kind": kind, "outcome": outcome, "summary": summary, "source_refs": source_refs, "observed_by": observed_by, "target_fingerprint": _target_fingerprint(target), "observed_at_revision": base_revision}
         _verification_result(proposed, registry)
         if result_id in {result["id"] for result in state["verification_results"]}:
             raise ValueError("verification result id already exists")
@@ -1187,7 +1321,7 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
         state["verification_results"].append(proposed)
         state["revision"] = base_revision + 1
         _write_state(root, state, enforce_fresh=False)
-    return _controller_ack(state, ["verification_results"])
+    return _controller_ack(state, ["evidence_refs", "verification_results"])
 
 
 def _require_current_verification(root: Path, state: dict[str, object]) -> None:
@@ -1200,8 +1334,11 @@ def _require_current_verification(root: Path, state: dict[str, object]) -> None:
     if not results:
         raise ValueError("verification target requires trusted successful verification result")
     covered: set[str] = set()
+    target_fingerprint = _target_fingerprint(state["verification_target"])
     for result in results:
         if result["outcome"] != "PASSED":
+            continue
+        if result["target_fingerprint"] != target_fingerprint:
             continue
         if not all(_evidence_fresh(root, registry[source], registry) for source in result["source_refs"]):
             continue
@@ -1488,20 +1625,27 @@ def _route(root: Path, task: str, role: str) -> tuple[list[Entry], list[str]]:
     return list({entry.path: entry for entry in matched}.values()), []
 
 
-def _changed_files(root: Path) -> list[str]:
+def _changed_entries(root: Path) -> list[dict[str, str]]:
     proc = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all", "-z"], cwd=root, capture_output=True, text=True, check=False)
-    if proc.returncode: return []
-    records = proc.stdout.split("\0"); paths: list[str] = []; index = 0
+    if proc.returncode:
+        raise ValueError("unable to inspect Git changed surface")
+    records = proc.stdout.split("\0"); entries: list[dict[str, str]] = []; index = 0
     while index < len(records):
         record = records[index]
         if not record: break
         status = record[:2]
-        if len(record) > 3: paths.append(record[3:].replace("\\", "/"))
+        if len(record) > 3:
+            entries.append({"path": _surface_path(record[3:].replace("\\", "/")), "status": status})
         if "R" in status or "C" in status:
             index += 1
-            if index < len(records) and records[index]: paths.append(records[index].replace("\\", "/"))
+            if index < len(records) and records[index]:
+                entries.append({"path": _surface_path(records[index].replace("\\", "/")), "status": status})
         index += 1
-    return list(dict.fromkeys(paths))
+    return list({entry["path"]: entry for entry in entries}.values())
+
+
+def _changed_files(root: Path) -> list[str]:
+    return [entry["path"] for entry in _changed_entries(root)]
 
 
 def _milestone_slice(root: Path, milestone: str | None) -> dict[str, dict[str, object]]:

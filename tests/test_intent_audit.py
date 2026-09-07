@@ -1226,6 +1226,63 @@ def test_acceptance_allows_only_exact_known_test_targets(tmp_path):
             assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
+def _acceptance_task(root: Path) -> tuple[dict[str, object], Path, str]:
+    init(root)
+    subject = root / "subject.py"
+    subject.write_text("subject", encoding="utf-8")
+    command = "pytest -q tests/test_subject.py"
+    task_input = root / "acceptance-task.json"
+    task_input.write_text(json.dumps({"changed_surface": ["subject.py"], "verification_target": command}), encoding="utf-8")
+    started = task_start(root, "acceptance observation", None, str(task_input))
+    handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"success": True}))
+    return started, subject, command
+
+
+def test_pretool_acceptance_does_not_create_a_verification_result(tmp_path):
+    root = repo(tmp_path)
+    started, _subject, command = _acceptance_task(root)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})) == ""
+    assert core_module.task_show(root)["state"]["verification_results"] == []
+    assert core_module.task_show(root)["state"]["revision"] == started["revision"]
+
+
+def test_posttool_acceptance_completion_records_trusted_pass_and_closes(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    started, subject, command = _acceptance_task(root)
+    assert handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"exit_code": 0})) == ""
+    state = core_module.task_show(root)["state"]
+    result = state["verification_results"]
+    assert len(result) == 1 and result[0]["outcome"] == "PASSED"
+    assert result[0]["target_fingerprint"] == core_module._target_fingerprint(state["verification_target"])
+    source = state["evidence_refs"][-1]
+    assert source["kind"] == "file" and source["locator"].endswith(hashlib.sha256(subject.read_bytes()).hexdigest())
+    monkeypatch.setattr("thaliris.codex_adapter.task_close_audit", lambda *_args, **_kwargs: {"status": "UNKNOWN"})
+    assert task_close(root, state["revision"])["status"] == "DONE"
+
+
+def test_posttool_failed_or_incomplete_completion_never_creates_pass(tmp_path):
+    root = repo(tmp_path / "failed")
+    _started, _subject, command = _acceptance_task(root)
+    handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"exit_code": 2}))
+    assert core_module.task_show(root)["state"]["verification_results"][0]["outcome"] == "FAILED"
+
+    root = repo(tmp_path / "unknown")
+    _started, _subject, command = _acceptance_task(root)
+    handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={}))
+    assert core_module.task_show(root)["state"]["verification_results"][0]["outcome"] == "UNKNOWN"
+
+
+def test_adapter_attested_pass_becomes_stale_before_close(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    _started, subject, command = _acceptance_task(root)
+    handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"exit_code": 0}))
+    subject.write_text("changed after test", encoding="utf-8")
+    state = core_module.task_show(root)["state"]
+    monkeypatch.setattr("thaliris.codex_adapter.task_close_audit", lambda *_args, **_kwargs: {"status": "UNKNOWN"})
+    with pytest.raises(ValueError, match="does not cover"):
+        task_close(root, state["revision"])
+
+
 def test_auditor_rubric_is_separate_from_untrusted_stdin_evidence(monkeypatch):
     captured = {}
     monkeypatch.setattr(audit_module, "_resolve_runner", lambda: "codex-test")

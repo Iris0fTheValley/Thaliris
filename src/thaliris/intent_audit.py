@@ -17,6 +17,8 @@ import tempfile
 import time
 from typing import Any
 
+from . import core
+
 HOOK_COMMAND_PREFIX = "context audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "Stop")
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed intent-audit hooks"
@@ -43,10 +45,6 @@ _COLLABORATION_TOOL_NAMES = (
     "interrupt_agent",
 )
 _COLLABORATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _COLLABORATION_TOOL_NAMES) + ")"
-# Codex 0.146 Multi-Agent V2 exposes both dotted names and flattened
-# `collaboration<tool>` names to hooks.  Keep the matcher explicit so other
-# collaboration-prefixed tools cannot enter the audit plane accidentally.
-POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN})$"
 # Codex 0.146 exposes shell execution to hooks as ``Bash``.  The controller
 # guard uses that native surface for deterministic action classification while
 # retaining the historical aliases for runtimes that expose a different name.
@@ -54,6 +52,10 @@ _CONTROLLER_EXECUTION_TOOL_NAMES = ("Bash", "Shell", "exec_command", "command_ex
 _CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_EXECUTION_TOOL_NAMES) + ")"
 _CONTROLLER_MUTATION_TOOL_NAMES = ("apply_patch", "file_change", "functions.apply_patch", "functions.file_change")
 _CONTROLLER_MUTATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_MUTATION_TOOL_NAMES) + ")"
+# Codex 0.146 Multi-Agent V2 exposes both dotted names and flattened
+# `collaboration<tool>` names to hooks. Keep execution surfaces explicit too:
+# a PostToolUse callback is the only possible completion observation.
+POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN})$"
 # Pre-dispatch isolation sees native spawn calls, the other flattened V2
 # collaboration names (for compatibility/observation), and root shell
 # execution.  The latter is intentionally explicit: a broad matcher would
@@ -402,6 +404,8 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) in _COLLABORATION_TOOL_NAMES:
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
+            if isinstance(tool, str) and _tool_basename(tool) in _CONTROLLER_EXECUTION_TOOL_NAMES:
+                _best_effort_record(_acceptance_execution_observed, root, payload)
             result = _capture_delegation(state, payload)
             if not result:
                 return ""
@@ -693,6 +697,64 @@ def _post_tool_succeeded(response: object) -> bool:
     if isinstance(response, str) and response.strip().lower() in {"error", "failed", "rejected"}:
         return False
     return True
+
+
+def _execution_outcome(response: object) -> str:
+    """Accept only explicit completion facts from a PostToolUse payload."""
+    if not isinstance(response, dict):
+        return "UNKNOWN"
+    if any(response.get(key) is True or response.get(key) not in (None, False, "") for key in ("isError", "failed", "error")):
+        return "FAILED"
+    for key in ("exit_code", "exitCode", "returncode", "return_code"):
+        value = response.get(key)
+        if type(value) is int:
+            return "PASSED" if value == 0 else "FAILED"
+    for key in ("success", "ok"):
+        if response.get(key) is True:
+            return "PASSED"
+        if response.get(key) is False:
+            return "FAILED"
+    if response.get("isError") is False:
+        return "PASSED"
+    status = response.get("status")
+    if isinstance(status, str):
+        normalized = status.strip().lower()
+        if normalized in {"ok", "success", "completed", "passed"}:
+            return "PASSED"
+        if normalized in {"error", "failed", "failure", "rejected"}:
+            return "FAILED"
+    nested = response.get("result")
+    return _execution_outcome(nested) if isinstance(nested, dict) else "UNKNOWN"
+
+
+def _acceptance_execution_observed(root: Path, payload: dict[str, Any]) -> None:
+    """Bridge a completed, authorized Codex acceptance invocation into Core."""
+    tool = payload.get("tool_name") or payload.get("tool")
+    if not isinstance(tool, str) or _tool_basename(tool) not in _CONTROLLER_EXECUTION_TOOL_NAMES:
+        return
+    command = _bash_command(payload)
+    target = _active_verification_target(root)
+    if command is None or target is None or _normalized_command(command) != _normalized_command(target) or not _successful_spawn_observed(root, payload):
+        return
+    outcome = _execution_outcome(_post_tool_response(payload))
+    try:
+        requirements = core.task_verification_requirements(root)
+        material = json.dumps({"task": requirements["task_id"], "revision": requirements["revision"], "command": command, "outcome": outcome}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        result_id = f"codex-observation-{hashlib.sha256(material).hexdigest()[:32]}"
+        core.task_record_verification(
+            root,
+            requirements["revision"],
+            result_id,
+            "test",
+            outcome,
+            "Codex PostToolUse execution observation",
+            observed_by="codex-post-tool-use",
+            source_paths=requirements["paths"],
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        # Missing/ambiguous payload or unrepresentable source identity must not
+        # manufacture a result. The Core close gate remains fail-closed.
+        return
 
 
 def _controller_roles(command: str) -> list[str]:

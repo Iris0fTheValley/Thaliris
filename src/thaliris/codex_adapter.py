@@ -593,4 +593,10 @@ def audit_hook(root: Path, event: str, payload: object) -> str:
 
 def doctor(root: Path) -> dict[str, object]:
     from .doctor import report
-    return report(root)
+    result = report(root)
+    result["verification_attestation"] = {
+        "configured": "YES",
+        "observed": "UNKNOWN",
+        "detail": "A compatible PostToolUse execution payload is required before Codex can attest an acceptance result.",
+    }
+    return result

@@ -470,6 +470,8 @@ def test_model_authored_test_evidence_never_becomes_trusted_verification(tmp_pat
         core.task_close(root, with_fake["revision"])
     with pytest.raises(ValueError, match="not allowed"):
         core.task_update(root, "controller", with_fake["revision"], input_file(root.parent, {"verification_evidence": ["passed"]}, "selection.json"))
+    with pytest.raises(ValueError, match="verification target cannot be changed"):
+        core.task_update(root, "controller", with_fake["revision"], input_file(root.parent, {"verification_target": None}, "remove-target.json"))
 
 
 @pytest.mark.parametrize("outcome", ["FAILED", "UNKNOWN"])

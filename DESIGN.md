@@ -64,9 +64,11 @@ task with a target requires a trusted, immutable execution result with outcome
 does not execute or independently prove arbitrary commands. A trusted runtime
 adapter records an observed result through the adapter-only Core ingress; Core
 then validates its native `source_refs`, outcome, freshness, and coverage.
+Once set, a verification target cannot be removed or replaced by ordinary task
+update.
 
 Task-start records the Git-visible dirty surface as a baseline. At close, an
-explicit target, registered artifacts, declared changed surface, and new or
+explicit target, verification-target artifact bindings, declared changed surface, and new or
 changed Git paths inside the modification boundary form the task-attributable
 surface. A changed source or artifact makes the result stale. A new Git change
 outside those signals cannot be safely attributed, so close fails with an

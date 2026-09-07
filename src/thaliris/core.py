@@ -981,6 +981,8 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
     with _lock(root):
         state = _load_state(root, active=True)
         if state["revision"] != base_revision: raise ValueError("task revision conflict")
+        if state["verification_target"] is not None and "verification_target" in partial and partial["verification_target"] != state["verification_target"]:
+            raise ValueError("verification target cannot be changed once set")
         new_investigation: list[dict[str, object]] = []
         # Raw provenance is immutable for every role, including Controller.
         # Inputs are additions rather than a replacement of the stored prefix.

@@ -80,6 +80,8 @@ execution result with `PASSED`, fresh native source identities, and full surface
 coverage. The adapter is responsible for producing that trusted observation;
 Core validates the attested result and its current source freshness. Thaliris
 does not claim to independently prove arbitrary shell commands ran correctly.
+Once set, a verification target cannot be removed or replaced through ordinary
+task update.
 
 At task start, Core captures the Git-visible dirty baseline. At close it
 combines explicit target bindings, verification-target artifact bindings, declared changed

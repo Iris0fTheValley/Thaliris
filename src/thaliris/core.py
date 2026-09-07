@@ -1296,8 +1296,17 @@ def _native_verification_sources(root: Path, state: dict[str, object], paths: li
     registry = {ref["id"]: ref for ref in state["evidence_refs"]}
     source_refs: list[str] = []
     for path in paths:
-        _valid_relative(root, path)
-        target = _safe(root, path)
+        # A task-surface symlink is itself a Git-visible object.  Do not
+        # resolve its final component here: that could read an external target
+        # and turn the link target's bytes into evidence for the link.
+        if not isinstance(path, str) or "\\" in path or not path or path.startswith("/") or any(part in {"", ".", ".."} for part in path.split("/")):
+            raise ValueError("path must be normalized POSIX repo-relative")
+        target = root.joinpath(*path.split("/"))
+        parent = root
+        for part in path.split("/"):
+            parent = parent / part
+            if parent.is_symlink() and parent != target:
+                raise ValueError("verification source path traverses a symlink")
         # Non-regular Git-visible paths are bound by covered_surface.  The
         # Core, not a runtime adapter, computes both identities.
         if target.is_symlink() or not target.is_file():
@@ -1338,6 +1347,12 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
         if source_paths is not None:
             if source_refs is not None:
                 raise ValueError("provide verification source refs or source paths, not both")
+            if (
+                not isinstance(source_paths, list)
+                or not all(isinstance(path, str) for path in source_paths)
+                or set(source_paths) != required_surface
+            ):
+                raise ValueError("verification source paths must exactly cover the current task surface")
             source_refs = _native_verification_sources(root, state, source_paths)
         if source_refs is None:
             raise ValueError("verification result requires source refs")

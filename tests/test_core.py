@@ -498,6 +498,23 @@ def test_trusted_verification_requires_every_current_surface_path(tmp_path: Path
         core.task_close(root, result["revision"])
 
 
+def test_native_verification_source_paths_must_exactly_cover_current_surface(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    configured, _evidence = _verification_task(root, ["a.py", "b.py"])
+    with pytest.raises(ValueError, match="exactly cover"):
+        core.task_record_verification(
+            root,
+            configured["revision"],
+            "partial-native",
+            "test",
+            "PASSED",
+            "partial native source paths",
+            observed_by="test-runtime",
+            source_paths=["a.py"],
+        )
+
+
 def test_new_task_scoped_git_mutation_requires_reverification(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.init(root)
@@ -551,6 +568,60 @@ def test_v5_verification_binds_symlink_surface_and_detects_a_later_change(tmp_pa
     link.symlink_to("third-target")
     with pytest.raises(ValueError, match="does not cover"):
         core.task_close(root, recorded["revision"])
+
+
+def test_verification_does_not_follow_symlink_to_external_target(tmp_path: Path) -> None:
+    root = repo(tmp_path / "repo")
+    core.init(root)
+    outside_one = tmp_path / "outside-one.txt"
+    outside_two = tmp_path / "outside-two.txt"
+    outside_one.write_text("outside one", encoding="utf-8")
+    outside_two.write_text("outside two", encoding="utf-8")
+    link = root / "external-link"
+    try:
+        link.symlink_to(outside_one)
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this host")
+    commit(root)
+    started = core.task_start(root, "change external link", None, input_file(root.parent, {
+        "changed_surface": ["external-link"],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": ["external-link"], "excludes": [], "evidence_refs": []},
+        "verification_target": {"description": "verify external link", "artifact_refs": [], "changed_surface": ["external-link"]},
+    }, "external-link-start.json"))
+    link.unlink()
+    link.symlink_to(outside_two)
+    recorded = core.task_record_verification(root, started["revision"], "external-link-pass", "test", "PASSED", "observed link", observed_by="runtime", source_paths=["external-link"])
+    result = core.task_show(root)["state"]["verification_results"][0]
+    assert result["source_refs"] == []
+    assert result["covered_surface"][0]["state"] == "SYMLINK"
+    link.unlink()
+    link.symlink_to(outside_one)
+    with pytest.raises(ValueError, match="does not cover"):
+        core.task_close(root, recorded["revision"])
+
+
+def test_verification_does_not_hash_internal_symlink_target_as_source(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    (root / "inside.txt").write_text("inside", encoding="utf-8")
+    link = root / "inside-link"
+    try:
+        link.symlink_to("inside.txt")
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this host")
+    commit(root)
+    started = core.task_start(root, "change internal link", None, input_file(root.parent, {
+        "changed_surface": ["inside-link"],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": ["inside-link"], "excludes": [], "evidence_refs": []},
+        "verification_target": {"description": "verify internal link", "artifact_refs": [], "changed_surface": ["inside-link"]},
+    }, "inside-link-start.json"))
+    link.unlink()
+    link.symlink_to("replacement.txt")
+    recorded = core.task_record_verification(root, started["revision"], "inside-link-pass", "test", "PASSED", "observed link", observed_by="runtime", source_paths=["inside-link"])
+    result = core.task_show(root)["state"]["verification_results"][0]
+    assert result["source_refs"] == []
+    assert result["covered_surface"][0]["state"] == "SYMLINK"
+    assert core.task_close(root, recorded["revision"])["status"] == "DONE"
 
 
 def test_v5_special_surface_is_visible_but_fails_closed_without_a_native_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

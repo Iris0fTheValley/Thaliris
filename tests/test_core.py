@@ -17,6 +17,11 @@ def repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def commit(root: Path, message: str = "baseline") -> None:
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=Thaliris", "-c", "user.email=thaliris@example.invalid", "commit", "-qm", message], cwd=root, check=True)
+
+
 def input_file(root: Path, payload: dict[str, object], name: str = "input.json") -> str:
     path = root / name
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -316,11 +321,11 @@ def test_legacy_anonymous_semantic_records_upgrade_without_loss(tmp_path: Path) 
     path.write_text(json.dumps(legacy), encoding="utf-8")
 
     loaded = core.task_show(root)["state"]
-    assert loaded["schema_version"] == 3
+    assert loaded["schema_version"] == 4
     assert loaded["constraints"] == [{"id": "legacy-C-0001", "text": "keep API", "evidence_refs": [], "status": "ACTIVE"}]
     assert core.migrate(root)["changed"]
     persisted = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["schema_version"] == 3
+    assert persisted["schema_version"] == 4
     assert persisted["constraints"] == loaded["constraints"]
 
 
@@ -345,7 +350,7 @@ def test_v2_verification_claims_remain_readable_but_are_not_trusted_results(tmp_
     path.write_text(json.dumps(legacy), encoding="utf-8")
 
     loaded = core.task_show(root)["state"]
-    assert loaded["schema_version"] == 3
+    assert loaded["schema_version"] == 4
     assert loaded["verification_evidence"] == ["claim"]
     assert loaded["verification_results"] == []
     assert loaded["task_surface_baseline"] is None
@@ -543,3 +548,125 @@ def test_semantic_projection_marks_stale_provenance_without_rewriting_history(tm
     historical = core.task_show(root)["state"]
     assert "effective_state" not in historical["constraints"][0]
     assert historical["constraints"][0]["status"] == "ACTIVE"
+
+
+def test_verification_result_requires_and_binds_the_current_target(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    subject = root / "subject.py"
+    subject.write_text("subject", encoding="utf-8")
+    digest = hashlib.sha256(subject.read_bytes()).hexdigest()
+    started = core.task_start(root, "target binding", None, input_file(root.parent, {
+        "evidence_refs": [{"id": "src", "kind": "file", "locator": f"file:subject.py#{digest}", "summary": "subject", "confidence": "SUPPORTED"}],
+    }, "unbound.json"))
+    with pytest.raises(ValueError, match="target is not configured"):
+        core.task_record_verification(root, started["revision"], "early", "test", "PASSED", "early", ["src"], observed_by="runtime")
+    configured = core.task_update(root, "controller", started["revision"], input_file(root.parent, {
+        "changed_surface": ["subject.py"],
+        "verification_target": {"description": "target A", "artifact_refs": [], "changed_surface": ["subject.py"]},
+    }, "target-a.json"))
+    target_a = core._target_fingerprint(core.task_show(root)["state"]["verification_target"])
+    assert target_a == core._target_fingerprint({"artifact_refs": [], "changed_surface": ["subject.py"], "description": "target A"})
+    assert target_a != core._target_fingerprint({"description": "target B", "artifact_refs": [], "changed_surface": ["subject.py"]})
+    with pytest.raises(ValueError, match="verification target cannot be changed"):
+        core.task_update(root, "controller", configured["revision"], input_file(root.parent, {
+            "verification_target": {"description": "target B", "artifact_refs": [], "changed_surface": ["subject.py"]},
+        }, "target-b.json"))
+    recorded = core.task_record_verification(root, configured["revision"], "bound", "test", "PASSED", "observed", ["src"], observed_by="runtime")
+    result = core.task_show(root)["state"]["verification_results"][0]
+    assert result["target_fingerprint"] == target_a
+    assert result["observed_at_revision"] == configured["revision"]
+    assert core.task_close(root, recorded["revision"])["status"] == "DONE"
+
+
+def test_forged_or_different_target_fingerprint_cannot_satisfy_close(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    configured, evidence = _verification_task(root, ["subject.py"])
+    recorded = core.task_record_verification(root, configured["revision"], "bound", "test", "PASSED", "observed", [evidence[0]["id"]], observed_by="runtime")
+    path = root / ".context/state.json"
+    forged = json.loads(path.read_text(encoding="utf-8"))
+    forged["verification_results"][0]["target_fingerprint"] = "0" * 64
+    path.write_text(json.dumps(forged), encoding="utf-8")
+    with pytest.raises(ValueError, match="does not cover"):
+        core.task_close(root, recorded["revision"])
+
+
+def test_clean_tracked_deletion_is_not_lost_from_surface_truth(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    target = root / "deleted.py"
+    target.write_text("baseline", encoding="utf-8")
+    commit(root)
+    started = core.task_start(root, "deletion", None, input_file(root.parent, {
+        "changed_surface": ["deleted.py"],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": ["deleted.py"], "excludes": [], "evidence_refs": []},
+        "verification_target": {"description": "keep deleted path covered", "artifact_refs": [], "changed_surface": ["deleted.py"]},
+    }, "delete-start.json"))
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    configured = core.task_update(root, "controller", started["revision"], input_file(root.parent, {
+        "evidence_refs": [{"id": "deleted-source", "kind": "file", "locator": f"file:deleted.py#{digest}", "summary": "before delete", "confidence": "SUPPORTED"}],
+    }, "delete-evidence.json"))
+    recorded = core.task_record_verification(root, configured["revision"], "before-delete", "test", "PASSED", "observed", ["deleted-source"], observed_by="runtime")
+    target.unlink()
+    assert core._surface_snapshot(root)[0]["state"] == "DELETED"
+    with pytest.raises(ValueError, match="does not cover"):
+        core.task_close(root, recorded["revision"])
+
+
+def test_git_symlinks_are_visible_without_being_followed(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    configured, evidence = _verification_task(root, ["subject.py"])
+    recorded = core.task_record_verification(root, configured["revision"], "pass", "test", "PASSED", "observed", [evidence[0]["id"]], observed_by="runtime")
+    link = root / "outside-link"
+    try:
+        link.symlink_to(root.parent / "outside-target")
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this host")
+    snapshot = {item["path"]: item for item in core._surface_snapshot(root)}
+    assert snapshot["outside-link"]["state"] == "SYMLINK"
+    with pytest.raises(ValueError, match="attribution is unknown"):
+        core.task_close(root, recorded["revision"])
+    commit(root, "tracked link")
+    link.unlink()
+    snapshot = {item["path"]: item for item in core._surface_snapshot(root)}
+    assert snapshot["outside-link"]["state"] == "DELETED"
+
+
+def test_committed_task_changes_remain_in_verification_surface(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    (root / "a.py").write_text("a0", encoding="utf-8")
+    source = root / "b.py"
+    source.write_text("b0", encoding="utf-8")
+    commit(root)
+    started = core.task_start(root, "committed surface", None, input_file(root.parent, {
+        "changed_surface": ["a.py"],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": ["a.py"], "excludes": [], "evidence_refs": []},
+        "verification_target": {"description": "verify a", "artifact_refs": [], "changed_surface": ["a.py"]},
+    }, "commit-start.json"))
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    configured = core.task_update(root, "controller", started["revision"], input_file(root.parent, {
+        "evidence_refs": [{"id": "wrong-source", "kind": "file", "locator": f"file:b.py#{digest}", "summary": "other file", "confidence": "SUPPORTED"}],
+    }, "commit-evidence.json"))
+    recorded = core.task_record_verification(root, configured["revision"], "wrong-pass", "test", "PASSED", "observed", ["wrong-source"], observed_by="runtime")
+    (root / "a.py").write_text("a1", encoding="utf-8")
+    commit(root, "task change")
+    assert core._changed_files(root) == []
+    assert "a.py" in core.task_verification_requirements(root)["paths"]
+    with pytest.raises(ValueError, match="does not cover"):
+        core.task_close(root, recorded["revision"])
+
+
+def test_head_change_outside_task_boundary_is_unknown(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    (root / "subject.py").write_text("v1", encoding="utf-8")
+    commit(root)
+    configured, evidence = _verification_task(root, ["subject.py"])
+    recorded = core.task_record_verification(root, configured["revision"], "pass", "test", "PASSED", "observed", [evidence[0]["id"]], observed_by="runtime")
+    (root / "other.py").write_text("concurrent", encoding="utf-8")
+    commit(root, "unattributed head change")
+    with pytest.raises(ValueError, match="surface attribution is unknown"):
+        core.task_close(root, recorded["revision"])

@@ -1136,8 +1136,10 @@ def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path
 def test_successful_spawn_evidence_is_scoped_to_the_active_task(tmp_path):
     root = repo(tmp_path)
     init(root)
+    source = root / "test_target.py"
+    source.write_text("verified source", encoding="utf-8")
     task_input = root / "task.json"
-    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/test_target.py"}), encoding="utf-8")
+    task_input.write_text(json.dumps({"changed_surface": ["test_target.py"], "verification_target": "pytest -q tests/test_target.py"}), encoding="utf-8")
     first = task_start(root, "first task", None, str(task_input))
     handle_hook(
         root,
@@ -1145,7 +1147,12 @@ def test_successful_spawn_evidence_is_scoped_to_the_active_task(tmp_path):
         payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"task_name": "/root/child-a"}),
     )
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
-    core_module.task_close(root, first["revision"], expected_task_id=first["task_id"])
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    verification_input = tmp_path.parent / "verification.json"
+    verification_input.write_text(json.dumps({"evidence_refs": [{"id": "source", "kind": "file", "locator": f"file:test_target.py#{digest}", "summary": "target", "confidence": "SUPPORTED"}]}), encoding="utf-8")
+    configured = core_module.task_update(root, "controller", first["revision"], str(verification_input))
+    observed = core_module.task_record_verification(root, configured["revision"], "observed-test", "test", "PASSED", "native test observation", ["source"], observed_by="codex-runtime-test-fixture")
+    core_module.task_close(root, observed["revision"], expected_task_id=first["task_id"])
 
     second = task_start(root, "second task", None, str(task_input))
     for command in ("pytest -q tests/test_target.py", "context task-close --base-revision 1"):

@@ -240,6 +240,7 @@ def _migrate_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str]]:
         _template_files(include_routing=True, include_kind=True, decision_link=False),
     )
     writes: dict[str, bytes] = {}
+    migrated: list[str] = []
     base = root / ".agent-memory"
     if base.is_dir():
         for path in sorted(base.rglob("*.md")):
@@ -250,17 +251,32 @@ def _migrate_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str]]:
                 if data != current[rel]: writes[rel] = current[rel]
             elif b"Audience:" not in data or b"Kind:" not in data:
                 manual.append(rel)
+    # State v1 is readable without mutation, but migrate offers an explicit,
+    # deterministic persistence path for anonymous semantic records.
+    state_path = _state_path(root)
+    if state_path.is_file():
+        try:
+            state_bytes = state_path.read_bytes()
+            raw_state = json.loads(state_bytes.decode("utf-8"))
+            upgraded = _validate_state(root, raw_state)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"task state migration failed: {exc}") from exc
+        upgraded_bytes = _state_payload(root, upgraded, enforce_fresh=False)
+        if state_bytes != upgraded_bytes:
+            files[_STATE_NAME] = upgraded_bytes
+            migrated.append(_STATE_NAME)
     files.update(writes)
-    return files, manual, sorted(writes)
+    migrated.extend(writes)
+    return files, manual, sorted(set(migrated))
 
 
 def migrate(root: Path) -> dict[str, object]:
     root = _repo_root(root)
     with _lock(root):
         files, manual, migrated = _migrate_plan(root)
-        if not files: return {"ok": True, "changed": False, "backup": None, "migration": "v2", "migrated": migrated, "manual_migration_required": manual}
+        if not files: return {"ok": True, "changed": False, "backup": None, "migration": "v3", "migrated": migrated, "manual_migration_required": manual}
         backup = _apply_with_backup(root, files, [], "migrate")
-    return {"ok": True, "changed": True, "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup}
+    return {"ok": True, "changed": True, "backup": backup, "files": sorted(files), "migration": "v3", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup}
 
 
 def rollback(root: Path, backup_id: str) -> dict[str, object]:
@@ -348,6 +364,7 @@ def stale(root: Path) -> dict[str, object]:
 # bookkeeping, but task-promote includes it with durable writes in its existing
 # backup mutation.
 _STATE_NAME = ".context/state.json"
+_STATE_SCHEMA_VERSION = 3
 _STATE_FIELDS = {
     "schema_version", "revision", "task_id", "status", "goal", "current_milestone",
     "confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints",
@@ -355,19 +372,21 @@ _STATE_FIELDS = {
     "changed_surface", "evidence_refs", "verification_target", "architectural_intent",
     "investigation_findings", "investigation_snapshot", "review_findings",
     "investigation_covered_through", "review_handled_through", "durable_promotion_count",
-    "active_work", "pending_results", "artifact_refs",
+    "active_work", "pending_results", "artifact_refs", "verification_evidence",
+    "verification_results", "task_surface_baseline",
 }
-_LIST_STATEMENTS = {"confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints", "decisions"}
+_SEMANTIC_FIELDS = {"unknowns", "contradictions", "constraints", "decisions"}
+_LIST_STATEMENTS = {"confirmed_facts", "supported_evidence"}
 _SNAPSHOT_MAX_ITEMS = 64
 _SNAPSHOT_MAX_BYTES = 32 * 1024
 _PROMOTION_BUDGET = 16
 _CONTROLLER_FIELDS = _STATE_FIELDS - {
     "schema_version", "revision", "task_id", "status", "goal", "durable_promotion_count",
     "investigation_findings", "investigation_snapshot", "review_findings",
-    "artifact_refs",
-}
+    "artifact_refs", "verification_evidence", "verification_results", "task_surface_baseline",
+} - _SEMANTIC_FIELDS
 _ROLE_FIELDS = {
-    "controller": _CONTROLLER_FIELDS,
+    "controller": _CONTROLLER_FIELDS | {"semantic_operations"},
     "investigator": {"investigation_findings", "evidence_refs"},
     "curator": {"investigation_snapshot", "investigation_covered_through"},
     "reasoning-specialist": set(),
@@ -409,6 +428,106 @@ def _check_json(value: object) -> None:
 def _statement(value: object, ids: set[str]) -> None:
     if not isinstance(value, dict) or set(value) != {"text", "evidence_refs"} or not isinstance(value["text"], str) or len(value["text"]) > 1000 or not isinstance(value["evidence_refs"], list) or not all(isinstance(ref, str) and ref in ids for ref in value["evidence_refs"]):
         raise ValueError("invalid statement")
+
+
+_SEMANTIC_STATUS = {
+    "constraints": {"ACTIVE", "RESOLVED"},
+    "unknowns": {"OPEN", "RESOLVED"},
+    "contradictions": {"OPEN", "ADJUDICATED"},
+    "decisions": {"ACTIVE", "SUPERSEDED"},
+}
+
+
+def _semantic_id(value: object) -> bool:
+    return isinstance(value, str) and bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", value))
+
+
+def _semantic_record(value: object, field: str, ids: set[str]) -> None:
+    if not isinstance(value, dict):
+        raise ValueError("invalid semantic record")
+    allowed = {"id", "text", "evidence_refs", "status"}
+    if field == "decisions":
+        allowed.add("superseded_by")
+    if set(value) - allowed or not {"id", "text", "evidence_refs", "status"} <= set(value):
+        raise ValueError("invalid semantic record")
+    if not _semantic_id(value["id"]) or value["status"] not in _SEMANTIC_STATUS[field]:
+        raise ValueError("invalid semantic record")
+    _statement({"text": value.get("text"), "evidence_refs": value.get("evidence_refs")}, ids)
+    if field == "decisions":
+        replacement = value.get("superseded_by")
+        if value["status"] == "SUPERSEDED" and not _semantic_id(replacement):
+            raise ValueError("superseded decisions require a replacement identity")
+        if value["status"] == "ACTIVE" and replacement is not None:
+            raise ValueError("active decisions cannot name a replacement")
+
+
+def _semantic_active(field: str, item: dict[str, object]) -> bool:
+    return item["status"] == ("OPEN" if field in {"unknowns", "contradictions"} else "ACTIVE")
+
+
+def _legacy_semantic_record(field: str, index: int, value: object) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != {"text", "evidence_refs"}:
+        raise ValueError("invalid legacy semantic record")
+    prefix = {"constraints": "C", "unknowns": "U", "contradictions": "X", "decisions": "D"}[field]
+    status = "OPEN" if field in {"unknowns", "contradictions"} else "ACTIVE"
+    return {"id": f"legacy-{prefix}-{index:04d}", "text": value["text"], "evidence_refs": value["evidence_refs"], "status": status}
+
+
+def _apply_semantic_operations(state: dict[str, object], operations: object) -> None:
+    if not isinstance(operations, list) or not operations or len(operations) > 64:
+        raise ValueError("semantic_operations must be a bounded non-empty list")
+    ids = {ref["id"] for ref in state["evidence_refs"]}
+    for operation in operations:
+        if not isinstance(operation, dict) or not isinstance(operation.get("op"), str) or operation.get("type") not in _SEMANTIC_FIELDS:
+            raise ValueError("invalid semantic transition")
+        op, field = operation["op"], operation["type"]
+        records = state[field]
+        by_id = {record["id"]: record for record in records}
+        if len(by_id) != len(records):
+            raise ValueError("duplicate semantic record id")
+        if op == "add":
+            if set(operation) != {"op", "type", "id", "text", "evidence_refs"} or not _semantic_id(operation.get("id")) or operation["id"] in by_id:
+                raise ValueError("invalid semantic add")
+            record = {"id": operation["id"], "text": operation["text"], "evidence_refs": operation["evidence_refs"], "status": "OPEN" if field in {"unknowns", "contradictions"} else "ACTIVE"}
+            _semantic_record(record, field, ids)
+            records.append(record)
+        elif op == "resolve":
+            if set(operation) != {"op", "type", "id"} or not _semantic_id(operation.get("id")) or operation["id"] not in by_id:
+                raise ValueError("invalid semantic resolve")
+            record = by_id[operation["id"]]
+            if field == "decisions" or not _semantic_active(field, record):
+                raise ValueError("illegal semantic resolve transition")
+            record["status"] = "ADJUDICATED" if field == "contradictions" else "RESOLVED"
+        elif op == "reopen":
+            if field != "unknowns" or set(operation) != {"op", "type", "id"} or not _semantic_id(operation.get("id")) or operation["id"] not in by_id:
+                raise ValueError("invalid semantic reopen")
+            record = by_id[operation["id"]]
+            if record["status"] != "RESOLVED":
+                raise ValueError("illegal semantic reopen transition")
+            record["status"] = "OPEN"
+        elif op == "adjudicate":
+            if field != "contradictions" or set(operation) != {"op", "type", "id"} or not _semantic_id(operation.get("id")) or operation["id"] not in by_id:
+                raise ValueError("invalid semantic adjudicate")
+            record = by_id[operation["id"]]
+            if record["status"] != "OPEN":
+                raise ValueError("illegal semantic adjudicate transition")
+            record["status"] = "ADJUDICATED"
+        elif op == "supersede":
+            if field != "decisions" or set(operation) != {"op", "type", "id", "text", "evidence_refs", "supersedes"} or not _semantic_id(operation.get("id")) or operation["id"] in by_id:
+                raise ValueError("invalid semantic supersede")
+            supersedes = operation["supersedes"]
+            if not isinstance(supersedes, list) or not supersedes or len(set(supersedes)) != len(supersedes) or not all(_semantic_id(item) and item in by_id for item in supersedes):
+                raise ValueError("invalid semantic supersede")
+            if any(by_id[item]["status"] != "ACTIVE" for item in supersedes):
+                raise ValueError("decision supersession requires active prior decisions")
+            record = {"id": operation["id"], "text": operation["text"], "evidence_refs": operation["evidence_refs"], "status": "ACTIVE"}
+            _semantic_record(record, field, ids)
+            records.append(record)
+            for prior_id in supersedes:
+                by_id[prior_id]["status"] = "SUPERSEDED"
+                by_id[prior_id]["superseded_by"] = operation["id"]
+        else:
+            raise ValueError("unsupported semantic transition")
 
 
 def _finding(value: object, ids: set[str]) -> None:
@@ -465,8 +584,8 @@ def _bounded_lines(value: object, field: str) -> None:
         raise ValueError(f"invalid {field}")
 
 
-def _artifact_ref(root: Path, value: object, *, require_target: bool = True, require_semantic_producer: bool = False) -> None:
-    if not isinstance(value, dict) or not {"id", "path", "summary"}.issubset(value) or set(value) - {"id", "path", "summary", "producer_role", "registered_by", "scope", "evidence_refs"}:
+def _artifact_ref(root: Path, value: object, *, require_target: bool = True, require_semantic_producer: bool = False, require_identity: bool = False) -> None:
+    if not isinstance(value, dict) or not {"id", "path", "summary"}.issubset(value) or set(value) - {"id", "path", "summary", "producer_role", "registered_by", "scope", "evidence_refs", "content_sha256"}:
         raise ValueError("invalid artifact reference")
     identifier, path, summary = value["id"], value["path"], value["summary"]
     if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", identifier):
@@ -500,6 +619,61 @@ def _artifact_ref(root: Path, value: object, *, require_target: bool = True, req
         raise ValueError("invalid artifact reference")
     if "evidence_refs" in value and (not isinstance(value["evidence_refs"], list) or len(value["evidence_refs"]) > 16 or not all(isinstance(ref, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", ref) for ref in value["evidence_refs"])):
         raise ValueError("invalid artifact reference")
+    identity = value.get("content_sha256")
+    if require_identity and identity is None:
+        raise ValueError("artifact reference requires content identity")
+    if identity is not None and (not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity)):
+        raise ValueError("invalid artifact content identity")
+
+
+def _artifact_freshness(root: Path, artifact: dict[str, object]) -> str:
+    """Compare an addressable historical pointer without invalidating its record."""
+    identity = artifact.get("content_sha256")
+    if identity is None:
+        return "LEGACY"
+    try:
+        target = _safe(root, str(artifact["path"]))
+    except ValueError:
+        return "MISSING"
+    if target.is_symlink() or not target.is_file():
+        return "MISSING"
+    return "FRESH" if _digest(target.read_bytes()) == identity else "STALE"
+
+
+def _surface_snapshot(root: Path) -> list[dict[str, object]]:
+    """Capture only Git-visible dirt present when a task begins.
+
+    It is a baseline, not an ownership claim.  Later unfamiliar changes are
+    deliberately surfaced as unknown rather than attributed to a model.
+    """
+    records: list[dict[str, object]] = []
+    for path in _changed_files(root):
+        try:
+            target = _safe(root, path)
+        except ValueError:
+            continue
+        content = target.read_bytes() if target.is_file() and not target.is_symlink() else None
+        records.append({"path": path, "content_sha256": _digest(content)})
+    return records
+
+
+def _surface_baseline(value: object, root: Path) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list) or len(value) > 512:
+        raise ValueError("invalid task_surface_baseline")
+    paths: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"path", "content_sha256"}:
+            raise ValueError("invalid task_surface_baseline")
+        _valid_relative(root, item.get("path"))
+        if item["path"] in paths or item["content_sha256"] is not None and (not isinstance(item["content_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", item["content_sha256"])):
+            raise ValueError("invalid task_surface_baseline")
+        paths.add(item["path"])
+
+
+def _path_in_scope(path: str, scopes: list[object]) -> bool:
+    return any(isinstance(scope, str) and (path == scope or path.startswith(f"{scope}/")) for scope in scopes)
 
 
 def _evidence_fresh(root: Path, ref: dict[str, object], registry: dict[str, dict[str, object]] | None = None) -> bool:
@@ -535,10 +709,19 @@ def _require_fresh_confirmed_items(root: Path, refs: list[dict[str, object]], it
         raise ValueError("new CONFIRMED investigation material requires fresh native CONFIRMED evidence")
 
 
+def _verification_result(value: object, registry: dict[str, dict[str, object]]) -> None:
+    required = {"id", "kind", "outcome", "summary", "source_refs", "observed_by"}
+    if not isinstance(value, dict) or set(value) != required or not _semantic_id(value.get("id")) or value.get("kind") not in {"test", "runtime"} or value.get("outcome") not in {"PASSED", "FAILED", "UNKNOWN"} or not isinstance(value.get("summary"), str) or not value["summary"].strip() or _bad_text(value["summary"]) or not isinstance(value.get("observed_by"), str) or not value["observed_by"].strip() or _bad_text(value["observed_by"]):
+        raise ValueError("invalid verification result")
+    source_refs = value["source_refs"]
+    if not isinstance(source_refs, list) or not source_refs or len(set(source_refs)) != len(source_refs) or not all(isinstance(source, str) and source in registry and registry[source]["kind"] in {"file", "git"} for source in source_refs):
+        raise ValueError("verification result requires native source_refs")
+
+
 def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -> dict[str, object]:
     _check_json(state)
-    # Schema v1 snapshots predate append-only finding collections, cursors,
-    # and bounded task-local durable-promotion bookkeeping.
+    # v1 used anonymous replaceable semantic statements.  Upgrade them in
+    # memory with deterministic IDs; the next successful mutation persists v3.
     if isinstance(state, dict) and state.get("schema_version") == 1:
         state.setdefault("investigation_findings", [])
         state.setdefault("investigation_snapshot", [])
@@ -552,9 +735,25 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
         for ref in state.get("evidence_refs", []):
             if isinstance(ref, dict) and ref.get("kind") in {"test", "runtime"} and "source_refs" not in ref:
                 ref["source_refs"] = []
+        for field in _SEMANTIC_FIELDS:
+            if isinstance(state.get(field), list):
+                state[field] = [_legacy_semantic_record(field, index + 1, item) for index, item in enumerate(state[field])]
+        state.setdefault("verification_evidence", [])
+        state.setdefault("verification_results", [])
+        state.setdefault("task_surface_baseline", None)
+        state["schema_version"] = _STATE_SCHEMA_VERSION
+    elif isinstance(state, dict) and state.get("schema_version") == 2:
+        state.setdefault("verification_evidence", [])
+        # v2 verification evidence was Controller-authored.  Retain its IDs
+        # diagnostically, but never reinterpret it as a trusted execution.
+        state.setdefault("verification_results", [])
+        state.setdefault("task_surface_baseline", None)
+        state["schema_version"] = _STATE_SCHEMA_VERSION
+    elif isinstance(state, dict) and state.get("schema_version") == _STATE_SCHEMA_VERSION:
+        state.setdefault("verification_results", [])
     if not isinstance(state, dict) or set(state) != _STATE_FIELDS:
         raise ValueError("invalid task state schema")
-    if state["schema_version"] != 1 or type(state["revision"]) is not int or state["revision"] < 1:
+    if state["schema_version"] != _STATE_SCHEMA_VERSION or type(state["revision"]) is not int or state["revision"] < 1:
         raise ValueError("invalid task state revision")
     if type(state["durable_promotion_count"]) is not int or not 0 <= state["durable_promotion_count"] <= _PROMOTION_BUDGET:
         raise ValueError("invalid durable_promotion_count")
@@ -599,8 +798,23 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
         for item in state[key]: _statement(item, ids)
     if any(not item["evidence_refs"] for item in state["supported_evidence"]):
         raise ValueError("supported evidence requires evidence refs")
-    if any(not item["evidence_refs"] for item in state["contradictions"]):
-        raise ValueError("contradictions require evidence refs")
+    for field in _SEMANTIC_FIELDS:
+        records = state[field]
+        if not isinstance(records, list):
+            raise ValueError(f"invalid {field}")
+        record_ids: set[str] = set()
+        for record in records:
+            _semantic_record(record, field, ids)
+            if record["id"] in record_ids:
+                raise ValueError("duplicate semantic record id")
+            record_ids.add(record["id"])
+        if field == "contradictions" and any(not item["evidence_refs"] for item in records):
+            raise ValueError("contradictions require evidence refs")
+        if field == "decisions":
+            for record in records:
+                replacement = record.get("superseded_by")
+                if replacement is not None and (replacement not in record_ids or replacement == record["id"]):
+                    raise ValueError("invalid decision supersession")
     if not isinstance(state["investigation_findings"], list): raise ValueError("invalid investigation_findings")
     for item in state["investigation_findings"]: _finding(item, ids)
     declared_confirmed_ids = {ref["id"] for ref in refs if ref["kind"] in {"file", "git"} and ref["confidence"] == "CONFIRMED"}
@@ -635,8 +849,32 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
     if not isinstance(boundary, dict) or set(boundary) != {"status", "includes", "excludes", "evidence_refs"} or boundary["status"] not in {"UNVERIFIED", "SUPPORTED", "CONFIRMED"} or not isinstance(boundary["includes"], list) or not isinstance(boundary["excludes"], list) or not isinstance(boundary["evidence_refs"], list): raise ValueError("invalid modification_boundary")
     for path in boundary["includes"] + boundary["excludes"]: _valid_relative(root, path)
     if not all(isinstance(ref, str) and ref in ids for ref in boundary["evidence_refs"]): raise ValueError("invalid boundary evidence refs")
-    for key in ("verification_target", "architectural_intent"):
-        if state[key] is not None and not isinstance(state[key], str): raise ValueError(f"invalid {key}")
+    target = state["verification_target"]
+    if target is not None and not isinstance(target, str):
+        if not isinstance(target, dict) or set(target) != {"description", "artifact_refs", "changed_surface"} or not isinstance(target["description"], str) or not target["description"].strip() or _bad_text(target["description"]) or len(target["description"]) > 2000 or not isinstance(target["artifact_refs"], list) or not isinstance(target["changed_surface"], list):
+            raise ValueError("invalid verification_target")
+        if not target["artifact_refs"] and not target["changed_surface"]:
+            raise ValueError("verification_target requires an artifact or changed-surface binding")
+        if len(set(target["artifact_refs"])) != len(target["artifact_refs"]) or not all(isinstance(item, str) and item in artifact_ids for item in target["artifact_refs"]):
+            raise ValueError("invalid verification target artifact refs")
+        if len(set(target["changed_surface"])) != len(target["changed_surface"]):
+            raise ValueError("invalid verification target changed surface")
+        for path in target["changed_surface"]: _valid_relative(root, path)
+    if state["architectural_intent"] is not None and not isinstance(state["architectural_intent"], str):
+        raise ValueError("invalid architectural_intent")
+    _surface_baseline(state["task_surface_baseline"], root)
+    verification_evidence = state["verification_evidence"]
+    if not isinstance(verification_evidence, list) or len(set(verification_evidence)) != len(verification_evidence) or not all(isinstance(ref, str) and ref in registry and registry[ref]["kind"] in {"test", "runtime"} for ref in verification_evidence):
+        raise ValueError("verification_evidence must name test/runtime evidence")
+    results = state["verification_results"]
+    if not isinstance(results, list) or len(results) > 64:
+        raise ValueError("invalid verification_results")
+    result_ids: set[str] = set()
+    for result in results:
+        _verification_result(result, registry)
+        if result["id"] in result_ids:
+            raise ValueError("duplicate verification result id")
+        result_ids.add(result["id"])
     return state
 
 
@@ -667,8 +905,8 @@ def _milestone_exists(root: Path, milestone: str) -> bool:
 
 def _blank_state(root: Path, goal: str, milestone: str | None) -> dict[str, object]:
     if milestone is not None and not _milestone_exists(root, milestone): raise ValueError("milestone is not linked by the top-level milestone index")
-    return {"schema_version": 1, "revision": 1, "task_id": str(uuid.uuid4()), "status": "ACTIVE", "goal": goal,
-            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "investigation_findings": [], "investigation_snapshot": [], "review_findings": [], "investigation_covered_through": 0, "review_handled_through": 0, "durable_promotion_count": 0, "active_work": [], "pending_results": [], "artifact_refs": [], "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "architectural_intent": None}
+    return {"schema_version": _STATE_SCHEMA_VERSION, "revision": 1, "task_id": str(uuid.uuid4()), "status": "ACTIVE", "goal": goal,
+            "current_milestone": milestone, "confirmed_facts": [], "supported_evidence": [], "unknowns": [], "contradictions": [], "constraints": [], "decisions": [], "investigation_findings": [], "investigation_snapshot": [], "review_findings": [], "investigation_covered_through": 0, "review_handled_through": 0, "durable_promotion_count": 0, "active_work": [], "pending_results": [], "artifact_refs": [], "relevant_files": [], "relevant_symbols": [], "modification_boundary": {"status": "UNVERIFIED", "includes": [], "excludes": [], "evidence_refs": []}, "changed_surface": [], "evidence_refs": [], "verification_target": None, "verification_evidence": [], "verification_results": [], "task_surface_baseline": _surface_snapshot(root), "architectural_intent": None}
 
 
 def _read_input(value: str | None) -> dict[str, object]:
@@ -703,7 +941,7 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
         "schema_version", "revision", "task_id", "status", "goal", "current_milestone",
         "durable_promotion_count", "artifact_refs", "investigation_findings",
         "investigation_snapshot", "review_findings", "investigation_covered_through",
-        "review_handled_through",
+        "review_handled_through", "verification_evidence", "verification_results", "task_surface_baseline",
     }
     if set(partial) - allowed: raise ValueError("task-start input has forbidden fields")
     with _lock(root):
@@ -711,6 +949,17 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
         path = _state_path(root)
         if path.is_file() and _load_state(root)["status"] == "ACTIVE": raise ValueError("an ACTIVE task already exists")
         state = _blank_state(root, goal, milestone); state.update(partial)
+        # Bootstrap remains compatible with the original concise statement
+        # shape, but it is immediately materialized as identified v2 records.
+        for field in _SEMANTIC_FIELDS:
+            if isinstance(state[field], list):
+                state[field] = [
+                    _legacy_semantic_record(field, index + 1, item) if isinstance(item, dict) and set(item) == {"text", "evidence_refs"} else item
+                    for index, item in enumerate(state[field])
+                ]
+            initial_status = "OPEN" if field in {"unknowns", "contradictions"} else "ACTIVE"
+            if any(not isinstance(item, dict) or item.get("status") != initial_status or "superseded_by" in item for item in state[field]):
+                raise ValueError("task-start semantic records must be new active additions")
         if any(item.get("supersedes") for item in state["investigation_snapshot"] if isinstance(item, dict)):
             raise ValueError("initial snapshot cannot supersede prior entries")
         _require_fresh_confirmed_items(root, state["evidence_refs"], state["investigation_findings"] + state["investigation_snapshot"])
@@ -728,9 +977,12 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
             raise ValueError("append-only findings and snapshots are not controller-writable")
         raise ValueError("role is not allowed to update these fields")
     if not partial: raise ValueError("role is not allowed to update these fields")
+    semantic_operations = partial.pop("semantic_operations", None)
     with _lock(root):
         state = _load_state(root, active=True)
         if state["revision"] != base_revision: raise ValueError("task revision conflict")
+        if state["verification_target"] is not None and "verification_target" in partial and partial["verification_target"] != state["verification_target"]:
+            raise ValueError("verification target cannot be changed once set")
         new_investigation: list[dict[str, object]] = []
         # Raw provenance is immutable for every role, including Controller.
         # Inputs are additions rather than a replacement of the stored prefix.
@@ -764,11 +1016,17 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
                 raise ValueError("evidence_refs must be append-only additions with new immutable IDs")
             # State validation checks every complete entry after this merge.
             partial = partial | {"evidence_refs": state["evidence_refs"] + additions}
-        state.update(partial); state["revision"] = base_revision + 1
+        state.update(partial)
+        if semantic_operations is not None:
+            _apply_semantic_operations(state, semantic_operations)
+        state["revision"] = base_revision + 1
         new_snapshot = state["investigation_snapshot"] if "investigation_snapshot" in partial else []
         _require_fresh_confirmed_items(root, state["evidence_refs"], new_investigation + new_snapshot)
         _write_state(root, state, enforce_fresh=bool({"evidence_refs", "confirmed_facts"} & set(partial)))
-    return _controller_ack(state, sorted(partial))
+    changed = sorted(partial)
+    if semantic_operations is not None:
+        changed.append("semantic_operations")
+    return _controller_ack(state, changed)
 
 
 def task_show(root: Path) -> dict[str, object]:
@@ -776,21 +1034,21 @@ def task_show(root: Path) -> dict[str, object]:
     return {"ok": True, "state": _load_state(root)}
 
 
-def _controller_packet(state: dict[str, object]) -> dict[str, object]:
+def _controller_packet(state: dict[str, object], root: Path | None = None) -> dict[str, object]:
     """Return control metadata only; raw evidence remains task-show-only."""
-    statements = lambda items: [item["text"] for item in items]
+    statements = lambda field: [item["text"] for item in state[field] if _semantic_active(field, item)]
     boundary = state["modification_boundary"]
-    return {
+    packet = {
         "ok": True,
         "schema_version": state["schema_version"],
         "role": "controller",
         "Task": {"id": state["task_id"], "goal": state["goal"], "status": state["status"], "revision": state["revision"], "milestone": state["current_milestone"]},
         "Active Work": state["active_work"],
         "Pending Results": state["pending_results"],
-        "Unresolved Questions": statements(state["unknowns"]),
-        "Artifact Refs": state["artifact_refs"],
-        "Accepted Constraints": statements(state["constraints"]),
-        "Accepted Decisions": statements(state["decisions"]),
+        "Unresolved Questions": statements("unknowns"),
+        "Artifact Refs": [dict(item) | ({"freshness": _artifact_freshness(root, item)} if root is not None else {}) for item in state["artifact_refs"]],
+        "Accepted Constraints": statements("constraints"),
+        "Accepted Decisions": statements("decisions"),
         "Modification Boundary": {
             "status": boundary["status"],
             "includes": boundary["includes"],
@@ -799,6 +1057,20 @@ def _controller_packet(state: dict[str, object]) -> dict[str, object]:
         },
         "Verification Target": state["verification_target"],
     }
+    if root is not None:
+        registry = {ref["id"]: ref for ref in state["evidence_refs"]}
+        stale = {}
+        for field in _SEMANTIC_FIELDS:
+            entries = [
+                {"id": item["id"], "effective_state": item["effective_state"]}
+                for item in _effective_semantic_records(root, field, state[field], registry)
+                if "effective_state" in item
+            ]
+            if entries:
+                stale[field] = entries
+        if stale:
+            packet["Semantic Freshness"] = stale
+    return packet
 
 
 def _controller_ack(state: dict[str, object], changed: list[str], *, include_packet: bool = False) -> dict[str, object]:
@@ -817,7 +1089,7 @@ def _controller_ack(state: dict[str, object], changed: list[str], *, include_pac
 
 def task_status(root: Path) -> dict[str, object]:
     root = _repo_root(root)
-    return _controller_packet(_load_state(root))
+    return _controller_packet(_load_state(root), root)
 
 
 def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer_role: str | None = None, registered_by: str = "controller", scope: str | None = None, evidence_refs: list[str] | None = None) -> dict[str, object]:
@@ -835,10 +1107,111 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
             raise ValueError("task revision conflict")
         if artifact_id in {item["id"] for item in state["artifact_refs"]}:
             raise ValueError("artifact reference id already exists")
+        target = _safe(root, path)
+        if target.is_symlink() or not target.is_file():
+            raise ValueError("artifact path must name an existing regular file")
+        artifact["content_sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+        _artifact_ref(root, artifact, require_semantic_producer=True, require_identity=True)
         state["artifact_refs"].append(artifact)
         state["revision"] = base_revision + 1
         _write_state(root, state, enforce_fresh=False)
     return _controller_ack(state, ["artifact_refs"])
+
+
+def _source_path(ref: dict[str, object]) -> str | None:
+    match = re.fullmatch(r"(?:file|git):([^#]+)#[0-9a-fA-F]{40,64}", str(ref.get("locator")))
+    return match.group(1) if match else None
+
+
+def _verification_bindings(root: Path, state: dict[str, object]) -> set[str]:
+    target = state["verification_target"]
+    if target is None:
+        return set()
+    artifact_by_id = {artifact["id"]: artifact for artifact in state["artifact_refs"]}
+    if isinstance(target, str):
+        paths = set(state["changed_surface"])
+    else:
+        paths = set(target["changed_surface"])
+        for artifact_id in target["artifact_refs"]:
+            artifact = artifact_by_id[artifact_id]
+            if _artifact_freshness(root, artifact) != "FRESH":
+                raise ValueError("verification target artifact is no longer current")
+            paths.add(artifact["path"])
+    if not paths:
+        raise ValueError("verification target has no current artifact or changed-surface binding")
+    return paths
+
+
+def _task_attributable_surface(root: Path, state: dict[str, object], bindings: set[str]) -> set[str]:
+    """Return current task surface or fail closed when provenance is ambiguous."""
+    baseline = state["task_surface_baseline"]
+    if baseline is None:
+        raise ValueError("task surface attribution is unavailable; reconcile before close")
+    before = {item["path"]: item["content_sha256"] for item in baseline}
+    current = {item["path"]: item["content_sha256"] for item in _surface_snapshot(root)}
+    declared = set(state["changed_surface"]) | bindings
+    boundary = state["modification_boundary"]
+    attributable = set(declared)
+    unknown: list[str] = []
+    for path, identity in current.items():
+        if before.get(path) == identity:
+            continue
+        if path in declared or _path_in_scope(path, boundary["includes"]):
+            attributable.add(path)
+        else:
+            unknown.append(path)
+    if unknown:
+        raise ValueError(f"task surface attribution is unknown; reconcile: {','.join(sorted(unknown))}")
+    return attributable
+
+
+def task_record_verification(root: Path, base_revision: int, result_id: str, kind: str, outcome: str, summary: str, source_refs: list[str], *, observed_by: str) -> dict[str, object]:
+    """Adapter-only ingress for an observed execution result.
+
+    This function intentionally has no CLI command and is not part of normal
+    task-update input.  Calling code is the trusted runtime boundary; Core
+    validates the resulting contract and never infers success from prose.
+    """
+    root = _repo_root(root)
+    proposed = {"id": result_id, "kind": kind, "outcome": outcome, "summary": summary, "source_refs": source_refs, "observed_by": observed_by}
+    with _lock(root):
+        state = _load_state(root, active=True)
+        if state["revision"] != base_revision:
+            raise ValueError("task revision conflict")
+        registry = {ref["id"]: ref for ref in state["evidence_refs"]}
+        _verification_result(proposed, registry)
+        if result_id in {result["id"] for result in state["verification_results"]}:
+            raise ValueError("verification result id already exists")
+        if not all(_evidence_fresh(root, registry[source], registry) for source in source_refs):
+            raise ValueError("verification result requires fresh native source_refs")
+        state["verification_results"].append(proposed)
+        state["revision"] = base_revision + 1
+        _write_state(root, state, enforce_fresh=False)
+    return _controller_ack(state, ["verification_results"])
+
+
+def _require_current_verification(root: Path, state: dict[str, object]) -> None:
+    if state["verification_target"] is None:
+        return
+    bindings = _verification_bindings(root, state)
+    required_surface = _task_attributable_surface(root, state, bindings)
+    registry = {ref["id"]: ref for ref in state["evidence_refs"]}
+    results = state["verification_results"]
+    if not results:
+        raise ValueError("verification target requires trusted successful verification result")
+    covered: set[str] = set()
+    for result in results:
+        if result["outcome"] != "PASSED":
+            continue
+        if not all(_evidence_fresh(root, registry[source], registry) for source in result["source_refs"]):
+            continue
+        for source_id in result["source_refs"]:
+            source = registry[source_id]
+            path = _source_path(source)
+            if path is not None:
+                covered.add(path)
+    if not required_surface <= covered:
+        raise ValueError("trusted verification does not cover the current task surface")
 
 
 def task_close(root: Path, base_revision: int, *, expected_task_id: str | None = None) -> dict[str, object]:
@@ -846,6 +1219,7 @@ def task_close(root: Path, base_revision: int, *, expected_task_id: str | None =
     with _lock(root):
         state = _load_state(root, active=True)
         if state["revision"] != base_revision or (expected_task_id is not None and state["task_id"] != expected_task_id): raise ValueError("task revision conflict")
+        _require_current_verification(root, state)
         state["status"] = "DONE"; state["revision"] = base_revision + 1; _write_state(root, state, enforce_fresh=False)
     return _controller_ack(state, ["status"])
 
@@ -1280,15 +1654,39 @@ def _effective_review_findings(root: Path, items: list[dict[str, object]], regis
     return result
 
 
+def _effective_semantic_records(root: Path, field: str, records: list[dict[str, object]], registry: dict[str, dict[str, object]]) -> list[dict[str, object]]:
+    """Project live semantic records without rewriting their historical state."""
+    result: list[dict[str, object]] = []
+    for record in records:
+        if not _semantic_active(field, record):
+            continue
+        projected = dict(record)
+        stale = [
+            ref for ref in record["evidence_refs"]
+            if ref in registry
+            and registry[ref]["kind"] in {"file", "git", "memory", "test", "runtime"}
+            and not _evidence_fresh(root, registry[ref], registry)
+        ]
+        if stale:
+            projected["stale_evidence_refs"] = stale
+            if field == "constraints":
+                projected["effective_state"] = "STALE_PROVENANCE"
+            elif field in {"decisions", "contradictions"}:
+                projected["effective_state"] = "REVALIDATION_REQUIRED"
+        result.append(projected)
+    return result
+
+
 def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, object]:
     if role == "controller":
-        return _controller_packet(state)
+        return _controller_packet(state, root)
     milestone = _milestone_slice(root, state["current_milestone"])
     memory = _empty_memory_context()
     registry = {ref["id"]: ref for ref in state["evidence_refs"]}
     effective_raw = _effective_findings(root, state["investigation_findings"], registry)
     effective_snapshot = _effective_snapshot(root, state["investigation_snapshot"], effective_raw, registry)
     effective_reviews = _effective_review_findings(root, state["review_findings"], registry)
+    semantic = {field: _effective_semantic_records(root, field, state[field], registry) for field in _SEMANTIC_FIELDS}
     fresh_ids = {ref["id"] for ref in state["evidence_refs"] if ref["kind"] in {"file", "git"} and ref["confidence"] == "CONFIRMED" and _evidence_fresh(root, ref)}
     confirmed = [item for item in state["confirmed_facts"] if set(item["evidence_refs"]) & fresh_ids]
     demoted = [{"text": f"stale confirmed fact: {item['text']}", "evidence_refs": item["evidence_refs"]} for item in state["confirmed_facts"] if item not in confirmed]
@@ -1329,23 +1727,23 @@ def _state_pack(root: Path, state: dict[str, object], role: str) -> dict[str, ob
         return meta | payload | {"Evidence refs": refs_for(effective_snapshot, suffix)}
     if role == "reasoning-specialist":
         facts, supported = confirmed + memory["confirmed"], supported + memory["supported"]
-        constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"]
-        payload = {"Goal": state["goal"], "Confirmed Facts": facts, "Supported Evidence": supported, "Hard Constraints": constraints, "Decisions": decisions, "Unknowns": state["unknowns"] + demoted + demoted_supported + memory["unknowns"], "Contradictions": state["contradictions"], "Investigation Readiness": readiness, "Review Readiness": review_status, "Milestone Scope": milestone.get("Scope"), "Milestone Decisions": milestone.get("Decisions")}
+        constraints, decisions = semantic["constraints"] + memory["constraints"], semantic["decisions"] + memory["decisions"]
+        payload = {"Goal": state["goal"], "Confirmed Facts": facts, "Supported Evidence": supported, "Hard Constraints": constraints, "Decisions": decisions, "Unknowns": semantic["unknowns"] + demoted + demoted_supported + memory["unknowns"], "Contradictions": semantic["contradictions"], "Investigation Readiness": readiness, "Review Readiness": review_status, "Milestone Scope": milestone.get("Scope"), "Milestone Decisions": milestone.get("Decisions")}
         return meta | payload | {"Evidence refs": refs_for(facts, supported, constraints, decisions, payload["Unknowns"], payload["Contradictions"])}
     if role == "investigator":
-        unknowns = state["unknowns"] + demoted + demoted_supported + memory["unknowns"]
-        constraints = state["constraints"] + memory["constraints"]
-        payload = {"Goal": state["goal"], "Investigation Target": state["verification_target"] or state["goal"], "Investigation Snapshot": effective_snapshot, "Relevant Files": list(dict.fromkeys(state["relevant_files"] + memory["files"])), "Relevant Symbols": list(dict.fromkeys(state["relevant_symbols"] + memory["symbols"])), "Hard Constraints": constraints, "Unknowns": unknowns, "Contradictions": state["contradictions"], "Verification Target": state["verification_target"] or milestone.get("Verification"), "Milestone Verification": milestone.get("Verification"), "Investigation Readiness": readiness}
-        return meta | payload | {"Evidence refs": refs_for(constraints, unknowns, state["contradictions"], effective_snapshot)}
+        unknowns = semantic["unknowns"] + demoted + demoted_supported + memory["unknowns"]
+        constraints = semantic["constraints"] + memory["constraints"]
+        payload = {"Goal": state["goal"], "Investigation Target": state["verification_target"] or state["goal"], "Investigation Snapshot": effective_snapshot, "Relevant Files": list(dict.fromkeys(state["relevant_files"] + memory["files"])), "Relevant Symbols": list(dict.fromkeys(state["relevant_symbols"] + memory["symbols"])), "Hard Constraints": constraints, "Unknowns": unknowns, "Contradictions": semantic["contradictions"], "Verification Target": state["verification_target"] or milestone.get("Verification"), "Milestone Verification": milestone.get("Verification"), "Investigation Readiness": readiness}
+        return meta | payload | {"Evidence refs": refs_for(constraints, unknowns, semantic["contradictions"], effective_snapshot)}
     if role == "implementer":
         facts, supported = confirmed + memory["confirmed"], supported + memory["supported"]
-        constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"]
+        constraints, decisions = semantic["constraints"] + memory["constraints"], semantic["decisions"] + memory["decisions"]
         payload = {"Goal": state["goal"], "Confirmed Facts": facts, "Supported Evidence": supported, "Hard Constraints": constraints, "Decisions": decisions, "Relevant Files": list(dict.fromkeys(state["relevant_files"] + memory["files"])), "Modification Boundary": state["modification_boundary"], "Required Verification": state["verification_target"], "Milestone Scope": milestone.get("Scope"), "Implementation Constraints": milestone.get("Decisions")}
         return meta | payload | {"Evidence refs": refs_for(facts, supported, constraints, decisions, state["modification_boundary"])}
     if role == "reviewer":
         changed = list(dict.fromkeys(state["changed_surface"] + _changed_files(root)))
         intent = state["architectural_intent"] or milestone.get("Scope")
-        constraints, decisions = state["constraints"] + memory["constraints"], state["decisions"] + memory["decisions"] + ([milestone["Decisions"]] if "Decisions" in milestone else [])
+        constraints, decisions = semantic["constraints"] + memory["constraints"], semantic["decisions"] + memory["decisions"] + ([milestone["Decisions"]] if "Decisions" in milestone else [])
         payload = {"Review Goal": state["goal"], "Architectural Intent": intent, "Hard Constraints": constraints, "Durable Decisions": decisions, "Changed Surface": changed}
         relevant = refs_for(constraints, decisions)
         def touches(ref: dict[str, object]) -> bool:

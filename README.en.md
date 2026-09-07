@@ -1,21 +1,19 @@
 # Thaliris Core
 
-Thaliris is a small, Git-native context-routing and bounded-retention core for
-agent workflows. It decides which information belongs in each semantic role,
-what remains retained without automatic propagation, and which evidence is
-fresh enough to support a claim.
+This concise English overview accompanies [README.md](README.md). Thaliris is a Git-native,
+runtime-neutral information-topology core: retained history and provenance are
+addressable but are not automatically injected into role context.
 
-The Core provides bounded task state and Controller packets, semantic role
-projections, evidence freshness, external artifact pointers, project memory,
-milestones, explicit durable promotion, and atomic CAS-backed persistence and
-recovery.
+The public contract is documented in [README.md](README.md): explicit durable
+memory recall; stable semantic-record IDs and validated transitions; append-only
+raw findings; provenance-bound curator snapshots; recorded-versus-effective
+evidence freshness; content-identified artifacts; and adapter-attested
+verification results that Core checks against the current task surface.
 
-Working set is not handoff set. Retention is not propagation. Normal packets do
-not include raw findings, review bodies, evidence registries, logs, transcripts,
-source dumps, or artifact contents.
+Core does not infer successful execution from model-authored prose or command
+strings, does not execute shell commands, and does not automatically compact or
+inject memory. The adapter produces trusted execution observations; Core checks
+their outcome, native source freshness, and coverage.
 
-Core is runtime-neutral. Runtime-specific adapters map these projections to
-concrete runtimes. The Codex adapter is maintained under `adapter/codex`, and
-benchmark assets under `test/abcd-benchmark`.
-
-See [DESIGN.md](DESIGN.md) for the topology and persistence invariants.
+The README also contains the design-evidence table, primary-source references,
+and explicit limits on the research claims made for Thaliris.

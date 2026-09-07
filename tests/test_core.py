@@ -321,11 +321,11 @@ def test_legacy_anonymous_semantic_records_upgrade_without_loss(tmp_path: Path) 
     path.write_text(json.dumps(legacy), encoding="utf-8")
 
     loaded = core.task_show(root)["state"]
-    assert loaded["schema_version"] == 4
+    assert loaded["schema_version"] == 5
     assert loaded["constraints"] == [{"id": "legacy-C-0001", "text": "keep API", "evidence_refs": [], "status": "ACTIVE"}]
     assert core.migrate(root)["changed"]
     persisted = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["schema_version"] == 4
+    assert persisted["schema_version"] == 5
     assert persisted["constraints"] == loaded["constraints"]
 
 
@@ -350,7 +350,7 @@ def test_v2_verification_claims_remain_readable_but_are_not_trusted_results(tmp_
     path.write_text(json.dumps(legacy), encoding="utf-8")
 
     loaded = core.task_show(root)["state"]
-    assert loaded["schema_version"] == 4
+    assert loaded["schema_version"] == 5
     assert loaded["verification_evidence"] == ["claim"]
     assert loaded["verification_results"] == []
     assert loaded["task_surface_baseline"] is None
@@ -506,6 +506,42 @@ def test_new_task_scoped_git_mutation_requires_reverification(tmp_path: Path) ->
     (root / "src/b.py").write_text("new task change", encoding="utf-8")
     with pytest.raises(ValueError, match="does not cover"):
         core.task_close(root, result["revision"])
+
+
+def test_v5_verification_binds_deleted_surface_without_inventing_file_evidence(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    removed = root / "removed.py"
+    removed.write_text("before", encoding="utf-8")
+    commit(root)
+    started = core.task_start(root, "remove file", None, input_file(root.parent, {
+        "changed_surface": ["removed.py"],
+        "modification_boundary": {"status": "UNVERIFIED", "includes": ["removed.py"], "excludes": [], "evidence_refs": []},
+        "verification_target": {"description": "verify removal", "artifact_refs": [], "changed_surface": ["removed.py"]},
+    }, "remove-start.json"))
+    removed.unlink()
+    recorded = core.task_record_verification(root, started["revision"], "remove-pass", "test", "PASSED", "observed removal", observed_by="runtime", source_paths=["removed.py"])
+    result = core.task_show(root)["state"]["verification_results"][0]
+    assert result["source_refs"] == []
+    assert result["covered_surface"] == [{"path": "removed.py", "state": "DELETED", "identity": None, "mode": None, "git_status": " D"}]
+    assert core.task_close(root, recorded["revision"])["status"] == "DONE"
+
+
+def test_v4_verification_result_migrates_without_invented_surface(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    configured, evidence = _verification_task(root, ["subject.py"])
+    recorded = core.task_record_verification(root, configured["revision"], "old-result", "test", "PASSED", "old result", [evidence[0]["id"]], observed_by="runtime")
+    path = root / ".context/state.json"
+    legacy = json.loads(path.read_text(encoding="utf-8"))
+    legacy["schema_version"] = 4
+    legacy["verification_results"][0].pop("covered_surface")
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+    loaded = core.task_show(root)["state"]
+    assert loaded["schema_version"] == 5
+    assert "covered_surface" not in loaded["verification_results"][0]
+    with pytest.raises(ValueError, match="does not cover"):
+        core.task_close(root, recorded["revision"])
 
 
 def test_unknown_post_start_workspace_mutation_fails_closed_but_baseline_does_not(tmp_path: Path) -> None:

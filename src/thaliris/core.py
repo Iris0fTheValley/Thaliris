@@ -364,7 +364,7 @@ def stale(root: Path) -> dict[str, object]:
 # bookkeeping, but task-promote includes it with durable writes in its existing
 # backup mutation.
 _STATE_NAME = ".context/state.json"
-_STATE_SCHEMA_VERSION = 4
+_STATE_SCHEMA_VERSION = 5
 _STATE_FIELDS = {
     "schema_version", "revision", "task_id", "status", "goal", "current_milestone",
     "confirmed_facts", "supported_evidence", "unknowns", "contradictions", "constraints",
@@ -726,11 +726,20 @@ def _require_fresh_confirmed_items(root: Path, refs: list[dict[str, object]], it
 
 def _verification_result(value: object, registry: dict[str, dict[str, object]]) -> None:
     required = {"id", "kind", "outcome", "summary", "source_refs", "observed_by", "target_fingerprint", "observed_at_revision"}
-    if not isinstance(value, dict) or set(value) != required or not _semantic_id(value.get("id")) or value.get("kind") not in {"test", "runtime"} or value.get("outcome") not in {"PASSED", "FAILED", "UNKNOWN"} or not isinstance(value.get("summary"), str) or not value["summary"].strip() or _bad_text(value["summary"]) or not isinstance(value.get("observed_by"), str) or not value["observed_by"].strip() or _bad_text(value["observed_by"]):
+    permitted = required | {"covered_surface"}
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - permitted or not _semantic_id(value.get("id")) or value.get("kind") not in {"test", "runtime"} or value.get("outcome") not in {"PASSED", "FAILED", "UNKNOWN"} or not isinstance(value.get("summary"), str) or not value["summary"].strip() or _bad_text(value["summary"]) or not isinstance(value.get("observed_by"), str) or not value["observed_by"].strip() or _bad_text(value["observed_by"]):
         raise ValueError("invalid verification result")
     source_refs = value["source_refs"]
-    if not isinstance(source_refs, list) or not source_refs or len(set(source_refs)) != len(source_refs) or not all(isinstance(source, str) and source in registry and registry[source]["kind"] in {"file", "git"} for source in source_refs):
+    if not isinstance(source_refs, list) or len(set(source_refs)) != len(source_refs) or not all(isinstance(source, str) and source in registry and registry[source]["kind"] in {"file", "git"} for source in source_refs):
         raise ValueError("verification result requires native source_refs")
+    covered_surface = value.get("covered_surface")
+    if covered_surface is None:
+        # v4 observations are retained but never retroactively assigned a
+        # deletion/link/special-path identity they did not actually observe.
+        if not source_refs:
+            raise ValueError("verification result requires native source_refs")
+    else:
+        _surface_baseline(covered_surface, Path("."))
     fingerprint = value["target_fingerprint"]
     if fingerprint is not None and (not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)):
         raise ValueError("invalid verification target fingerprint")
@@ -746,7 +755,7 @@ def _target_fingerprint(target: object) -> str:
 def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -> dict[str, object]:
     _check_json(state)
     # v1 used anonymous replaceable semantic statements.  Upgrade them in
-    # memory with deterministic IDs; the next successful mutation persists v4.
+    # memory with deterministic IDs; the next successful mutation persists v5.
     if isinstance(state, dict) and state.get("schema_version") == 1:
         state.setdefault("investigation_findings", [])
         state.setdefault("investigation_snapshot", [])
@@ -788,6 +797,12 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
             if isinstance(result, dict):
                 result.setdefault("target_fingerprint", None)
                 result.setdefault("observed_at_revision", None)
+        state["schema_version"] = _STATE_SCHEMA_VERSION
+    elif isinstance(state, dict) and state.get("schema_version") == 4:
+        # v4 had no surface identity in a verification result.  Keep results
+        # readable, but deliberately omit covered_surface rather than guessing
+        # that an old regular-file observation covered a deleted/link surface.
+        state.setdefault("verification_results", [])
         state["schema_version"] = _STATE_SCHEMA_VERSION
     elif isinstance(state, dict) and state.get("schema_version") == _STATE_SCHEMA_VERSION:
         state.setdefault("verification_results", [])
@@ -1269,6 +1284,12 @@ def task_verification_requirements(root: Path) -> dict[str, object]:
         return {"task_id": state["task_id"], "revision": state["revision"], "target_fingerprint": _target_fingerprint(target), "paths": sorted(required)}
 
 
+def _verification_surface(root: Path, paths: set[str]) -> list[dict[str, object]]:
+    """Freeze Core's current task-surface identity without adapter-supplied hashes."""
+    current = {item["path"]: item for item in _surface_snapshot(root)}
+    return [current.get(path, _surface_identity(root, path, "  ")) for path in sorted(paths)]
+
+
 def _native_verification_sources(root: Path, state: dict[str, object], paths: list[str]) -> list[str]:
     if not isinstance(paths, list) or not paths or len(set(paths)) != len(paths):
         raise ValueError("verification source paths must be a non-empty unique list")
@@ -1277,8 +1298,10 @@ def _native_verification_sources(root: Path, state: dict[str, object], paths: li
     for path in paths:
         _valid_relative(root, path)
         target = _safe(root, path)
+        # Non-regular Git-visible paths are bound by covered_surface.  The
+        # Core, not a runtime adapter, computes both identities.
         if target.is_symlink() or not target.is_file():
-            raise ValueError("verification source path must be a current regular file")
+            continue
         digest = hashlib.sha256(target.read_bytes()).hexdigest()
         locator = f"file:{path}#{digest}"
         existing = next((ref["id"] for ref in registry.values() if ref["kind"] == "file" and ref["locator"] == locator), None)
@@ -1311,6 +1334,7 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
         target = state["verification_target"]
         if target is None:
             raise ValueError("verification target is not configured")
+        required_surface = _task_attributable_surface(root, state, _verification_bindings(root, state))
         if source_paths is not None:
             if source_refs is not None:
                 raise ValueError("provide verification source refs or source paths, not both")
@@ -1318,7 +1342,11 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
         if source_refs is None:
             raise ValueError("verification result requires source refs")
         registry = {ref["id"]: ref for ref in state["evidence_refs"]}
-        proposed = {"id": result_id, "kind": kind, "outcome": outcome, "summary": summary, "source_refs": source_refs, "observed_by": observed_by, "target_fingerprint": _target_fingerprint(target), "observed_at_revision": base_revision}
+        if source_paths is not None:
+            covered_paths = required_surface
+        else:
+            covered_paths = {path for source in source_refs for path in [_source_path(registry.get(source, {}))] if path in required_surface}
+        proposed = {"id": result_id, "kind": kind, "outcome": outcome, "summary": summary, "source_refs": source_refs, "observed_by": observed_by, "target_fingerprint": _target_fingerprint(target), "observed_at_revision": base_revision, "covered_surface": _verification_surface(root, covered_paths)}
         _verification_result(proposed, registry)
         if result_id in {result["id"] for result in state["verification_results"]}:
             raise ValueError("verification result id already exists")
@@ -1339,6 +1367,7 @@ def _require_current_verification(root: Path, state: dict[str, object]) -> None:
     results = state["verification_results"]
     if not results:
         raise ValueError("verification target requires trusted successful verification result")
+    current_surface = {item["path"]: item for item in _verification_surface(root, required_surface)}
     covered: set[str] = set()
     target_fingerprint = _target_fingerprint(state["verification_target"])
     for result in results:
@@ -1348,11 +1377,12 @@ def _require_current_verification(root: Path, state: dict[str, object]) -> None:
             continue
         if not all(_evidence_fresh(root, registry[source], registry) for source in result["source_refs"]):
             continue
-        for source_id in result["source_refs"]:
-            source = registry[source_id]
-            path = _source_path(source)
-            if path is not None:
-                covered.add(path)
+        observed_surface = result.get("covered_surface")
+        if not isinstance(observed_surface, list):
+            continue
+        for item in observed_surface:
+            if isinstance(item, dict) and item.get("path") in current_surface and item == current_surface[item["path"]]:
+                covered.add(item["path"])
     if not required_surface <= covered:
         raise ValueError("trusted verification does not cover the current task surface")
 

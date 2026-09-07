@@ -1349,7 +1349,7 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
         covered_surface = _verification_surface(root, covered_paths)
         if any(item["state"] in {"SPECIAL", "UNSAFE", "LEGACY"} for item in covered_surface):
             # Git reported the path, but Core has no stable native content
-            # identity for this shape.  Keep it visible and require explicit
+            # identity for this shape. Keep it visible and require explicit
             # reconciliation instead of pretending a PASS bound it.
             raise ValueError("verification surface contains an unsupported special path; reconcile before recording")
         proposed = {"id": result_id, "kind": kind, "outcome": outcome, "summary": summary, "source_refs": source_refs, "observed_by": observed_by, "target_fingerprint": _target_fingerprint(target), "observed_at_revision": base_revision, "covered_surface": covered_surface}

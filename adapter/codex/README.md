@@ -32,8 +32,11 @@ compression.
 
 Core v5 distinguishes an ordinary model-authored test report from an observed
 execution result and binds a trusted result to the target and current Core
-surface identity. An allowed root `spawn_agent(fork_turns="none")` authorizes
-the next matching `SubagentStart`; only that managed start followed by its
+surface identity. An allowed root `spawn_agent(fork_turns="none")` for a
+supported Thaliris profile creates one bounded pending authorization scoped to
+the active task, semantic role, and session hash. Only a matching
+`SubagentStart` may consume it; unknown or mismatched starts remain
+observations and receive no projection. Only that managed start followed by its
 matching `SubagentStop` is the lifecycle condition for acceptance and
 `task-close`. PostToolUse records dispatch observation only. Stop proves
 lifecycle completion, not work correctness. Managed root children are serial
@@ -64,3 +67,9 @@ status availability separately. A configured hook file is not proof that the
 current Codex session loaded or trusted it. Historical compatible observations
 do not prove current-session readiness, which remains `UNKNOWN` until a
 matching hook-spec and adapter protocol are observed in that session.
+
+In the recorded Codex CLI 0.153.4 protocol-3 probe, a requested fresh child did
+not report the Core-only projection sentinel and no adapter hook observation was
+written. That invocation is therefore `NOT_OBSERVED`, not evidence that
+SubagentStart projection delivery is active. See
+[`docs/codex-native-probe-20260908.md`](../../docs/codex-native-probe-20260908.md).

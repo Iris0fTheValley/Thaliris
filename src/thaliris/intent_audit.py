@@ -21,7 +21,7 @@ from . import core
 
 HOOK_COMMAND_PREFIX = "context audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
-CODEX_ADAPTER_PROTOCOL_VERSION = 2
+CODEX_ADAPTER_PROTOCOL_VERSION = 3
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed intent-audit hooks"
 AUDIT_INTERVAL = 5
 MAX_AUDIT_RESULTS = 32
@@ -423,8 +423,14 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
         if event == "SessionStart":
             _record_session_start(root, payload)
             return ""
-        if event == "UserPromptSubmit" and _consume_expected_continuation(root, payload):
-            return ""
+        if event == "UserPromptSubmit":
+            # A pending dispatch has meaning only in the root turn that
+            # authorized it. A later root prompt cannot safely be linked to
+            # that spawn, so discard it rather than authorize an unrelated
+            # same-role child in the same session.
+            _best_effort_record(_clear_pending_authorized_spawn, root, payload)
+            if _consume_expected_continuation(root, payload):
+                return ""
         task_id = _active_task_id(root)
         partition = _resolve_partition(root, payload, event)
         state_path = _state_path(root, payload, partition)
@@ -652,25 +658,55 @@ def _lifecycle_path(root: Path, task_id: str) -> Path:
 
 def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     if not path.is_file():
-        return {"version": 2, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawns": 0, "sequence": 0}
+        return {"version": 3, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
         raise ValueError("invalid lifecycle runtime state")
-    if value.get("version") == 1:
-        value["version"] = 2
-        value.setdefault("pending_authorized_spawns", 0)
+    if value.get("version") in {1, 2}:
+        # Earlier state represented pending permission as a bare counter. It
+        # has no role or session provenance, so it must never authorize a new
+        # child after this adapter protocol upgrade.
+        value["version"] = 3
+        value.pop("pending_authorized_spawns", None)
+        value["pending_authorized_spawn"] = None
         for child in value["children"]:
             if isinstance(child, dict):
                 child.setdefault("managed", False)
-    if type(value.get("pending_authorized_spawns")) is not int or not 0 <= value["pending_authorized_spawns"] <= 1:
+    pending = value.get("pending_authorized_spawn")
+    if pending is not None and (
+        not isinstance(pending, dict)
+        or set(pending) != {"role", "session_id_hash", "authorized_sequence"}
+        or pending.get("role") not in set(_NATIVE_AGENT_ROLES.values())
+        or not isinstance(pending.get("session_id_hash"), str)
+        or not isinstance(pending.get("authorized_sequence"), int)
+    ):
         raise ValueError("invalid lifecycle authorized spawns")
     return value
+
+
+def _managed_spawn_role(payload: dict[str, Any]) -> str | None:
+    """Map only an explicitly supported native profile to a semantic role."""
+    tool_input = _delegation_input(payload)
+    for key in ("agent_type", "agentType", "agent_role", "role"):
+        value = tool_input.get(key)
+        if isinstance(value, str):
+            role = _NATIVE_AGENT_ROLES.get(value.strip().lower())
+            if role is not None:
+                return role
+    return None
+
+
+def _session_id_hash(payload: dict[str, Any]) -> str | None:
+    value = payload.get("session_id")
+    return _identity_hash(value) if isinstance(value, str) and value else None
 
 
 def _record_authorized_spawn(root: Path, payload: dict[str, Any]) -> None:
     """Store only one bounded task-local authorization, never a prompt or child ID."""
     task_id = _active_task_id(root)
-    if task_id is None:
+    role = _managed_spawn_role(payload)
+    session_id_hash = _session_id_hash(payload)
+    if task_id is None or role is None or session_id_hash is None:
         return
     with core._lock(root):
         path = _lifecycle_path(root, task_id)
@@ -681,11 +717,33 @@ def _record_authorized_spawn(root: Path, payload: dict[str, Any]) -> None:
             and child.get("stopped") is None
             for child in state["children"]
         )
-        if active or state["pending_authorized_spawns"]:
+        if active or state["pending_authorized_spawn"] is not None:
             return
-        state["pending_authorized_spawns"] = 1
+        state["sequence"] = int(state.get("sequence", 0)) + 1
+        state["pending_authorized_spawn"] = {
+            "role": role,
+            "session_id_hash": session_id_hash,
+            "authorized_sequence": state["sequence"],
+        }
         _runtime_metadata(state, payload)
         _write_capture(path, state)
+
+
+def _clear_pending_authorized_spawn(root: Path, payload: dict[str, Any]) -> None:
+    task_id = _active_task_id(root)
+    session_id_hash = _session_id_hash(payload)
+    if task_id is None or session_id_hash is None:
+        return
+    with core._lock(root):
+        path = _lifecycle_path(root, task_id)
+        if not path.is_file():
+            return
+        state = _load_lifecycle(path, task_id)
+        pending = state["pending_authorized_spawn"]
+        if isinstance(pending, dict) and pending.get("session_id_hash") == session_id_hash:
+            state["pending_authorized_spawn"] = None
+            _runtime_metadata(state, payload)
+            _write_capture(path, state)
 
 
 def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
@@ -693,7 +751,8 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
     task_id = _active_task_id(root)
     agent_id = payload.get("agent_id")
     agent_type = payload.get("agent_type")
-    role = _NATIVE_AGENT_ROLES.get(agent_type.lower()) if isinstance(agent_type, str) else None
+    role = _managed_spawn_role({"tool_input": {"agent_type": agent_type}})
+    session_id_hash = _session_id_hash(payload)
     if task_id is None or not isinstance(agent_id, str) or not agent_id or role is None:
         return None
     with core._lock(root):
@@ -702,9 +761,14 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
         state["sequence"] = int(state.get("sequence", 0)) + 1
         child_hash = _identity_hash(agent_id)
         children = state["children"]
-        authorized = int(state["pending_authorized_spawns"]) > 0
+        pending = state["pending_authorized_spawn"]
+        authorized = (
+            isinstance(pending, dict)
+            and pending.get("role") == role
+            and pending.get("session_id_hash") == session_id_hash
+        )
         if authorized:
-            state["pending_authorized_spawns"] -= 1
+            state["pending_authorized_spawn"] = None
         prior = next((item for item in children if item.get("agent_id_hash") == child_hash), None)
         if prior is None:
             children.append({"agent_id_hash": child_hash, "role": role, "managed": authorized, "started": state["sequence"], "stopped": None})
@@ -1515,6 +1579,12 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
         return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
     fork = tool_input.get("fork_turns")
     if fork == "none":
+        root = _hook_repository_root(root or Path.cwd(), payload)
+        if _active_task_id(root) is not None:
+            if _managed_spawn_role(payload) is None:
+                return _permission_deny("THALIRIS_MANAGED_AGENT_REQUIRED: managed tasks may spawn only a supported Thaliris agent profile.")
+            if _session_id_hash(payload) is None:
+                return _permission_deny("THALIRIS_MANAGED_SESSION_REQUIRED: managed spawn authorization requires a current session identity.")
         if _managed_child_active(root):
             return _permission_deny("THALIRIS_SERIAL_CHILD_REQUIRED: wait for the active managed child to stop before spawning another child.")
         # Current Codex treats a bare `allow` without updatedInput as invalid.

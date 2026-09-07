@@ -5,6 +5,10 @@ stores bounded task state and evidence, provides low-noise default projections
 for semantic roles, and preserves useful material without automatically
 propagating every working-set detail.
 
+Its boundary is information routing: every Core invariant exists to help place
+the correct, current, role-appropriate information in a reasoning context, not
+to manage agents, schedules, or generic workflows.
+
 ## Core Responsibilities
 
 - task state with revision-checked CAS and atomic recovery;

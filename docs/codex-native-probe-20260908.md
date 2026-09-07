@@ -39,3 +39,23 @@ The adapter therefore keeps automatic Bash terminal status `UNAVAILABLE`.
 Current-session readiness still requires a task-bound observation rather than a
 historical runtime artifact. Unit tests exercise only the adapter's handling of
 synthetic, explicitly shaped payloads; they are not native runtime proof.
+
+## Protocol 3 follow-up
+
+A second disposable-root probe used the same Codex CLI `0.153.4` with the
+current adapter protocol. It started one requested `thaliris-investigator`
+child with `fork_turns="none"`. The only complete sentinel was stored in the
+Core task goal; the child instruction named only its prefix and asked for a
+binary report. The child reported that the sentinel was missing.
+
+That probe root also produced no current adapter runtime observation or
+task-local lifecycle record. Consequently, this invocation does **not** prove
+that project `SubagentStart` hooks ran, that their `additionalContext` reached
+the child, or that the requested profile was loaded rather than merely accepted
+by the native spawn interface. These capabilities remain `NOT_OBSERVED` for
+this CLI invocation. The adapter must therefore report managed runtime
+readiness as unknown/not ready until a compatible live hook observation exists.
+
+The follow-up retained no prompt body, child transcript, shell command, or
+payload body. It does not change the independent Bash finding above: a
+structured terminal result remains unavailable for trusted shell attestation.

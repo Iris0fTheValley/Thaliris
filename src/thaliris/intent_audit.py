@@ -22,7 +22,7 @@ from . import core
 HOOK_COMMAND_PREFIX = "context audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
 CODEX_ADAPTER_PROTOCOL_VERSION = 4
-LIFECYCLE_STATE_VERSION = 5
+LIFECYCLE_STATE_VERSION = 6
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed intent-audit hooks"
 AUDIT_INTERVAL = 5
 MAX_AUDIT_RESULTS = 32
@@ -658,10 +658,10 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     if not path.is_file():
         return {"version": LIFECYCLE_STATE_VERSION, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, LIFECYCLE_STATE_VERSION} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, 5, LIFECYCLE_STATE_VERSION} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
         raise ValueError("invalid lifecycle runtime state")
     prior_version = value.get("version")
-    if prior_version in {1, 2, 3, 4}:
+    if prior_version in {1, 2, 3, 4, 5}:
         # Earlier records have no exact native agent provenance. Never infer it
         # across an upgrade; discard pending reservations and managed status.
         value["version"] = LIFECYCLE_STATE_VERSION

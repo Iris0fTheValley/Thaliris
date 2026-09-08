@@ -22,6 +22,7 @@ from . import core
 HOOK_COMMAND_PREFIX = "context audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
 CODEX_ADAPTER_PROTOCOL_VERSION = 4
+LIFECYCLE_STATE_VERSION = 5
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed intent-audit hooks"
 AUDIT_INTERVAL = 5
 MAX_AUDIT_RESULTS = 32
@@ -655,25 +656,27 @@ def _lifecycle_path(root: Path, task_id: str) -> Path:
 
 def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     if not path.is_file():
-        return {"version": 4, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
+        return {"version": LIFECYCLE_STATE_VERSION, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, LIFECYCLE_STATE_VERSION} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
         raise ValueError("invalid lifecycle runtime state")
-    if value.get("version") in {1, 2, 3}:
-        # Earlier records have neither atomic reservation semantics nor a
-        # projection-ready fact. Never infer either across an upgrade.
-        value["version"] = 4
+    prior_version = value.get("version")
+    if prior_version in {1, 2, 3, 4}:
+        # Earlier records have no exact native agent provenance. Never infer it
+        # across an upgrade; discard pending reservations and managed status.
+        value["version"] = LIFECYCLE_STATE_VERSION
         value.pop("pending_authorized_spawns", None)
         value["pending_authorized_spawn"] = None
         for child in value["children"]:
             if isinstance(child, dict):
-                child.setdefault("managed", False)
+                child["managed"] = False
                 child["projection_ready"] = False
     pending = value.get("pending_authorized_spawn")
     if pending is not None and (
         not isinstance(pending, dict)
-        or set(pending) != {"role", "session_id_hash", "authorized_sequence"}
+        or set(pending) != {"role", "expected_agent_type", "session_id_hash", "authorized_sequence"}
         or pending.get("role") not in set(_NATIVE_AGENT_ROLES.values())
+        or pending.get("expected_agent_type") not in _NATIVE_AGENT_ROLES
         or not isinstance(pending.get("session_id_hash"), str)
         or not isinstance(pending.get("authorized_sequence"), int)
     ):
@@ -682,14 +685,23 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
 
 
 def _managed_spawn_role(payload: dict[str, Any]) -> str | None:
-    """Map only an explicitly supported native profile to a semantic role."""
+    """Map only an explicitly supported native agent_type to a semantic role."""
     tool_input = _delegation_input(payload)
-    for key in ("agent_type", "agentType", "agent_role", "role"):
+    for key in ("agent_type", "agentType"):
         value = tool_input.get(key)
         if isinstance(value, str):
-            role = _NATIVE_AGENT_ROLES.get(value.strip())
+            role = _NATIVE_AGENT_ROLES.get(value)
             if role is not None:
                 return role
+    return None
+
+
+def _native_spawn_agent_type(payload: dict[str, Any]) -> str | None:
+    tool_input = _delegation_input(payload)
+    for key in ("agent_type", "agentType"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value in _NATIVE_AGENT_ROLES:
+            return value
     return None
 
 
@@ -703,7 +715,8 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
     task_id = _active_task_id(root)
     if task_id is None:
         return ""
-    role = _managed_spawn_role(payload)
+    expected_agent_type = _native_spawn_agent_type(payload)
+    role = _NATIVE_AGENT_ROLES.get(expected_agent_type) if expected_agent_type is not None else None
     if role is None:
         return _permission_deny("THALIRIS_MANAGED_AGENT_REQUIRED: managed tasks may spawn only a supported Thaliris agent profile.")
     session_id_hash = _session_id_hash(payload)
@@ -727,6 +740,7 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
             state["sequence"] = int(state.get("sequence", 0)) + 1
             state["pending_authorized_spawn"] = {
                 "role": role,
+                "expected_agent_type": expected_agent_type,
                 "session_id_hash": session_id_hash,
                 "authorized_sequence": state["sequence"],
             }
@@ -759,7 +773,8 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
     task_id = _active_task_id(root)
     agent_id = payload.get("agent_id")
     agent_type = payload.get("agent_type")
-    role = _managed_spawn_role({"tool_input": {"agent_type": agent_type}})
+    native_agent_type = _native_spawn_agent_type({"tool_input": {"agent_type": agent_type}})
+    role = _NATIVE_AGENT_ROLES.get(native_agent_type) if native_agent_type is not None else None
     session_id_hash = _session_id_hash(payload)
     if task_id is None or not isinstance(agent_id, str) or not agent_id or role is None:
         return None
@@ -773,6 +788,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
         authorized = (
             isinstance(pending, dict)
             and pending.get("role") == role
+            and pending.get("expected_agent_type") == native_agent_type
             and pending.get("session_id_hash") == session_id_hash
         )
         if authorized:
@@ -814,7 +830,7 @@ def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> None:
 
 
 def _mark_projection_ready(root: Path, payload: dict[str, Any]) -> bool:
-    """Confirm that this authorized child received a Core projection."""
+    """Record that the adapter successfully emitted the Core projection."""
     task_id = _active_task_id(root)
     agent_id = payload.get("agent_id")
     if task_id is None or not isinstance(agent_id, str) or not agent_id:
@@ -903,7 +919,7 @@ def _bash_command(payload: dict[str, Any]) -> str | None:
 
 
 def qualifying_child_completed(root: Path) -> bool:
-    """Only matching current-task SubagentStart + SubagentStop satisfy lifecycle."""
+    """Require exact authorized native start, emitted projection, stop, and no in-flight work."""
     task_id = _active_task_id(root)
     if task_id is None:
         return False
@@ -914,6 +930,7 @@ def qualifying_child_completed(root: Path) -> bool:
         return False
     return (
         isinstance(value, dict)
+        and value.get("version") == LIFECYCLE_STATE_VERSION
         and value.get("task_id_hash") == _task_key(task_id)
         and value.get("managed_hook_spec_hash") == managed_hook_spec_hash()
         and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
@@ -931,7 +948,7 @@ def _managed_child_active(root: Path) -> bool:
         value = json.loads(_lifecycle_path(root, task_id).read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return False
-    return isinstance(value, dict) and value.get("managed_hook_spec_hash") == managed_hook_spec_hash() and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION and any(isinstance(child, dict) and child.get("managed") is True and child.get("stopped") is None for child in value.get("children", []))
+    return isinstance(value, dict) and value.get("version") == LIFECYCLE_STATE_VERSION and value.get("managed_hook_spec_hash") == managed_hook_spec_hash() and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION and any(isinstance(child, dict) and child.get("managed") is True and child.get("stopped") is None for child in value.get("children", []))
 
 
 def _post_tool_response(payload: dict[str, Any]) -> object:

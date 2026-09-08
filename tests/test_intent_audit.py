@@ -980,6 +980,37 @@ def test_supported_native_agent_types_can_reserve_managed_spawn(tmp_path, agent_
     assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": agent_type})) == ""
     lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
     assert lifecycle["pending_authorized_spawn"]["role"] == role
+    assert lifecycle["pending_authorized_spawn"]["expected_agent_type"] == agent_type
+
+
+def test_reservation_requires_exact_native_agent_type_before_projection(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "exact native provenance", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "thaliris-investigator"})) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id="wrong-native", agent_type="explorer")) == ""
+    lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
+    assert lifecycle["pending_authorized_spawn"]["expected_agent_type"] == "thaliris-investigator"
+    assert handle_hook(root, "SubagentStart", payload(agent_id="right-native", agent_type="thaliris-investigator"))
+    assert handle_hook(root, "SubagentStop", payload(agent_id="right-native")) == ""
+    lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
+    assert lifecycle["pending_authorized_spawn"] is None
+    assert [child["managed"] for child in lifecycle["children"]] == [False, True]
+
+
+def test_legacy_lifecycle_without_native_type_provenance_cannot_qualify(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "legacy lifecycle", None, None)
+    task_id = json.loads((root / ".context" / "state.json").read_text(encoding="utf-8"))["task_id"]
+    path = root / ".context" / "audit" / "lifecycle" / f"{audit_module._task_key(task_id)}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "version": 4,
+        "task_id_hash": audit_module._task_key(task_id),
+        "children": [{"agent_id_hash": "old", "role": "investigator", "managed": True, "projection_ready": True, "started": 1, "stopped": 2}],
+        "pending_authorized_spawn": None,
+        "sequence": 2,
+        "managed_hook_spec_hash": audit_module.managed_hook_spec_hash(),
+        "adapter_protocol_version": audit_module.CODEX_ADAPTER_PROTOCOL_VERSION,
+    }), encoding="utf-8")
+    assert audit_module.qualifying_child_completed(root) is False
 
 
 def test_stale_pending_authorization_cannot_authorize_a_later_child(tmp_path):

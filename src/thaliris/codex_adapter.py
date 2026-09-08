@@ -668,7 +668,7 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
     state = core.task_show(root)["state"]
     task_id = str(state["task_id"])
     if not intent_audit.qualifying_child_completed(core._repo_root(root)):
-        raise ValueError("task-close requires a matching managed child SubagentStart and SubagentStop")
+        raise ValueError("task-close requires an authorized native SubagentStart, emitted Core projection, matching SubagentStop, and no pending or active managed work")
     try:
         audit = task_close_audit(core._repo_root(root), task_id, cleanup=False)
     except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):

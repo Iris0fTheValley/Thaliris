@@ -44,12 +44,20 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
 
 
 def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
+    instructions = (
+        "Resolve the supplied Decision Context. Choose among competing options when evidence permits. "
+        "Return the selected decision, rationale, invariants implementation must preserve, and remaining "
+        "decision-changing unknowns. Do not reconstruct unrelated investigation history. If context is "
+        "insufficient, identify the missing evidence instead."
+        if role == "reasoning-specialist"
+        else f"Thaliris semantic role: {role}. Work only inside your assigned role and return selected evidence-backed results."
+    )
     return (
         f'name = "{name}"\n'
         f'description = "Thaliris {role} execution role"\n'
         f'model = "{model}"\n'
         f'model_reasoning_effort = "{effort}"\n'
-        f'developer_instructions = "Thaliris semantic role: {role}. Work only inside your assigned role and return selected evidence-backed results."\n'
+        f'developer_instructions = "{instructions}"\n'
     ).encode("utf-8")
 
 
@@ -117,6 +125,14 @@ logs, and tool output do not enter Controller packets or durable memory
 automatically; explicitly select any detail needed for the next decision, and
 promote only explicit durable decisions, constraints, invariants, failure modes,
 or material milestone progress.
+
+Escalate to `agent_type="thaliris-reasoning-specialist"` with
+`fork_turns="none"` before implementation when materially different fixes,
+decision-changing OPEN unknowns or contradictions, cross-module state,
+lifecycle, ownership, concurrency, or compatibility invariants, substantive
+trade-offs, or a Reviewer design question remain. Do not escalate only for
+task size, file count, or token count. Pass a selected Decision Context, not
+the full investigation or an empty decision request.
 {MANAGED_END}
 """
 
@@ -175,6 +191,26 @@ followed by deterministic verification; the persistent Controller does not edit
 source directly. Larger work adds only the roles needed by risk and unknowns.
 Wait for native completion or mailbox updates; Thaliris has no polling, worker,
 retry, or scheduling runtime.
+
+Escalate to `agent_type="thaliris-reasoning-specialist"` with
+`fork_turns="none"` before implementation when two or more materially
+different fixes remain plausible without uniquely deciding evidence; an OPEN
+unknown or contradiction could change the implementation; the choice crosses
+state, lifecycle, ownership, concurrency, or compatibility invariants; the
+facts are known but a substantive trade-off remains; or a Reviewer finds a
+design question rather than a mechanical correction. Do not escalate based
+only on task size, file count, or token count. Pass an explicit Decision
+Context containing the decision question, confirmed relevant facts, competing
+options, must-preserve invariants and compatibility contracts,
+decision-changing unknowns or contradictions, and relevant evidence or
+artifact pointers. Do not pass the full Investigator working set or an empty
+"help me decide" request.
+
+Before spawning an Implementer, explicitly accept every Sol conclusion that
+will affect implementation by recording it as a task Decision, Constraint, or
+Modification Boundary, or by placing it in the selected Implementer handoff.
+Never rely on an implicit Sol-to-child history transfer. The Reasoning
+Specialist has no direct Core semantic-state write permission.
 
 After a qualifying completed child, the Controller may run only the exact
 Verification Target when it is a known test command family: pytest, npm/pnpm/

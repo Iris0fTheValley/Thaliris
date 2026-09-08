@@ -656,6 +656,11 @@ def test_effective_agents_override_and_role_pack_migration_are_not_silent(tmp_pa
     assert packs.read_text(encoding="utf-8") == "user-owned role notes\n"
 
 
+def test_checked_in_role_pack_matches_runtime_generated_content():
+    checked_in = Path(__file__).parents[1] / "docs" / "thaliris-role-packs.md"
+    assert checked_in.read_bytes() == ROLE_PACKS.encode("utf-8")
+
+
 def test_effective_instruction_discovery_skips_empty_override_and_uses_fallbacks(tmp_path, monkeypatch):
     home = tmp_path / "codex-home"; home.mkdir()
     (home / "config.toml").write_text('project_doc_fallback_filenames = ["TEAM_GUIDE.md"]\n', encoding="utf-8")
@@ -1116,6 +1121,8 @@ def test_generated_agent_profiles_match_codex_schema_and_native_role_mapping(tmp
         assert profile["name"] == name
         assert isinstance(profile["description"], str) and profile["description"]
         assert isinstance(profile["developer_instructions"], str) and profile["developer_instructions"]
+        if role == "reasoning-specialist":
+            assert "Resolve the supplied Decision Context" in profile["developer_instructions"]
         assert audit_module._NATIVE_AGENT_ROLES[name] == role
 
 

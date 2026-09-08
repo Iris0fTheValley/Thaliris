@@ -1057,9 +1057,33 @@ def test_task_start_does_not_claim_current_codex_session_is_managed(tmp_path):
     assert started["managed_readiness"]["profile_definition_present"] == "YES"
     assert started["managed_readiness"]["profile_native_active"] == "UNKNOWN"
     assert started["managed_readiness"]["project_layer_activation"] == "UNKNOWN"
+    assert started["managed_readiness"]["compatible_profile_observed"] == "UNKNOWN"
+    assert started["managed_readiness"]["compatible_project_hooks_observed"] == "UNKNOWN"
     readiness = codex_adapter.doctor(root)["managed_readiness"]
     assert readiness["CURRENT_SESSION_OBSERVED"] == "UNKNOWN"
     assert readiness["profile_definition_present"] == "YES"
+    assert readiness["profile_native_active"] == "UNKNOWN"
+    assert readiness["project_layer_activation"] == "UNKNOWN"
+    assert readiness["compatible_profile_observed"] == "UNKNOWN"
+    assert readiness["compatible_project_hooks_observed"] == "UNKNOWN"
+
+
+def test_profile_definition_missing_does_not_imply_project_layer_inactive(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    (root / ".codex" / "agents" / "thaliris-investigator.toml").unlink()
+    readiness = codex_adapter.doctor(root)["managed_readiness"]
+    assert readiness["profile_definition_present"] == "NO"
+    assert readiness["profile_native_active"] == "UNKNOWN"
+    assert readiness["project_layer_activation"] == "UNKNOWN"
+
+
+def test_compatible_historical_profile_observation_does_not_upgrade_current_state(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "historical activation", None, None)
+    assert handle_hook(root, "SubagentStart", payload(agent_id="historical", agent_type="thaliris-investigator")) == ""
+    readiness = codex_adapter.doctor(root)["managed_readiness"]
+    assert readiness["compatible_profile_observed"] == "YES"
+    assert readiness["compatible_project_hooks_observed"] == "YES"
     assert readiness["profile_native_active"] == "UNKNOWN"
     assert readiness["project_layer_activation"] == "UNKNOWN"
 

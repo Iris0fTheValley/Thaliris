@@ -67,17 +67,19 @@ def _profile_definition_present(root: Path) -> str:
     return "YES" if all((root / ".codex" / "agents" / name).is_file() for name in _AGENT_PROFILES) else "NO"
 
 
-def _activation_fields(root: Path, native_profile_active: str = "UNKNOWN") -> dict[str, str]:
-    definitions = _profile_definition_present(root)
-    if definitions == "NO":
-        native_profile_active = "NO"
-        project_layer = "NO"
-    else:
-        project_layer = "YES" if native_profile_active == "YES" else "UNKNOWN"
+def _activation_fields(
+    root: Path,
+    profile_native_active: str = "UNKNOWN",
+    project_layer_activation: str = "UNKNOWN",
+    compatible_profile_observed: str = "UNKNOWN",
+    compatible_project_hooks_observed: str = "UNKNOWN",
+) -> dict[str, str]:
     return {
-        "profile_definition_present": definitions,
-        "profile_native_active": native_profile_active,
-        "project_layer_activation": project_layer,
+        "profile_definition_present": _profile_definition_present(root),
+        "profile_native_active": profile_native_active,
+        "project_layer_activation": project_layer_activation,
+        "compatible_profile_observed": compatible_profile_observed,
+        "compatible_project_hooks_observed": compatible_project_hooks_observed,
     }
 
 
@@ -691,7 +693,7 @@ def doctor(root: Path) -> dict[str, object]:
     result = report(root)
     observations: list[tuple[int, int, dict[str, object]]] = []
     events: set[str] = set()
-    native_profile_observed = False
+    compatible_profile_observed = False
     expected = intent_audit.managed_hook_spec_hash()
     for path in (root / ".context" / "audit").glob("*/runtime.json"):
         try:
@@ -703,7 +705,7 @@ def doctor(root: Path) -> dict[str, object]:
         if current and isinstance(runtime.get("events_observed"), dict):
             events.update(name for name, observed in runtime["events_observed"].items() if observed is True)
         if current and isinstance(runtime.get("subagent_start_agent_types"), list):
-            native_profile_observed = native_profile_observed or any(
+            compatible_profile_observed = compatible_profile_observed or any(
                 isinstance(value, str) and value in _NATIVE_PROFILE_NAMES
                 for value in runtime["subagent_start_agent_types"]
             )
@@ -750,7 +752,13 @@ def doctor(root: Path) -> dict[str, object]:
         # A hook response was emitted locally, but only a native child probe
         # can show that Codex delivered additionalContext to the child.
         "role_projection_injection_observed": "UNKNOWN",
-        **_activation_fields(root, "YES" if native_profile_observed else "UNKNOWN"),
+        **_activation_fields(
+            root,
+            profile_native_active="UNKNOWN",
+            project_layer_activation="UNKNOWN",
+            compatible_profile_observed="YES" if compatible_profile_observed else "UNKNOWN",
+            compatible_project_hooks_observed="YES" if events else "UNKNOWN",
+        ),
     }
     task = result.get("context", {}).get("task_state", {}) if isinstance(result.get("context"), dict) else {}
     target = task.get("verification_target") if isinstance(task, dict) else None

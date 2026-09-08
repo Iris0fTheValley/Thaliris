@@ -22,6 +22,9 @@ and the five `thaliris-*` profiles. Init/doctor report profile definition
 presence separately from native profile activation and project-layer
 activation; an installed `.codex` file does not prove that the current session
 trusted or loaded it.
+The compatibility field `hook_trust_required` reports only that this init or
+update changed project definitions that need restart/trust review; it is not a
+claim about the current session's trust state.
 
 Hooks cover only known local native surfaces. During an ACTIVE task the root
 Controller is denied on matched `mcp__*` tools as well as guarded local shell

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -898,12 +899,45 @@ def test_authorized_spawn_is_bound_to_role_and_session_before_it_can_be_consumed
     # authorization, and it must not receive a Core projection.
     assert handle_hook(root, "SubagentStart", payload(agent_id="wrong-role", agent_type="thaliris-reviewer")) == ""
     assert handle_hook(root, "SubagentStop", payload(agent_id="wrong-role")) == ""
+    # A matching role from another session likewise cannot consume it.
+    assert handle_hook(root, "SubagentStart", payload(session="another-session", agent_id="wrong-session", agent_type="worker")) == ""
+    assert handle_hook(root, "SubagentStop", payload(session="another-session", agent_id="wrong-session")) == ""
     assert handle_hook(root, "SubagentStart", payload(agent_id="managed", agent_type="worker"))
     assert handle_hook(root, "SubagentStop", payload(agent_id="managed")) == ""
     assert handle_hook(root, "SubagentStart", payload(agent_id="unmanaged", agent_type="worker")) == ""
     lifecycle = next((root / ".context" / "audit" / "lifecycle").glob("*.json"))
     children = json.loads(lifecycle.read_text(encoding="utf-8"))["children"]
-    assert [child["managed"] for child in children] == [False, True, False]
+    assert [child["managed"] for child in children] == [False, False, True, False]
+
+
+def test_concurrent_managed_spawns_reserve_only_one_authorization(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "atomic spawn reservation", None, None)
+    event = payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: handle_hook(root, "PreToolUse", event), range(2)))
+    assert outcomes.count("") == 1
+    denied = [json.loads(item) for item in outcomes if item]
+    assert len(denied) == 1
+    assert denied[0]["hookSpecificOutput"]["permissionDecision"] == "deny"
+    lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
+    assert lifecycle["pending_authorized_spawn"]["role"] == "implementer"
+
+
+def test_projection_failure_never_qualifies_a_managed_child(tmp_path, monkeypatch):
+    root = repo(tmp_path); init(root); task_start(root, "projection failure", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+    monkeypatch.setattr(audit_module.core, "prepare", lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("projection unavailable")))
+    assert handle_hook(root, "SubagentStart", payload(agent_id="projection-failure", agent_type="worker")) == ""
+    denied = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "thaliris-reviewer"}),
+    ))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert handle_hook(root, "SubagentStop", payload(agent_id="projection-failure")) == ""
+    assert audit_module.qualifying_child_completed(root) is False
+    lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
+    assert lifecycle["children"][0]["projection_ready"] is False
 
 
 def test_unknown_managed_agent_is_denied_without_pending_authorization(tmp_path):

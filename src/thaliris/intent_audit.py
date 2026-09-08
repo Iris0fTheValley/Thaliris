@@ -21,7 +21,7 @@ from . import core
 
 HOOK_COMMAND_PREFIX = "context audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
-CODEX_ADAPTER_PROTOCOL_VERSION = 3
+CODEX_ADAPTER_PROTOCOL_VERSION = 4
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed intent-audit hooks"
 AUDIT_INTERVAL = 5
 MAX_AUDIT_RESULTS = 32
@@ -416,8 +416,6 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             if isinstance(tool, str) and _tool_basename(tool) == "spawn_agent":
                 decision = _pre_tool_output(payload, root)
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
-                if not decision and _delegation_input(payload).get("fork_turns") == "none":
-                    _best_effort_record(_record_authorized_spawn, root, payload)
                 return decision
             return _pre_tool_output(payload, root)
         if event == "SessionStart":
@@ -658,20 +656,20 @@ def _lifecycle_path(root: Path, task_id: str) -> Path:
 
 def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     if not path.is_file():
-        return {"version": 3, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
+        return {"version": 4, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
         raise ValueError("invalid lifecycle runtime state")
-    if value.get("version") in {1, 2}:
-        # Earlier state represented pending permission as a bare counter. It
-        # has no role or session provenance, so it must never authorize a new
-        # child after this adapter protocol upgrade.
-        value["version"] = 3
+    if value.get("version") in {1, 2, 3}:
+        # Earlier records have neither atomic reservation semantics nor a
+        # projection-ready fact. Never infer either across an upgrade.
+        value["version"] = 4
         value.pop("pending_authorized_spawns", None)
         value["pending_authorized_spawn"] = None
         for child in value["children"]:
             if isinstance(child, dict):
                 child.setdefault("managed", False)
+                child["projection_ready"] = False
     pending = value.get("pending_authorized_spawn")
     if pending is not None and (
         not isinstance(pending, dict)
@@ -701,32 +699,43 @@ def _session_id_hash(payload: dict[str, Any]) -> str | None:
     return _identity_hash(value) if isinstance(value, str) and value else None
 
 
-def _record_authorized_spawn(root: Path, payload: dict[str, Any]) -> None:
-    """Store only one bounded task-local authorization, never a prompt or child ID."""
+def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
+    """Atomically reserve the one managed child slot before allowing spawn."""
     task_id = _active_task_id(root)
+    if task_id is None:
+        return ""
     role = _managed_spawn_role(payload)
+    if role is None:
+        return _permission_deny("THALIRIS_MANAGED_AGENT_REQUIRED: managed tasks may spawn only a supported Thaliris agent profile.")
     session_id_hash = _session_id_hash(payload)
-    if task_id is None or role is None or session_id_hash is None:
-        return
-    with core._lock(root):
-        path = _lifecycle_path(root, task_id)
-        state = _load_lifecycle(path, task_id)
-        active = any(
-            isinstance(child, dict)
-            and child.get("managed") is True
-            and child.get("stopped") is None
-            for child in state["children"]
-        )
-        if active or state["pending_authorized_spawn"] is not None:
-            return
-        state["sequence"] = int(state.get("sequence", 0)) + 1
-        state["pending_authorized_spawn"] = {
-            "role": role,
-            "session_id_hash": session_id_hash,
-            "authorized_sequence": state["sequence"],
-        }
-        _runtime_metadata(state, payload)
-        _write_capture(path, state)
+    if session_id_hash is None:
+        return _permission_deny("THALIRIS_MANAGED_SESSION_REQUIRED: managed spawn authorization requires a current session identity.")
+    try:
+        with core._lock(root):
+            # Re-read while holding the same lock used by task mutations.
+            if _active_task_id(root) != task_id:
+                return _permission_deny("THALIRIS_MANAGED_SPAWN_UNAVAILABLE: the active task changed before authorization.")
+            path = _lifecycle_path(root, task_id)
+            state = _load_lifecycle(path, task_id)
+            active = any(
+                isinstance(child, dict)
+                and child.get("managed") is True
+                and child.get("stopped") is None
+                for child in state["children"]
+            )
+            if active or state["pending_authorized_spawn"] is not None:
+                return _permission_deny("THALIRIS_SERIAL_CHILD_REQUIRED: wait for the managed child reservation to complete before spawning another child.")
+            state["sequence"] = int(state.get("sequence", 0)) + 1
+            state["pending_authorized_spawn"] = {
+                "role": role,
+                "session_id_hash": session_id_hash,
+                "authorized_sequence": state["sequence"],
+            }
+            _runtime_metadata(state, payload)
+            _write_capture(path, state)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return _permission_deny("THALIRIS_MANAGED_SPAWN_UNAVAILABLE: managed authorization could not be reserved.")
+    return ""
 
 
 def _clear_pending_authorized_spawn(root: Path, payload: dict[str, Any]) -> None:
@@ -771,7 +780,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
             state["pending_authorized_spawn"] = None
         prior = next((item for item in children if item.get("agent_id_hash") == child_hash), None)
         if prior is None:
-            children.append({"agent_id_hash": child_hash, "role": role, "managed": authorized, "started": state["sequence"], "stopped": None})
+            children.append({"agent_id_hash": child_hash, "role": role, "managed": authorized, "projection_ready": False, "started": state["sequence"], "stopped": None})
         _runtime_metadata(state, payload)
         _write_capture(path, state)
     # Keep only the old bounded identity-corroboration sample for diagnostics;
@@ -805,6 +814,32 @@ def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> None:
                 return
 
 
+def _mark_projection_ready(root: Path, payload: dict[str, Any]) -> bool:
+    """Confirm that this authorized child received a Core projection."""
+    task_id = _active_task_id(root)
+    agent_id = payload.get("agent_id")
+    if task_id is None or not isinstance(agent_id, str) or not agent_id:
+        return False
+    try:
+        with core._lock(root):
+            path = _lifecycle_path(root, task_id)
+            state = _load_lifecycle(path, task_id)
+            child_hash = _identity_hash(agent_id)
+            for child in state["children"]:
+                if (
+                    child.get("agent_id_hash") == child_hash
+                    and child.get("managed") is True
+                    and child.get("stopped") is None
+                ):
+                    child["projection_ready"] = True
+                    _runtime_metadata(state, payload)
+                    _write_capture(path, state)
+                    return True
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+    return False
+
+
 def _subagent_start_output(root: Path, payload: dict[str, Any]) -> str:
     role = _record_subagent_start(root, payload)
     if role is None:
@@ -812,6 +847,8 @@ def _subagent_start_output(root: Path, payload: dict[str, Any]) -> str:
     try:
         projection = core.prepare(root, None, role)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return ""
+    if not _mark_projection_ready(root, payload):
         return ""
     return json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": json.dumps({"thaliris_role": role, "projection": projection}, ensure_ascii=False, separators=(",", ":"))}}, ensure_ascii=False, separators=(",", ":"))
 
@@ -868,7 +905,7 @@ def qualifying_child_completed(root: Path) -> bool:
         and value.get("managed_hook_spec_hash") == managed_hook_spec_hash()
         and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
         and not _managed_child_active(root)
-        and any(isinstance(child, dict) and child.get("managed") is True and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
+        and any(isinstance(child, dict) and child.get("managed") is True and child.get("projection_ready") is True and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
     )
 
 
@@ -1580,16 +1617,7 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
     fork = tool_input.get("fork_turns")
     if fork == "none":
         root = _hook_repository_root(root or Path.cwd(), payload)
-        if _active_task_id(root) is not None:
-            if _managed_spawn_role(payload) is None:
-                return _permission_deny("THALIRIS_MANAGED_AGENT_REQUIRED: managed tasks may spawn only a supported Thaliris agent profile.")
-            if _session_id_hash(payload) is None:
-                return _permission_deny("THALIRIS_MANAGED_SESSION_REQUIRED: managed spawn authorization requires a current session identity.")
-        if _managed_child_active(root):
-            return _permission_deny("THALIRIS_SERIAL_CHILD_REQUIRED: wait for the active managed child to stop before spawning another child.")
-        # Current Codex treats a bare `allow` without updatedInput as invalid.
-        # A correct primary invocation therefore has no hook control effect.
-        return ""
+        return _reserve_managed_spawn(root, payload)
     return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
 
 

@@ -40,6 +40,16 @@ Current-session readiness still requires a task-bound observation rather than a
 historical runtime artifact. Unit tests exercise only the adapter's handling of
 synthetic, explicitly shaped payloads; they are not native runtime proof.
 
+## Protocol 4 marker follow-up
+
+A fresh disposable Git root was initialized with the current adapter protocol.
+Codex CLI `0.153.4` was asked to spawn `thaliris-investigator` with
+`fork_turns="none"` and to report a bounded context marker. The native runtime
+returned `unknown agent_type 'thaliris-investigator'` before starting a child.
+No marker, `SubagentStart`, or `SubagentStop` observation was recorded, so
+projection delivery for this Protocol 4 session is `NOT_OBSERVED`. No prompt,
+transcript, command output, or payload body was retained.
+
 ## Protocol 3 follow-up
 
 A second disposable-root probe used the same Codex CLI `0.153.4` with the

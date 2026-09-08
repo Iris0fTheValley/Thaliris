@@ -977,6 +977,24 @@ def test_completed_child_cannot_mask_a_later_active_managed_child(tmp_path):
     assert audit_module.qualifying_child_completed(root) is True
 
 
+def test_pending_spawn_reservation_blocks_acceptance_and_close_until_child_finishes(tmp_path):
+    root = repo(tmp_path); init(root)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
+    task_start(root, "pending child lifecycle", None, str(task_input))
+    completed_child(root, "first")
+    assert audit_module.qualifying_child_completed(root) is True
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "thaliris-reviewer"})) == ""
+    assert audit_module.qualifying_child_completed(root) is False
+    acceptance = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})))
+    assert acceptance["hookSpecificOutput"]["permissionDecision"] == "deny"
+    close = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
+    assert close["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert handle_hook(root, "SubagentStart", payload(agent_id="second", agent_type="thaliris-reviewer"))
+    assert handle_hook(root, "SubagentStop", payload(agent_id="second")) == ""
+    assert audit_module.qualifying_child_completed(root) is True
+
+
 def test_generated_agent_profiles_match_codex_schema_and_native_role_mapping(tmp_path):
     root = repo(tmp_path)
     result = init(root)

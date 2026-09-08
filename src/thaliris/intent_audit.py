@@ -846,11 +846,25 @@ def _subagent_start_output(root: Path, payload: dict[str, Any]) -> str:
         return ""
     try:
         projection = core.prepare(root, None, role)
+        response = json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "SubagentStart",
+                    "additionalContext": json.dumps(
+                        {"thaliris_role": role, "projection": projection},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                }
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return ""
     if not _mark_projection_ready(root, payload):
         return ""
-    return json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": json.dumps({"thaliris_role": role, "projection": projection}, ensure_ascii=False, separators=(",", ":"))}}, ensure_ascii=False, separators=(",", ":"))
+    return response
 
 
 def _bounded_append(state: dict[str, Any], key: str, value: str | None) -> None:
@@ -904,6 +918,7 @@ def qualifying_child_completed(root: Path) -> bool:
         and value.get("task_id_hash") == _task_key(task_id)
         and value.get("managed_hook_spec_hash") == managed_hook_spec_hash()
         and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
+        and value.get("pending_authorized_spawn") is None
         and not _managed_child_active(root)
         and any(isinstance(child, dict) and child.get("managed") is True and child.get("projection_ready") is True and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
     )

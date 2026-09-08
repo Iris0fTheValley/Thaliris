@@ -34,13 +34,14 @@ Core v5 distinguishes an ordinary model-authored test report from an observed
 execution result and binds a trusted result to the target and current Core
 surface identity. An allowed root `spawn_agent(fork_turns="none")` for a
 supported Thaliris profile creates one bounded pending authorization scoped to
-the active task, semantic role, and session hash. Only a matching
-`SubagentStart` may consume it; unknown or mismatched starts remain
-observations and receive no projection. Only that managed start followed by its
-matching `SubagentStop` is the lifecycle condition for acceptance and
-`task-close`. PostToolUse records dispatch observation only. Stop proves
-lifecycle completion, not work correctness. Managed root children are serial
-while a started child remains unstopped.
+the active task, semantic role, and session hash. The managed lifecycle is
+`authorized reservation -> matching SubagentStart -> Core projection emitted
+successfully -> matching SubagentStop -> qualifying completion`. Unknown or
+mismatched starts remain observations and receive no projection. A pending
+reservation and every started managed child are in flight, so managed dispatch
+remains serial until the child stops. Stop proves lifecycle completion, not
+work correctness. A projection-ready child is not a claim that the native
+child confirmed receipt.
 
 The current trusted shell candidate is exactly Codex stable `Bash`. Codex CLI
 0.153.4 does not document a terminal exit/status field in its Bash PostToolUse
@@ -73,3 +74,10 @@ not report the Core-only projection sentinel and no adapter hook observation was
 written. That invocation is therefore `NOT_OBSERVED`, not evidence that
 SubagentStart projection delivery is active. See
 [`docs/codex-native-probe-20260908.md`](../../docs/codex-native-probe-20260908.md).
+
+A Protocol 4 disposable-session probe on the same Codex build requested the
+`thaliris-investigator` profile with `fork_turns="none"` and a bounded marker.
+The native runtime rejected that `agent_type` as unknown before a child
+started, so no `SubagentStart`/`SubagentStop` or marker observation was
+recorded. The result remains `NOT_OBSERVED`; generated profile presence and
+synthetic hook tests are not native projection proof.

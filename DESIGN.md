@@ -124,9 +124,9 @@ invariants, not a semantic payload quota or a handoff-size limit. Artifact
 pointers provide selective access, not a mandatory compression rule.
 
 The model decides which retained facts are relevant to the next decision.
-Thaliris bounds the amount and automatic propagation of a handoff, but does not
-act as a semantic firewall that excludes an important constraint merely because
-it originated in another role's working set.
+Thaliris bounds automatic propagation, not the size of an explicitly selected
+handoff, and does not act as a semantic firewall that excludes an important
+constraint merely because it originated in another role's working set.
 
 ## Runtime Boundary
 

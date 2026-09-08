@@ -1122,6 +1122,8 @@ def test_generated_agent_profiles_match_codex_schema_and_native_role_mapping(tmp
         assert isinstance(profile["description"], str) and profile["description"]
         assert isinstance(profile["developer_instructions"], str) and profile["developer_instructions"]
         if role == "reasoning-specialist":
+            assert profile["model"] == "gpt-5.6-sol"
+            assert profile["model_reasoning_effort"] == "xhigh"
             assert "Resolve the supplied Decision Context" in profile["developer_instructions"]
         assert audit_module._NATIVE_AGENT_ROLES[name] == role
 

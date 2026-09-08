@@ -65,7 +65,7 @@ def completed_child(root: Path, identifier: str = "managed-child") -> None:
         payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"}),
     ) == ""
     assert handle_hook(root, "SubagentStart", payload(agent_id=identifier, agent_type="worker"))
-    assert handle_hook(root, "SubagentStop", payload(agent_id=identifier)) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id=identifier, agent_type="worker")) == ""
 
 
 def test_root_prompt_and_child_prompt_are_not_mixed(tmp_path):
@@ -277,7 +277,7 @@ def test_checkpoint_does_not_infer_requirement_omission_but_task_close_does(tmp_
     assert handle_hook(final_root, "PreToolUse", payload(session="s2", tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
     handle_hook(final_root, "PostToolUse", payload(session="s2", tool_name="spawn_agent", tool_input={"message": "实现功能"}, tool_response={"success": True}))
     handle_hook(final_root, "SubagentStart", payload(session="s2", agent_id="audit-final", agent_type="worker"))
-    handle_hook(final_root, "SubagentStop", payload(session="s2", agent_id="audit-final"))
+    handle_hook(final_root, "SubagentStop", payload(session="s2", agent_id="audit-final", agent_type="worker"))
     closed = task_close(final_root, 1)
     assert closed["status"] == "ACTIVE" and "state" not in closed
     assert closed["intent_audit"] == {"status": "DRIFT", "finding": "Correct delegation scope before closing this task."}
@@ -903,7 +903,7 @@ def test_authorized_spawn_is_bound_to_role_and_session_before_it_can_be_consumed
     assert handle_hook(root, "SubagentStart", payload(session="another-session", agent_id="wrong-session", agent_type="worker")) == ""
     assert handle_hook(root, "SubagentStop", payload(session="another-session", agent_id="wrong-session")) == ""
     assert handle_hook(root, "SubagentStart", payload(agent_id="managed", agent_type="worker"))
-    assert handle_hook(root, "SubagentStop", payload(agent_id="managed")) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id="managed", agent_type="worker")) == ""
     assert handle_hook(root, "SubagentStart", payload(agent_id="unmanaged", agent_type="worker")) == ""
     lifecycle = next((root / ".context" / "audit" / "lifecycle").glob("*.json"))
     children = json.loads(lifecycle.read_text(encoding="utf-8"))["children"]
@@ -934,7 +934,7 @@ def test_projection_failure_never_qualifies_a_managed_child(tmp_path, monkeypatc
         payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "thaliris-reviewer"}),
     ))
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert handle_hook(root, "SubagentStop", payload(agent_id="projection-failure")) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id="projection-failure", agent_type="worker")) == ""
     assert audit_module.qualifying_child_completed(root) is False
     lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
     assert lifecycle["children"][0]["projection_ready"] is False
@@ -990,10 +990,49 @@ def test_reservation_requires_exact_native_agent_type_before_projection(tmp_path
     lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
     assert lifecycle["pending_authorized_spawn"]["expected_agent_type"] == "thaliris-investigator"
     assert handle_hook(root, "SubagentStart", payload(agent_id="right-native", agent_type="thaliris-investigator"))
-    assert handle_hook(root, "SubagentStop", payload(agent_id="right-native")) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id="right-native", agent_type="thaliris-investigator")) == ""
     lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
     assert lifecycle["pending_authorized_spawn"] is None
     assert [child["managed"] for child in lifecycle["children"]] == [False, True]
+
+
+def test_subagent_stop_requires_exact_child_provenance(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "stop provenance", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id="provenance-child", agent_type="worker"))
+
+    lifecycle_path = next((root / ".context" / "audit" / "lifecycle").glob("*.json"))
+    for stop_payload in (
+        payload(agent_id="provenance-child", agent_type="worker", turn="other-turn"),
+        payload(agent_id="provenance-child", agent_type="explorer"),
+        payload(session="other-session", agent_id="provenance-child", agent_type="worker"),
+    ):
+        assert handle_hook(root, "SubagentStop", stop_payload) == ""
+        child = json.loads(lifecycle_path.read_text(encoding="utf-8"))["children"][0]
+        assert child["stopped"] is None
+
+    assert handle_hook(root, "SubagentStop", payload(agent_id="provenance-child", agent_type="worker")) == ""
+    child = json.loads(lifecycle_path.read_text(encoding="utf-8"))["children"][0]
+    assert isinstance(child["stopped"], int)
+
+
+def test_legacy_lifecycle_does_not_report_current_start_stop_observation(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "legacy doctor lifecycle", None, None)
+    task_id = json.loads((root / ".context" / "state.json").read_text(encoding="utf-8"))["task_id"]
+    path = root / ".context" / "audit" / "lifecycle" / f"{audit_module._task_key(task_id)}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "version": 4,
+        "task_id_hash": audit_module._task_key(task_id),
+        "children": [{"agent_id_hash": "old", "role": "investigator", "managed": True, "projection_ready": True, "started": 1, "stopped": 2}],
+        "pending_authorized_spawn": None,
+        "sequence": 2,
+        "managed_hook_spec_hash": audit_module.managed_hook_spec_hash(),
+        "adapter_protocol_version": audit_module.CODEX_ADAPTER_PROTOCOL_VERSION,
+    }), encoding="utf-8")
+    readiness = codex_adapter.doctor(root)["managed_readiness"]
+    assert readiness["subagent_start_observed"] == "UNKNOWN"
+    assert readiness["subagent_stop_observed"] == "UNKNOWN"
 
 
 def test_legacy_lifecycle_without_native_type_provenance_cannot_qualify(tmp_path):
@@ -1035,7 +1074,7 @@ def test_completed_child_cannot_mask_a_later_active_managed_child(tmp_path):
     assert audit_module.qualifying_child_completed(root) is False
     denied = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert handle_hook(root, "SubagentStop", payload(agent_id="second")) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id="second", agent_type="thaliris-reviewer")) == ""
     assert audit_module.qualifying_child_completed(root) is True
 
 
@@ -1053,7 +1092,7 @@ def test_pending_spawn_reservation_blocks_acceptance_and_close_until_child_finis
     close = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
     assert close["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert handle_hook(root, "SubagentStart", payload(agent_id="second", agent_type="thaliris-reviewer"))
-    assert handle_hook(root, "SubagentStop", payload(agent_id="second")) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id="second", agent_type="thaliris-reviewer")) == ""
     assert audit_module.qualifying_child_completed(root) is True
 
 
@@ -1078,6 +1117,17 @@ def test_generated_agent_profiles_match_codex_schema_and_native_role_mapping(tmp
         assert isinstance(profile["description"], str) and profile["description"]
         assert isinstance(profile["developer_instructions"], str) and profile["developer_instructions"]
         assert audit_module._NATIVE_AGENT_ROLES[name] == role
+
+
+def test_profile_only_update_requires_restart_without_hook_trust(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    profile = root / ".codex" / "agents" / "thaliris-investigator.toml"
+    profile.unlink()
+    result = init(root)
+    assert result["agent_profile_changed"] is True
+    assert result["session_restart_required"] is True
+    assert result["hook_trust_required"] is False
 
 
 def test_task_start_does_not_claim_current_codex_session_is_managed(tmp_path):
@@ -1580,7 +1630,7 @@ def test_subagent_start_projection_and_stop_gate_serial_children(tmp_path):
     assert "investigation_findings" not in json.dumps(context)
     denied = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})))
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert handle_hook(root, "SubagentStop", payload(agent_id="child-one")) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id="child-one", agent_type="worker")) == ""
     assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
 
     root = repo(tmp_path / "unknown")

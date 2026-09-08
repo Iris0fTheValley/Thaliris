@@ -373,7 +373,7 @@ def _install(root: Path) -> dict[str, object]:
         hook_changed = ".codex/hooks.json" in writes
         instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in writes)
         profile_changed = any(path.startswith(".codex/agents/") for path in writes)
-        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, [], "codex-init"), "files": sorted(writes), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed or profile_changed, **_activation_fields(root)}
+        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, [], "codex-init"), "files": sorted(writes), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed, **_activation_fields(root)}
 
 
 def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
@@ -460,7 +460,7 @@ def init(root: Path) -> dict[str, object]:
     hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed or profile_changed, **_activation_fields(root)}
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed, **_activation_fields(root)}
 
 
 def migrate(root: Path) -> dict[str, object]:
@@ -476,7 +476,7 @@ def migrate(root: Path) -> dict[str, object]:
     hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed or profile_changed, **_activation_fields(root)}
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed, **_activation_fields(root)}
 
 
 def _uninstall(root: Path) -> dict[str, object]:
@@ -668,7 +668,7 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
     state = core.task_show(root)["state"]
     task_id = str(state["task_id"])
     if not intent_audit.qualifying_child_completed(core._repo_root(root)):
-        raise ValueError("task-close requires an authorized native SubagentStart, emitted Core projection, matching SubagentStop, and no pending or active managed work")
+        raise ValueError("task-close requires an authorized native SubagentStart, an emitted Core projection, a matching session/turn/type SubagentStop, and no pending or active managed work")
     try:
         audit = task_close_audit(core._repo_root(root), task_id, cleanup=False)
     except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
@@ -720,7 +720,7 @@ def doctor(root: Path) -> dict[str, object]:
             lifecycle = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError):
             continue
-        if not isinstance(lifecycle, dict) or lifecycle.get("managed_hook_spec_hash") != expected or lifecycle.get("adapter_protocol_version") != intent_audit.CODEX_ADAPTER_PROTOCOL_VERSION:
+        if not isinstance(lifecycle, dict) or lifecycle.get("version") != intent_audit.LIFECYCLE_STATE_VERSION or lifecycle.get("managed_hook_spec_hash") != expected or lifecycle.get("adapter_protocol_version") != intent_audit.CODEX_ADAPTER_PROTOCOL_VERSION:
             continue
         for child in lifecycle.get("children", []):
             if isinstance(child, dict) and isinstance(child.get("started"), int):

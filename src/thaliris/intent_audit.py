@@ -710,6 +710,11 @@ def _session_id_hash(payload: dict[str, Any]) -> str | None:
     return _identity_hash(value) if isinstance(value, str) and value else None
 
 
+def _turn_id_hash(payload: dict[str, Any]) -> str | None:
+    value = payload.get("turn_id")
+    return _identity_hash(value) if isinstance(value, str) and value else None
+
+
 def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
     """Atomically reserve the one managed child slot before allowing spawn."""
     task_id = _active_task_id(root)
@@ -776,6 +781,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
     native_agent_type = _native_spawn_agent_type({"tool_input": {"agent_type": agent_type}})
     role = _NATIVE_AGENT_ROLES.get(native_agent_type) if native_agent_type is not None else None
     session_id_hash = _session_id_hash(payload)
+    turn_id_hash = _turn_id_hash(payload)
     if task_id is None or not isinstance(agent_id, str) or not agent_id or role is None:
         return None
     with core._lock(root):
@@ -795,7 +801,17 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
             state["pending_authorized_spawn"] = None
         prior = next((item for item in children if item.get("agent_id_hash") == child_hash), None)
         if prior is None:
-            children.append({"agent_id_hash": child_hash, "role": role, "managed": authorized, "projection_ready": False, "started": state["sequence"], "stopped": None})
+            children.append({
+                "agent_id_hash": child_hash,
+                "agent_type": native_agent_type,
+                "session_id_hash": session_id_hash,
+                "turn_id_hash": turn_id_hash,
+                "role": role,
+                "managed": authorized,
+                "projection_ready": False,
+                "started": state["sequence"],
+                "stopped": None,
+            })
         _runtime_metadata(state, payload)
         _write_capture(path, state)
     # Keep only the old bounded identity-corroboration sample for diagnostics;
@@ -814,14 +830,24 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
 def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> None:
     task_id = _active_task_id(root)
     agent_id = payload.get("agent_id")
-    if task_id is None or not isinstance(agent_id, str) or not agent_id:
+    native_agent_type = _native_spawn_agent_type({"tool_input": {"agent_type": payload.get("agent_type")}})
+    session_id_hash = _session_id_hash(payload)
+    turn_id_hash = _turn_id_hash(payload)
+    if task_id is None or not isinstance(agent_id, str) or not agent_id or native_agent_type is None or session_id_hash is None or turn_id_hash is None:
         return
     with core._lock(root):
         path = _lifecycle_path(root, task_id)
         state = _load_lifecycle(path, task_id)
         child_hash = _identity_hash(agent_id)
         for child in state["children"]:
-            if child.get("agent_id_hash") == child_hash and child.get("stopped") is None:
+            if (
+                child.get("agent_id_hash") == child_hash
+                and child.get("agent_type") == native_agent_type
+                and child.get("session_id_hash") == session_id_hash
+                and child.get("turn_id_hash") == turn_id_hash
+                and child.get("managed") is True
+                and child.get("stopped") is None
+            ):
                 state["sequence"] = int(state.get("sequence", 0)) + 1
                 child["stopped"] = state["sequence"]
                 _runtime_metadata(state, payload)

@@ -2,7 +2,7 @@
 
 [中文](README.md)
 
-A lightweight, Git-native context and orchestration layer for Codex.
+A lightweight, Git-native context routing and evidence layer for Codex.
 
 Thaliris helps multi-agent coding workflows keep the right information in the right reasoning context without turning the repository into an agent framework.
 

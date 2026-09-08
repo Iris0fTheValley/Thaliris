@@ -22,7 +22,7 @@ def repo(tmp_path: Path) -> Path:
 def completed_child(root: Path) -> None:
     assert handle_hook(root, "PreToolUse", {"session_id": "boundary", "turn_id": "boundary", "tool_name": "spawn_agent", "tool_input": {"fork_turns": "none", "agent_type": "worker"}}) == ""
     assert handle_hook(root, "SubagentStart", {"session_id": "boundary", "turn_id": "boundary", "agent_id": "child", "agent_type": "worker"})
-    assert handle_hook(root, "SubagentStop", {"session_id": "boundary", "turn_id": "boundary", "agent_id": "child"}) == ""
+    assert handle_hook(root, "SubagentStop", {"session_id": "boundary", "turn_id": "boundary", "agent_id": "child", "agent_type": "worker"}) == ""
 
 
 def test_core_has_no_codex_adapter_import() -> None:

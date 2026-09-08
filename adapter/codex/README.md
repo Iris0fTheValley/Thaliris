@@ -22,9 +22,10 @@ and the five `thaliris-*` profiles. Init/doctor report profile definition
 presence separately from native profile activation and project-layer
 activation; an installed `.codex` file does not prove that the current session
 trusted or loaded it.
-The compatibility field `hook_trust_required` reports only that this init or
-update changed project definitions that need restart/trust review; it is not a
-claim about the current session's trust state.
+The compatibility field `hook_trust_required` is only a hook-definition change
+trigger. Profile or instruction changes can still set
+`session_restart_required` without implying that hook trust is required; neither
+field claims anything about the current session's trust state.
 
 Hooks cover only known local native surfaces. During an ACTIVE task the root
 Controller is denied on matched `mcp__*` tools as well as guarded local shell
@@ -44,9 +45,11 @@ Core v5 distinguishes an ordinary model-authored test report from an observed
 execution result and binds a trusted result to the target and current Core
 surface identity. An allowed root `spawn_agent(fork_turns="none")` for a
 supported Thaliris profile creates one bounded pending authorization scoped to
-the active task, semantic role, and session hash. The managed lifecycle is
+the active task, semantic role, native `agent_type`, and shared session hash.
+The managed lifecycle is
 `authorized reservation -> matching SubagentStart -> Core projection emitted
-successfully -> matching SubagentStop -> qualifying completion`. Unknown or
+successfully -> matching session/turn/type SubagentStop -> qualifying completion`.
+Unknown or
 mismatched starts remain observations and receive no projection. A pending
 reservation and every started managed child are in flight, so managed dispatch
 remains serial until the child stops. Stop proves lifecycle completion, not

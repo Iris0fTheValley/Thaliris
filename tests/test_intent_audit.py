@@ -951,6 +951,37 @@ def test_unknown_managed_agent_is_denied_without_pending_authorization(tmp_path)
     assert not list((root / ".context" / "audit" / "lifecycle").glob("*.json"))
 
 
+def test_semantic_alias_is_not_native_spawn_authority(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "semantic alias boundary", None, None)
+    assert codex_adapter.semantic_role("investigator") == "investigator"
+    denied = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "investigator"}),
+    ))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert not list((root / ".context" / "audit" / "lifecycle").glob("*.json"))
+
+
+@pytest.mark.parametrize(
+    ("agent_type", "role"),
+    [
+        ("explorer", "investigator"),
+        ("worker", "implementer"),
+        ("thaliris-investigator", "investigator"),
+        ("thaliris-curator", "curator"),
+        ("thaliris-reasoning-specialist", "reasoning-specialist"),
+        ("thaliris-implementer", "implementer"),
+        ("thaliris-reviewer", "reviewer"),
+    ],
+)
+def test_supported_native_agent_types_can_reserve_managed_spawn(tmp_path, agent_type, role):
+    root = repo(tmp_path); init(root); task_start(root, "native agent boundary", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": agent_type})) == ""
+    lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
+    assert lifecycle["pending_authorized_spawn"]["role"] == role
+
+
 def test_stale_pending_authorization_cannot_authorize_a_later_child(tmp_path):
     root = repo(tmp_path); init(root); task_start(root, "stale pending", None, None)
     assert handle_hook(root, "PreToolUse", payload(session="same", tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
@@ -999,6 +1030,10 @@ def test_generated_agent_profiles_match_codex_schema_and_native_role_mapping(tmp
     root = repo(tmp_path)
     result = init(root)
     assert result["agent_profile_changed"] is True
+    assert result["profile_definition_present"] == "YES"
+    assert result["profile_native_active"] == "UNKNOWN"
+    assert result["project_layer_activation"] == "UNKNOWN"
+    assert result["hook_trust_required"] is True
     expected = {
         "thaliris-investigator": "investigator",
         "thaliris-curator": "curator",
@@ -1019,7 +1054,14 @@ def test_task_start_does_not_claim_current_codex_session_is_managed(tmp_path):
     init(root)
     started = task_start(root, "readiness", None, None)
     assert started["managed_readiness"]["status"] == "UNKNOWN"
-    assert codex_adapter.doctor(root)["managed_readiness"]["CURRENT_SESSION_OBSERVED"] == "UNKNOWN"
+    assert started["managed_readiness"]["profile_definition_present"] == "YES"
+    assert started["managed_readiness"]["profile_native_active"] == "UNKNOWN"
+    assert started["managed_readiness"]["project_layer_activation"] == "UNKNOWN"
+    readiness = codex_adapter.doctor(root)["managed_readiness"]
+    assert readiness["CURRENT_SESSION_OBSERVED"] == "UNKNOWN"
+    assert readiness["profile_definition_present"] == "YES"
+    assert readiness["profile_native_active"] == "UNKNOWN"
+    assert readiness["project_layer_activation"] == "UNKNOWN"
 
 
 def test_modified_generated_agent_profile_requires_manual_migration_and_is_preserved(tmp_path):

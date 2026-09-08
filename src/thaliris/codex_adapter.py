@@ -33,6 +33,7 @@ _AGENT_PROFILES = {
     "thaliris-implementer.toml": ("gpt-5.6-terra", "medium", "implementer"),
     "thaliris-reviewer.toml": ("gpt-5.6-terra", "high", "reviewer"),
 }
+_NATIVE_PROFILE_NAMES = frozenset(name.removesuffix(".toml") for name in _AGENT_PROFILES)
 _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     "0720619c1d0b85b80a2981597fcd60086a1bddc7f03f48f88cc8f75c1128d872",
     "8026959290edeb86d66ee86f9b5db286e7fb31c28c95ec2c42ec8be7f2cda515",
@@ -62,6 +63,24 @@ def _agent_profile_state(value: bytes, name: str) -> str:
     return "legacy" if hashlib.sha256(value).hexdigest() in _KNOWN_GENERATED_AGENT_PROFILE_HASHES else "user"
 
 
+def _profile_definition_present(root: Path) -> str:
+    return "YES" if all((root / ".codex" / "agents" / name).is_file() for name in _AGENT_PROFILES) else "NO"
+
+
+def _activation_fields(root: Path, native_profile_active: str = "UNKNOWN") -> dict[str, str]:
+    definitions = _profile_definition_present(root)
+    if definitions == "NO":
+        native_profile_active = "NO"
+        project_layer = "NO"
+    else:
+        project_layer = "YES" if native_profile_active == "YES" else "UNKNOWN"
+    return {
+        "profile_definition_present": definitions,
+        "profile_native_active": native_profile_active,
+        "project_layer_activation": project_layer,
+    }
+
+
 def semantic_role(runtime_role: str) -> str:
     if runtime_role in {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}:
         return runtime_role
@@ -89,7 +108,7 @@ Codex remains the runtime. Thaliris stores bounded task control and pointers; it
 
 Controller uses `context task-status` or `context prepare --role controller` for the default low-noise context base. `context task-show` is an explicit out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller path. `context task-artifact` passes pointers, not contents.
 
-During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn authorizes the next matching native `SubagentStart`; that managed child receives its Thaliris role projection there, performs the assigned work, avoids child-to-child delegation, and explicitly selects what to return to the Controller. Large selected information remains valid when needed for correctness. The authorized spawn plus matching `SubagentStart` and `SubagentStop` is required before acceptance or task-close; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. Use serial managed dispatch unless sibling isolation has been independently observed for the current Codex runtime. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn creates one authorization reservation; the next matching native `SubagentStart` receives its Thaliris role projection, and only a successfully emitted projection followed by the matching `SubagentStop` qualifies for acceptance or task-close. Large selected information remains valid when needed for correctness. Pending reservations and started managed children are serial in flight; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
 
 Read detailed role packs only when needed. Raw findings, evidence, transcripts,
 logs, and tool output do not enter Controller packets or durable memory
@@ -143,10 +162,11 @@ the persistent Controller. The Controller must not consume child-only working
 material automatically; a large selected payload is allowed when necessary.
 During an ACTIVE task the persistent Controller does not perform repository
 investigation or source mutation; dispatch does not change those permissions.
-`task-close` and acceptance require a matching child `SubagentStart` and
-`SubagentStop` for the active task. The lifecycle must follow an allowed
-`fork_turns=\"none\"` root spawn; PostToolUse records dispatch only; it is
-not a completion signal.
+`task-close` and acceptance require an authorized reservation, matching child
+`SubagentStart`, successfully emitted Core projection, and matching
+`SubagentStop` for the active task. Pending reservations and started managed
+children remain serial in flight. PostToolUse records dispatch only; it is not
+a completion signal.
 
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
@@ -347,11 +367,11 @@ def _install(root: Path) -> dict[str, object]:
     writes, manual = _install_plan(root)
     with core._lock(root):
         if not writes:
-            return {"ok": True, "changed": False, "backup": None, "files": [], "manual_migration_required": manual, "instruction_definition_changed": False, "hook_definition_changed": False, "agent_profile_changed": False, "session_restart_required": False, "hook_trust_required": False}
+            return {"ok": True, "changed": False, "backup": None, "files": [], "manual_migration_required": manual, "instruction_definition_changed": False, "hook_definition_changed": False, "agent_profile_changed": False, "session_restart_required": False, "hook_trust_required": False, **_activation_fields(root)}
         hook_changed = ".codex/hooks.json" in writes
         instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in writes)
         profile_changed = any(path.startswith(".codex/agents/") for path in writes)
-        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, [], "codex-init"), "files": sorted(writes), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed}
+        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, [], "codex-init"), "files": sorted(writes), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed or profile_changed, **_activation_fields(root)}
 
 
 def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
@@ -438,7 +458,7 @@ def init(root: Path) -> dict[str, object]:
     hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed}
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed or profile_changed, **_activation_fields(root)}
 
 
 def migrate(root: Path) -> dict[str, object]:
@@ -454,7 +474,7 @@ def migrate(root: Path) -> dict[str, object]:
     hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed}
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed or profile_changed, **_activation_fields(root)}
 
 
 def _uninstall(root: Path) -> dict[str, object]:
@@ -616,6 +636,7 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
     result["managed_readiness"] = {
         "status": "UNKNOWN",
         "reason": "current Codex session hook/profile activation has not been observed",
+        **_activation_fields(core._repo_root(root)),
     }
     return result
 
@@ -666,9 +687,11 @@ def audit_hook(root: Path, event: str, payload: object) -> str:
 
 def doctor(root: Path) -> dict[str, object]:
     from .doctor import report
+    root = core._repo_root(root)
     result = report(root)
     observations: list[tuple[int, int, dict[str, object]]] = []
     events: set[str] = set()
+    native_profile_observed = False
     expected = intent_audit.managed_hook_spec_hash()
     for path in (root / ".context" / "audit").glob("*/runtime.json"):
         try:
@@ -679,6 +702,11 @@ def doctor(root: Path) -> dict[str, object]:
         samples = runtime.get("execution_observations") if current else None
         if current and isinstance(runtime.get("events_observed"), dict):
             events.update(name for name, observed in runtime["events_observed"].items() if observed is True)
+        if current and isinstance(runtime.get("subagent_start_agent_types"), list):
+            native_profile_observed = native_profile_observed or any(
+                isinstance(value, str) and value in _NATIVE_PROFILE_NAMES
+                for value in runtime["subagent_start_agent_types"]
+            )
         if isinstance(samples, list):
             observations.extend((int(runtime.get("observed_at_ns", 0)), int(runtime.get("observation_sequence", 0)), item) for item in samples if isinstance(item, dict))
     latest = max(observations, default=None, key=lambda item: (item[0], item[1]))
@@ -722,6 +750,7 @@ def doctor(root: Path) -> dict[str, object]:
         # A hook response was emitted locally, but only a native child probe
         # can show that Codex delivered additionalContext to the child.
         "role_projection_injection_observed": "UNKNOWN",
+        **_activation_fields(root, "YES" if native_profile_observed else "UNKNOWN"),
     }
     task = result.get("context", {}).get("task_state", {}) if isinstance(result.get("context"), dict) else {}
     target = task.get("verification_target") if isinstance(task, dict) else None

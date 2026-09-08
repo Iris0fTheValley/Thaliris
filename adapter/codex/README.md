@@ -16,6 +16,13 @@ truncation. The
 Controller never receives child-only projections. `child_bootstrap()` remains a
 manual/legacy fallback, not the managed correctness path.
 
+Semantic and CLI aliases are not native spawn authority. Managed
+`spawn_agent` accepts only the supported native values `explorer`, `worker`,
+and the five `thaliris-*` profiles. Init/doctor report profile definition
+presence separately from native profile activation and project-layer
+activation; an installed `.codex` file does not prove that the current session
+trusted or loaded it.
+
 Hooks cover only known local native surfaces. During an ACTIVE task the root
 Controller is denied on matched `mcp__*` tools as well as guarded local shell
 and mutation paths; children are not given that root allowlist. Hosted,

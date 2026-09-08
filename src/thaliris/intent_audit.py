@@ -54,15 +54,14 @@ _TRUSTED_CODEX_SHELL_TOOL_NAMES = ("Bash",)
 _CONTROLLER_EXECUTION_TOOL_NAMES = _OBSERVED_EXECUTION_TOOL_NAMES
 _CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _OBSERVED_EXECUTION_TOOL_NAMES) + ")"
 _NATIVE_AGENT_ROLES = {
-    "investigator": "investigator", "luna": "investigator", "luna-investigator": "investigator", "explorer": "investigator",
+    # Only concrete Codex native agent_type values may cross the managed
+    # spawn boundary. Semantic/CLI aliases stay in codex_adapter.
+    "explorer": "investigator",
+    "worker": "implementer",
     "thaliris-investigator": "investigator",
-    "curator": "curator", "luna-curator": "curator",
     "thaliris-curator": "curator",
-    "reasoning-specialist": "reasoning-specialist", "sol-high": "reasoning-specialist",
     "thaliris-reasoning-specialist": "reasoning-specialist",
-    "implementer": "implementer", "terra-implementer": "implementer", "worker": "implementer",
     "thaliris-implementer": "implementer",
-    "reviewer": "reviewer", "terra-reviewer": "reviewer",
     "thaliris-reviewer": "reviewer",
 }
 _CONTROLLER_MUTATION_TOOL_NAMES = ("apply_patch", "file_change", "functions.apply_patch", "functions.file_change")
@@ -688,7 +687,7 @@ def _managed_spawn_role(payload: dict[str, Any]) -> str | None:
     for key in ("agent_type", "agentType", "agent_role", "role"):
         value = tool_input.get(key)
         if isinstance(value, str):
-            role = _NATIVE_AGENT_ROLES.get(value.strip().lower())
+            role = _NATIVE_AGENT_ROLES.get(value.strip())
             if role is not None:
                 return role
     return None

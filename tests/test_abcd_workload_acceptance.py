@@ -31,7 +31,10 @@ def test_abcd_t2_bounded_artifact_pointer(tmp_path, capsys):
     artifact.write_text("fresh evidence\n", encoding="utf-8")
     _run(capsys, root, "task-artifact", "--base-revision", "1", "--id", "e1", "--path", "evidence.txt", "--summary", "focused evidence")
     packet = _run(capsys, root, "task-status")
-    assert packet["Artifact Refs"] == [{"id": "e1", "path": "evidence.txt", "summary": "focused evidence"}]
+    assert len(packet["Artifact Refs"]) == 1
+    assert packet["Artifact Refs"][0] | {"id": "e1", "path": "evidence.txt", "summary": "focused evidence"} == packet["Artifact Refs"][0]
+    assert packet["Artifact Refs"][0]["freshness"] == "FRESH"
+    assert packet["Artifact Refs"][0]["content_sha256"]
     assert "evidence_refs" not in packet
     assert "investigation_findings" not in packet
 

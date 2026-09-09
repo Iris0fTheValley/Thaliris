@@ -1,13 +1,15 @@
 """Summarize sanitized model and context metrics for benchmark session JSONL.
 
-This is benchmark-only tooling. It discovers only direct child sessions of the
-manifested root and never copies prompts, tool payloads, or raw output into the
-ledger. Input-token totals are telemetry sums, not billing estimates.
+This is benchmark-only tooling. It can discover a manifested root's complete
+persistent Codex thread DAG and never copies prompts, tool payloads, or raw
+output into the ledger. Input-token totals are telemetry sums, not billing
+estimates.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -98,11 +100,54 @@ def _session(path: Path) -> dict[str, Any]:
     }
 
 
+def _persistent_sessions(state_db: Path, root_id: str) -> list[dict[str, Any]]:
+    """Read sanitized rollout metadata and recursively walk the thread DAG."""
+    con = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True)
+    try:
+        rows = con.execute("select id, rollout_path from threads").fetchall()
+        by_id = {str(row[0]): row for row in rows}
+        edges = con.execute(
+            "select parent_thread_id, child_thread_id from thread_spawn_edges"
+        ).fetchall()
+    finally:
+        con.close()
+    children: dict[str, list[str]] = {}
+    for parent, child in edges:
+        children.setdefault(str(parent), []).append(str(child))
+    ordered: list[str] = []
+    seen = {root_id}
+    pending = [root_id]
+    while pending:
+        parent = pending.pop(0)
+        for child in children.get(parent, []):
+            if child in seen:
+                continue
+            seen.add(child)
+            ordered.append(child)
+            pending.append(child)
+    output: list[dict[str, Any]] = []
+    for session_id in [root_id, *ordered]:
+        row = by_id.get(session_id)
+        if row is None:
+            continue
+        path = Path(str(row[1]))
+        if not path.is_file():
+            output.append({"session_id": session_id, "file": path.name, "missing": True})
+            continue
+        session = _session(path)
+        session["session_id"] = session_id
+        session["parent_thread_id"] = next((str(parent) for parent, child in edges if str(child) == session_id), None)
+        output.append(session)
+    return output
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--session-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--state-db", type=Path, help="Persistent Codex state_5.sqlite for recursive DAG discovery")
+    parser.add_argument("--root-session-id", help="Root thread id in --state-db")
     args = parser.parse_args(argv)
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     runs = manifest.get("runs") if isinstance(manifest, dict) else None
@@ -113,6 +158,10 @@ def main(argv: list[str] | None = None) -> int:
     for item in runs:
         run = item["run"]
         root = args.session_root / item["root_file"]
+        if args.state_db and args.root_session_id:
+            tree = _persistent_sessions(args.state_db, args.root_session_id)
+            output_runs.append({"run": run, "root": tree[0] if tree else {}, "children": tree[1:]})
+            continue
         root_session = _session(root)
         root_id = root_session.get("session_id")
         children = []

@@ -1135,6 +1135,7 @@ def test_reasoning_specialist_profile_is_bounded_and_requests_missing_evidence()
     instructions = profile["developer_instructions"]
     assert "one bounded decision attempt" in instructions
     assert "NEED_EVIDENCE" in instructions
+    assert "INSUFFICIENT_OR_CONTRADICTORY" in instructions
     assert "EvidenceRequest" in instructions
     assert "repository-wide investigation" in instructions
     assert "Do not modify repository files or task semantic state" in instructions

@@ -69,7 +69,9 @@ decision-changing fact is missing, return `NEED_EVIDENCE` with an
 decision, preferred evidence surface, and verification requirement), finish,
 and let the Controller route a fresh Investigator. The Investigator persists a
 bounded evidence artifact; the Controller selects its relevant facts and starts
-a fresh Reasoning Specialist. Reviewers are fresh one-shot children on every
+a fresh Reasoning Specialist. If selected evidence is materially contradictory
+and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
+conflicting references and stop. Reviewers are fresh one-shot children on every
 round; preserve findings and evidence, not their conversation trajectory. Use a
 single sufficiently long native wait and a single post-timeout status check,
 not short polling turns, and close completed one-shot Sol/Reviewer children

@@ -46,16 +46,24 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     # Exact profile bytes emitted by the first dedicated Decision Context
     # profile before the current boundary instruction was added.
     "d2191d59621e2765ae7642ca1648d96b4dbfb1a82293a8a02bf8642328fb58a7",
+    # Exact profile bytes emitted before bounded-decision/evidence-request
+    # instructions were added.
+    "60a87a06e97602f10f7f3842061c6eba551e78f76a8fa99b17ba377f48d22117",
 })
 
 
 def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
     instructions = (
-        "Resolve the supplied Decision Context. Choose among competing options when evidence permits. "
-        "Return the selected decision, rationale, invariants implementation must preserve, and remaining "
-        "decision-changing unknowns. Do not reconstruct unrelated investigation history. If context is "
-        "insufficient, identify the missing evidence instead. Do not modify repository files or task "
-        "semantic state. Return the decision to the Controller; implementation belongs to the Implementer."
+        "Resolve the supplied Decision Context only, as one bounded decision attempt. Do not reconstruct "
+        "the Investigator working set or perform repository-wide investigation, exploratory searches, or "
+        "broad tool-driven fact gathering. You may inspect an exact selected evidence artifact or reference "
+        "when necessary, but do not expand into open-ended investigation. If a decision-changing fact is "
+        "missing, return NEED_EVIDENCE with an EvidenceRequest containing decision_question, missing_fact, "
+        "why_it_can_change_the_decision, preferred_evidence_surface, and verification_requirement, then "
+        "stop. Otherwise return DECISION with the selected decision, rationale, must-preserve invariants, "
+        "compatibility constraints, and remaining decision-changing unknowns. Do not modify repository "
+        "files or task semantic state. Return the decision to the Controller; implementation belongs to "
+        "the Implementer."
         if role == "reasoning-specialist"
         else f"Thaliris semantic role: {role}. Work only inside your assigned role and return selected evidence-backed results."
     )
@@ -145,7 +153,16 @@ Context, not the full investigation or an empty decision request.
 After a Reasoning Specialist returns, do not dispatch an Implementer until
 every accepted implementation-changing conclusion is recorded in task
 semantic state or explicitly included in that Implementer handoff. Never rely
-on implicit child history.
+on implicit child history. A Reasoning Specialist makes one bounded decision
+attempt: if evidence is insufficient, it returns an EvidenceRequest and stops;
+the Controller sends that request to a fresh Investigator, persists a bounded
+evidence artifact, then uses a fresh Reasoning Specialist. Reviewers are fresh
+one-shot children for each review round; retain findings, not reviewer
+conversation history. Use one sufficiently long native wait for child
+completion (with one status check after timeout), not short model-driven
+polling. Close completed one-shot Sol and Reviewer children with Codex native
+controls; do not create a Thaliris timer, watchdog, worker, or lifecycle
+runtime.
 {MANAGED_END}
 """
 
@@ -225,6 +242,20 @@ will affect implementation by recording it as a task Decision, Constraint, or
 Modification Boundary, or by placing it in the selected Implementer handoff.
 Never rely on an implicit Sol-to-child history transfer. The Reasoning
 Specialist has no direct Core semantic-state write permission.
+
+Reasoning Specialists make one bounded decision attempt. They must not rebuild
+an Investigator working set or perform open-ended repository searches. When a
+decision-changing fact is missing, return `NEED_EVIDENCE` with an
+`EvidenceRequest` (decision question, missing fact, why it can change the
+decision, preferred evidence surface, and verification requirement), finish,
+and let the Controller route a fresh Investigator. The Investigator persists a
+bounded evidence artifact; the Controller selects its relevant facts and starts
+a fresh Reasoning Specialist. Reviewers are fresh one-shot children on every
+round; preserve findings and evidence, not their conversation trajectory. Use a
+single sufficiently long native wait and a single post-timeout status check,
+not short polling turns, and close completed one-shot Sol/Reviewer children
+with native controls. Thaliris does not implement timers, watchdogs, workers,
+or lifecycle orchestration.
 
 After a qualifying completed child, the Controller may run only the exact
 Verification Target when it is a known test command family: pytest, npm/pnpm/

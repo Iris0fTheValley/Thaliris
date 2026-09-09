@@ -43,6 +43,9 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     # Exact profile bytes emitted before the dedicated Sol Decision Context
     # instruction was added.
     "960190bb4b67b02e7616bcf6dbd71192bcc79327fb0ed72e6f23b3815819afd0",
+    # Exact profile bytes emitted by the first dedicated Decision Context
+    # profile before the current boundary instruction was added.
+    "d2191d59621e2765ae7642ca1648d96b4dbfb1a82293a8a02bf8642328fb58a7",
 })
 
 

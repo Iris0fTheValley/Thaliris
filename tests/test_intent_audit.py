@@ -1215,6 +1215,31 @@ def test_previous_sol_profile_bytes_upgrade_but_user_edit_is_preserved(tmp_path)
     assert edited_profile.read_bytes() == historical + b"# user customization\n"
 
 
+def test_first_decision_context_sol_profile_bytes_upgrade_but_user_edit_is_preserved(tmp_path):
+    historical = (
+        b'name = "thaliris-reasoning-specialist"\n'
+        b'description = "Thaliris reasoning-specialist execution role"\n'
+        b'model = "gpt-5.6-sol"\n'
+        b'model_reasoning_effort = "xhigh"\n'
+        b'developer_instructions = "Resolve the supplied Decision Context. Choose among competing options when evidence permits. Return the selected decision, rationale, invariants implementation must preserve, and remaining decision-changing unknowns. Do not reconstruct unrelated investigation history. If context is insufficient, identify the missing evidence instead."\n'
+    )
+    root = repo(tmp_path / "legacy")
+    profile = root / ".codex" / "agents" / "thaliris-reasoning-specialist.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_bytes(historical)
+    upgraded = init(root)
+    assert ".codex/agents/thaliris-reasoning-specialist.toml" in upgraded["files"]
+    assert profile.read_bytes() == codex_adapter._agent_profile("thaliris-reasoning-specialist", "reasoning-specialist", "gpt-5.6-sol", "xhigh")
+
+    edited = repo(tmp_path / "edited")
+    edited_profile = edited / ".codex" / "agents" / "thaliris-reasoning-specialist.toml"
+    edited_profile.parent.mkdir(parents=True)
+    edited_profile.write_bytes(historical + b"# user customization\n")
+    preserved = init(edited)
+    assert ".codex/agents/thaliris-reasoning-specialist.toml" in preserved["manual_migration_required"]
+    assert edited_profile.read_bytes() == historical + b"# user customization\n"
+
+
 def test_previous_role_pack_bytes_upgrade_but_user_edit_is_preserved(tmp_path):
     historical = subprocess.run(
         ["git", "show", "5f24998:docs/thaliris-role-packs.md"],

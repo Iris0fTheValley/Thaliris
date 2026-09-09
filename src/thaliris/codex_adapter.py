@@ -8,13 +8,16 @@ from pathlib import Path
 import subprocess
 import tomllib
 
-from . import core
+from . import core, intent_audit
 from .intent_audit import MANAGED_HOOKS_DESCRIPTION, bind_unbound_intent, cleanup_task_audit, handle_hook, merge_hooks, remove_hooks, task_close_audit
 
 CODEX_ROLE_MAP = {
     "luna": "investigator", "luna-investigator": "investigator",
     "luna-curator": "curator", "sol-high": "reasoning-specialist",
     "terra-implementer": "implementer", "terra-reviewer": "reviewer",
+    "thaliris-investigator": "investigator", "thaliris-curator": "curator",
+    "thaliris-reasoning-specialist": "reasoning-specialist",
+    "thaliris-implementer": "implementer", "thaliris-reviewer": "reviewer",
     # Codex built-in profile compatibility aliases; these are not Core roles.
     "worker": "implementer", "explorer": "investigator",
 }
@@ -22,6 +25,77 @@ CODEX_ROLE_MAP = {
 # This is a CLI ingress contract, not a second role registry: every value is
 # immediately normalized by semantic_role() before it reaches Core.
 ROLE_CHOICES = tuple(sorted(core._PACK_ROLES | set(CODEX_ROLE_MAP)))
+
+_AGENT_PROFILES = {
+    "thaliris-investigator.toml": ("gpt-5.6-luna", "medium", "investigator"),
+    "thaliris-curator.toml": ("gpt-5.6-luna", "medium", "curator"),
+    "thaliris-reasoning-specialist.toml": ("gpt-5.6-sol", "xhigh", "reasoning-specialist"),
+    "thaliris-implementer.toml": ("gpt-5.6-terra", "medium", "implementer"),
+    "thaliris-reviewer.toml": ("gpt-5.6-terra", "high", "reviewer"),
+}
+_NATIVE_PROFILE_NAMES = frozenset(name.removesuffix(".toml") for name in _AGENT_PROFILES)
+_KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
+    "0720619c1d0b85b80a2981597fcd60086a1bddc7f03f48f88cc8f75c1128d872",
+    "8026959290edeb86d66ee86f9b5db286e7fb31c28c95ec2c42ec8be7f2cda515",
+    "7e596a38e95606b684b17f25cc0eecb3163aef7d65d36110f6496b3ab7d53692",
+    "a91e41c67930071db4d6eb45342526cbbf67af6d4fda13d1c847d18f28816a35",
+    "ae56701985a1d27a2daea326819fa0e93b4350eb6e65d1a299daf198126a7a9a",
+    # Exact profile bytes emitted before the dedicated Sol Decision Context
+    # instruction was added.
+    "960190bb4b67b02e7616bcf6dbd71192bcc79327fb0ed72e6f23b3815819afd0",
+    # Exact profile bytes emitted by the first dedicated Decision Context
+    # profile before the current boundary instruction was added.
+    "d2191d59621e2765ae7642ca1648d96b4dbfb1a82293a8a02bf8642328fb58a7",
+})
+
+
+def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
+    instructions = (
+        "Resolve the supplied Decision Context. Choose among competing options when evidence permits. "
+        "Return the selected decision, rationale, invariants implementation must preserve, and remaining "
+        "decision-changing unknowns. Do not reconstruct unrelated investigation history. If context is "
+        "insufficient, identify the missing evidence instead. Do not modify repository files or task "
+        "semantic state. Return the decision to the Controller; implementation belongs to the Implementer."
+        if role == "reasoning-specialist"
+        else f"Thaliris semantic role: {role}. Work only inside your assigned role and return selected evidence-backed results."
+    )
+    return (
+        f'name = "{name}"\n'
+        f'description = "Thaliris {role} execution role"\n'
+        f'model = "{model}"\n'
+        f'model_reasoning_effort = "{effort}"\n'
+        f'developer_instructions = "{instructions}"\n'
+    ).encode("utf-8")
+
+
+def _agent_profile_state(value: bytes, name: str) -> str:
+    profile = _AGENT_PROFILES.get(name)
+    if profile is None:
+        return "user"
+    expected = _agent_profile(name.removesuffix(".toml"), profile[2], profile[0], profile[1])
+    if value == expected:
+        return "current"
+    return "legacy" if hashlib.sha256(value).hexdigest() in _KNOWN_GENERATED_AGENT_PROFILE_HASHES else "user"
+
+
+def _profile_definition_present(root: Path) -> str:
+    return "YES" if all((root / ".codex" / "agents" / name).is_file() for name in _AGENT_PROFILES) else "NO"
+
+
+def _activation_fields(
+    root: Path,
+    profile_native_active: str = "UNKNOWN",
+    project_layer_activation: str = "UNKNOWN",
+    compatible_profile_observed: str = "UNKNOWN",
+    compatible_project_hooks_observed: str = "UNKNOWN",
+) -> dict[str, str]:
+    return {
+        "profile_definition_present": _profile_definition_present(root),
+        "profile_native_active": profile_native_active,
+        "project_layer_activation": project_layer_activation,
+        "compatible_profile_observed": compatible_profile_observed,
+        "compatible_project_hooks_observed": compatible_project_hooks_observed,
+    }
 
 
 def semantic_role(runtime_role: str) -> str:
@@ -51,13 +125,27 @@ Codex remains the runtime. Thaliris stores bounded task control and pointers; it
 
 Controller uses `context task-status` or `context prepare --role controller` for the default low-noise context base. `context task-show` is an explicit out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller path. `context task-artifact` passes pointers, not contents.
 
-During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. The child obtains its own Thaliris role projection directly, performs the assigned work, avoids child-to-child delegation, and explicitly selects what to return to the Controller. Large selected information remains valid when needed for correctness. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. PostToolUse records dispatch evidence. Use serial managed dispatch unless sibling isolation has been independently observed for the current Codex runtime. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn creates one authorization reservation; the next matching native `SubagentStart` receives its Thaliris role projection, and only a successfully emitted projection followed by the matching `SubagentStop` qualifies for acceptance or task-close. Large selected information remains valid when needed for correctness. Pending reservations and started managed children are serial in flight; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
 
 Read detailed role packs only when needed. Raw findings, evidence, transcripts,
 logs, and tool output do not enter Controller packets or durable memory
 automatically; explicitly select any detail needed for the next decision, and
 promote only explicit durable decisions, constraints, invariants, failure modes,
 or material milestone progress.
+
+After targeted investigation, escalate to
+`agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
+when a material implementation choice remains unresolved by available
+evidence: materially different fixes remain plausible, an OPEN unknown or
+contradiction could change the choice, a cross-module state/lifecycle/
+ownership/concurrency/compatibility choice remains undecided, a substantive
+trade-off remains, or a Reviewer raises a design question. Do not escalate
+only for task size, file count, or token count. Pass a selected Decision
+Context, not the full investigation or an empty decision request.
+After a Reasoning Specialist returns, do not dispatch an Implementer until
+every accepted implementation-changing conclusion is recorded in task
+semantic state or explicitly included in that Implementer handoff. Never rely
+on implicit child history.
 {MANAGED_END}
 """
 
@@ -104,9 +192,12 @@ child-to-child workflow, and explicitly selects the information to return to
 the persistent Controller. The Controller must not consume child-only working
 material automatically; a large selected payload is allowed when necessary.
 During an ACTIVE task the persistent Controller does not perform repository
-investigation or source mutation; successful child dispatch does not change
-those permissions. `task-close` requires a qualifying successful child
-dispatch. PostToolUse keeps native dispatch evidence auditable.
+investigation or source mutation; dispatch does not change those permissions.
+`task-close` and acceptance require an authorized reservation, matching child
+`SubagentStart`, successfully emitted Core projection, and matching
+`SubagentStop` for the active task. Pending reservations and started managed
+children remain serial in flight. PostToolUse records dispatch only; it is not
+a completion signal.
 
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
@@ -114,7 +205,28 @@ source directly. Larger work adds only the roles needed by risk and unknowns.
 Wait for native completion or mailbox updates; Thaliris has no polling, worker,
 retry, or scheduling runtime.
 
-After a qualifying child dispatch, the Controller may run only the exact
+After targeted investigation, escalate to
+`agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
+when a material implementation choice remains unresolved by available
+evidence: two or more materially different fixes remain plausible, an OPEN
+unknown or contradiction could change the choice, a cross-module
+state/lifecycle/ownership/concurrency/compatibility choice remains undecided,
+the facts are known but a substantive trade-off remains, or a Reviewer finds a
+design question rather than a mechanical correction. Do not escalate based
+only on task size, file count, or token count. Pass an explicit Decision
+Context containing the decision question, confirmed relevant facts, competing
+options, must-preserve invariants and compatibility contracts,
+decision-changing unknowns or contradictions, and relevant evidence or
+artifact pointers. Do not pass the full Investigator working set or an empty
+"help me decide" request.
+
+Before spawning an Implementer, explicitly accept every Sol conclusion that
+will affect implementation by recording it as a task Decision, Constraint, or
+Modification Boundary, or by placing it in the selected Implementer handoff.
+Never rely on an implicit Sol-to-child history transfer. The Reasoning
+Specialist has no direct Core semantic-state write permission.
+
+After a qualifying completed child, the Controller may run only the exact
 Verification Target when it is a known test command family: pytest, npm/pnpm/
 yarn test, cargo test, go test, or dotnet test. A target never authorizes an
 arbitrary shell command.
@@ -172,9 +284,12 @@ do not treat this layer as a scheduler, transcript store, or automatic summary.
 # Exact byte hashes for documents emitted by prior adapter releases.  Ownership
 # is deliberately binary: a one-character user edit makes the file user-owned.
 KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
+    "242d1c6420139434425a2d6883011c2c44e34f1f3280267cb09243bdc0155f09",
     "75f6c6804db80995c32cf4902247ae0d78762a15f37b35b677219813c8d17e6a",
     "4ff409d7aa3d5f2ad2eb0c82b317d9af54426dde7765d8101939dcc578a460c0",
     "6e49df8985c52309a6966c5ddd8b6b3b6a2b6bce326c55f327cb999bb6b46e4c",
+    # Exact role-pack bytes emitted before the current escalation/handoff text.
+    "8822c992b91d6cf0cc03a4f7c56b2c4ee48050d76d4e3b07654fa0acef36bbce",
 })
 
 
@@ -306,9 +421,11 @@ def _install(root: Path) -> dict[str, object]:
     writes, manual = _install_plan(root)
     with core._lock(root):
         if not writes:
-            return {"ok": True, "changed": False, "backup": None, "files": [], "manual_migration_required": manual, "hook_definition_changed": False, "hook_trust_required": False}
+            return {"ok": True, "changed": False, "backup": None, "files": [], "manual_migration_required": manual, "instruction_definition_changed": False, "hook_definition_changed": False, "agent_profile_changed": False, "session_restart_required": False, "hook_trust_required": False, **_activation_fields(root)}
         hook_changed = ".codex/hooks.json" in writes
-        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, [], "codex-init"), "files": sorted(writes), "manual_migration_required": manual, "hook_definition_changed": hook_changed, "hook_trust_required": hook_changed}
+        instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in writes)
+        profile_changed = any(path.startswith(".codex/agents/") for path in writes)
+        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, [], "codex-init"), "files": sorted(writes), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed, **_activation_fields(root)}
 
 
 def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
@@ -344,6 +461,14 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
         writes["docs/thaliris-role-packs.md"] = ROLE_PACKS.encode("utf-8")
     elif _role_pack_state(role_packs.read_bytes()) == "user":
         manual.append("docs/thaliris-role-packs.md")
+    for name, (model, effort, role) in _AGENT_PROFILES.items():
+        relative = f".codex/agents/{name}"
+        profile = core._safe(root, relative)
+        rendered = _agent_profile(name.removesuffix(".toml"), role, model, effort)
+        if not profile.exists() or _agent_profile_state(profile.read_bytes(), name) == "legacy":
+            writes[relative] = rendered
+        elif _agent_profile_state(profile.read_bytes(), name) == "user":
+            manual.append(relative)
     current_ignore = _read_text(ignore) if ignore.is_file() else ""
     rendered_ignore = _audit_ignore(current_ignore)
     if current_ignore != rendered_ignore:
@@ -385,7 +510,9 @@ def init(root: Path) -> dict[str, object]:
     with core._lock(root):
         backup = core._apply_with_backup(root, files, [], "init") if files else None
     hook_changed = ".codex/hooks.json" in files
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_migration_required": manual, "hook_definition_changed": hook_changed, "hook_trust_required": hook_changed}
+    instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
+    profile_changed = any(path.startswith(".codex/agents/") for path in files)
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed, **_activation_fields(root)}
 
 
 def migrate(root: Path) -> dict[str, object]:
@@ -399,7 +526,9 @@ def migrate(root: Path) -> dict[str, object]:
     with core._lock(root):
         backup = core._apply_with_backup(root, files, [], "migrate") if files else None
     hook_changed = ".codex/hooks.json" in files
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup, "hook_definition_changed": hook_changed, "hook_trust_required": hook_changed}
+    instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
+    profile_changed = any(path.startswith(".codex/agents/") for path in files)
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed, **_activation_fields(root)}
 
 
 def _uninstall(root: Path) -> dict[str, object]:
@@ -511,6 +640,16 @@ def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], li
             deletes.append("docs/thaliris-role-packs.md")
         else:
             kept.append("docs/thaliris-role-packs.md")
+    for name in _AGENT_PROFILES:
+        relative = f".codex/agents/{name}"
+        profile = core._safe(root, relative)
+        if not profile.is_file():
+            continue
+        state = _agent_profile_state(profile.read_bytes(), name)
+        if state in {"current", "legacy"}:
+            deletes.append(relative)
+        else:
+            kept.append(relative)
     hooks = core._safe(root, ".codex/hooks.json")
     if hooks.is_file():
         try:
@@ -546,6 +685,13 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
         bind_unbound_intent(core._repo_root(root), str(result["task_id"]), intent_capture_id)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         pass
+    # A task is a Core object.  Starting one cannot prove that this already
+    # running Codex session reloaded project hooks, AGENTS, or agent profiles.
+    result["managed_readiness"] = {
+        "status": "UNKNOWN",
+        "reason": "current Codex session hook/profile activation has not been observed",
+        **_activation_fields(core._repo_root(root)),
+    }
     return result
 
 
@@ -573,6 +719,8 @@ def prepare_child(root: Path, role: str) -> dict[str, object]:
 def task_close(root: Path, base_revision: int) -> dict[str, object]:
     state = core.task_show(root)["state"]
     task_id = str(state["task_id"])
+    if not intent_audit.qualifying_child_completed(core._repo_root(root)):
+        raise ValueError("task-close requires an authorized native SubagentStart, an emitted Core projection, a matching session/turn/type SubagentStop, and no pending or active managed work")
     try:
         audit = task_close_audit(core._repo_root(root), task_id, cleanup=False)
     except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
@@ -593,4 +741,84 @@ def audit_hook(root: Path, event: str, payload: object) -> str:
 
 def doctor(root: Path) -> dict[str, object]:
     from .doctor import report
-    return report(root)
+    root = core._repo_root(root)
+    result = report(root)
+    observations: list[tuple[int, int, dict[str, object]]] = []
+    events: set[str] = set()
+    compatible_profile_observed = False
+    expected = intent_audit.managed_hook_spec_hash()
+    for path in (root / ".context" / "audit").glob("*/runtime.json"):
+        try:
+            runtime = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        current = isinstance(runtime, dict) and runtime.get("managed_hook_spec_hash") == expected and runtime.get("adapter_protocol_version") == intent_audit.CODEX_ADAPTER_PROTOCOL_VERSION
+        samples = runtime.get("execution_observations") if current else None
+        if current and isinstance(runtime.get("events_observed"), dict):
+            events.update(name for name, observed in runtime["events_observed"].items() if observed is True)
+        if current and isinstance(runtime.get("subagent_start_agent_types"), list):
+            compatible_profile_observed = compatible_profile_observed or any(
+                isinstance(value, str) and value in _NATIVE_PROFILE_NAMES
+                for value in runtime["subagent_start_agent_types"]
+            )
+        if isinstance(samples, list):
+            observations.extend((int(runtime.get("observed_at_ns", 0)), int(runtime.get("observation_sequence", 0)), item) for item in samples if isinstance(item, dict))
+    latest = max(observations, default=None, key=lambda item: (item[0], item[1]))
+    latest_item = latest[2] if latest is not None else None
+    health = intent_audit.hooks_health(root)
+    lifecycle_start = lifecycle_stop = False
+    for path in (root / ".context" / "audit" / "lifecycle").glob("*.json"):
+        try:
+            lifecycle = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(lifecycle, dict) or lifecycle.get("version") != intent_audit.LIFECYCLE_STATE_VERSION or lifecycle.get("managed_hook_spec_hash") != expected or lifecycle.get("adapter_protocol_version") != intent_audit.CODEX_ADAPTER_PROTOCOL_VERSION:
+            continue
+        for child in lifecycle.get("children", []):
+            if isinstance(child, dict) and isinstance(child.get("started"), int):
+                lifecycle_start = True
+                lifecycle_stop = lifecycle_stop or isinstance(child.get("stopped"), int)
+    result["verification_attestation"] = {
+        "hook_definition_present": health["hooks_configured"],
+        "hook_definition_current": health["hooks_configured"],
+        # Stored observations are intentionally useful diagnostics, but they
+        # cannot prove that the session asking for this doctor report loaded
+        # the current project definitions.
+        "current_session_observed": "UNKNOWN",
+        "adapter_protocol_current": "YES" if events or latest is not None else "UNKNOWN",
+        "verification_shell_surface": "Bash",
+        "verification_terminal_status": "UNAVAILABLE",
+        "observed_outcome": latest_item.get("outcome") if latest_item is not None else "UNKNOWN",
+        "hook_trust": "UNKNOWN",
+        "detail": "Codex 0.153.4 Bash output has no version-pinned terminal-status contract; no automatic PASSED attestation is emitted.",
+    }
+    result["managed_readiness"] = {
+        "CORE_READY": "YES",
+        "CODEX_DEFINITION_PRESENT": health["hooks_configured"],
+        "CODEX_RUNTIME_OBSERVED": health["runtime_observed"],
+        "CURRENT_SESSION_OBSERVED": "UNKNOWN",
+        "CODEX_MANAGED_READY": "UNKNOWN",
+        "spawn_pretool_observed": "YES" if "PreToolUse" in events else "UNKNOWN",
+        "subagent_start_observed": "YES" if lifecycle_start else "UNKNOWN",
+        "subagent_stop_observed": "YES" if lifecycle_stop else "UNKNOWN",
+        # A hook response was emitted locally, but only a native child probe
+        # can show that Codex delivered additionalContext to the child.
+        "role_projection_injection_observed": "UNKNOWN",
+        **_activation_fields(
+            root,
+            profile_native_active="UNKNOWN",
+            project_layer_activation="UNKNOWN",
+            compatible_profile_observed="YES" if compatible_profile_observed else "UNKNOWN",
+            compatible_project_hooks_observed="YES" if events else "UNKNOWN",
+        ),
+    }
+    task = result.get("context", {}).get("task_state", {}) if isinstance(result.get("context"), dict) else {}
+    target = task.get("verification_target") if isinstance(task, dict) else None
+    if isinstance(target, str) and intent_audit._ACCEPTANCE_COMMAND.fullmatch(target):
+        target_capability = "TARGET_EXECUTABLE_BY_CODEX"
+    elif target is not None:
+        target_capability = "TARGET_REQUIRES_EXTERNAL_ATTESTATION"
+    else:
+        target_capability = "UNKNOWN"
+    result["verification_capability"] = {"target": target_capability, "terminal_status": "TERMINAL_STATUS_UNAVAILABLE"}
+    return result

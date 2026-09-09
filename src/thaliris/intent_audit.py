@@ -17,8 +17,12 @@ import tempfile
 import time
 from typing import Any
 
+from . import core
+
 HOOK_COMMAND_PREFIX = "context audit-hook"
-HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "Stop")
+HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
+CODEX_ADAPTER_PROTOCOL_VERSION = 4
+LIFECYCLE_STATE_VERSION = 6
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed intent-audit hooks"
 AUDIT_INTERVAL = 5
 MAX_AUDIT_RESULTS = 32
@@ -43,17 +47,30 @@ _COLLABORATION_TOOL_NAMES = (
     "interrupt_agent",
 )
 _COLLABORATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _COLLABORATION_TOOL_NAMES) + ")"
-# Codex 0.146 Multi-Agent V2 exposes both dotted names and flattened
-# `collaboration<tool>` names to hooks.  Keep the matcher explicit so other
-# collaboration-prefixed tools cannot enter the audit plane accidentally.
-POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN})$"
-# Codex 0.146 exposes shell execution to hooks as ``Bash``.  The controller
-# guard uses that native surface for deterministic action classification while
-# retaining the historical aliases for runtimes that expose a different name.
-_CONTROLLER_EXECUTION_TOOL_NAMES = ("Bash", "Shell", "exec_command", "command_execution", "functions.exec_command")
-_CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_EXECUTION_TOOL_NAMES) + ")"
+# Keep legacy spellings observable for diagnostics, but do not confuse them
+# with the only current Codex stable shell hook surface.  In particular, an
+# ``exec`` payload from another runtime must never reach Core's trusted ingress.
+_OBSERVED_EXECUTION_TOOL_NAMES = ("Bash", "Shell", "exec", "exec_command", "command_execution", "functions.exec_command")
+_TRUSTED_CODEX_SHELL_TOOL_NAMES = ("Bash",)
+_CONTROLLER_EXECUTION_TOOL_NAMES = _OBSERVED_EXECUTION_TOOL_NAMES
+_CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _OBSERVED_EXECUTION_TOOL_NAMES) + ")"
+_NATIVE_AGENT_ROLES = {
+    # Only concrete Codex native agent_type values may cross the managed
+    # spawn boundary. Semantic/CLI aliases stay in codex_adapter.
+    "explorer": "investigator",
+    "worker": "implementer",
+    "thaliris-investigator": "investigator",
+    "thaliris-curator": "curator",
+    "thaliris-reasoning-specialist": "reasoning-specialist",
+    "thaliris-implementer": "implementer",
+    "thaliris-reviewer": "reviewer",
+}
 _CONTROLLER_MUTATION_TOOL_NAMES = ("apply_patch", "file_change", "functions.apply_patch", "functions.file_change")
 _CONTROLLER_MUTATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_MUTATION_TOOL_NAMES) + ")"
+# Codex 0.146 Multi-Agent V2 exposes both dotted names and flattened
+# `collaboration<tool>` names to hooks. Keep execution surfaces explicit too:
+# a PostToolUse callback is the only possible completion observation.
+POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN})$"
 # Pre-dispatch isolation sees native spawn calls, the other flattened V2
 # collaboration names (for compatibility/observation), and root shell
 # execution.  The latter is intentionally explicit: a broad matcher would
@@ -91,9 +108,12 @@ def hook_spec() -> dict[str, Any]:
     hooks: dict[str, list[dict[str, Any]]] = {}
     prefix = _hook_command_prefix()
     for event in HOOK_EVENTS:
-        entry: dict[str, Any] = {
-            "hooks": [{"type": "command", "command": f"{prefix} {event}", "timeout": 60}]
-        }
+        handler: dict[str, Any] = {"type": "command", "command": f"{prefix} {event}", "timeout": 60}
+        if event == "SubagentStart":
+            # Core already bounds the projection.  Do not ask Codex to apply
+            # another opaque truncation to this managed child-only context.
+            handler["additionalContextLimit"] = 0
+        entry: dict[str, Any] = {"hooks": [handler]}
         if event == "PostToolUse":
             # Codex treats a matcher made only of word characters and `|` as
             # an exact-name set.  Regex anchors and escaping deliberately opt
@@ -124,7 +144,10 @@ def managed_hook_spec_hash() -> str:
 
 
 def _managed_handler(event: str) -> dict[str, Any]:
-    return {"type": "command", "command": f"{_hook_command_prefix()} {event}", "timeout": 60}
+    handler = {"type": "command", "command": f"{_hook_command_prefix()} {event}", "timeout": 60}
+    if event == "SubagentStart":
+        handler["additionalContextLimit"] = 0
+    return handler
 
 
 def _hook_command_prefix() -> str:
@@ -142,7 +165,7 @@ def is_managed_handler(value: object, event: str) -> bool:
         return True
     # Permit upgrading an older PATH-relative hook to a pinned executable
     # without creating duplicate handlers during merge.
-    return isinstance(value, dict) and value.get("type") == "command" and value.get("command", "").endswith(f" audit-hook {event}") and value.get("timeout") == 60
+    return isinstance(value, dict) and value.get("type") == "command" and value.get("command", "").endswith(f" audit-hook {event}") and value.get("timeout") == 60 and (event != "SubagentStart" or value.get("additionalContextLimit") in {None, 0})
 
 
 def merge_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -185,7 +208,20 @@ def merge_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
                         changed = True
                     normalized_entries.append(copied)
             else:
-                normalized_entries.append(entry)
+                if event == "SubagentStart":
+                    user_handlers = [item for item in entry["hooks"] if not is_managed_handler(item, event)]
+                    if user_handlers:
+                        copied = dict(entry)
+                        copied["hooks"] = user_handlers
+                        normalized_entries.append(copied)
+                        normalized_entries.append(wanted_entries[0])
+                    elif entry != wanted_entries[0]:
+                        normalized_entries.append(wanted_entries[0])
+                    else:
+                        normalized_entries.append(entry)
+                    changed = changed or entry != wanted_entries[0]
+                else:
+                    normalized_entries.append(entry)
         if not present:
             normalized_entries.append(wanted_entries[0])
             changed = True
@@ -337,7 +373,7 @@ def _observed_health(root: Path) -> dict[str, str]:
             runtime = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError):
             continue
-        if isinstance(runtime, dict) and runtime.get("managed_hook_spec_hash") == expected:
+        if isinstance(runtime, dict) and runtime.get("managed_hook_spec_hash") == expected and runtime.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION:
             runtime_files.append(path)
         else:
             stale = True
@@ -365,7 +401,9 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             return ""
         root = _hook_repository_root(root, payload)
         if event == "SubagentStart":
-            _best_effort_record(_record_subagent_start, root, payload)
+            return _subagent_start_output(root, payload)
+        if event == "SubagentStop":
+            _best_effort_record(_record_subagent_stop, root, payload)
             return ""
         if payload.get("agent_id") is not None:
             tool = payload.get("tool_name") or payload.get("tool")
@@ -376,15 +414,21 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
         if event == "PreToolUse":
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) == "spawn_agent":
-                # Dispatch policy is independent from supplemental evidence.
-                # A broken audit write must never turn an unsafe fork into an allow.
+                decision = _pre_tool_output(payload, root)
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
+                return decision
             return _pre_tool_output(payload, root)
         if event == "SessionStart":
             _record_session_start(root, payload)
             return ""
-        if event == "UserPromptSubmit" and _consume_expected_continuation(root, payload):
-            return ""
+        if event == "UserPromptSubmit":
+            # A pending dispatch has meaning only in the root turn that
+            # authorized it. A later root prompt cannot safely be linked to
+            # that spawn, so discard it rather than authorize an unrelated
+            # same-role child in the same session.
+            _best_effort_record(_clear_pending_authorized_spawn, root, payload)
+            if _consume_expected_continuation(root, payload):
+                return ""
         task_id = _active_task_id(root)
         partition = _resolve_partition(root, payload, event)
         state_path = _state_path(root, payload, partition)
@@ -402,6 +446,10 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) in _COLLABORATION_TOOL_NAMES:
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
+            if isinstance(tool, str) and _tool_basename(tool) in _OBSERVED_EXECUTION_TOOL_NAMES:
+                _best_effort_record(_record_execution_observation, root, payload)
+                if _tool_basename(tool) in _TRUSTED_CODEX_SHELL_TOOL_NAMES:
+                    _best_effort_record(_acceptance_execution_observed, root, payload)
             result = _capture_delegation(state, payload)
             if not result:
                 return ""
@@ -496,75 +544,75 @@ def _session_dir(root: Path, payload: dict[str, Any]) -> Path:
 
 
 def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
-    path = _session_dir(root, payload) / "runtime.json"
-    state = _load_runtime(path)
-    if payload.get("source") in {"startup", "clear"}:
-        state.pop("expected_continuation_sha256", None)
-    state.update({"version": 3, "session_start_observed": True, "root_classification": "UNKNOWN", "managed_hook_spec_hash": managed_hook_spec_hash()})
-    _write_capture(path, state)
+    with core._lock(root):
+        path = _session_dir(root, payload) / "runtime.json"
+        state = _load_runtime(path)
+        if payload.get("source") in {"startup", "clear"}:
+            state.pop("expected_continuation_sha256", None)
+        _runtime_metadata(state, payload)
+        state.update({"version": 4, "session_start_observed": True, "root_classification": "UNKNOWN"})
+        _write_capture(path, state)
+
+
+def _runtime_metadata(state: dict[str, Any], payload: dict[str, Any]) -> None:
+    """Attach only compatibility metadata, never prompts, output, or IDs."""
+    state["managed_hook_spec_hash"] = managed_hook_spec_hash()
+    state["adapter_protocol_version"] = CODEX_ADAPTER_PROTOCOL_VERSION
+    state["thaliris_version"] = getattr(__import__("thaliris"), "__version__", "UNKNOWN")
+    session = payload.get("session_id")
+    if isinstance(session, str) and session:
+        state["session_id_hash"] = _identity_hash(session)
+    state["observation_sequence"] = int(state.get("observation_sequence", 0)) + 1
+    state["observed_at_ns"] = time.time_ns()
 
 
 def _record_runtime_event(root: Path, payload: dict[str, Any], event: str, tool: str) -> None:
     """Persist bounded evidence that a root hook event reached this adapter."""
-    path = _session_dir(root, payload) / "runtime.json"
-    state = _load_runtime(path)
-    state["managed_hook_spec_hash"] = managed_hook_spec_hash()
-    observed = state.setdefault("events_observed", {})
-    observed[event] = True
-    tools = state.setdefault("tools_observed", [])
-    normalized = _tool_basename(tool)
-    if normalized not in tools and len(tools) < 16:
-        tools.append(normalized)
-    raw_tools = state.setdefault("tool_names_observed", [])
-    if tool not in raw_tools and len(raw_tools) < 16:
-        raw_tools.append(tool)
-    if event == "PreToolUse":
-        tool_input = _delegation_input(payload)
-        state.pop("pre_dispatch_rewrite", None)
-        state["pre_dispatch_isolation"] = (
-            "EXPLICIT" if tool_input.get("fork_turns") == "none" else "NONCOMPLIANT"
-        )
-    if event == "PostToolUse" and _tool_basename(tool) == "spawn_agent":
-        # Codex has emitted both a structured response object and a
-        # scalar/opaque response for collaboration tools.  The PostToolUse
-        # event itself is the completion boundary; only an explicit failure
-        # marker should prevent the Controller from recognizing that a child
-        # dispatch completed.  Do not inspect encrypted V2 message content.
-        tool_input = _delegation_input(payload)
-        response = _post_tool_response(payload)
-        if tool_input.get("fork_turns") == "none" and _post_tool_succeeded(response):
-            # Dispatch eligibility belongs to one ACTIVE task, not the whole
-            # native session. Legacy session-level booleans intentionally do
-            # not satisfy a later task.
-            task_id = _active_task_id(root)
-            if task_id is not None:
-                state["successful_spawn_task_id_hash"] = _task_key(task_id)
-                state["successful_spawn_hook_spec_hash"] = managed_hook_spec_hash()
-    _write_capture(path, state)
+    with core._lock(root):
+        path = _session_dir(root, payload) / "runtime.json"
+        state = _load_runtime(path)
+        _runtime_metadata(state, payload)
+        observed = state.setdefault("events_observed", {})
+        observed[event] = True
+        tools = state.setdefault("tools_observed", [])
+        normalized = _tool_basename(tool)
+        if normalized not in tools and len(tools) < 16:
+            tools.append(normalized)
+        raw_tools = state.setdefault("tool_names_observed", [])
+        if tool not in raw_tools and len(raw_tools) < 16:
+            raw_tools.append(tool)
+        if event == "PreToolUse":
+            tool_input = _delegation_input(payload)
+            state.pop("pre_dispatch_rewrite", None)
+            state["pre_dispatch_isolation"] = (
+                "EXPLICIT" if tool_input.get("fork_turns") == "none" else "NONCOMPLIANT"
+            )
+        _write_capture(path, state)
 
 
 def _record_controller_guard_event(root: Path, payload: dict[str, Any], action: str, decision: str) -> None:
     """Persist only bounded action/decision evidence for the root guard."""
-    path = _session_dir(root, payload) / "runtime.json"
-    state = _load_runtime(path)
-    state["managed_hook_spec_hash"] = managed_hook_spec_hash()
-    state.setdefault("events_observed", {})["PreToolUse"] = True
-    tool = payload.get("tool_name") or payload.get("tool")
-    normalized = _tool_basename(tool) if isinstance(tool, str) else "UNKNOWN"
-    tools = state.setdefault("tools_observed", [])
-    if normalized not in tools and len(tools) < 16:
-        tools.append(normalized)
-    raw_name = tool if isinstance(tool, str) else "UNKNOWN"
-    raw_tools = state.setdefault("tool_names_observed", [])
-    if raw_name not in raw_tools and len(raw_tools) < 16:
-        raw_tools.append(raw_name)
-    counters = state.setdefault("controller_guard", {"allowed": 0, "blocked": 0, "unknown": 0})
-    if decision in counters:
-        counters[decision] = int(counters[decision]) + 1
-    actions = state.setdefault("controller_actions_observed", [])
-    if action not in actions and len(actions) < 16:
-        actions.append(action)
-    _write_capture(path, state)
+    with core._lock(root):
+        path = _session_dir(root, payload) / "runtime.json"
+        state = _load_runtime(path)
+        _runtime_metadata(state, payload)
+        state.setdefault("events_observed", {})["PreToolUse"] = True
+        tool = payload.get("tool_name") or payload.get("tool")
+        normalized = _tool_basename(tool) if isinstance(tool, str) else "UNKNOWN"
+        tools = state.setdefault("tools_observed", [])
+        if normalized not in tools and len(tools) < 16:
+            tools.append(normalized)
+        raw_name = tool if isinstance(tool, str) else "UNKNOWN"
+        raw_tools = state.setdefault("tool_names_observed", [])
+        if raw_name not in raw_tools and len(raw_tools) < 16:
+            raw_tools.append(raw_name)
+        counters = state.setdefault("controller_guard", {"allowed": 0, "blocked": 0, "unknown": 0})
+        if decision in counters:
+            counters[decision] = int(counters[decision]) + 1
+        actions = state.setdefault("controller_actions_observed", [])
+        if action not in actions and len(actions) < 16:
+            actions.append(action)
+        _write_capture(path, state)
 
 
 def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str) -> None:
@@ -585,38 +633,279 @@ def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str)
         command = _bash_command(payload)
         if command and (_BROAD_INVESTIGATION.search(command) or re.search(r"(?i)^git\s+diff\b", command)):
             action = "BROAD_INVESTIGATION"
-    path = _session_dir(root, payload) / "runtime.json"
-    state = _load_runtime(path)
-    state["managed_hook_spec_hash"] = managed_hook_spec_hash()
-    _bounded_append(state, "pretool_child_agent_id_hashes", _identity_hash(agent_id))
-    if action is None:
+    with core._lock(root):
+        path = _session_dir(root, payload) / "runtime.json"
+        state = _load_runtime(path)
+        _runtime_metadata(state, payload)
+        _bounded_append(state, "pretool_child_agent_id_hashes", _identity_hash(agent_id))
+        if action is None:
+            _write_capture(path, state)
+            return
+        tools = state.setdefault("child_tools_observed", [])
+        if normalized not in tools and len(tools) < 16:
+            tools.append(normalized)
+        actions = state.setdefault("child_actions_observed", [])
+        if action not in actions and len(actions) < 16:
+            actions.append(action)
         _write_capture(path, state)
+
+
+def _lifecycle_path(root: Path, task_id: str) -> Path:
+    return root / ".context" / "audit" / "lifecycle" / f"{_task_key(task_id)}.json"
+
+
+def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
+    if not path.is_file():
+        return {"version": LIFECYCLE_STATE_VERSION, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, 5, LIFECYCLE_STATE_VERSION} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
+        raise ValueError("invalid lifecycle runtime state")
+    prior_version = value.get("version")
+    if prior_version in {1, 2, 3, 4, 5}:
+        # Earlier records have no exact native agent provenance. Never infer it
+        # across an upgrade; discard pending reservations and managed status.
+        value["version"] = LIFECYCLE_STATE_VERSION
+        value.pop("pending_authorized_spawns", None)
+        value["pending_authorized_spawn"] = None
+        for child in value["children"]:
+            if isinstance(child, dict):
+                child["managed"] = False
+                child["projection_ready"] = False
+    pending = value.get("pending_authorized_spawn")
+    if pending is not None and (
+        not isinstance(pending, dict)
+        or set(pending) != {"role", "expected_agent_type", "session_id_hash", "authorized_sequence"}
+        or pending.get("role") not in set(_NATIVE_AGENT_ROLES.values())
+        or pending.get("expected_agent_type") not in _NATIVE_AGENT_ROLES
+        or not isinstance(pending.get("session_id_hash"), str)
+        or not isinstance(pending.get("authorized_sequence"), int)
+    ):
+        raise ValueError("invalid lifecycle authorized spawns")
+    return value
+
+
+def _managed_spawn_role(payload: dict[str, Any]) -> str | None:
+    """Map only an explicitly supported native agent_type to a semantic role."""
+    tool_input = _delegation_input(payload)
+    for key in ("agent_type", "agentType"):
+        value = tool_input.get(key)
+        if isinstance(value, str):
+            role = _NATIVE_AGENT_ROLES.get(value)
+            if role is not None:
+                return role
+    return None
+
+
+def _native_spawn_agent_type(payload: dict[str, Any]) -> str | None:
+    tool_input = _delegation_input(payload)
+    for key in ("agent_type", "agentType"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value in _NATIVE_AGENT_ROLES:
+            return value
+    return None
+
+
+def _session_id_hash(payload: dict[str, Any]) -> str | None:
+    value = payload.get("session_id")
+    return _identity_hash(value) if isinstance(value, str) and value else None
+
+
+def _turn_id_hash(payload: dict[str, Any]) -> str | None:
+    value = payload.get("turn_id")
+    return _identity_hash(value) if isinstance(value, str) and value else None
+
+
+def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
+    """Atomically reserve the one managed child slot before allowing spawn."""
+    task_id = _active_task_id(root)
+    if task_id is None:
+        return ""
+    expected_agent_type = _native_spawn_agent_type(payload)
+    role = _NATIVE_AGENT_ROLES.get(expected_agent_type) if expected_agent_type is not None else None
+    if role is None:
+        return _permission_deny("THALIRIS_MANAGED_AGENT_REQUIRED: managed tasks may spawn only a supported Thaliris agent profile.")
+    session_id_hash = _session_id_hash(payload)
+    if session_id_hash is None:
+        return _permission_deny("THALIRIS_MANAGED_SESSION_REQUIRED: managed spawn authorization requires a current session identity.")
+    try:
+        with core._lock(root):
+            # Re-read while holding the same lock used by task mutations.
+            if _active_task_id(root) != task_id:
+                return _permission_deny("THALIRIS_MANAGED_SPAWN_UNAVAILABLE: the active task changed before authorization.")
+            path = _lifecycle_path(root, task_id)
+            state = _load_lifecycle(path, task_id)
+            active = any(
+                isinstance(child, dict)
+                and child.get("managed") is True
+                and child.get("stopped") is None
+                for child in state["children"]
+            )
+            if active or state["pending_authorized_spawn"] is not None:
+                return _permission_deny("THALIRIS_SERIAL_CHILD_REQUIRED: wait for the managed child reservation to complete before spawning another child.")
+            state["sequence"] = int(state.get("sequence", 0)) + 1
+            state["pending_authorized_spawn"] = {
+                "role": role,
+                "expected_agent_type": expected_agent_type,
+                "session_id_hash": session_id_hash,
+                "authorized_sequence": state["sequence"],
+            }
+            _runtime_metadata(state, payload)
+            _write_capture(path, state)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return _permission_deny("THALIRIS_MANAGED_SPAWN_UNAVAILABLE: managed authorization could not be reserved.")
+    return ""
+
+
+def _clear_pending_authorized_spawn(root: Path, payload: dict[str, Any]) -> None:
+    task_id = _active_task_id(root)
+    session_id_hash = _session_id_hash(payload)
+    if task_id is None or session_id_hash is None:
         return
-    tools = state.setdefault("child_tools_observed", [])
-    if normalized not in tools and len(tools) < 16:
-        tools.append(normalized)
-    actions = state.setdefault("child_actions_observed", [])
-    if action not in actions and len(actions) < 16:
-        actions.append(action)
-    _write_capture(path, state)
+    with core._lock(root):
+        path = _lifecycle_path(root, task_id)
+        if not path.is_file():
+            return
+        state = _load_lifecycle(path, task_id)
+        pending = state["pending_authorized_spawn"]
+        if isinstance(pending, dict) and pending.get("session_id_hash") == session_id_hash:
+            state["pending_authorized_spawn"] = None
+            _runtime_metadata(state, payload)
+            _write_capture(path, state)
 
 
-def _record_subagent_start(root: Path, payload: dict[str, Any]) -> None:
-    """Keep bounded identity corroboration; never alter child context or routing."""
-    path = _session_dir(root, payload) / "runtime.json"
-    state = _load_runtime(path)
-    state["managed_hook_spec_hash"] = managed_hook_spec_hash()
+def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
+    """Record a bounded child start and return its Core-owned projection role."""
+    task_id = _active_task_id(root)
     agent_id = payload.get("agent_id")
     agent_type = payload.get("agent_type")
-    turn_id = payload.get("turn_id")
-    if isinstance(agent_id, str) and agent_id:
-        _bounded_append(state, "subagent_start_agent_id_hashes", _identity_hash(agent_id))
-    if isinstance(agent_type, str) and agent_type:
-        _bounded_append(state, "subagent_start_agent_types", agent_type[:80])
-    if isinstance(turn_id, str) and turn_id:
-        _bounded_append(state, "subagent_start_turn_id_hashes", _identity_hash(turn_id))
-    state.setdefault("events_observed", {})["SubagentStart"] = True
-    _write_capture(path, state)
+    native_agent_type = _native_spawn_agent_type({"tool_input": {"agent_type": agent_type}})
+    role = _NATIVE_AGENT_ROLES.get(native_agent_type) if native_agent_type is not None else None
+    session_id_hash = _session_id_hash(payload)
+    turn_id_hash = _turn_id_hash(payload)
+    if task_id is None or not isinstance(agent_id, str) or not agent_id or role is None:
+        return None
+    with core._lock(root):
+        path = _lifecycle_path(root, task_id)
+        state = _load_lifecycle(path, task_id)
+        state["sequence"] = int(state.get("sequence", 0)) + 1
+        child_hash = _identity_hash(agent_id)
+        children = state["children"]
+        pending = state["pending_authorized_spawn"]
+        authorized = (
+            isinstance(pending, dict)
+            and pending.get("role") == role
+            and pending.get("expected_agent_type") == native_agent_type
+            and pending.get("session_id_hash") == session_id_hash
+        )
+        if authorized:
+            state["pending_authorized_spawn"] = None
+        prior = next((item for item in children if item.get("agent_id_hash") == child_hash), None)
+        if prior is None:
+            children.append({
+                "agent_id_hash": child_hash,
+                "agent_type": native_agent_type,
+                "session_id_hash": session_id_hash,
+                "turn_id_hash": turn_id_hash,
+                "role": role,
+                "managed": authorized,
+                "projection_ready": False,
+                "started": state["sequence"],
+                "stopped": None,
+            })
+        _runtime_metadata(state, payload)
+        _write_capture(path, state)
+    # Keep only the old bounded identity-corroboration sample for diagnostics;
+    # completion authority remains exclusively in the task-local lifecycle file.
+    with core._lock(root):
+        runtime_path = _session_dir(root, payload) / "runtime.json"
+        runtime = _load_runtime(runtime_path)
+        _runtime_metadata(runtime, payload)
+        _bounded_append(runtime, "subagent_start_agent_id_hashes", _identity_hash(agent_id))
+        _bounded_append(runtime, "subagent_start_agent_types", agent_type[:80] if isinstance(agent_type, str) else None)
+        runtime.setdefault("events_observed", {})["SubagentStart"] = True
+        _write_capture(runtime_path, runtime)
+    return role if authorized else None
+
+
+def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> None:
+    task_id = _active_task_id(root)
+    agent_id = payload.get("agent_id")
+    native_agent_type = _native_spawn_agent_type({"tool_input": {"agent_type": payload.get("agent_type")}})
+    session_id_hash = _session_id_hash(payload)
+    turn_id_hash = _turn_id_hash(payload)
+    if task_id is None or not isinstance(agent_id, str) or not agent_id or native_agent_type is None or session_id_hash is None or turn_id_hash is None:
+        return
+    with core._lock(root):
+        path = _lifecycle_path(root, task_id)
+        state = _load_lifecycle(path, task_id)
+        child_hash = _identity_hash(agent_id)
+        for child in state["children"]:
+            if (
+                child.get("agent_id_hash") == child_hash
+                and child.get("agent_type") == native_agent_type
+                and child.get("session_id_hash") == session_id_hash
+                and child.get("turn_id_hash") == turn_id_hash
+                and child.get("managed") is True
+                and child.get("stopped") is None
+            ):
+                state["sequence"] = int(state.get("sequence", 0)) + 1
+                child["stopped"] = state["sequence"]
+                _runtime_metadata(state, payload)
+                _write_capture(path, state)
+                return
+
+
+def _mark_projection_ready(root: Path, payload: dict[str, Any]) -> bool:
+    """Record that the adapter successfully emitted the Core projection."""
+    task_id = _active_task_id(root)
+    agent_id = payload.get("agent_id")
+    if task_id is None or not isinstance(agent_id, str) or not agent_id:
+        return False
+    try:
+        with core._lock(root):
+            path = _lifecycle_path(root, task_id)
+            state = _load_lifecycle(path, task_id)
+            child_hash = _identity_hash(agent_id)
+            for child in state["children"]:
+                if (
+                    child.get("agent_id_hash") == child_hash
+                    and child.get("managed") is True
+                    and child.get("stopped") is None
+                ):
+                    child["projection_ready"] = True
+                    _runtime_metadata(state, payload)
+                    _write_capture(path, state)
+                    return True
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+    return False
+
+
+def _subagent_start_output(root: Path, payload: dict[str, Any]) -> str:
+    role = _record_subagent_start(root, payload)
+    if role is None:
+        return ""
+    try:
+        projection = core.prepare(root, None, role)
+        response = json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "SubagentStart",
+                    "additionalContext": json.dumps(
+                        {"thaliris_role": role, "projection": projection},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                }
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return ""
+    if not _mark_projection_ready(root, payload):
+        return ""
+    return response
 
 
 def _bounded_append(state: dict[str, Any], key: str, value: str | None) -> None:
@@ -655,19 +944,37 @@ def _bash_command(payload: dict[str, Any]) -> str | None:
     return command if isinstance(command, str) and command.strip() else None
 
 
-def _successful_spawn_observed(root: Path, payload: dict[str, Any]) -> bool:
-    path = _session_dir(root, payload) / "runtime.json"
+def qualifying_child_completed(root: Path) -> bool:
+    """Require exact authorized native start, emitted projection, stop, and no in-flight work."""
+    task_id = _active_task_id(root)
+    if task_id is None:
+        return False
+    path = _lifecycle_path(root, task_id)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return False
-    task_id = _active_task_id(root)
     return (
         isinstance(value, dict)
-        and task_id is not None
-        and value.get("successful_spawn_task_id_hash") == _task_key(task_id)
-        and value.get("successful_spawn_hook_spec_hash") == managed_hook_spec_hash()
+        and value.get("version") == LIFECYCLE_STATE_VERSION
+        and value.get("task_id_hash") == _task_key(task_id)
+        and value.get("managed_hook_spec_hash") == managed_hook_spec_hash()
+        and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
+        and value.get("pending_authorized_spawn") is None
+        and not _managed_child_active(root)
+        and any(isinstance(child, dict) and child.get("managed") is True and child.get("projection_ready") is True and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
     )
+
+
+def _managed_child_active(root: Path) -> bool:
+    task_id = _active_task_id(root)
+    if task_id is None:
+        return False
+    try:
+        value = json.loads(_lifecycle_path(root, task_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return isinstance(value, dict) and value.get("version") == LIFECYCLE_STATE_VERSION and value.get("managed_hook_spec_hash") == managed_hook_spec_hash() and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION and any(isinstance(child, dict) and child.get("managed") is True and child.get("stopped") is None for child in value.get("children", []))
 
 
 def _post_tool_response(payload: dict[str, Any]) -> object:
@@ -676,6 +983,32 @@ def _post_tool_response(payload: dict[str, Any]) -> object:
         if key in payload:
             return payload[key]
     return None
+
+
+def _record_execution_observation(root: Path, payload: dict[str, Any]) -> None:
+    """Keep a privacy-preserving native payload-shape sample for doctor/probes."""
+    tool = payload.get("tool_name") or payload.get("tool")
+    response_field = next((key for key in ("tool_response", "tool_result", "result", "output") if key in payload), None)
+    response = payload.get(response_field) if response_field is not None else None
+    item: dict[str, Any] = {
+        "tool": _tool_basename(tool) if isinstance(tool, str) else "UNKNOWN",
+        "response_field": response_field,
+        "response_type": type(response).__name__,
+        "outcome": _codex_bash_outcome(response) if isinstance(tool, str) and _tool_basename(tool) == "Bash" else _execution_outcome(response),
+    }
+    if isinstance(response, dict):
+        item["response_keys"] = sorted(str(key) for key in response)[:16]
+        nested = response.get("result")
+        if isinstance(nested, dict):
+            item["nested_result_keys"] = sorted(str(key) for key in nested)[:16]
+    with core._lock(root):
+        path = _session_dir(root, payload) / "runtime.json"
+        state = _load_runtime(path)
+        _runtime_metadata(state, payload)
+        observed = state.setdefault("execution_observations", [])
+        if isinstance(observed, list) and len(observed) < 8:
+            observed.append(item)
+        _write_capture(path, state)
 
 
 def _post_tool_succeeded(response: object) -> bool:
@@ -693,6 +1026,66 @@ def _post_tool_succeeded(response: object) -> bool:
     if isinstance(response, str) and response.strip().lower() in {"error", "failed", "rejected"}:
         return False
     return True
+
+
+def _execution_outcome(response: object) -> str:
+    """Parse an explicit terminal-result contract for a future supported runtime.
+
+    Codex stable 0.153.4 does not publish this contract for Bash.  Callers on
+    that surface must use _codex_bash_outcome(), which intentionally remains
+    UNKNOWN even when a synthetic payload happens to contain these fields.
+    """
+    if not isinstance(response, dict):
+        return "UNKNOWN"
+    if any(response.get(key) is True or response.get(key) not in (None, False, "") for key in ("isError", "failed", "error")):
+        return "FAILED"
+    for key in ("exit_code", "exitCode", "returncode", "return_code"):
+        value = response.get(key)
+        if type(value) is int:
+            return "PASSED" if value == 0 else "FAILED"
+    nested = response.get("result")
+    return _execution_outcome(nested) if isinstance(nested, dict) else "UNKNOWN"
+
+
+def _codex_bash_outcome(response: object) -> str:
+    """Current Codex stable has no version-pinned Bash terminal-status fact."""
+    del response
+    return "UNKNOWN"
+
+
+def _acceptance_execution_observed(root: Path, payload: dict[str, Any]) -> None:
+    """Bridge a completed, authorized Codex acceptance invocation into Core."""
+    tool = payload.get("tool_name") or payload.get("tool")
+    if not isinstance(tool, str) or _tool_basename(tool) not in _TRUSTED_CODEX_SHELL_TOOL_NAMES:
+        return
+    command = _bash_command(payload)
+    target = _active_verification_target(root)
+    if command is None or target is None or _normalized_command(command) != _normalized_command(target) or not qualifying_child_completed(root):
+        return
+    outcome = _codex_bash_outcome(_post_tool_response(payload))
+    if outcome == "UNKNOWN":
+        # Codex 0.153.4 exposes no version-pinned Bash terminal-result fact.
+        # Retain only the bounded diagnostic observation; do not churn Core
+        # state with an execution result that cannot prove anything.
+        return
+    try:
+        requirements = core.task_verification_requirements(root)
+        material = json.dumps({"task": requirements["task_id"], "revision": requirements["revision"], "command": command, "outcome": outcome}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        result_id = f"codex-observation-{hashlib.sha256(material).hexdigest()[:32]}"
+        core.task_record_verification(
+            root,
+            requirements["revision"],
+            result_id,
+            "test",
+            outcome,
+            "Codex PostToolUse execution observation",
+            observed_by="codex-post-tool-use",
+            source_paths=requirements["paths"],
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        # Missing/ambiguous payload or unrepresentable source identity must not
+        # manufacture a result. The Core close gate remains fail-closed.
+        return
 
 
 def _controller_roles(command: str) -> list[str]:
@@ -744,11 +1137,11 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
                 continue
             return "ROOT_COMMAND_NOT_ALLOWED"
         if re.match(r"^context\s+task-close\b", lowered):
-            if not _successful_spawn_observed(root, payload):
+            if not qualifying_child_completed(root):
                 return "TASK_CLOSE_NO_CHILD"
             continue
         if _ACCEPTANCE_COMMAND.fullmatch(value):
-            if not _successful_spawn_observed(root, payload):
+            if not qualifying_child_completed(root):
                 return "ACCEPTANCE_BEFORE_CHILD"
             target = _active_verification_target(root)
             if target is not None and _normalized_command(value) == _normalized_command(target):
@@ -766,11 +1159,11 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
 
 def _load_runtime(path: Path) -> dict[str, Any]:
     if not path.is_file():
-        return {"version": 3}
+        return {"version": 4}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3}:
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4}:
         raise ValueError("unsupported audit runtime state")
-    value["version"] = 3
+    value["version"] = 4
     return value
 
 
@@ -1280,9 +1673,8 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
         return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
     fork = tool_input.get("fork_turns")
     if fork == "none":
-        # Current Codex treats a bare `allow` without updatedInput as invalid.
-        # A correct primary invocation therefore has no hook control effect.
-        return ""
+        root = _hook_repository_root(root or Path.cwd(), payload)
+        return _reserve_managed_spawn(root, payload)
     return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
 
 

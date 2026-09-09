@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -10,11 +11,18 @@ import pytest
 
 from thaliris import core
 from thaliris import codex_adapter
+from thaliris.intent_audit import handle_hook
 
 
 def repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     return tmp_path
+
+
+def completed_child(root: Path) -> None:
+    assert handle_hook(root, "PreToolUse", {"session_id": "boundary", "turn_id": "boundary", "tool_name": "spawn_agent", "tool_input": {"fork_turns": "none", "agent_type": "worker"}}) == ""
+    assert handle_hook(root, "SubagentStart", {"session_id": "boundary", "turn_id": "boundary", "agent_id": "child", "agent_type": "worker"})
+    assert handle_hook(root, "SubagentStop", {"session_id": "boundary", "turn_id": "boundary", "agent_id": "child", "agent_type": "worker"}) == ""
 
 
 def test_core_has_no_codex_adapter_import() -> None:
@@ -49,6 +57,7 @@ def test_adapter_close_rejects_task_identity_change_during_audit(tmp_path: Path,
     root = repo(tmp_path)
     codex_adapter.init(root)
     started = codex_adapter.task_start(root, "race", None, None)
+    completed_child(root)
 
     def audit_with_task_switch(*_args, **_kwargs):
         state = json.loads((root / ".context/state.json").read_text(encoding="utf-8"))
@@ -60,6 +69,30 @@ def test_adapter_close_rejects_task_identity_change_during_audit(tmp_path: Path,
     monkeypatch.setattr(codex_adapter, "task_close_audit", audit_with_task_switch)
     with pytest.raises(ValueError, match="task revision conflict"):
         codex_adapter.task_close(root, started["revision"])
+
+
+def test_adapter_close_does_not_treat_model_test_report_as_execution_result(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    codex_adapter.init(root)
+    source = root / "subject.py"
+    source.write_text("subject", encoding="utf-8")
+    start_input = tmp_path.parent / "adapter-start.json"
+    start_input.write_text(json.dumps({
+        "changed_surface": ["subject.py"],
+        "verification_target": {"description": "run subject tests", "artifact_refs": [], "changed_surface": ["subject.py"]},
+    }), encoding="utf-8")
+    started = codex_adapter.task_start(root, "verification", None, str(start_input))
+    completed_child(root)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    fake_input = tmp_path.parent / "adapter-fake.json"
+    fake_input.write_text(json.dumps({"evidence_refs": [
+        {"id": "src", "kind": "file", "locator": f"file:subject.py#{digest}", "summary": "source", "confidence": "SUPPORTED"},
+        {"id": "fake", "kind": "test", "locator": "pytest -q", "summary": "passed", "confidence": "SUPPORTED", "source_refs": ["src"]},
+    ]}), encoding="utf-8")
+    configured = core.task_update(root, "controller", started["revision"], str(fake_input))
+    monkeypatch.setattr(codex_adapter, "task_close_audit", lambda *_args, **_kwargs: {"status": "UNKNOWN"})
+    with pytest.raises(ValueError, match="trusted successful verification result"):
+        codex_adapter.task_close(root, configured["revision"])
 
 
 def test_child_bootstrap_loads_projection_inside_child_boundary(tmp_path: Path) -> None:

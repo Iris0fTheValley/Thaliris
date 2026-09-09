@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -7,12 +8,14 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
 
 import pytest
 
 from thaliris.codex_adapter import LEGACY_ROLE_PACKS, ROLE_PACKS, init, task_close, task_start, uninstall
 from thaliris.doctor import _context_isolation
 import thaliris.doctor as doctor_module
+import thaliris.codex_adapter as codex_adapter
 import thaliris.core as core_module
 import thaliris.intent_audit as audit_module
 from thaliris.intent_audit import handle_hook, hooks_health
@@ -53,6 +56,16 @@ def capture_id(response: str) -> str:
     match = re.search(r"--intent-capture-id ([A-Za-z0-9_-]+)", context)
     assert match is not None
     return match.group(1)
+
+
+def completed_child(root: Path, identifier: str = "managed-child") -> None:
+    assert handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"}),
+    ) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id=identifier, agent_type="worker"))
+    assert handle_hook(root, "SubagentStop", payload(agent_id=identifier, agent_type="worker")) == ""
 
 
 def test_root_prompt_and_child_prompt_are_not_mixed(tmp_path):
@@ -261,7 +274,10 @@ def test_checkpoint_does_not_infer_requirement_omission_but_task_close_does(tmp_
     from thaliris.codex_adapter import task_close, task_start
     task_start(final_root, "final task", None, None)
     handle_hook(final_root, "UserPromptSubmit", payload(session="s2", prompt="实现功能；不得删除用户文件"))
+    assert handle_hook(final_root, "PreToolUse", payload(session="s2", tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
     handle_hook(final_root, "PostToolUse", payload(session="s2", tool_name="spawn_agent", tool_input={"message": "实现功能"}, tool_response={"success": True}))
+    handle_hook(final_root, "SubagentStart", payload(session="s2", agent_id="audit-final", agent_type="worker"))
+    handle_hook(final_root, "SubagentStop", payload(session="s2", agent_id="audit-final", agent_type="worker"))
     closed = task_close(final_root, 1)
     assert closed["status"] == "ACTIVE" and "state" not in closed
     assert closed["intent_audit"] == {"status": "DRIFT", "finding": "Correct delegation scope before closing this task."}
@@ -640,6 +656,11 @@ def test_effective_agents_override_and_role_pack_migration_are_not_silent(tmp_pa
     assert packs.read_text(encoding="utf-8") == "user-owned role notes\n"
 
 
+def test_checked_in_role_pack_matches_runtime_generated_content():
+    checked_in = Path(__file__).parents[1] / "docs" / "thaliris-role-packs.md"
+    assert checked_in.read_bytes() == ROLE_PACKS.encode("utf-8")
+
+
 def test_effective_instruction_discovery_skips_empty_override_and_uses_fallbacks(tmp_path, monkeypatch):
     home = tmp_path / "codex-home"; home.mkdir()
     (home / "config.toml").write_text('project_doc_fallback_filenames = ["TEAM_GUIDE.md"]\n', encoding="utf-8")
@@ -744,7 +765,7 @@ def test_managed_router_is_rendered_at_effective_file_prefix_and_hook_hash_is_fr
     agents.write_text("x" * (40 * 1024), encoding="utf-8")
     init(root)
     assert agents.read_text(encoding="utf-8").startswith("<!-- thaliris:begin -->")
-    handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}))
+    handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"}))
     assert _context_isolation(root)["observed"]["current_hook_hash_observed"] == "YES"
     monkeypatch.setattr(audit_module, "managed_hook_spec_hash", lambda: "next-definition")
     monkeypatch.setattr(doctor_module, "managed_hook_spec_hash", lambda: "next-definition")
@@ -805,7 +826,7 @@ def test_post_tool_matcher_uses_regex_for_namespaced_multiagent_tools(tmp_path):
 
 def test_pre_tool_isolation_requires_explicit_fresh_dispatch_without_agent_type(tmp_path):
     root = repo(tmp_path)
-    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "message": "work"})) == ""
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker", "message": "work"})) == ""
     for fork_turns in (None, "all", "1", "2", "5", "unexpected", 1):
         tool_input = {"message": "work"}
         if fork_turns is not None:
@@ -828,7 +849,7 @@ def test_explicit_large_spawn_payload_is_not_a_handoff_quota(tmp_path):
     allowed = handle_hook(
         root,
         "PreToolUse",
-        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "message": selected}),
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker", "message": selected}),
     )
     assert allowed == ""
 
@@ -853,6 +874,394 @@ def test_pre_tool_hook_spec_has_narrow_spawn_matcher():
     assert re.fullmatch(matcher, "functions.exec_command")
     assert re.fullmatch(matcher, "functions.apply_patch")
     assert not re.fullmatch(matcher, "shell-script")
+
+
+def test_subagent_start_hook_requests_unlimited_managed_projection_only():
+    hooks = audit_module.hook_spec()["hooks"]
+    start = hooks["SubagentStart"][0]["hooks"][0]
+    assert start["additionalContextLimit"] == 0
+    for event, entries in hooks.items():
+        if event != "SubagentStart":
+            assert all("additionalContextLimit" not in handler for entry in entries for handler in entry["hooks"])
+
+
+def test_unauthorized_subagent_start_and_stop_never_satisfy_managed_completion(tmp_path):
+    root = repo(tmp_path); init(root)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
+    task_start(root, "unauthorized lifecycle", None, str(task_input))
+    assert handle_hook(root, "SubagentStart", payload(agent_id="observed-only", agent_type="thaliris-reviewer")) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id="observed-only")) == ""
+    assert audit_module.qualifying_child_completed(root) is False
+    denied = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_authorized_spawn_is_bound_to_role_and_session_before_it_can_be_consumed(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "one pending spawn", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+    # An observed child with another role cannot take an implementer pending
+    # authorization, and it must not receive a Core projection.
+    assert handle_hook(root, "SubagentStart", payload(agent_id="wrong-role", agent_type="thaliris-reviewer")) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id="wrong-role")) == ""
+    # A matching role from another session likewise cannot consume it.
+    assert handle_hook(root, "SubagentStart", payload(session="another-session", agent_id="wrong-session", agent_type="worker")) == ""
+    assert handle_hook(root, "SubagentStop", payload(session="another-session", agent_id="wrong-session")) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id="managed", agent_type="worker"))
+    assert handle_hook(root, "SubagentStop", payload(agent_id="managed", agent_type="worker")) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id="unmanaged", agent_type="worker")) == ""
+    lifecycle = next((root / ".context" / "audit" / "lifecycle").glob("*.json"))
+    children = json.loads(lifecycle.read_text(encoding="utf-8"))["children"]
+    assert [child["managed"] for child in children] == [False, False, True, False]
+
+
+def test_concurrent_managed_spawns_reserve_only_one_authorization(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "atomic spawn reservation", None, None)
+    event = payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: handle_hook(root, "PreToolUse", event), range(2)))
+    assert outcomes.count("") == 1
+    denied = [json.loads(item) for item in outcomes if item]
+    assert len(denied) == 1
+    assert denied[0]["hookSpecificOutput"]["permissionDecision"] == "deny"
+    lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
+    assert lifecycle["pending_authorized_spawn"]["role"] == "implementer"
+
+
+def test_projection_failure_never_qualifies_a_managed_child(tmp_path, monkeypatch):
+    root = repo(tmp_path); init(root); task_start(root, "projection failure", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+    monkeypatch.setattr(audit_module.core, "prepare", lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("projection unavailable")))
+    assert handle_hook(root, "SubagentStart", payload(agent_id="projection-failure", agent_type="worker")) == ""
+    denied = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "thaliris-reviewer"}),
+    ))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert handle_hook(root, "SubagentStop", payload(agent_id="projection-failure", agent_type="worker")) == ""
+    assert audit_module.qualifying_child_completed(root) is False
+    lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
+    assert lifecycle["children"][0]["projection_ready"] is False
+
+
+def test_unknown_managed_agent_is_denied_without_pending_authorization(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "unknown managed agent", None, None)
+    denied = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "custom-untracked-agent"}),
+    ))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert not list((root / ".context" / "audit" / "lifecycle").glob("*.json"))
+
+
+def test_semantic_alias_is_not_native_spawn_authority(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "semantic alias boundary", None, None)
+    assert codex_adapter.semantic_role("investigator") == "investigator"
+    denied = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "investigator"}),
+    ))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert not list((root / ".context" / "audit" / "lifecycle").glob("*.json"))
+
+
+@pytest.mark.parametrize(
+    ("agent_type", "role"),
+    [
+        ("explorer", "investigator"),
+        ("worker", "implementer"),
+        ("thaliris-investigator", "investigator"),
+        ("thaliris-curator", "curator"),
+        ("thaliris-reasoning-specialist", "reasoning-specialist"),
+        ("thaliris-implementer", "implementer"),
+        ("thaliris-reviewer", "reviewer"),
+    ],
+)
+def test_supported_native_agent_types_can_reserve_managed_spawn(tmp_path, agent_type, role):
+    root = repo(tmp_path); init(root); task_start(root, "native agent boundary", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": agent_type})) == ""
+    lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
+    assert lifecycle["pending_authorized_spawn"]["role"] == role
+    assert lifecycle["pending_authorized_spawn"]["expected_agent_type"] == agent_type
+
+
+def test_reservation_requires_exact_native_agent_type_before_projection(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "exact native provenance", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "thaliris-investigator"})) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id="wrong-native", agent_type="explorer")) == ""
+    lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
+    assert lifecycle["pending_authorized_spawn"]["expected_agent_type"] == "thaliris-investigator"
+    assert handle_hook(root, "SubagentStart", payload(agent_id="right-native", agent_type="thaliris-investigator"))
+    assert handle_hook(root, "SubagentStop", payload(agent_id="right-native", agent_type="thaliris-investigator")) == ""
+    lifecycle = json.loads(next((root / ".context" / "audit" / "lifecycle").glob("*.json")).read_text(encoding="utf-8"))
+    assert lifecycle["pending_authorized_spawn"] is None
+    assert [child["managed"] for child in lifecycle["children"]] == [False, True]
+
+
+def test_subagent_stop_requires_exact_child_provenance(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "stop provenance", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id="provenance-child", agent_type="worker"))
+
+    lifecycle_path = next((root / ".context" / "audit" / "lifecycle").glob("*.json"))
+    for stop_payload in (
+        payload(agent_id="provenance-child", agent_type="worker", turn="other-turn"),
+        payload(agent_id="provenance-child", agent_type="explorer"),
+        payload(session="other-session", agent_id="provenance-child", agent_type="worker"),
+    ):
+        assert handle_hook(root, "SubagentStop", stop_payload) == ""
+        child = json.loads(lifecycle_path.read_text(encoding="utf-8"))["children"][0]
+        assert child["stopped"] is None
+
+    assert handle_hook(root, "SubagentStop", payload(agent_id="provenance-child", agent_type="worker")) == ""
+    child = json.loads(lifecycle_path.read_text(encoding="utf-8"))["children"][0]
+    assert isinstance(child["stopped"], int)
+
+
+def test_legacy_lifecycle_does_not_report_current_start_stop_observation(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "legacy doctor lifecycle", None, None)
+    task_id = json.loads((root / ".context" / "state.json").read_text(encoding="utf-8"))["task_id"]
+    path = root / ".context" / "audit" / "lifecycle" / f"{audit_module._task_key(task_id)}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "version": 4,
+        "task_id_hash": audit_module._task_key(task_id),
+        "children": [{"agent_id_hash": "old", "role": "investigator", "managed": True, "projection_ready": True, "started": 1, "stopped": 2}],
+        "pending_authorized_spawn": None,
+        "sequence": 2,
+        "managed_hook_spec_hash": audit_module.managed_hook_spec_hash(),
+        "adapter_protocol_version": audit_module.CODEX_ADAPTER_PROTOCOL_VERSION,
+    }), encoding="utf-8")
+    readiness = codex_adapter.doctor(root)["managed_readiness"]
+    assert readiness["subagent_start_observed"] == "UNKNOWN"
+    assert readiness["subagent_stop_observed"] == "UNKNOWN"
+
+
+def test_legacy_lifecycle_without_native_type_provenance_cannot_qualify(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "legacy lifecycle", None, None)
+    task_id = json.loads((root / ".context" / "state.json").read_text(encoding="utf-8"))["task_id"]
+    path = root / ".context" / "audit" / "lifecycle" / f"{audit_module._task_key(task_id)}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "version": 4,
+        "task_id_hash": audit_module._task_key(task_id),
+        "children": [{"agent_id_hash": "old", "role": "investigator", "managed": True, "projection_ready": True, "started": 1, "stopped": 2}],
+        "pending_authorized_spawn": None,
+        "sequence": 2,
+        "managed_hook_spec_hash": audit_module.managed_hook_spec_hash(),
+        "adapter_protocol_version": audit_module.CODEX_ADAPTER_PROTOCOL_VERSION,
+    }), encoding="utf-8")
+    assert audit_module.qualifying_child_completed(root) is False
+
+
+def test_stale_pending_authorization_cannot_authorize_a_later_child(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "stale pending", None, None)
+    assert handle_hook(root, "PreToolUse", payload(session="same", tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+    # A new root prompt ends the authorization turn, even within the same
+    # session; the future child has no native spawn invocation to bind to.
+    assert handle_hook(root, "UserPromptSubmit", payload(session="same", prompt="later unrelated root turn")) == ""
+    assert handle_hook(root, "SubagentStart", payload(session="same", agent_id="later-child", agent_type="worker")) == ""
+    assert audit_module.qualifying_child_completed(root) is False
+
+
+def test_completed_child_cannot_mask_a_later_active_managed_child(tmp_path):
+    root = repo(tmp_path); init(root)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
+    task_start(root, "active child lifecycle", None, str(task_input))
+    completed_child(root, "first")
+    assert audit_module.qualifying_child_completed(root) is True
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "thaliris-reviewer"})) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id="second", agent_type="thaliris-reviewer"))
+    assert audit_module.qualifying_child_completed(root) is False
+    denied = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert handle_hook(root, "SubagentStop", payload(agent_id="second", agent_type="thaliris-reviewer")) == ""
+    assert audit_module.qualifying_child_completed(root) is True
+
+
+def test_pending_spawn_reservation_blocks_acceptance_and_close_until_child_finishes(tmp_path):
+    root = repo(tmp_path); init(root)
+    task_input = root / "task.json"
+    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
+    task_start(root, "pending child lifecycle", None, str(task_input))
+    completed_child(root, "first")
+    assert audit_module.qualifying_child_completed(root) is True
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "thaliris-reviewer"})) == ""
+    assert audit_module.qualifying_child_completed(root) is False
+    acceptance = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})))
+    assert acceptance["hookSpecificOutput"]["permissionDecision"] == "deny"
+    close = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
+    assert close["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert handle_hook(root, "SubagentStart", payload(agent_id="second", agent_type="thaliris-reviewer"))
+    assert handle_hook(root, "SubagentStop", payload(agent_id="second", agent_type="thaliris-reviewer")) == ""
+    assert audit_module.qualifying_child_completed(root) is True
+
+
+def test_generated_agent_profiles_match_codex_schema_and_native_role_mapping(tmp_path):
+    root = repo(tmp_path)
+    result = init(root)
+    assert result["agent_profile_changed"] is True
+    assert result["profile_definition_present"] == "YES"
+    assert result["profile_native_active"] == "UNKNOWN"
+    assert result["project_layer_activation"] == "UNKNOWN"
+    assert result["hook_trust_required"] is True
+    expected = {
+        "thaliris-investigator": "investigator",
+        "thaliris-curator": "curator",
+        "thaliris-reasoning-specialist": "reasoning-specialist",
+        "thaliris-implementer": "implementer",
+        "thaliris-reviewer": "reviewer",
+    }
+    for name, role in expected.items():
+        profile = tomllib.loads((root / ".codex" / "agents" / f"{name}.toml").read_text(encoding="utf-8"))
+        assert profile["name"] == name
+        assert isinstance(profile["description"], str) and profile["description"]
+        assert isinstance(profile["developer_instructions"], str) and profile["developer_instructions"]
+        if role == "reasoning-specialist":
+            assert profile["model"] == "gpt-5.6-sol"
+            assert profile["model_reasoning_effort"] == "xhigh"
+            assert "Resolve the supplied Decision Context" in profile["developer_instructions"]
+        assert audit_module._NATIVE_AGENT_ROLES[name] == role
+
+
+def test_profile_only_update_requires_restart_without_hook_trust(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    profile = root / ".codex" / "agents" / "thaliris-investigator.toml"
+    profile.unlink()
+    result = init(root)
+    assert result["agent_profile_changed"] is True
+    assert result["session_restart_required"] is True
+    assert result["hook_trust_required"] is False
+
+
+def test_task_start_does_not_claim_current_codex_session_is_managed(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    started = task_start(root, "readiness", None, None)
+    assert started["managed_readiness"]["status"] == "UNKNOWN"
+    assert started["managed_readiness"]["profile_definition_present"] == "YES"
+    assert started["managed_readiness"]["profile_native_active"] == "UNKNOWN"
+    assert started["managed_readiness"]["project_layer_activation"] == "UNKNOWN"
+    assert started["managed_readiness"]["compatible_profile_observed"] == "UNKNOWN"
+    assert started["managed_readiness"]["compatible_project_hooks_observed"] == "UNKNOWN"
+    readiness = codex_adapter.doctor(root)["managed_readiness"]
+    assert readiness["CURRENT_SESSION_OBSERVED"] == "UNKNOWN"
+    assert readiness["profile_definition_present"] == "YES"
+    assert readiness["profile_native_active"] == "UNKNOWN"
+    assert readiness["project_layer_activation"] == "UNKNOWN"
+    assert readiness["compatible_profile_observed"] == "UNKNOWN"
+    assert readiness["compatible_project_hooks_observed"] == "UNKNOWN"
+
+
+def test_profile_definition_missing_does_not_imply_project_layer_inactive(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    (root / ".codex" / "agents" / "thaliris-investigator.toml").unlink()
+    readiness = codex_adapter.doctor(root)["managed_readiness"]
+    assert readiness["profile_definition_present"] == "NO"
+    assert readiness["profile_native_active"] == "UNKNOWN"
+    assert readiness["project_layer_activation"] == "UNKNOWN"
+
+
+def test_compatible_historical_profile_observation_does_not_upgrade_current_state(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "historical activation", None, None)
+    assert handle_hook(root, "SubagentStart", payload(agent_id="historical", agent_type="thaliris-investigator")) == ""
+    readiness = codex_adapter.doctor(root)["managed_readiness"]
+    assert readiness["compatible_profile_observed"] == "YES"
+    assert readiness["compatible_project_hooks_observed"] == "YES"
+    assert readiness["profile_native_active"] == "UNKNOWN"
+    assert readiness["project_layer_activation"] == "UNKNOWN"
+
+
+def test_modified_generated_agent_profile_requires_manual_migration_and_is_preserved(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    profile = root / ".codex" / "agents" / "thaliris-reviewer.toml"
+    profile.write_text(profile.read_text(encoding="utf-8") + "# user customization\n", encoding="utf-8")
+    migrated = init(root)
+    assert ".codex/agents/thaliris-reviewer.toml" in migrated["manual_migration_required"]
+    assert profile.read_text(encoding="utf-8").endswith("# user customization\n")
+    removed = uninstall(root)
+    assert ".codex/agents/thaliris-reviewer.toml" in removed["kept"]
+
+
+def test_previous_sol_profile_bytes_upgrade_but_user_edit_is_preserved(tmp_path):
+    historical = (
+        b'name = "thaliris-reasoning-specialist"\n'
+        b'description = "Thaliris reasoning-specialist execution role"\n'
+        b'model = "gpt-5.6-sol"\n'
+        b'model_reasoning_effort = "xhigh"\n'
+        b'developer_instructions = "Thaliris semantic role: reasoning-specialist. Work only inside your assigned role and return selected evidence-backed results."\n'
+    )
+    root = repo(tmp_path / "legacy")
+    profile = root / ".codex" / "agents" / "thaliris-reasoning-specialist.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_bytes(historical)
+    upgraded = init(root)
+    assert ".codex/agents/thaliris-reasoning-specialist.toml" in upgraded["files"]
+    assert profile.read_bytes() == codex_adapter._agent_profile("thaliris-reasoning-specialist", "reasoning-specialist", "gpt-5.6-sol", "xhigh")
+
+    edited = repo(tmp_path / "edited")
+    edited_profile = edited / ".codex" / "agents" / "thaliris-reasoning-specialist.toml"
+    edited_profile.parent.mkdir(parents=True)
+    edited_profile.write_bytes(historical + b"# user customization\n")
+    preserved = init(edited)
+    assert ".codex/agents/thaliris-reasoning-specialist.toml" in preserved["manual_migration_required"]
+    assert edited_profile.read_bytes() == historical + b"# user customization\n"
+
+
+def test_first_decision_context_sol_profile_bytes_upgrade_but_user_edit_is_preserved(tmp_path):
+    historical = (
+        b'name = "thaliris-reasoning-specialist"\n'
+        b'description = "Thaliris reasoning-specialist execution role"\n'
+        b'model = "gpt-5.6-sol"\n'
+        b'model_reasoning_effort = "xhigh"\n'
+        b'developer_instructions = "Resolve the supplied Decision Context. Choose among competing options when evidence permits. Return the selected decision, rationale, invariants implementation must preserve, and remaining decision-changing unknowns. Do not reconstruct unrelated investigation history. If context is insufficient, identify the missing evidence instead."\n'
+    )
+    root = repo(tmp_path / "legacy")
+    profile = root / ".codex" / "agents" / "thaliris-reasoning-specialist.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_bytes(historical)
+    upgraded = init(root)
+    assert ".codex/agents/thaliris-reasoning-specialist.toml" in upgraded["files"]
+    assert profile.read_bytes() == codex_adapter._agent_profile("thaliris-reasoning-specialist", "reasoning-specialist", "gpt-5.6-sol", "xhigh")
+
+    edited = repo(tmp_path / "edited")
+    edited_profile = edited / ".codex" / "agents" / "thaliris-reasoning-specialist.toml"
+    edited_profile.parent.mkdir(parents=True)
+    edited_profile.write_bytes(historical + b"# user customization\n")
+    preserved = init(edited)
+    assert ".codex/agents/thaliris-reasoning-specialist.toml" in preserved["manual_migration_required"]
+    assert edited_profile.read_bytes() == historical + b"# user customization\n"
+
+
+def test_previous_role_pack_bytes_upgrade_but_user_edit_is_preserved(tmp_path):
+    historical = subprocess.run(
+        ["git", "show", "5f24998:docs/thaliris-role-packs.md"],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        check=True,
+    ).stdout
+    root = repo(tmp_path / "legacy")
+    packs = root / "docs" / "thaliris-role-packs.md"
+    packs.parent.mkdir(parents=True)
+    packs.write_bytes(historical)
+    upgraded = init(root)
+    assert "docs/thaliris-role-packs.md" in upgraded["files"]
+    assert packs.read_bytes() == ROLE_PACKS.encode("utf-8")
+
+    edited = repo(tmp_path / "edited")
+    edited_packs = edited / "docs" / "thaliris-role-packs.md"
+    edited_packs.parent.mkdir(parents=True)
+    edited_packs.write_bytes(historical + b"\n# user customization\n")
+    preserved = init(edited)
+    assert "docs/thaliris-role-packs.md" in preserved["manual_migration_required"]
+    assert edited_packs.read_bytes() == historical + b"\n# user customization\n"
 
 
 def test_controller_guard_blocks_current_cli_file_change_surface(tmp_path):
@@ -1028,9 +1437,12 @@ def test_active_root_mcp_is_denied_but_child_mcp_is_not_reclassified(tmp_path):
         assert handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name=tool, tool_input={"path": "README.md"})) == ""
 
 
-def test_subagent_start_is_bounded_identity_corroboration_only(tmp_path):
+def test_subagent_start_records_hashed_lifecycle_and_injects_role_projection(tmp_path):
     root = repo(tmp_path)
-    assert handle_hook(root, "SubagentStart", payload(agent_id="child-private", agent_type="worker", turn="turn-private")) == ""
+    init(root); task_start(root, "child", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+    response = json.loads(handle_hook(root, "SubagentStart", payload(agent_id="child-private", agent_type="worker", turn="turn-private")))
+    assert response["hookSpecificOutput"]["hookEventName"] == "SubagentStart"
     runtime = next((root / ".context" / "audit").glob("*/runtime.json"))
     evidence = json.loads(runtime.read_text(encoding="utf-8"))
     assert evidence["events_observed"]["SubagentStart"] is True
@@ -1041,6 +1453,8 @@ def test_subagent_start_is_bounded_identity_corroboration_only(tmp_path):
 
 def test_child_pretool_identity_is_corroborated_only_when_it_matches_subagent_start(tmp_path):
     root = repo(tmp_path / "match")
+    init(root); task_start(root, "child", None, None)
+    handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"}))
     handle_hook(root, "SubagentStart", payload(agent_id="child-a", agent_type="worker"))
     assert handle_hook(root, "PreToolUse", payload(agent_id="child-a", tool_name="Bash", tool_input={"command": "echo ready"})) == ""
     evidence = json.loads(next((root / ".context" / "audit").glob("*/runtime.json")).read_text(encoding="utf-8"))
@@ -1048,6 +1462,8 @@ def test_child_pretool_identity_is_corroborated_only_when_it_matches_subagent_st
     assert _context_isolation(root)["observed"]["pretool_child_identity_corroborated"] == "YES"
 
     mismatch = repo(tmp_path / "mismatch")
+    init(mismatch); task_start(mismatch, "child", None, None)
+    handle_hook(mismatch, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"}))
     handle_hook(mismatch, "SubagentStart", payload(agent_id="child-a", agent_type="worker"))
     handle_hook(mismatch, "PreToolUse", payload(agent_id="child-b", tool_name="Bash", tool_input={"command": "echo ready"}))
     assert _context_isolation(mismatch)["observed"]["pretool_child_identity_corroborated"] == "UNKNOWN"
@@ -1068,7 +1484,7 @@ def test_child_delegation_is_denied_only_with_explicit_identity(tmp_path):
     root = repo(tmp_path); init(root); task_start(root, "child delegation", None, None)
     response = json.loads(handle_hook(root, "PreToolUse", payload(agent_id="child-1", tool_name="spawn_agent", tool_input={"fork_turns": "none"})))
     assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"})) == ""
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
 
 
 def test_controller_guard_blocks_root_apply_patch_without_leaking_payload(tmp_path):
@@ -1120,7 +1536,7 @@ def test_apply_patch_without_active_task_fails_open(tmp_path):
     ) == ""
 
 
-def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path):
+def test_controller_guard_requires_a_completed_child_before_task_close(tmp_path):
     root = repo(tmp_path)
     init(root)
     task_input = root / "task.json"
@@ -1129,6 +1545,9 @@ def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path
     blocked = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
     assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
     handle_hook(root, "PostToolUse", payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "none", "message": "bounded child"}, tool_response={"task_name": "/root/child"}))
+    blocked = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})))
+    assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
+    completed_child(root)
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})) == ""
 
@@ -1136,16 +1555,24 @@ def test_controller_guard_requires_a_successful_spawn_before_task_close(tmp_path
 def test_successful_spawn_evidence_is_scoped_to_the_active_task(tmp_path):
     root = repo(tmp_path)
     init(root)
+    source = root / "test_target.py"
+    source.write_text("verified source", encoding="utf-8")
     task_input = root / "task.json"
-    task_input.write_text(json.dumps({"verification_target": "pytest -q tests/test_target.py"}), encoding="utf-8")
+    task_input.write_text(json.dumps({"changed_surface": ["test_target.py"], "verification_target": "pytest -q tests/test_target.py"}), encoding="utf-8")
     first = task_start(root, "first task", None, str(task_input))
     handle_hook(
         root,
         "PostToolUse",
         payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"task_name": "/root/child-a"}),
     )
+    completed_child(root, "child-a")
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
-    core_module.task_close(root, first["revision"], expected_task_id=first["task_id"])
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    verification_input = tmp_path.parent / "verification.json"
+    verification_input.write_text(json.dumps({"evidence_refs": [{"id": "source", "kind": "file", "locator": f"file:test_target.py#{digest}", "summary": "target", "confidence": "SUPPORTED"}]}), encoding="utf-8")
+    configured = core_module.task_update(root, "controller", first["revision"], str(verification_input))
+    observed = core_module.task_record_verification(root, configured["revision"], "observed-test", "test", "PASSED", "native test observation", ["source"], observed_by="codex-runtime-test-fixture")
+    core_module.task_close(root, observed["revision"], expected_task_id=first["task_id"])
 
     second = task_start(root, "second task", None, str(task_input))
     for command in ("pytest -q tests/test_target.py", "context task-close --base-revision 1"):
@@ -1164,6 +1591,8 @@ def test_successful_spawn_evidence_is_scoped_to_the_active_task(tmp_path):
         "PostToolUse",
         payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"task_name": "/root/child-b"}),
     )
+    completed_child(root, "child-b")
+    completed_child(root)
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"})) == ""
     assert second["task_id"] != first["task_id"]
@@ -1180,6 +1609,7 @@ def test_controller_guard_accepts_opaque_native_spawn_post_result(tmp_path):
         "PostToolUse",
         payload(tool_name="collaborationspawn_agent", tool_input={"fork_turns": "none"}, tool_response="/root/child"),
     )
+    completed_child(root)
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/test_target.py"})) == ""
 
 
@@ -1188,7 +1618,7 @@ def test_qualifying_spawn_evidence_expires_with_the_managed_hook_definition(tmp_
     task_input = root / "task.json"
     task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
     task_start(root, "current hook evidence", None, str(task_input))
-    handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"success": True}))
+    completed_child(root)
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})) == ""
     monkeypatch.setattr(audit_module, "managed_hook_spec_hash", lambda: "different-definition")
     denied = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})))
@@ -1200,7 +1630,7 @@ def test_acceptance_requires_exact_verification_target_after_qualifying_child(tm
     task_input = root / "task.json"
     task_input.write_text(json.dumps({"verification_target": "pytest -q tests/expected.py"}), encoding="utf-8")
     task_start(root, "acceptance target", None, str(task_input))
-    handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"success": True}))
+    completed_child(root)
     assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": "pytest -q tests/expected.py"})) == ""
     for command in ("pytest", "pytest --pdb", "pytest -q tests/other.py"):
         response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
@@ -1212,11 +1642,114 @@ def test_acceptance_allows_only_exact_known_test_targets(tmp_path):
         root = repo(tmp_path / f"acceptance-{index}"); init(root)
         task_input = root / "task.json"; task_input.write_text(json.dumps({"verification_target": target}), encoding="utf-8")
         task_start(root, "acceptance family", None, str(task_input))
-        handle_hook(root, "PostToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none"}, tool_response={"success": True}))
+        completed_child(root)
         assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": target})) == ""
         for command in ("npm run lint", "echo not-a-test", target + " && echo escaped"):
             response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
             assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def _acceptance_task(root: Path) -> tuple[dict[str, object], Path, str]:
+    init(root)
+    subject = root / "subject.py"
+    subject.write_text("subject", encoding="utf-8")
+    command = "pytest -q tests/test_subject.py"
+    task_input = root / "acceptance-task.json"
+    task_input.write_text(json.dumps({"changed_surface": ["subject.py"], "verification_target": command}), encoding="utf-8")
+    started = task_start(root, "acceptance observation", None, str(task_input))
+    completed_child(root)
+    return started, subject, command
+
+
+def test_pretool_acceptance_does_not_create_a_verification_result(tmp_path):
+    root = repo(tmp_path)
+    started, _subject, command = _acceptance_task(root)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})) == ""
+    assert core_module.task_show(root)["state"]["verification_results"] == []
+    assert core_module.task_show(root)["state"]["revision"] == started["revision"]
+
+
+def test_codex_bash_posttool_never_infers_trusted_pass(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    started, _subject, command = _acceptance_task(root)
+    assert handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"exit_code": 0})) == ""
+    state = core_module.task_show(root)["state"]
+    assert state["verification_results"] == []
+    assert state["revision"] == started["revision"]
+    monkeypatch.setattr("thaliris.codex_adapter.task_close_audit", lambda *_args, **_kwargs: {"status": "UNKNOWN"})
+    with pytest.raises(ValueError, match="trusted successful"):
+        task_close(root, state["revision"])
+
+
+def test_posttool_failed_or_incomplete_completion_never_creates_pass(tmp_path):
+    root = repo(tmp_path / "failed")
+    _started, _subject, command = _acceptance_task(root)
+    handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"exit_code": 2}))
+    assert core_module.task_show(root)["state"]["verification_results"] == []
+
+
+@pytest.mark.parametrize("response", ["10 passed", "", {"status": "completed"}, {"success": True}, {"exit_code": 0}])
+def test_codex_bash_text_and_generic_status_never_attest_pass(tmp_path, response):
+    root = repo(tmp_path)
+    _started, _subject, command = _acceptance_task(root)
+    handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response=response))
+    results = core_module.task_show(root)["state"]["verification_results"]
+    assert results == []
+
+
+def test_historical_exec_exit_code_is_observation_not_codex_trusted_pass(tmp_path):
+    root = repo(tmp_path)
+    _started, _subject, command = _acceptance_task(root)
+    handle_hook(root, "PostToolUse", payload(tool_name="exec", tool_input={"command": command}, tool_response={"exit_code": 0}))
+    assert core_module.task_show(root)["state"]["verification_results"] == []
+
+
+def test_subagent_start_projection_and_stop_gate_serial_children(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "projection", None, None)
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+    injected = json.loads(handle_hook(root, "SubagentStart", payload(agent_id="child-one", agent_type="worker")))
+    context = json.loads(injected["hookSpecificOutput"]["additionalContext"])
+    assert context["thaliris_role"] == "implementer"
+    assert "investigation_findings" not in json.dumps(context)
+    denied = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert handle_hook(root, "SubagentStop", payload(agent_id="child-one", agent_type="worker")) == ""
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+
+    root = repo(tmp_path / "unknown")
+    _started, _subject, command = _acceptance_task(root)
+    handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"isError": False}))
+    assert core_module.task_show(root)["state"]["verification_results"] == []
+
+
+def test_execution_observation_records_payload_shape_without_output(tmp_path):
+    root = repo(tmp_path)
+    init(root)
+    handle_hook(root, "PostToolUse", payload(
+        tool_name="exec",
+        tool_input={"command": "echo private command"},
+        tool_response={"exit_code": 0, "stdout": "private output"},
+    ))
+    runtime = next((root / ".context" / "audit").glob("*/runtime.json"))
+    recorded = json.loads(runtime.read_text(encoding="utf-8"))["execution_observations"]
+    assert recorded == [{
+        "tool": "exec", "response_field": "tool_response", "response_type": "dict",
+        "response_keys": ["exit_code", "stdout"], "outcome": "PASSED",
+    }]
+    assert "private command" not in runtime.read_text(encoding="utf-8")
+    assert "private output" not in runtime.read_text(encoding="utf-8")
+    assert codex_adapter.doctor(root)["verification_attestation"]["verification_terminal_status"] == "UNAVAILABLE"
+
+
+def test_adapter_bash_unknown_cannot_close_after_source_changes(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    _started, subject, command = _acceptance_task(root)
+    handle_hook(root, "PostToolUse", payload(tool_name="Bash", tool_input={"command": command}, tool_response={"exit_code": 0}))
+    subject.write_text("changed after test", encoding="utf-8")
+    state = core_module.task_show(root)["state"]
+    monkeypatch.setattr("thaliris.codex_adapter.task_close_audit", lambda *_args, **_kwargs: {"status": "UNKNOWN"})
+    with pytest.raises(ValueError, match="trusted successful"):
+        task_close(root, state["revision"])
 
 
 def test_auditor_rubric_is_separate_from_untrusted_stdin_evidence(monkeypatch):
@@ -1264,6 +1797,7 @@ def test_task_start_binds_first_root_prompt_and_close_retries_drift(tmp_path, mo
     token = capture_id(handle_hook(root, "UserPromptSubmit", payload(turn="a", prompt="first root")))
     task_start(root, "complete history", None, None, token)
     handle_hook(root, "PostToolUse", payload(turn="a", tool_name="spawn_agent", tool_input={"message": "first delegation"}, tool_response={"success": True}))
+    completed_child(root, "first")
     result = task_close(root, 1)
     assert result["status"] == "ACTIVE" and "state" not in result
     assert result["intent_audit"] == {"status": "DRIFT", "finding": "Correct delegation scope before closing this task."}
@@ -1274,6 +1808,7 @@ def test_task_start_binds_first_root_prompt_and_close_retries_drift(tmp_path, mo
 
     # Controller corrects the delegation, then a retry may close the task.
     handle_hook(root, "PostToolUse", payload(turn="a", tool_name="spawn_agent", tool_input={"message": "first delegation; preserve all requirements"}, tool_response={"success": True}))
+    completed_child(root, "second")
     passed = task_close(root, 1)
     assert passed["status"] == "DONE" and "state" not in passed and "intent_audit" not in passed
     assert len(requests) == 2 and requests[1][1] == "task-final"
@@ -1307,6 +1842,7 @@ def test_invalid_and_reused_capture_ids_fail_open(tmp_path):
     first = task_start(root, "first task", None, None, token)
     capability_dir = root / ".context" / "audit" / "capture-capabilities"
     assert not list(capability_dir.glob("*.json"))
+    completed_child(root)
     assert task_close(root, 1)["status"] == "DONE"
     second = task_start(root, "second task", None, None, token)
     second_hash = hashlib.sha256(str(second["task_id"]).encode("utf-8")).hexdigest()
@@ -1332,6 +1868,7 @@ def test_task_close_hides_unknown_from_controller(tmp_path):
     root = repo(tmp_path)
     init(root)
     task_start(root, "unknown audit", None, None)
+    completed_child(root)
     closed = task_close(root, 1)
     assert closed["status"] == "DONE" and "state" not in closed and "intent_audit" not in closed
 
@@ -1342,6 +1879,7 @@ def test_task_scoped_intent_does_not_cross_task_boundaries(tmp_path, monkeypatch
     task_start(root, "task one", None, None)
     monkeypatch.setattr(audit_module, "_invoke_fresh_auditor", lambda request, mode: (json.dumps({"status": "PASS", "findings": []}), False))
     handle_hook(root, "UserPromptSubmit", payload(session="same", turn="same", prompt="secret task one"))
+    completed_child(root)
     task_close(root, 1)
     task_start(root, "task two", None, None)
     handle_hook(root, "UserPromptSubmit", payload(session="same", turn="same", prompt="task two only"))

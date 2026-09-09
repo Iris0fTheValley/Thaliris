@@ -62,7 +62,7 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("backup")
     sub.add_parser("version")
     q = sub.add_parser("audit-hook", help=argparse.SUPPRESS)
-    q.add_argument("event", choices=("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "Stop"))
+    q.add_argument("event", choices=("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop"))
     return p
 
 

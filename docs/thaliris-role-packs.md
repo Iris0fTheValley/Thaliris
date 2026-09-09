@@ -28,9 +28,12 @@ child-to-child workflow, and explicitly selects the information to return to
 the persistent Controller. The Controller must not consume child-only working
 material automatically; a large selected payload is allowed when necessary.
 During an ACTIVE task the persistent Controller does not perform repository
-investigation or source mutation; successful child dispatch does not change
-those permissions. `task-close` requires a qualifying successful child
-dispatch. PostToolUse keeps native dispatch evidence auditable.
+investigation or source mutation; dispatch does not change those permissions.
+`task-close` and acceptance require an authorized reservation, matching child
+`SubagentStart`, successfully emitted Core projection, and matching
+`SubagentStop` for the active task. Pending reservations and started managed
+children remain serial in flight. PostToolUse records dispatch only; it is not
+a completion signal.
 
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
@@ -38,7 +41,28 @@ source directly. Larger work adds only the roles needed by risk and unknowns.
 Wait for native completion or mailbox updates; Thaliris has no polling, worker,
 retry, or scheduling runtime.
 
-After a qualifying child dispatch, the Controller may run only the exact
+After targeted investigation, escalate to
+`agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
+when a material implementation choice remains unresolved by available
+evidence: two or more materially different fixes remain plausible, an OPEN
+unknown or contradiction could change the choice, a cross-module
+state/lifecycle/ownership/concurrency/compatibility choice remains undecided,
+the facts are known but a substantive trade-off remains, or a Reviewer finds a
+design question rather than a mechanical correction. Do not escalate based
+only on task size, file count, or token count. Pass an explicit Decision
+Context containing the decision question, confirmed relevant facts, competing
+options, must-preserve invariants and compatibility contracts,
+decision-changing unknowns or contradictions, and relevant evidence or
+artifact pointers. Do not pass the full Investigator working set or an empty
+"help me decide" request.
+
+Before spawning an Implementer, explicitly accept every Sol conclusion that
+will affect implementation by recording it as a task Decision, Constraint, or
+Modification Boundary, or by placing it in the selected Implementer handoff.
+Never rely on an implicit Sol-to-child history transfer. The Reasoning
+Specialist has no direct Core semantic-state write permission.
+
+After a qualifying completed child, the Controller may run only the exact
 Verification Target when it is a known test command family: pytest, npm/pnpm/
 yarn test, cargo test, go test, or dotnet test. A target never authorizes an
 arbitrary shell command.

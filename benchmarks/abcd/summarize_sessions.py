@@ -149,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-db", type=Path, help="Persistent Codex state_5.sqlite for recursive DAG discovery")
     parser.add_argument("--root-session-id", help="Root thread id in --state-db")
     args = parser.parse_args(argv)
+    if bool(args.state_db) != bool(args.root_session_id):
+        parser.error("--state-db and --root-session-id must be provided together")
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     runs = manifest.get("runs") if isinstance(manifest, dict) else None
     if not isinstance(runs, list):
@@ -158,8 +160,12 @@ def main(argv: list[str] | None = None) -> int:
     for item in runs:
         run = item["run"]
         root = args.session_root / item["root_file"]
+        if not root.is_file() and not (args.state_db and args.root_session_id):
+            raise SystemExit(f"ROOT_MISSING: {root}")
         if args.state_db and args.root_session_id:
             tree = _persistent_sessions(args.state_db, args.root_session_id)
+            if not tree or tree[0].get("session_id") != args.root_session_id:
+                raise SystemExit(f"ROOT_MISSING: {args.root_session_id}")
             output_runs.append({"run": run, "root": tree[0] if tree else {}, "children": tree[1:]})
             continue
         root_session = _session(root)

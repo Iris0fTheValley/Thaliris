@@ -62,6 +62,20 @@ Modification Boundary, or by placing it in the selected Implementer handoff.
 Never rely on an implicit Sol-to-child history transfer. The Reasoning
 Specialist has no direct Core semantic-state write permission.
 
+Reasoning Specialists make one bounded decision attempt. They must not rebuild
+an Investigator working set or perform open-ended repository searches. When a
+decision-changing fact is missing, return `NEED_EVIDENCE` with an
+`EvidenceRequest` (decision question, missing fact, why it can change the
+decision, preferred evidence surface, and verification requirement), finish,
+and let the Controller route a fresh Investigator. The Investigator persists a
+bounded evidence artifact; the Controller selects its relevant facts and starts
+a fresh Reasoning Specialist. Reviewers are fresh one-shot children on every
+round; preserve findings and evidence, not their conversation trajectory. Use a
+single sufficiently long native wait and a single post-timeout status check,
+not short polling turns, and close completed one-shot Sol/Reviewer children
+with native controls. Thaliris does not implement timers, watchdogs, workers,
+or lifecycle orchestration.
+
 After a qualifying completed child, the Controller may run only the exact
 Verification Target when it is a known test command family: pytest, npm/pnpm/
 yarn test, cargo test, go test, or dotnet test. A target never authorizes an

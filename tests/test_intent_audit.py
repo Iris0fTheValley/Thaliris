@@ -1128,6 +1128,21 @@ def test_generated_agent_profiles_match_codex_schema_and_native_role_mapping(tmp
         assert audit_module._NATIVE_AGENT_ROLES[name] == role
 
 
+def test_reasoning_specialist_profile_is_bounded_and_requests_missing_evidence():
+    profile = tomllib.loads(codex_adapter._agent_profile(
+        "thaliris-reasoning-specialist", "reasoning-specialist", "gpt-5.6-sol", "xhigh"
+    ).decode("utf-8"))
+    instructions = profile["developer_instructions"]
+    assert "one bounded decision attempt" in instructions
+    assert "NEED_EVIDENCE" in instructions
+    assert "EvidenceRequest" in instructions
+    assert "repository-wide investigation" in instructions
+    assert "Do not modify repository files or task semantic state" in instructions
+    assert "fresh Investigator" in ROLE_PACKS
+    assert "one-shot children" in codex_adapter.MANAGED
+    assert "sufficiently long native wait" in codex_adapter.MANAGED
+
+
 def test_profile_only_update_requires_restart_without_hook_trust(tmp_path):
     root = repo(tmp_path)
     init(root)

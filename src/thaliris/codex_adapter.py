@@ -49,6 +49,9 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     # Exact profile bytes emitted before bounded-decision/evidence-request
     # instructions were added.
     "60a87a06e97602f10f7f3842061c6eba551e78f76a8fa99b17ba377f48d22117",
+    # Exact profile bytes emitted before the explicit contradictory-evidence
+    # outcome was added.
+    "13b3283ad629bb6d32fe3613462694be14fba3a24c547aa791e1e651c0b3106d",
 })
 
 
@@ -60,8 +63,10 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
         "when necessary, but do not expand into open-ended investigation. If a decision-changing fact is "
         "missing, return NEED_EVIDENCE with an EvidenceRequest containing decision_question, missing_fact, "
         "why_it_can_change_the_decision, preferred_evidence_surface, and verification_requirement, then "
-        "stop. Otherwise return DECISION with the selected decision, rationale, must-preserve invariants, "
-        "compatibility constraints, and remaining decision-changing unknowns. Do not modify repository "
+        "stop. If the selected evidence is materially contradictory and cannot be safely resolved, return "
+        "INSUFFICIENT_OR_CONTRADICTORY with the conflicting references and stop. Otherwise return DECISION "
+        "with the selected decision, rationale, must-preserve invariants, compatibility constraints, and "
+        "remaining decision-changing unknowns. Do not modify repository "
         "files or task semantic state. Return the decision to the Controller; implementation belongs to "
         "the Implementer."
         if role == "reasoning-specialist"
@@ -250,7 +255,9 @@ decision-changing fact is missing, return `NEED_EVIDENCE` with an
 decision, preferred evidence surface, and verification requirement), finish,
 and let the Controller route a fresh Investigator. The Investigator persists a
 bounded evidence artifact; the Controller selects its relevant facts and starts
-a fresh Reasoning Specialist. Reviewers are fresh one-shot children on every
+a fresh Reasoning Specialist. If selected evidence is materially contradictory
+and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
+conflicting references and stop. Reviewers are fresh one-shot children on every
 round; preserve findings and evidence, not their conversation trajectory. Use a
 single sufficiently long native wait and a single post-timeout status check,
 not short polling turns, and close completed one-shot Sol/Reviewer children

@@ -1190,6 +1190,55 @@ def test_modified_generated_agent_profile_requires_manual_migration_and_is_prese
     assert ".codex/agents/thaliris-reviewer.toml" in removed["kept"]
 
 
+def test_previous_sol_profile_bytes_upgrade_but_user_edit_is_preserved(tmp_path):
+    historical = (
+        b'name = "thaliris-reasoning-specialist"\n'
+        b'description = "Thaliris reasoning-specialist execution role"\n'
+        b'model = "gpt-5.6-sol"\n'
+        b'model_reasoning_effort = "xhigh"\n'
+        b'developer_instructions = "Thaliris semantic role: reasoning-specialist. Work only inside your assigned role and return selected evidence-backed results."\n'
+    )
+    root = repo(tmp_path / "legacy")
+    profile = root / ".codex" / "agents" / "thaliris-reasoning-specialist.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_bytes(historical)
+    upgraded = init(root)
+    assert ".codex/agents/thaliris-reasoning-specialist.toml" in upgraded["files"]
+    assert profile.read_bytes() == codex_adapter._agent_profile("thaliris-reasoning-specialist", "reasoning-specialist", "gpt-5.6-sol", "xhigh")
+
+    edited = repo(tmp_path / "edited")
+    edited_profile = edited / ".codex" / "agents" / "thaliris-reasoning-specialist.toml"
+    edited_profile.parent.mkdir(parents=True)
+    edited_profile.write_bytes(historical + b"# user customization\n")
+    preserved = init(edited)
+    assert ".codex/agents/thaliris-reasoning-specialist.toml" in preserved["manual_migration_required"]
+    assert edited_profile.read_bytes() == historical + b"# user customization\n"
+
+
+def test_previous_role_pack_bytes_upgrade_but_user_edit_is_preserved(tmp_path):
+    historical = subprocess.run(
+        ["git", "show", "5f24998:docs/thaliris-role-packs.md"],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        check=True,
+    ).stdout
+    root = repo(tmp_path / "legacy")
+    packs = root / "docs" / "thaliris-role-packs.md"
+    packs.parent.mkdir(parents=True)
+    packs.write_bytes(historical)
+    upgraded = init(root)
+    assert "docs/thaliris-role-packs.md" in upgraded["files"]
+    assert packs.read_bytes() == ROLE_PACKS.encode("utf-8")
+
+    edited = repo(tmp_path / "edited")
+    edited_packs = edited / "docs" / "thaliris-role-packs.md"
+    edited_packs.parent.mkdir(parents=True)
+    edited_packs.write_bytes(historical + b"\n# user customization\n")
+    preserved = init(edited)
+    assert "docs/thaliris-role-packs.md" in preserved["manual_migration_required"]
+    assert edited_packs.read_bytes() == historical + b"\n# user customization\n"
+
+
 def test_controller_guard_blocks_current_cli_file_change_surface(tmp_path):
     root = repo(tmp_path)
     init(root)

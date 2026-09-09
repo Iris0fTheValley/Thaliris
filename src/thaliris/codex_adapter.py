@@ -40,6 +40,9 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     "7e596a38e95606b684b17f25cc0eecb3163aef7d65d36110f6496b3ab7d53692",
     "a91e41c67930071db4d6eb45342526cbbf67af6d4fda13d1c847d18f28816a35",
     "ae56701985a1d27a2daea326819fa0e93b4350eb6e65d1a299daf198126a7a9a",
+    # Exact profile bytes emitted before the dedicated Sol Decision Context
+    # instruction was added.
+    "960190bb4b67b02e7616bcf6dbd71192bcc79327fb0ed72e6f23b3815819afd0",
 })
 
 
@@ -48,7 +51,8 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
         "Resolve the supplied Decision Context. Choose among competing options when evidence permits. "
         "Return the selected decision, rationale, invariants implementation must preserve, and remaining "
         "decision-changing unknowns. Do not reconstruct unrelated investigation history. If context is "
-        "insufficient, identify the missing evidence instead."
+        "insufficient, identify the missing evidence instead. Do not modify repository files or task "
+        "semantic state. Return the decision to the Controller; implementation belongs to the Implementer."
         if role == "reasoning-specialist"
         else f"Thaliris semantic role: {role}. Work only inside your assigned role and return selected evidence-backed results."
     )
@@ -126,13 +130,19 @@ automatically; explicitly select any detail needed for the next decision, and
 promote only explicit durable decisions, constraints, invariants, failure modes,
 or material milestone progress.
 
-Escalate to `agent_type="thaliris-reasoning-specialist"` with
-`fork_turns="none"` before implementation when materially different fixes,
-decision-changing OPEN unknowns or contradictions, cross-module state,
-lifecycle, ownership, concurrency, or compatibility invariants, substantive
-trade-offs, or a Reviewer design question remain. Do not escalate only for
-task size, file count, or token count. Pass a selected Decision Context, not
-the full investigation or an empty decision request.
+After targeted investigation, escalate to
+`agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
+when a material implementation choice remains unresolved by available
+evidence: materially different fixes remain plausible, an OPEN unknown or
+contradiction could change the choice, a cross-module state/lifecycle/
+ownership/concurrency/compatibility choice remains undecided, a substantive
+trade-off remains, or a Reviewer raises a design question. Do not escalate
+only for task size, file count, or token count. Pass a selected Decision
+Context, not the full investigation or an empty decision request.
+After a Reasoning Specialist returns, do not dispatch an Implementer until
+every accepted implementation-changing conclusion is recorded in task
+semantic state or explicitly included in that Implementer handoff. Never rely
+on implicit child history.
 {MANAGED_END}
 """
 
@@ -192,12 +202,13 @@ source directly. Larger work adds only the roles needed by risk and unknowns.
 Wait for native completion or mailbox updates; Thaliris has no polling, worker,
 retry, or scheduling runtime.
 
-Escalate to `agent_type="thaliris-reasoning-specialist"` with
-`fork_turns="none"` before implementation when two or more materially
-different fixes remain plausible without uniquely deciding evidence; an OPEN
-unknown or contradiction could change the implementation; the choice crosses
-state, lifecycle, ownership, concurrency, or compatibility invariants; the
-facts are known but a substantive trade-off remains; or a Reviewer finds a
+After targeted investigation, escalate to
+`agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
+when a material implementation choice remains unresolved by available
+evidence: two or more materially different fixes remain plausible, an OPEN
+unknown or contradiction could change the choice, a cross-module
+state/lifecycle/ownership/concurrency/compatibility choice remains undecided,
+the facts are known but a substantive trade-off remains, or a Reviewer finds a
 design question rather than a mechanical correction. Do not escalate based
 only on task size, file count, or token count. Pass an explicit Decision
 Context containing the decision question, confirmed relevant facts, competing
@@ -274,6 +285,8 @@ KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "75f6c6804db80995c32cf4902247ae0d78762a15f37b35b677219813c8d17e6a",
     "4ff409d7aa3d5f2ad2eb0c82b317d9af54426dde7765d8101939dcc578a460c0",
     "6e49df8985c52309a6966c5ddd8b6b3b6a2b6bce326c55f327cb999bb6b46e4c",
+    # Exact role-pack bytes emitted before the current escalation/handoff text.
+    "8822c992b91d6cf0cc03a4f7c56b2c4ee48050d76d4e3b07654fa0acef36bbce",
 })
 
 

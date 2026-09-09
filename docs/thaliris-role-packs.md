@@ -41,12 +41,13 @@ source directly. Larger work adds only the roles needed by risk and unknowns.
 Wait for native completion or mailbox updates; Thaliris has no polling, worker,
 retry, or scheduling runtime.
 
-Escalate to `agent_type="thaliris-reasoning-specialist"` with
-`fork_turns="none"` before implementation when two or more materially
-different fixes remain plausible without uniquely deciding evidence; an OPEN
-unknown or contradiction could change the implementation; the choice crosses
-state, lifecycle, ownership, concurrency, or compatibility invariants; the
-facts are known but a substantive trade-off remains; or a Reviewer finds a
+After targeted investigation, escalate to
+`agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
+when a material implementation choice remains unresolved by available
+evidence: two or more materially different fixes remain plausible, an OPEN
+unknown or contradiction could change the choice, a cross-module
+state/lifecycle/ownership/concurrency/compatibility choice remains undecided,
+the facts are known but a substantive trade-off remains, or a Reviewer finds a
 design question rather than a mechanical correction. Do not escalate based
 only on task size, file count, or token count. Pass an explicit Decision
 Context containing the decision question, confirmed relevant facts, competing

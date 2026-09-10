@@ -38,8 +38,10 @@ a completion signal.
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
 source directly. Larger work adds only the roles needed by risk and unknowns.
-Wait for native completion or mailbox updates; Thaliris has no polling, worker,
-retry, or scheduling runtime.
+After dispatch, end the Controller activation. A runtime/supervisor completion
+or deadline event resumes it exactly once; do not call `wait`, poll status, or
+use a timer to wake a model. The bounded supervisor is only an event/deadline
+bridge, not a worker, scheduler, retry system, or lifecycle runtime.
 
 After targeted investigation, escalate to
 `agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
@@ -72,11 +74,12 @@ bounded evidence artifact; the Controller selects its relevant facts and starts
 a fresh Reasoning Specialist. If selected evidence is materially contradictory
 and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
 conflicting references and stop. Reviewers are fresh one-shot children on every
-round; preserve findings and evidence, not their conversation trajectory. Use a
-single sufficiently long native wait and a single post-timeout status check,
-not short polling turns, and close completed one-shot Sol/Reviewer children
-with native controls. Thaliris does not implement timers, watchdogs, workers,
-or lifecycle orchestration.
+round; preserve findings and evidence, not their conversation trajectory. End
+the current activation after dispatch and let the runtime/supervisor completion
+or deadline event resume it exactly once; do not call `wait`, poll status, or
+use a timer-driven model wake-up. Close completed one-shot Sol/Reviewer
+children with native controls. The bounded supervisor is only an event/deadline
+bridge, not a worker or generic lifecycle runtime.
 
 After a qualifying completed child, the Controller may run only the exact
 Verification Target when it is a known test command family: pytest, npm/pnpm/

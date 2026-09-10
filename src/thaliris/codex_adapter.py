@@ -148,7 +148,7 @@ Codex remains the runtime. Thaliris stores bounded task control and pointers; it
 
 Controller uses `context task-status` or `context prepare --role controller` for the default low-noise context base. `context task-show` is an explicit out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller path. `context task-artifact` passes pointers, not contents.
 
-During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn creates one authorization reservation; the next matching native `SubagentStart` receives its Thaliris role projection, and only a successfully emitted projection followed by the matching `SubagentStop` qualifies for acceptance or task-close. Large selected information remains valid when needed for correctness. Pending reservations and started managed children are serial in flight; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. Codex owns execution; Thaliris has no worker, scheduler, polling loop, or lifecycle runtime.
+During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn creates one authorization reservation; the next matching native `SubagentStart` receives its Thaliris role projection, and only a successfully emitted projection followed by the matching `SubagentStop` qualifies for acceptance or task-close. Large selected information remains valid when needed for correctness. Pending reservations and started managed children are serial in flight; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. After dispatch, persist the pending activation and end the Controller activation; a runtime/supervisor completion or deadline event resumes it exactly once. There is no model `wait`, polling loop, or timer-driven model wake-up. Codex owns execution; Thaliris does not recreate an agent runtime.
 
 Read detailed role packs only when needed. Raw findings, evidence, transcripts,
 logs, and tool output do not enter Controller packets or durable memory
@@ -181,10 +181,11 @@ attempt: if evidence is insufficient, it returns an EvidenceRequest and stops;
 the Controller sends that request to a fresh Investigator, persists a bounded
 evidence artifact, then uses a fresh Reasoning Specialist. Reviewers are fresh
 one-shot children for each review round; retain findings, not reviewer
-conversation history. Use one sufficiently long native wait for child
-completion (with one status check after timeout), not short model-driven
-polling. Close completed one-shot Sol and Reviewer children with Codex native
-controls; do not create a Thaliris timer, watchdog, worker, or lifecycle
+conversation history. After dispatch, end the current Controller activation and
+let the runtime/supervisor completion or deadline event resume it exactly once;
+do not call `wait`, loop on status, or create a timer-driven model wake-up.
+Close completed one-shot Sol and Reviewer children with Codex native controls;
+the supervisor is only a bounded event/deadline bridge, not a worker or agent
 runtime.
 {MANAGED_END}
 """
@@ -242,8 +243,10 @@ a completion signal.
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
 source directly. Larger work adds only the roles needed by risk and unknowns.
-Wait for native completion or mailbox updates; Thaliris has no polling, worker,
-retry, or scheduling runtime.
+After dispatch, end the Controller activation. A runtime/supervisor completion
+or deadline event resumes it exactly once; do not call `wait`, poll status, or
+use a timer to wake a model. The bounded supervisor is only an event/deadline
+bridge, not a worker, scheduler, retry system, or lifecycle runtime.
 
 After targeted investigation, escalate to
 `agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
@@ -276,11 +279,12 @@ bounded evidence artifact; the Controller selects its relevant facts and starts
 a fresh Reasoning Specialist. If selected evidence is materially contradictory
 and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
 conflicting references and stop. Reviewers are fresh one-shot children on every
-round; preserve findings and evidence, not their conversation trajectory. Use a
-single sufficiently long native wait and a single post-timeout status check,
-not short polling turns, and close completed one-shot Sol/Reviewer children
-with native controls. Thaliris does not implement timers, watchdogs, workers,
-or lifecycle orchestration.
+round; preserve findings and evidence, not their conversation trajectory. End
+the current activation after dispatch and let the runtime/supervisor completion
+or deadline event resume it exactly once; do not call `wait`, poll status, or
+use a timer-driven model wake-up. Close completed one-shot Sol/Reviewer
+children with native controls. The bounded supervisor is only an event/deadline
+bridge, not a worker or generic lifecycle runtime.
 
 After a qualifying completed child, the Controller may run only the exact
 Verification Target when it is a known test command family: pytest, npm/pnpm/
@@ -367,6 +371,8 @@ KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "8822e1aaa5a56f78cd9f044e329aa73c324bfd63df841fefd8f02b0008edfa0e",
     # Exact role-pack bytes before artifact-first handoff guidance.
     "865944fad8b854952422d741787fbbcfa292948fbfb11e31c6f9a0e9452b6df7",
+    # Exact bytes immediately before event-driven Controller suspension.
+    "432f122986f11e28568674e06d509ac22636f0eed4e86fbdffd46d4ab79d8fa6",
 })
 
 
@@ -881,6 +887,8 @@ def doctor(root: Path) -> dict[str, object]:
         # A hook response was emitted locally, but only a native child probe
         # can show that Codex delivered additionalContext to the child.
         "role_projection_injection_observed": "UNKNOWN",
+        "controller_activation_bridge": "PRESENT",
+        "pending_activation": "UNKNOWN",
         **_activation_fields(
             root,
             profile_native_active="UNKNOWN",
@@ -889,6 +897,14 @@ def doctor(root: Path) -> dict[str, object]:
             compatible_project_hooks_observed="YES" if events else "UNKNOWN",
         ),
     }
+    try:
+        activation = intent_audit.activation_status(root)
+        if isinstance(activation, dict):
+            result["managed_readiness"]["pending_activation"] = activation.get("state", "UNKNOWN")
+        else:
+            result["managed_readiness"]["pending_activation"] = "NONE"
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        result["managed_readiness"]["pending_activation"] = "UNKNOWN"
     task = result.get("context", {}).get("task_state", {}) if isinstance(result.get("context"), dict) else {}
     target = task.get("verification_target") if isinstance(task, dict) else None
     if isinstance(target, str) and intent_audit._ACCEPTANCE_COMMAND.fullmatch(target):

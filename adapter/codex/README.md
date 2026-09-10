@@ -48,13 +48,17 @@ supported Thaliris profile creates one bounded pending authorization scoped to
 the active task, semantic role, native `agent_type`, and shared session hash.
 The managed lifecycle is
 `authorized reservation -> matching SubagentStart -> Core projection emitted
-successfully -> matching session/turn/type SubagentStop -> qualifying completion`.
+successfully -> matching session/turn/type SubagentStop -> persisted completion
+event -> one Controller reactivation`.
 Unknown or
 mismatched starts remain observations and receive no projection. A pending
 reservation and every started managed child are in flight, so managed dispatch
-remains serial until the child stops. Stop proves lifecycle completion, not
-work correctness. A projection-ready child is not a claim that the native
-child confirmed receipt.
+remains serial until the child stops. After dispatch the Controller activation
+ends; the narrow supervisor/deadline bridge consumes one completion or timeout
+event and resumes the existing Codex root session. It is not a second agent
+runtime and does not poll the model. Stop proves lifecycle completion, not work
+correctness. A projection-ready child is not a claim that the native child
+confirmed receipt.
 
 The current trusted shell candidate is exactly Codex stable `Bash`. Codex CLI
 0.153.4 does not document a terminal exit/status field in its Bash PostToolUse

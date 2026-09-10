@@ -1166,7 +1166,7 @@ def test_reasoning_specialist_profile_is_bounded_and_requests_missing_evidence()
     assert "Do not modify repository files or task semantic state" in instructions
     assert "fresh Investigator" in ROLE_PACKS
     assert "one-shot children" in codex_adapter.MANAGED
-    assert "sufficiently long native wait" in codex_adapter.MANAGED
+    assert "runtime/supervisor completion" in codex_adapter.MANAGED
 
 
 def test_profile_only_update_requires_restart_without_hook_trust(tmp_path):

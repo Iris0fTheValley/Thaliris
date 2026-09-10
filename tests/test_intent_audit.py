@@ -759,6 +759,31 @@ def test_a909_role_pack_v2_migrates_only_when_byte_exact(tmp_path):
     assert not generated_packs.exists()
 
 
+@pytest.mark.parametrize("commit", ["1f75ca3", "c459d8e"])
+def test_recent_published_role_pack_bytes_upgrade_only_when_exact(tmp_path, commit):
+    historical = subprocess.run(
+        ["git", "show", f"{commit}:docs/thaliris-role-packs.md"],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        check=True,
+    ).stdout
+    root = repo(tmp_path / f"legacy-{commit}")
+    packs = root / "docs" / "thaliris-role-packs.md"
+    packs.parent.mkdir(parents=True)
+    packs.write_bytes(historical)
+    upgraded = init(root)
+    assert "docs/thaliris-role-packs.md" in upgraded["files"]
+    assert packs.read_bytes() == ROLE_PACKS.encode("utf-8")
+
+    edited = repo(tmp_path / f"edited-{commit}")
+    edited_packs = edited / "docs" / "thaliris-role-packs.md"
+    edited_packs.parent.mkdir(parents=True)
+    edited_packs.write_bytes(historical + b"\nuser note\n")
+    preserved = init(edited)
+    assert "docs/thaliris-role-packs.md" in preserved["manual_migration_required"]
+    assert edited_packs.read_bytes() == historical + b"\nuser note\n"
+
+
 def test_managed_router_is_rendered_at_effective_file_prefix_and_hook_hash_is_fresh(tmp_path, monkeypatch):
     root = repo(tmp_path)
     agents = root / "AGENTS.md"

@@ -92,7 +92,15 @@ before claiming a live observation.
 
 ## Evidence Roles
 
-Investigators may keep a large private working set. Downstream roles do not
+Investigators may keep a large private working set, but when another role will
+reuse the result they persist a bounded repo-relative Evidence Artifact first.
+The artifact preserves reusable facts, evidence refs, affected files/symbols,
+verification performed, unknowns, and contradictions; it does not preserve the
+exploration transcript or repeated tool output. Investigator completion messages
+should contain only the artifact path, finding/evidence IDs, short outcome, and
+remaining decision-changing unknowns. The Controller registers the pointer with
+`context task-artifact` and selects relevant content; artifact existence does
+not authorize automatic full-text projection. Downstream roles do not
 receive it automatically: select the facts, constraints, contradictions,
 compatibility or lifecycle invariants, evidence summaries, unknowns, artifact
 pointers, and any other information that could materially change the next

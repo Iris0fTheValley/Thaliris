@@ -98,3 +98,12 @@ The native runtime rejected that `agent_type` as unknown before a child
 started, so no `SubagentStart`/`SubagentStop` or marker observation was
 recorded. The result remains `NOT_OBSERVED`; generated profile presence and
 synthetic hook tests are not native projection proof.
+
+The event-driven bridge also depends on a runtime that keeps a dispatched child
+alive after the Controller activation ends and emits a matching completion or
+failure event. In the local `codex exec` probe, ending the root CLI activation
+aborted the still-running child; the supervisor recorded the native abort and a
+resume attempt failed. This is recorded as an infrastructure/runtime boundary,
+not as a synthetic child stop or verification result. A deployment that cannot
+provide a surviving child plus completion event must remain `UNKNOWN` for
+managed completion readiness.

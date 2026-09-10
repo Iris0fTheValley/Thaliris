@@ -69,3 +69,24 @@ def test_supervisor_resumes_ready_event_once(tmp_path: Path):
     assert supervisor.resume_once(root, "root-session", "continue from child event", runner=runner)["status"] == "PENDING"
     assert len(calls) == 1
 
+
+def test_native_completion_bridge_requires_exact_start_identity(tmp_path: Path):
+    root = _repo(tmp_path / "identity")
+    _reserve(root)
+    handle_hook(root, "SubagentStart", _payload(agent_id="child", agent_type="worker", turn_id="child-turn"))
+    assert supervisor.record_native_completion(
+        root,
+        session_id="root-session",
+        agent_id="child",
+        turn_id="wrong-turn",
+        agent_type="worker",
+    ) is False
+    assert activation_status(root)["state"] == "RUNNING"
+    assert supervisor.record_native_completion(
+        root,
+        session_id="root-session",
+        agent_id="child",
+        turn_id="child-turn",
+        agent_type="worker",
+    ) is True
+    assert activation_status(root)["event_kind"] == "completed"

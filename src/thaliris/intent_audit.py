@@ -966,14 +966,14 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
     return role if authorized else None
 
 
-def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> None:
+def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> bool:
     task_id = _active_task_id(root)
     agent_id = payload.get("agent_id")
     native_agent_type = _native_spawn_agent_type({"tool_input": {"agent_type": payload.get("agent_type")}})
     session_id_hash = _session_id_hash(payload)
     turn_id_hash = _turn_id_hash(payload)
     if task_id is None or not isinstance(agent_id, str) or not agent_id or native_agent_type is None or session_id_hash is None or turn_id_hash is None:
-        return
+        return False
     with core._lock(root):
         path = _lifecycle_path(root, task_id)
         state = _load_lifecycle(path, task_id)
@@ -998,7 +998,32 @@ def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> None:
                     _activation_event_locked(state, kind, payload)
                 _runtime_metadata(state, payload)
                 _write_capture(path, state)
-                return
+                return True
+    return False
+
+
+def record_supervisor_completion(
+    root: Path,
+    *,
+    session_id: str,
+    agent_id: str,
+    turn_id: str,
+    agent_type: str,
+    failed: bool = False,
+) -> bool:
+    """Record a completion observed by the external runtime supervisor.
+
+    This uses the same exact Start -> Stop identity contract as the native
+    hook.  The supervisor must supply fields observed from Codex's completion
+    event; arbitrary model text cannot call this path.
+    """
+    return _record_subagent_stop(root, {
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "agent_id": agent_id,
+        "agent_type": agent_type,
+        "failed": failed,
+    })
 
 
 def _mark_projection_ready(root: Path, payload: dict[str, Any]) -> bool:

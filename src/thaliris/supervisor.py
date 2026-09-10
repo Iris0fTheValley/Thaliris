@@ -16,6 +16,26 @@ from typing import Any, Callable
 from . import intent_audit
 
 
+def record_native_completion(
+    root: Path,
+    *,
+    session_id: str,
+    agent_id: str,
+    turn_id: str,
+    agent_type: str,
+    failed: bool = False,
+) -> bool:
+    """Forward one runtime-observed completion through the exact hook contract."""
+    return intent_audit.record_supervisor_completion(
+        root,
+        session_id=session_id,
+        agent_id=agent_id,
+        turn_id=turn_id,
+        agent_type=agent_type,
+        failed=failed,
+    )
+
+
 def poll(root: Path, *, now_ns: int | None = None) -> dict[str, Any] | None:
     """Return a ready completion/timeout event, converting expired work once."""
     intent_audit.activation_timeout(root, now_ns=now_ns)
@@ -79,4 +99,3 @@ def run(
     if isinstance(event, dict) and event.get("state") == "READY":
         return resume_once(root, session_id, prompt, executable=executable, runner=runner)
     return {"status": "SUPERVISOR_TIMEOUT"}
-

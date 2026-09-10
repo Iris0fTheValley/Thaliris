@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "run": "D7-clean-artifact-sol-20260910",
+  "routing": {
+    "investigator_artifact_round_trip": "PASS",
+    "artifacts": [
+      ".scratch/live2d-runtime-renderer-parity-contract.evidence.md",
+      ".scratch/live2d-runtime-renderer-parity-acceptance-license.evidence.md",
+      ".scratch/live2d-runtime-renderer-parity-final-evidence.md"
+    ],
+    "sol_need_evidence_rounds": 3,
+    "fresh_sol_decision": "PASS",
+    "accepted_decision_to_implementer": "NOT_OBSERVED",
+    "reviewer_fresh_round": "NOT_OBSERVED"
+  },
+  "formal_evaluator": {
+    "status": "SEALED_PASS",
+    "version": "d-sakiko-live2d-behavior-v2",
+    "sha256": "8bba8f2590c9d06cd318119850e0bbbe433d06e1bc06ff747c2fb3f16156eda3",
+    "candidate_tests": 16,
+    "candidate_passed": 16,
+    "untouched_base": "FAIL",
+    "manifest": "D7-formal-final-20260910.json"
+  },
+  "metrics": {
+    "sessions": 12,
+    "aggregate_input_tokens": 10722214,
+    "aggregate_cached_input_tokens": 9990912,
+    "aggregate_output_tokens": 72372,
+    "aggregate_reasoning_tokens": 22552,
+    "model_calls": 210,
+    "tool_calls": 204,
+    "peak_context": 107144,
+    "root_wait_calls": 13,
+    "comparison_d6b": {"input_tokens": 14324034, "model_calls": 233, "tool_calls": 221, "peak_context": 173249}
+  },
+  "quality": "SEALED_PASS",
+  "target_status": "TARGET_NOT_ACHIEVED",
+  "reason": "Fresh D7 implementer/reviewer completion and Sol-to-Terra acceptance were not fully observed; the candidate was then calibrated independently from the prior known-good implementation."
+}

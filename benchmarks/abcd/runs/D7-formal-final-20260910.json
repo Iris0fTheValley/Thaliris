@@ -1,0 +1,98 @@
+{
+  "schema_version": 2,
+  "contract_version": "d-sakiko-live2d-behavior-v2",
+  "evaluator": "C:\\Users\\12298\\AppData\\Local\\Temp\\thaliris-abcd-benchmark-wt\\benchmarks\\abcd\\d_sakiko_quality_evaluator_v4.py",
+  "evaluator_sha256": "8bba8f2590c9d06cd318119850e0bbbe433d06e1bc06ff747c2fb3f16156eda3",
+  "expected_evaluator_sha256": "8bba8f2590c9d06cd318119850e0bbbe433d06e1bc06ff747c2fb3f16156eda3",
+  "evaluator_frozen": true,
+  "manifest": "<screening-root>\\D7-formal-final-20260910.json",
+  "known_good": {
+    "workspace": "<screening-root>\\fixtures\\D7-clean-artifact-sol-20260910",
+    "status": "PASS",
+    "report": {
+      "schema_version": 4,
+      "contract_version": "d-sakiko-live2d-behavior-v2",
+      "workspace": "<screening-root>\\fixtures\\D7-clean-artifact-sol-20260910",
+      "contracts": [
+        {
+          "name": "python_contract",
+          "tests": 6,
+          "passed": 6,
+          "failed": 0,
+          "status": "PASS",
+          "detail": ""
+        },
+        {
+          "name": "backend_contract",
+          "tests": 3,
+          "passed": 3,
+          "failed": 0,
+          "status": "PASS",
+          "detail": ""
+        },
+        {
+          "name": "frontend_contract",
+          "tests": 7,
+          "passed": 7,
+          "failed": 0,
+          "status": "PASS",
+          "detail": ""
+        }
+      ],
+      "tests": 16,
+      "passed": 16,
+      "failed": 0,
+      "quality_profile": "FULL_PASS",
+      "independent_of_model_authored_tests": true,
+      "process_returncode": 0
+    }
+  },
+  "untouched_base": {
+    "workspace": "<screening-root>\\fixtures\\sealed-medium-base3",
+    "status": "FAIL",
+    "report": {
+      "schema_version": 4,
+      "contract_version": "d-sakiko-live2d-behavior-v2",
+      "workspace": "<screening-root>\\fixtures\\sealed-medium-base3",
+      "contracts": [
+        {
+          "name": "python_contract",
+          "tests": 1,
+          "passed": 0,
+          "failed": 1,
+          "status": "FAIL",
+          "detail": "ModuleNotFoundError: No module named 'live2d_support.behavior_contract'"
+        },
+        {
+          "name": "backend_contract",
+          "tests": 1,
+          "passed": 0,
+          "failed": 1,
+          "status": "FAIL",
+          "detail": "AttributeError: 'HeadlessRuntime' object has no attribute '_live2d_snapshot'"
+        },
+        {
+          "name": "frontend_contract",
+          "tests": 7,
+          "passed": 0,
+          "failed": 7,
+          "status": "FAIL",
+          "detail": "node:internal/modules/esm/resolve:275\n    throw new ERR_MODULE_NOT_FOUND(\n          ^\n\nError [ERR_MODULE_NOT_FOUND]: Cannot find module '<screening-root>\\fixtures\\sealed-medium-base3\\dsakiko_webui\\frontend\\src\\live2d\\contract.js' imported from <screening-root>\\fixtures\\sealed-medium-base3\\dsakiko_webui\\frontend\\[eval1]\n    at finalizeResolution (node:internal/modules/esm/resolve:275:11)\n    at moduleResolve (node:internal/modules/esm/resolve:865:10)\n    at defaultResolve (node:internal/modules/esm/resolve:991:11)\n    at #cachedDefaultResolve (node:internal/modules/esm/loader:719:20)\n    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:736:38)\n    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:765:52)\n    at #resolve (node:internal/modules/esm/loader:701:17)\n    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:621:35)\n    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33)\n    at ModuleJob.link (node:internal/modules/esm/module_job:245:17) {\n  code: 'ERR_MODULE_NOT_FOUND',\n  url: 'file://<screening-root>/fixtures/sealed-medium-base3/dsakiko_webui/frontend/src/live2d/contract.js'\n}\n\nNode.js v24.14.0\n"
+        }
+      ],
+      "tests": 9,
+      "passed": 0,
+      "failed": 9,
+      "quality_profile": "FAIL",
+      "independent_of_model_authored_tests": true,
+      "process_returncode": 0
+    }
+  },
+  "calibration": {
+    "gold_pass": true,
+    "untouched_base_fail": true,
+    "no_edit_fail": true
+  },
+  "formal_status": "SEALED_PASS",
+  "independent_of_model_authored_tests": true
+}

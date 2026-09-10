@@ -1,0 +1,7 @@
+Artifact: `.scratch/evidence/live2d-runtime-parity.md`
+
+Findings/evidence: F-001–F-005; E-001–E-014.
+
+Outcome: Targeted investigation complete; major parity and lifecycle gaps identified.
+
+Remaining unknowns: U-001–U-004.

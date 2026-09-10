@@ -1,0 +1,12 @@
+
+> dsakiko_web@0.0.0 test
+> vitest run --run
+
+
+ RUN  v4.1.11 <screening-root>/fixtures/D8-interactive-medium-20260911/dsakiko_webui/frontend
+
+
+ Test Files  5 passed (5)
+      Tests  11 passed (11)
+   Start at  01:33:32
+   Duration  1.36s (transform 402ms, setup 0ms, import 711ms, tests 101ms, environment 4.17s)

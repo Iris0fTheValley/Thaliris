@@ -1,0 +1,31 @@
+{
+  "schema_version": 3,
+  "contracts": [
+    {
+      "tests": 3,
+      "passed": 3,
+      "failed": 0,
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "tests": 3,
+      "passed": 3,
+      "failed": 0,
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "tests": 2,
+      "passed": 2,
+      "failed": 0,
+      "status": "PASS",
+      "detail": ""
+    }
+  ],
+  "tests": 8,
+  "passed": 8,
+  "failed": 0,
+  "quality_profile": "FULL_PASS",
+  "independent_of_model_authored_tests": true
+}

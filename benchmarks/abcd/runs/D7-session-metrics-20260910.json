@@ -1,0 +1,1276 @@
+{
+  "runs": [
+    {
+      "children": [
+        {
+          "cwd_leaf": "D7-clean-artifact-sol-20260910",
+          "file": "rollout-2026-09-10T19-34-56-01a08b19-73dd-78a3-82d0-8ef87695a526.jsonl",
+          "model": "gpt-5.6-luna",
+          "model_calls": 14,
+          "parent_thread_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+          "peak_context": 85440,
+          "session_id": "01a08b19-73dd-78a3-82d0-8ef87695a526",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17775,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 20478,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 33086,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 42310,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 52840,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 63080,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 72225,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 72803,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 75946,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 79443,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 81766,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 82898,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 85169,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 85440,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 13,
+          "usage": {
+            "cached_input_tokens": 774656,
+            "input_tokens": 865259,
+            "output_tokens": 6096,
+            "reasoning_tokens": 920
+          }
+        },
+        {
+          "cwd_leaf": "D7-clean-artifact-sol-20260910",
+          "file": "rollout-2026-09-10T19-40-39-01a08b1e-afba-7702-aed7-9b3527c0fb78.jsonl",
+          "model": "gpt-5.6-sol",
+          "model_calls": 2,
+          "parent_thread_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+          "peak_context": 20008,
+          "session_id": "01a08b1e-afba-7702-aed7-9b3527c0fb78",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17929,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 20008,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 1,
+          "usage": {
+            "cached_input_tokens": 28160,
+            "input_tokens": 37937,
+            "output_tokens": 410,
+            "reasoning_tokens": 128
+          }
+        },
+        {
+          "cwd_leaf": "D7-clean-artifact-sol-20260910",
+          "file": "rollout-2026-09-10T19-41-20-01a08b1f-5054-7521-8036-cecc4615edfb.jsonl",
+          "model": "gpt-5.6-luna",
+          "model_calls": 20,
+          "parent_thread_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+          "peak_context": 107144,
+          "session_id": "01a08b1f-5054-7521-8036-cecc4615edfb",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17811,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 20462,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 22783,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 23135,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 25350,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 29916,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 45868,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 57667,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 61251,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 67694,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 70361,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 75473,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 75879,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 80417,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 87242,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 16,
+              "input_tokens": 92074,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 17,
+              "input_tokens": 95610,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 18,
+              "input_tokens": 97689,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 19,
+              "input_tokens": 97918,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 20,
+              "input_tokens": 107144,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 19,
+          "usage": {
+            "cached_input_tokens": 1143808,
+            "input_tokens": 1251744,
+            "output_tokens": 6906,
+            "reasoning_tokens": 2040
+          }
+        },
+        {
+          "cwd_leaf": "D7-clean-artifact-sol-20260910",
+          "file": "rollout-2026-09-10T19-45-52-01a08b23-789f-77c3-8776-4a76ff80221b.jsonl",
+          "model": "gpt-5.6-luna",
+          "model_calls": 14,
+          "parent_thread_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+          "peak_context": 74285,
+          "session_id": "01a08b23-789f-77c3-8776-4a76ff80221b",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17816,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 21136,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 35675,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 36687,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 41205,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 43282,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 44372,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 50562,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 52316,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 55485,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 67149,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 71784,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 73927,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 74285,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 13,
+          "usage": {
+            "cached_input_tokens": 620032,
+            "input_tokens": 685681,
+            "output_tokens": 5212,
+            "reasoning_tokens": 1188
+          }
+        },
+        {
+          "cwd_leaf": "D7-clean-artifact-sol-20260910",
+          "file": "rollout-2026-09-10T19-49-29-01a08b26-c547-7383-9a3b-00499e06a704.jsonl",
+          "model": "gpt-5.6-sol",
+          "model_calls": 2,
+          "parent_thread_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+          "peak_context": 19678,
+          "session_id": "01a08b26-c547-7383-9a3b-00499e06a704",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17941,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 19678,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 1,
+          "usage": {
+            "cached_input_tokens": 28160,
+            "input_tokens": 37619,
+            "output_tokens": 1028,
+            "reasoning_tokens": 712
+          }
+        },
+        {
+          "cwd_leaf": "D7-clean-artifact-sol-20260910",
+          "file": "rollout-2026-09-10T19-50-27-01a08b27-a811-7312-838b-57fcd1f60d62.jsonl",
+          "model": "gpt-5.6-luna",
+          "model_calls": 15,
+          "parent_thread_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+          "peak_context": 106038,
+          "session_id": "01a08b27-a811-7312-838b-57fcd1f60d62",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17801,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 20438,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 37378,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 50135,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 52668,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 63751,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 74212,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 86621,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 86845,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 87074,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 91175,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 100272,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 103473,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 105564,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 106038,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 14,
+          "usage": {
+            "cached_input_tokens": 987392,
+            "input_tokens": 1083445,
+            "output_tokens": 4572,
+            "reasoning_tokens": 617
+          }
+        },
+        {
+          "cwd_leaf": "D7-clean-artifact-sol-20260910",
+          "file": "rollout-2026-09-10T19-53-19-01a08b2a-4b14-7883-92a9-312c396844b6.jsonl",
+          "model": "gpt-5.6-sol",
+          "model_calls": 2,
+          "parent_thread_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+          "peak_context": 21541,
+          "session_id": "01a08b2a-4b14-7883-92a9-312c396844b6",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17969,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 21541,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 1,
+          "usage": {
+            "cached_input_tokens": 32768,
+            "input_tokens": 39510,
+            "output_tokens": 962,
+            "reasoning_tokens": 516
+          }
+        },
+        {
+          "cwd_leaf": "D7-clean-artifact-sol-20260910",
+          "file": "rollout-2026-09-10T19-54-20-01a08b2b-3893-79c3-962b-5fcecf19ac8b.jsonl",
+          "model": "gpt-5.6-luna",
+          "model_calls": 12,
+          "parent_thread_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+          "peak_context": 74418,
+          "session_id": "01a08b2b-3893-79c3-962b-5fcecf19ac8b",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17842,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 22448,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 34880,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 35582,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 35817,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 39369,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 51170,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 55344,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 66030,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 71713,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 74020,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 74418,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 11,
+          "usage": {
+            "cached_input_tokens": 516096,
+            "input_tokens": 578633,
+            "output_tokens": 4889,
+            "reasoning_tokens": 568
+          }
+        },
+        {
+          "cwd_leaf": "D7-clean-artifact-sol-20260910",
+          "file": "rollout-2026-09-10T19-58-00-01a08b2e-941e-75d3-9478-3dbe5c24dcc9.jsonl",
+          "model": "gpt-5.6-sol",
+          "model_calls": 2,
+          "parent_thread_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+          "peak_context": 23554,
+          "session_id": "01a08b2e-941e-75d3-9478-3dbe5c24dcc9",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 18013,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 23554,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 1,
+          "usage": {
+            "cached_input_tokens": 29952,
+            "input_tokens": 41567,
+            "output_tokens": 1021,
+            "reasoning_tokens": 516
+          }
+        },
+        {
+          "cwd_leaf": "D7-clean-artifact-sol-20260910",
+          "file": "rollout-2026-09-10T19-59-14-01a08b2f-b330-7fd0-8426-9a1ad2aa2023.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 28,
+          "parent_thread_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+          "peak_context": 77074,
+          "session_id": "01a08b2f-b330-7fd0-8426-9a1ad2aa2023",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17958,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 29709,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 32375,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 44623,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 45245,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 47307,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 49418,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 52695,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 52938,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 53996,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 54655,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 55554,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 56315,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 56737,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 59641,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 16,
+              "input_tokens": 64866,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 17,
+              "input_tokens": 65416,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 18,
+              "input_tokens": 66167,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 19,
+              "input_tokens": 66462,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 20,
+              "input_tokens": 67475,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 21,
+              "input_tokens": 67789,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 22,
+              "input_tokens": 68432,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 23,
+              "input_tokens": 69076,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 24,
+              "input_tokens": 73985,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 25,
+              "input_tokens": 74314,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 26,
+              "input_tokens": 75812,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 27,
+              "input_tokens": 76667,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 28,
+              "input_tokens": 77074,
+              "preceding_action": "exec"
+            }
+          ],
+          "tool_calls": 29,
+          "usage": {
+            "cached_input_tokens": 1540096,
+            "input_tokens": 1622701,
+            "output_tokens": 16658,
+            "reasoning_tokens": 3718
+          }
+        },
+        {
+          "cwd_leaf": "context",
+          "file": "rollout-2026-09-10T20-09-26-01a08b39-0c43-76e3-8a0a-5ff15aef2607.jsonl",
+          "model": "gpt-5.6-luna",
+          "model_calls": 20,
+          "parent_thread_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+          "peak_context": 83263,
+          "session_id": "01a08b39-0c43-76e3-8a0a-5ff15aef2607",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 15864,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 16737,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 19230,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 29634,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 36434,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 41754,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 45702,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 46478,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 47241,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 49738,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 54480,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 54866,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 65960,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 66506,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 72317,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 16,
+              "input_tokens": 75135,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 17,
+              "input_tokens": 77084,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 18,
+              "input_tokens": 80765,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 19,
+              "input_tokens": 82004,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 20,
+              "input_tokens": 83263,
+              "preceding_action": "exec"
+            }
+          ],
+          "tool_calls": 20,
+          "usage": {
+            "cached_input_tokens": 975872,
+            "input_tokens": 1061192,
+            "output_tokens": 6288,
+            "reasoning_tokens": 2630
+          }
+        }
+      ],
+      "root": {
+        "cwd_leaf": "D7-clean-artifact-sol-20260910",
+        "file": "rollout-2026-09-10T19-33-50-01a08b18-7169-78a0-84d8-70e73fe701ab.jsonl",
+        "model": "gpt-5.6-luna",
+        "model_calls": 79,
+        "parent_thread_id": null,
+        "peak_context": 61513,
+        "session_id": "01a08b18-7169-78a0-84d8-70e73fe701ab",
+        "timeline": [
+          {
+            "call": 1,
+            "input_tokens": 14903,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 2,
+            "input_tokens": 15468,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 3,
+            "input_tokens": 15904,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 4,
+            "input_tokens": 16300,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 5,
+            "input_tokens": 25973,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 6,
+            "input_tokens": 26392,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 7,
+            "input_tokens": 27809,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 8,
+            "input_tokens": 28136,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 9,
+            "input_tokens": 28405,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 10,
+            "input_tokens": 28515,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 11,
+            "input_tokens": 28762,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 12,
+            "input_tokens": 29277,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 13,
+            "input_tokens": 29600,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 14,
+            "input_tokens": 30141,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 15,
+            "input_tokens": 30528,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 16,
+            "input_tokens": 30827,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 17,
+            "input_tokens": 31153,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 18,
+            "input_tokens": 31358,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 19,
+            "input_tokens": 36621,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 20,
+            "input_tokens": 37257,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 21,
+            "input_tokens": 38106,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 22,
+            "input_tokens": 38405,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 23,
+            "input_tokens": 38610,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 24,
+            "input_tokens": 39092,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 25,
+            "input_tokens": 39397,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 26,
+            "input_tokens": 41046,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 27,
+            "input_tokens": 41525,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 28,
+            "input_tokens": 42094,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 29,
+            "input_tokens": 42355,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 30,
+            "input_tokens": 42449,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 31,
+            "input_tokens": 42636,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 32,
+            "input_tokens": 42778,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 33,
+            "input_tokens": 43017,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 34,
+            "input_tokens": 43307,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 35,
+            "input_tokens": 43971,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 36,
+            "input_tokens": 44067,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 37,
+            "input_tokens": 44328,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 38,
+            "input_tokens": 44484,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 39,
+            "input_tokens": 44726,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 40,
+            "input_tokens": 45127,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 41,
+            "input_tokens": 45326,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 42,
+            "input_tokens": 45730,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 43,
+            "input_tokens": 45825,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 44,
+            "input_tokens": 46324,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 45,
+            "input_tokens": 46801,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 46,
+            "input_tokens": 47049,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 47,
+            "input_tokens": 47143,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 48,
+            "input_tokens": 47388,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 49,
+            "input_tokens": 47562,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 50,
+            "input_tokens": 47801,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 51,
+            "input_tokens": 48105,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 52,
+            "input_tokens": 48202,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 53,
+            "input_tokens": 48939,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 54,
+            "input_tokens": 49657,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 55,
+            "input_tokens": 49963,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 56,
+            "input_tokens": 50060,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 57,
+            "input_tokens": 50342,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 58,
+            "input_tokens": 50510,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 59,
+            "input_tokens": 50841,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 60,
+            "input_tokens": 51351,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 61,
+            "input_tokens": 51692,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 62,
+            "input_tokens": 52302,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 63,
+            "input_tokens": 52644,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 64,
+            "input_tokens": 53125,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 65,
+            "input_tokens": 53732,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 66,
+            "input_tokens": 54212,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 67,
+            "input_tokens": 54310,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 68,
+            "input_tokens": 55106,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 69,
+            "input_tokens": 55777,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 70,
+            "input_tokens": 56278,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 71,
+            "input_tokens": 56375,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 72,
+            "input_tokens": 56956,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 73,
+            "input_tokens": 57264,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 74,
+            "input_tokens": 57545,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 75,
+            "input_tokens": 58582,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 76,
+            "input_tokens": 59423,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 77,
+            "input_tokens": 59867,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 78,
+            "input_tokens": 60455,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 79,
+            "input_tokens": 61513,
+            "preceding_action": "exec"
+          }
+        ],
+        "tool_calls": 81,
+        "usage": {
+          "cached_input_tokens": 3313920,
+          "input_tokens": 3416926,
+          "output_tokens": 18330,
+          "reasoning_tokens": 8999
+        }
+      },
+      "run": "D7-clean"
+    }
+  ],
+  "schema_version": 1
+}

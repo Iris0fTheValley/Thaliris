@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "codex_version": "codex-cli 0.153.4",
+  "sanitized": true,
+  "case_a_direct_decision": {
+    "status": "PASS",
+    "root_session": "01a08828-ac7d-7a72-ad4e-95994da528e6",
+    "sol_outcome": "DECISION",
+    "sol_tool_calls": 0,
+    "bounded": true,
+    "notes": "Supplied Decision Context was sufficient; no repository investigation observed."
+  },
+  "case_b_evidence_request": {
+    "status": "PASS",
+    "root_session": "01a08829-9fa6-7940-b6a3-c1045076d0de",
+    "sol1_outcome": "NEED_EVIDENCE",
+    "fresh_investigator": true,
+    "evidence_artifact": "README.md:1",
+    "sol2_fresh": true,
+    "notes": "Sol 1 stopped after EvidenceRequest; Investigator was fresh; Sol 2 used a new selected context."
+  },
+  "case_c_reviewer_freshness": {
+    "status": "PASS",
+    "root_session": "01a0882a-efce-7933-89c3-14d33235cec7",
+    "reviewer_a": "01a0882b-5f07-72c3-bfc8-143783be8378",
+    "reviewer_b": "01a0882b-b4ad-7e82-ae38-e385dc9c86cb",
+    "distinct_sessions": true,
+    "fork_turns": "none",
+    "reviewer_a_resumed": false
+  },
+  "formal_d6b_quality": {
+    "status": "SEALED_PASS",
+    "report": "D6b-formal-evaluator-final-20260910.json",
+    "evaluator_sha256": "d92708764c91dbda75943008c9d180ac206a6209fac35cd4946c31ff71d87ad4",
+    "known_good_tests": "8/8",
+    "untouched_base": "FAIL"
+  },
+  "d6c_formal_rerun": {
+    "status": "EXTERNALLY_INCOMPLETE",
+    "partial_trace": "D6c-managed-bounded-sol-20260910-retry.jsonl",
+    "partial_metrics": "D6c-session-metrics-partial.json",
+    "root_and_children_observed": 4,
+    "reason": "Codex Responses websocket and HTTPS transports repeatedly returned connection-closed/401 errors during the implementation child; no final quality result was produced."
+  }
+}

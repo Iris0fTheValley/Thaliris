@@ -1,0 +1,47 @@
+{
+  "date": "2026-09-10",
+  "codex_version": "0.153.4",
+  "adapter_branch": "adapter/codex",
+  "adapter_sha": "645a40e",
+  "medium": {
+    "fixture": "<screening-root>\\fixtures\\D8-event-driven-medium-20260910",
+    "root_session": "01a08bc6-63b6-7310-bc36-004a4adf83a0",
+    "investigator_session": "01a08bc7-1dda-7450-a76b-b8c65abd8dce",
+    "evidence_artifact": ".scratch/evidence/live2d-runtime-parity.md",
+    "root_wait_calls": 0,
+    "managed_protocol": "INFRA_INVALID",
+    "event_driven": "NOT_OBSERVED",
+    "review_freshness": "NOT_OBSERVED",
+    "quality": "NOT_OBSERVED",
+    "reason": "codex exec root activation ended and native child turn_aborted; exact failure event recorded, supervisor resume returned RESUME_FAILED",
+    "cost_usd": 0.07657108,
+    "models": {
+      "luna": {
+        "sessions": 2,
+        "input_tokens": 1836173,
+        "cached_input_tokens": 1686784,
+        "output_tokens": 10798,
+        "cost_usd": 0.07657108
+      }
+    }
+  },
+  "fast_path": {
+    "fixture": "<screening-root>\\fixtures\\fast-path-canary-20260910b",
+    "evaluator": "<screening-root>\\fast-path-canary-evaluator-20260910b.py",
+    "evaluator_sha256": "03256C43342F2036A29C5C3B05A9EDD84A8D8F2310047C0E411D18058F7699FC",
+    "root_wait_calls": 0,
+    "managed_protocol": "INFRA_INVALID",
+    "routing": "FAIL",
+    "quality": "FAIL",
+    "cost_usd": 0.11495728,
+    "reason": "native implementer was dispatched after trusted project activation, but child could not edit/run in the CLI workspace and completion was aborted; candidate remained unchanged"
+  },
+  "tests": {
+    "root_py311": "PASS",
+    "root_py312": "PASS",
+    "root_py313": "PASS",
+    "benchmark_py311": "PASS",
+    "benchmark_py312": "PASS",
+    "benchmark_py313": "PASS"
+  }
+}

@@ -1,0 +1,1 @@
+Dispatched fresh `thaliris-investigator` child `01a08bc7-1dda-7450-a76b-b8c65abd8dce` with `fork_turns="none"`. Ending this controller activation; no polling or wait performed.

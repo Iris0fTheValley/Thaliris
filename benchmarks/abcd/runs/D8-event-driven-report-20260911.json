@@ -1,0 +1,101 @@
+{
+  "schema_version": 3,
+  "run_id": "D8-interactive-medium-20260911",
+  "codex_version": "0.153.4",
+  "adapter_branch": "adapter/codex",
+  "adapter_sha": "645a40e",
+  "fixture": "<screening-root>\\fixtures\\D8-interactive-medium-20260911",
+  "root_session": "01a08c35-9e9c-7c02-b95c-100195ef5907",
+  "medium": {
+    "routing": "PASS",
+    "managed_protocol": "PASS",
+    "event_driven": "PASS",
+    "root_wait_calls": 0,
+    "polls": 0,
+    "investigator_sessions": [
+      "01a08c29-fb2c-7180-ab26-a5cd59c1e5b6",
+      "01a08c39-7b93-7b13-a4fe-2c23f72c7448",
+      "01a08c3d-3f74-7f60-8346-34d87fd0d9a4"
+    ],
+    "evidence_artifacts": [
+      "evidence/live2d-runtime-renderer-investigation.md",
+      "evidence/live2d-runtime-renderer-decision-matrix.md",
+      "evidence/live2d-runtime-renderer-decision-addendum.md"
+    ],
+    "sol_sessions": [
+      "01a08c36-27ea-7351-b4e0-a20bb166c9ed",
+      "01a08c40-7ec0-71f1-b30b-e06cc86d1246",
+      "01a08c43-25ea-7a20-a4b3-3d19d153e344",
+      "01a08c44-97a5-71d2-b4ac-6311277bd487"
+    ],
+    "sol_need_evidence": 3,
+    "sol_decisions": 1,
+    "implementer_sessions": [
+      "01a08c49-3cfd-7d91-9c71-00f7682f0545",
+      "01a08c52-6f60-7841-9ead-28477b47333d"
+    ],
+    "reviewer_sessions": [
+      "01a08c4d-f9cf-7c82-8e46-4a57290b171e",
+      "01a08c55-ac5f-7022-bf76-de1c6843e602"
+    ],
+    "review_freshness": "PASS",
+    "handoff": "PASS",
+    "candidate_tests": {
+      "focused_python_unittest": "39 passed",
+      "semantic_runtime_and_policies": "20 passed (included in 39)",
+      "backend": "19 passed (included in 39)",
+      "frontend_vitest": "11 passed",
+      "frontend_build": "PASS"
+    },
+    "formal_quality": "FAIL",
+    "formal_quality_reason": "Frozen v4 evaluator is incompatible with sealed base and candidate: required behavior_contract/contract.js/_live2d_snapshot surfaces are absent from both; calibration gold_pass=false and untouched_base_fail=true. This is an evaluator/contract mismatch, not a valid SEALED_PASS.",
+    "task_close": "NOT_OBSERVED",
+    "task_close_reason": "verification_target was not configured in the interactive task state; no trusted Bash terminal outcome is available in Codex 0.153.4.",
+    "cost_usd": 1.4513868,
+    "cost_usd_observed_all_invocations": 1.4513868,
+    "cost_usd_managed_valid_route": 1.4241716,
+    "candidate_fix_after_initial_run": "Minimal compatibility fix: only resolve Live2D character for assistant messages; added one-byte PNG background fixture required by pre-existing range test. No benchmark evaluator or Thaliris runtime changed."
+  },
+  "models": {
+    "luna": {
+      "sessions": 4,
+      "input_tokens": 2072928,
+      "cached_input_tokens": 1853440,
+      "output_tokens": 20148,
+      "cost_usd": 0.105144
+    },
+    "sol": {
+      "sessions": 4,
+      "input_tokens": 69505,
+      "cached_input_tokens": 49408,
+      "output_tokens": 2396,
+      "cost_usd": 0.1480712
+    },
+    "terra": {
+      "sessions": 4,
+      "input_tokens": 2139567,
+      "cached_input_tokens": 1914112,
+      "output_tokens": 28102,
+      "cost_usd": 1.1709564
+    }
+  },
+  "all_descendants": {
+    "sessions": 13,
+    "input_tokens": 4299141,
+    "cached_input_tokens": 3831168,
+    "output_tokens": 51136,
+    "cost_usd": 1.4513868,
+    "reasoning_tokens_diagnostic_only": null,
+    "managed_valid_route_cost_usd": 1.4241716,
+    "observed_including_invalid_child_cost_usd": 1.4513868
+  },
+  "invalid_children": [
+    "01a08c3c-7313-73e1-9aef-85d497dca08c"
+  ],
+  "notes": [
+    "All managed Start/Stop pairs have matching role/session/turn provenance in lifecycle v7.",
+    "One unmanaged Sol child was spawned during a failed root attempt and remained stopped=false; excluded from managed completion and cost model as invalid runtime artifact.",
+    "Candidate backend suite initially exposed a compatibility regression and missing fixture assets; both were corrected locally, then focused 39-test suite passed.",
+    "Formal evaluator was run with its actual SHA256 8bba8f2590c9d06cd318119850e0bbbe433d06e1bc06ff747c2fb3f16156eda3; hash matched, but contract calibration did not."
+  ]
+}

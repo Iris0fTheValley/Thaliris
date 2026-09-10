@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "sanitized": true,
+  "comparison": [
+    {
+      "run": "D6b",
+      "source": "D6b-session-metrics.json",
+      "sessions": 7,
+      "input_tokens": 14324034,
+      "output_tokens": 106329,
+      "reasoning_tokens": 48466,
+      "model_calls": 233,
+      "tool_calls": 221,
+      "peak_context": 173249,
+      "sol_input_tokens": 2820803,
+      "sol_model_calls": 30,
+      "sol_tool_calls": 28
+    },
+    {
+      "run": "D5",
+      "source": "D5-managed-hybrid-20260909.jsonl",
+      "root_input_tokens": 4401728,
+      "root_output_tokens": 12306,
+      "root_model_calls": "NOT_NORMALIZED",
+      "root_tool_calls": "NOT_NORMALIZED",
+      "child_telemetry": "UNAVAILABLE"
+    },
+    {
+      "run": "A2",
+      "source": "historical benchmark ledger",
+      "aggregate_input_tokens": 7717195,
+      "note": "Historical ledger is not a recursive DAG export; direct comparison is directional only."
+    },
+    {
+      "run": "D3",
+      "source": "historical benchmark ledger",
+      "aggregate_input_tokens": 13918652,
+      "note": "Historical ledger was normalized as root plus children; exact raw session recovery was not available in this run."
+    },
+    {
+      "run": "D6c-partial",
+      "source": "D6c-session-metrics-partial.json",
+      "sessions": 4,
+      "input_tokens": 4030290,
+      "output_tokens": 22464,
+      "reasoning_tokens": 5728,
+      "model_calls": 70,
+      "tool_calls": 70,
+      "peak_context": 117837,
+      "status": "INCOMPLETE"
+    }
+  ]
+}

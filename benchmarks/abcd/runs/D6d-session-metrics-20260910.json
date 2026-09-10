@@ -1,0 +1,2186 @@
+{
+  "runs": [
+    {
+      "children": [
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-19-27-01a08878-1b2c-7b11-8da9-0bb97a518aaf.jsonl",
+          "model": "gpt-5.6-luna",
+          "model_calls": 20,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 114934,
+          "session_id": "01a08878-1b2c-7b11-8da9-0bb97a518aaf",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 16952,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 19616,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 31127,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 31892,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 40421,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 44431,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 56008,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 57100,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 65215,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 70362,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 76432,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 81037,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 87912,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 93573,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 98705,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 16,
+              "input_tokens": 108350,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 17,
+              "input_tokens": 111138,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 18,
+              "input_tokens": 112720,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 19,
+              "input_tokens": 113286,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 20,
+              "input_tokens": 114934,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 19,
+          "usage": {
+            "cached_input_tokens": 1302528,
+            "input_tokens": 1431211,
+            "output_tokens": 6518,
+            "reasoning_tokens": 603
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-22-52-01a0887b-39c0-7e21-a1ef-dcdccc38de9b.jsonl",
+          "model": "gpt-5.6-sol",
+          "model_calls": 1,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 17432,
+          "session_id": "01a0887b-39c0-7e21-a1ef-dcdccc38de9b",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17432,
+              "preceding_action": "initial"
+            }
+          ],
+          "tool_calls": 0,
+          "usage": {
+            "cached_input_tokens": 6784,
+            "input_tokens": 17432,
+            "output_tokens": 1785,
+            "reasoning_tokens": 1483
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-24-14-01a0887c-7b09-7211-ba20-2a9326c93c67.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 22,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 80752,
+          "session_id": "01a0887c-7b09-7211-ba20-2a9326c93c67",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17219,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 19457,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 28044,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 37377,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 49077,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 57556,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 62079,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 64367,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 66927,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 68516,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 69268,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 70057,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 70443,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 70874,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 71711,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 16,
+              "input_tokens": 72392,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 17,
+              "input_tokens": 73335,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 18,
+              "input_tokens": 78387,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 19,
+              "input_tokens": 78988,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 20,
+              "input_tokens": 80001,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 21,
+              "input_tokens": 80365,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 22,
+              "input_tokens": 80752,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 21,
+          "usage": {
+            "cached_input_tokens": 1273344,
+            "input_tokens": 1367192,
+            "output_tokens": 9245,
+            "reasoning_tokens": 2209
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-28-40-01a08880-88d3-7030-865f-47f7067db63b.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 8,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 73029,
+          "session_id": "01a08880-88d3-7030-865f-47f7067db63b",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17310,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 23766,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 35135,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 46639,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 56202,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 62374,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 67002,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 73029,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 7,
+          "usage": {
+            "cached_input_tokens": 315392,
+            "input_tokens": 381457,
+            "output_tokens": 7267,
+            "reasoning_tokens": 2728
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-31-37-01a08883-3bf3-7b31-aa52-b09f6a782e24.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 20,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 82658,
+          "session_id": "01a08883-3bf3-7b31-aa52-b09f6a782e24",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17122,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 29220,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 39980,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 48595,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 53135,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 62806,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 64966,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 67303,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 68420,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 69659,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 71174,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 71859,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 72557,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 73260,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 74327,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 16,
+              "input_tokens": 74915,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 17,
+              "input_tokens": 75487,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 18,
+              "input_tokens": 76980,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 19,
+              "input_tokens": 81971,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 20,
+              "input_tokens": 82658,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 19,
+          "usage": {
+            "cached_input_tokens": 1184768,
+            "input_tokens": 1276394,
+            "output_tokens": 12016,
+            "reasoning_tokens": 3123
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-36-36-01a08887-cd26-77e3-8f5c-5cb9f650a81b.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 15,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 105146,
+          "session_id": "01a08887-cd26-77e3-8f5c-5cb9f650a81b",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17229,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 27855,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 28304,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 39215,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 39668,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 49772,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 56368,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 66289,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 71614,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 81428,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 95047,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 96270,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 96765,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 103755,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 105146,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 14,
+          "usage": {
+            "cached_input_tokens": 872704,
+            "input_tokens": 974725,
+            "output_tokens": 8486,
+            "reasoning_tokens": 4569
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-40-05-01a0888a-fbca-7d21-bd47-ce48016e6e81.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 13,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 59187,
+          "session_id": "01a0888a-fbca-7d21-bd47-ce48016e6e81",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 16986,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 27309,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 30410,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 38264,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 44505,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 49200,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 53433,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 55282,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 55876,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 56436,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 57532,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 58533,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 59187,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 12,
+          "usage": {
+            "cached_input_tokens": 552704,
+            "input_tokens": 602953,
+            "output_tokens": 9975,
+            "reasoning_tokens": 4348
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-43-56-01a0888e-84cf-7b83-801e-66c4d6f11c73.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 16,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 104129,
+          "session_id": "01a0888e-84cf-7b83-801e-66c4d6f11c73",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17240,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 26863,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 35853,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 36263,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 47415,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 47891,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 58005,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 68047,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 77994,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 90792,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 92721,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 95916,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 96792,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 97038,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 99906,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 16,
+              "input_tokens": 104129,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 15,
+          "usage": {
+            "cached_input_tokens": 993280,
+            "input_tokens": 1092865,
+            "output_tokens": 8748,
+            "reasoning_tokens": 4466
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-47-32-01a08891-d0c2-7501-8eeb-583b4aaa333e.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 20,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 68906,
+          "session_id": "01a08891-d0c2-7501-8eeb-583b4aaa333e",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17032,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 27510,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 36961,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 45006,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 47845,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 51294,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 54683,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 58865,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 59126,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 61398,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 62275,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 63346,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 64105,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 64257,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 65241,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 16,
+              "input_tokens": 65858,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 17,
+              "input_tokens": 66030,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 18,
+              "input_tokens": 68076,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 19,
+              "input_tokens": 68350,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 20,
+              "input_tokens": 68906,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 19,
+          "usage": {
+            "cached_input_tokens": 1049600,
+            "input_tokens": 1116164,
+            "output_tokens": 11858,
+            "reasoning_tokens": 3893
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-52-23-01a08896-4177-7050-b0ba-ecf0435d2f8c.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 15,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 94626,
+          "session_id": "01a08896-4177-7050-b0ba-ecf0435d2f8c",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17264,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 27131,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 38478,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 38976,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 49473,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 59529,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 70095,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 76019,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 85739,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 86965,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 87622,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 88505,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 88752,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 92720,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 94626,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 14,
+          "usage": {
+            "cached_input_tokens": 913664,
+            "input_tokens": 1001894,
+            "output_tokens": 7330,
+            "reasoning_tokens": 3443
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-55-31-01a08899-1f4c-7101-858f-86c4887dff52.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 10,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 55285,
+          "session_id": "01a08899-1f4c-7101-858f-86c4887dff52",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 16946,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 27192,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 33827,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 40174,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 43561,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 44240,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 45281,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 53605,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 54730,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 55285,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 9,
+          "usage": {
+            "cached_input_tokens": 370176,
+            "input_tokens": 414841,
+            "output_tokens": 6780,
+            "reasoning_tokens": 2480
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T07-58-12-01a0889b-9452-7dc0-8be3-c118231d958d.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 16,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 105920,
+          "session_id": "01a0889b-9452-7dc0-8be3-c118231d958d",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17274,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 19176,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 28871,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 40779,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 51191,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 62378,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 69211,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 75643,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 79949,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 87867,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 88868,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 89452,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 89699,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 94022,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 104875,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 16,
+              "input_tokens": 105920,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 15,
+          "usage": {
+            "cached_input_tokens": 1005568,
+            "input_tokens": 1105175,
+            "output_tokens": 7316,
+            "reasoning_tokens": 4232
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T08-01-20-01a0889e-7318-75c2-aa3c-6e31ea1a7c06.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 7,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 46738,
+          "session_id": "01a0889e-7318-75c2-aa3c-6e31ea1a7c06",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 16869,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 27368,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 30658,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 37478,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 38838,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 39360,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 46738,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 6,
+          "usage": {
+            "cached_input_tokens": 180480,
+            "input_tokens": 237309,
+            "output_tokens": 3117,
+            "reasoning_tokens": 1209
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T08-02-49-01a0889f-ccad-7f20-b9b1-fa9264499bb4.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 20,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 138352,
+          "session_id": "01a0889f-ccad-7f20-b9b1-fa9264499bb4",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17273,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 27045,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 38599,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 49942,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 50542,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 60930,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 72855,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 75600,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 75978,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 77203,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 77895,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 89450,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 100184,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 104809,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 109009,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 16,
+              "input_tokens": 115428,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 17,
+              "input_tokens": 117823,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 18,
+              "input_tokens": 129986,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 19,
+              "input_tokens": 135825,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 20,
+              "input_tokens": 138352,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 19,
+          "usage": {
+            "cached_input_tokens": 1529856,
+            "input_tokens": 1664728,
+            "output_tokens": 9600,
+            "reasoning_tokens": 4631
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T08-07-17-01a088a3-e330-7bd3-b85f-8c4528a07193.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 22,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 79461,
+          "session_id": "01a088a3-e330-7bd3-b85f-8c4528a07193",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 16928,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 21357,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 29732,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 39056,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 49258,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 56036,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 58882,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 61034,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 63340,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 66531,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 66943,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 12,
+              "input_tokens": 67616,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 13,
+              "input_tokens": 68447,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 14,
+              "input_tokens": 69026,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 15,
+              "input_tokens": 69533,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 16,
+              "input_tokens": 69736,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 17,
+              "input_tokens": 70248,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 18,
+              "input_tokens": 71549,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 19,
+              "input_tokens": 76352,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 20,
+              "input_tokens": 77549,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 21,
+              "input_tokens": 78760,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 22,
+              "input_tokens": 79461,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 21,
+          "usage": {
+            "cached_input_tokens": 1250816,
+            "input_tokens": 1327374,
+            "output_tokens": 10974,
+            "reasoning_tokens": 3124
+          }
+        },
+        {
+          "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+          "file": "rollout-2026-09-10T08-11-52-01a088a8-1598-70e2-a08d-f52e7626395b.jsonl",
+          "model": "gpt-5.6-terra",
+          "model_calls": 11,
+          "parent_thread_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+          "peak_context": 92746,
+          "session_id": "01a088a8-1598-70e2-a08d-f52e7626395b",
+          "timeline": [
+            {
+              "call": 1,
+              "input_tokens": 17278,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 2,
+              "input_tokens": 27107,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 3,
+              "input_tokens": 35928,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 4,
+              "input_tokens": 46874,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 5,
+              "input_tokens": 56119,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 6,
+              "input_tokens": 64469,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 7,
+              "input_tokens": 70126,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 8,
+              "input_tokens": 78091,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 9,
+              "input_tokens": 80871,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 10,
+              "input_tokens": 92746,
+              "preceding_action": "exec"
+            },
+            {
+              "call": 11,
+              "input_tokens": 92746,
+              "preceding_action": "model_turn"
+            }
+          ],
+          "tool_calls": 10,
+          "usage": {
+            "cached_input_tokens": 568576,
+            "input_tokens": 662355,
+            "output_tokens": 3253,
+            "reasoning_tokens": 939
+          }
+        }
+      ],
+      "root": {
+        "cwd_leaf": "D6d-managed-bounded-sol-20260910",
+        "file": "rollout-2026-09-10T07-18-50-01a08877-87f7-7233-913a-f0de8f964b2c.jsonl",
+        "model": "gpt-5.6-luna",
+        "model_calls": 138,
+        "parent_thread_id": null,
+        "peak_context": 70848,
+        "session_id": "01a08877-87f7-7233-913a-f0de8f964b2c",
+        "timeline": [
+          {
+            "call": 1,
+            "input_tokens": 14068,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 2,
+            "input_tokens": 23971,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 3,
+            "input_tokens": 24681,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 4,
+            "input_tokens": 25144,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 5,
+            "input_tokens": 25552,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 6,
+            "input_tokens": 25863,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 7,
+            "input_tokens": 26177,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 8,
+            "input_tokens": 26278,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 9,
+            "input_tokens": 26352,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 10,
+            "input_tokens": 26422,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 11,
+            "input_tokens": 26489,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 12,
+            "input_tokens": 26565,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 13,
+            "input_tokens": 32877,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 14,
+            "input_tokens": 36198,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 15,
+            "input_tokens": 36929,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 16,
+            "input_tokens": 37602,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 17,
+            "input_tokens": 37701,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 18,
+            "input_tokens": 38473,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 19,
+            "input_tokens": 39078,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 20,
+            "input_tokens": 39690,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 21,
+            "input_tokens": 39788,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 22,
+            "input_tokens": 39886,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 23,
+            "input_tokens": 39953,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 24,
+            "input_tokens": 40020,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 25,
+            "input_tokens": 40087,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 26,
+            "input_tokens": 40158,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 27,
+            "input_tokens": 40279,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 28,
+            "input_tokens": 40759,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 29,
+            "input_tokens": 41093,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 30,
+            "input_tokens": 42187,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 31,
+            "input_tokens": 42689,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 32,
+            "input_tokens": 43225,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 33,
+            "input_tokens": 43328,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 34,
+            "input_tokens": 43395,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 35,
+            "input_tokens": 43462,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 36,
+            "input_tokens": 43529,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 37,
+            "input_tokens": 45565,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 38,
+            "input_tokens": 46941,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 39,
+            "input_tokens": 47461,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 40,
+            "input_tokens": 47561,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 41,
+            "input_tokens": 47629,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 42,
+            "input_tokens": 47696,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 43,
+            "input_tokens": 47763,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 44,
+            "input_tokens": 47830,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 45,
+            "input_tokens": 47897,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 46,
+            "input_tokens": 47964,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 47,
+            "input_tokens": 48031,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 48,
+            "input_tokens": 48619,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 49,
+            "input_tokens": 48992,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 50,
+            "input_tokens": 49277,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 51,
+            "input_tokens": 49376,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 52,
+            "input_tokens": 49443,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 53,
+            "input_tokens": 49510,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 54,
+            "input_tokens": 49577,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 55,
+            "input_tokens": 49644,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 56,
+            "input_tokens": 50766,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 57,
+            "input_tokens": 51463,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 58,
+            "input_tokens": 51828,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 59,
+            "input_tokens": 51926,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 60,
+            "input_tokens": 51993,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 61,
+            "input_tokens": 52060,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 62,
+            "input_tokens": 52127,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 63,
+            "input_tokens": 52194,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 64,
+            "input_tokens": 52261,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 65,
+            "input_tokens": 52743,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 66,
+            "input_tokens": 53058,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 67,
+            "input_tokens": 53327,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 68,
+            "input_tokens": 53425,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 69,
+            "input_tokens": 53492,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 70,
+            "input_tokens": 53559,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 71,
+            "input_tokens": 53626,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 72,
+            "input_tokens": 53693,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 73,
+            "input_tokens": 53760,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 74,
+            "input_tokens": 55424,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 75,
+            "input_tokens": 56389,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 76,
+            "input_tokens": 56800,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 77,
+            "input_tokens": 56895,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 78,
+            "input_tokens": 56962,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 79,
+            "input_tokens": 57029,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 80,
+            "input_tokens": 57096,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 81,
+            "input_tokens": 57163,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 82,
+            "input_tokens": 57230,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 83,
+            "input_tokens": 57297,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 84,
+            "input_tokens": 57364,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 85,
+            "input_tokens": 57962,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 86,
+            "input_tokens": 58339,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 87,
+            "input_tokens": 58586,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 88,
+            "input_tokens": 58684,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 89,
+            "input_tokens": 58751,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 90,
+            "input_tokens": 58818,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 91,
+            "input_tokens": 58885,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 92,
+            "input_tokens": 58952,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 93,
+            "input_tokens": 60082,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 94,
+            "input_tokens": 60733,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 95,
+            "input_tokens": 61058,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 96,
+            "input_tokens": 61154,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 97,
+            "input_tokens": 61221,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 98,
+            "input_tokens": 61288,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 99,
+            "input_tokens": 61355,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 100,
+            "input_tokens": 62002,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 101,
+            "input_tokens": 62396,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 102,
+            "input_tokens": 62651,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 103,
+            "input_tokens": 62746,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 104,
+            "input_tokens": 62813,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 105,
+            "input_tokens": 62880,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 106,
+            "input_tokens": 62947,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 107,
+            "input_tokens": 63014,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 108,
+            "input_tokens": 63884,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 109,
+            "input_tokens": 64436,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 110,
+            "input_tokens": 64681,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 111,
+            "input_tokens": 64780,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 112,
+            "input_tokens": 64847,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 113,
+            "input_tokens": 65460,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 114,
+            "input_tokens": 65831,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 115,
+            "input_tokens": 66085,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 116,
+            "input_tokens": 66180,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 117,
+            "input_tokens": 66247,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 118,
+            "input_tokens": 66314,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 119,
+            "input_tokens": 66381,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 120,
+            "input_tokens": 66448,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 121,
+            "input_tokens": 66515,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 122,
+            "input_tokens": 66582,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 123,
+            "input_tokens": 67876,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 124,
+            "input_tokens": 68713,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 125,
+            "input_tokens": 69013,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 126,
+            "input_tokens": 69108,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 127,
+            "input_tokens": 69175,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 128,
+            "input_tokens": 69242,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 129,
+            "input_tokens": 69309,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 130,
+            "input_tokens": 69376,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 131,
+            "input_tokens": 69443,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 132,
+            "input_tokens": 69510,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 133,
+            "input_tokens": 70068,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 134,
+            "input_tokens": 70427,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 135,
+            "input_tokens": 70686,
+            "preceding_action": "exec"
+          },
+          {
+            "call": 136,
+            "input_tokens": 70781,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 137,
+            "input_tokens": 70848,
+            "preceding_action": "wait"
+          },
+          {
+            "call": 138,
+            "input_tokens": 70848,
+            "preceding_action": "model_turn"
+          }
+        ],
+        "tool_calls": 137,
+        "usage": {
+          "cached_input_tokens": 7020032,
+          "input_tokens": 7246085,
+          "output_tokens": 14292,
+          "reasoning_tokens": 2405
+        }
+      },
+      "run": "D6d"
+    }
+  ],
+  "schema_version": 1
+}

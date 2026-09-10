@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "run_id": "D9-medium-20260911b",
+  "codex_version": "0.153.4",
+  "adapter_branch": "adapter/codex",
+  "adapter_sha": "0970a7f",
+  "fixture": "<screening-root>/fixtures/D9-medium-20260911b",
+  "root_session": "01a08cc3-6ee7-7d33-97f4-1e1bda37c637",
+  "raw_session_dir": "<D9-CODEX_HOME>/sessions/2026/09/11",
+  "status": {
+    "routing": "PARTIAL_PASS",
+    "managed_protocol": "INFRA_INVALID",
+    "event_driven": "NOT_OBSERVED",
+    "root_wait_calls": 11,
+    "polls": "NOT_ASSESSED",
+    "investigator_artifact_first": "PASS",
+    "sol_bounded_decision": "PASS",
+    "sol_evidence_request_round_trip": "NOT_OBSERVED",
+    "implementer_handoff": "PASS",
+    "review_fresh_sessions": "PASS",
+    "review_read_only_boundary": "FAIL",
+    "task_close": "NOT_OBSERVED"
+  },
+  "sessions": {
+    "investigator": ["01a08cc4-7a9b-7031-bd02-2e2e10b97ba4"],
+    "sol": ["01a08cc9-24a8-7ee0-ad27-67bf08a141e8"],
+    "implementer": ["01a08cce-9a64-77a2-8de9-f1756add0ce8"],
+    "reviewers": [
+      "01a08cd4-3ae9-74c2-a517-b25346ce30ac",
+      "01a08cd8-40b8-7013-9eec-4911d9d52127",
+      "01a08ce1-d63d-7991-9f6e-7692b5d61e65"
+    ]
+  },
+  "formal_evaluator": {
+    "contract_version": "d-sakiko-live2d-behavior-v5",
+    "evaluator_sha256": "8e7d79c3fc4843cee864fea46ac7fcab6160b9dcf896ce5c03ed734399e8e4e9",
+    "gold": "PASS",
+    "untouched_base": "FAIL",
+    "no_edit": "NOT_RUN",
+    "candidate": "FAIL",
+    "candidate_reason": "trusted evaluator tests import implementation-specific live2d_support modules absent from the candidate; this is not a valid implementation-independent SEALED_PASS"
+  },
+  "models": {
+    "gpt-5.6-luna": {
+      "sessions": 2,
+      "input_tokens": 5959004,
+      "cached_input_tokens": 5673472,
+      "output_tokens": 24111,
+      "reasoning_tokens_diagnostic": 8529,
+      "model_calls": 130,
+      "tool_calls": 128,
+      "peak_context": 118645,
+      "cost_usd": 0.199509
+    },
+    "gpt-5.6-sol": {
+      "sessions": 1,
+      "input_tokens": 478422,
+      "cached_input_tokens": 413184,
+      "output_tokens": 13487,
+      "reasoning_tokens_diagnostic": 10212,
+      "model_calls": 11,
+      "tool_calls": 10,
+      "peak_context": 64730,
+      "cost_usd": 0.695966
+    },
+    "gpt-5.6-terra": {
+      "sessions": 4,
+      "input_tokens": 4687226,
+      "cached_input_tokens": 4339456,
+      "output_tokens": 49639,
+      "reasoning_tokens_diagnostic": 18293,
+      "model_calls": 77,
+      "tool_calls": 73,
+      "peak_context": 90626,
+      "cost_usd": 2.159099
+    }
+  },
+  "aggregate": {
+    "sessions": 7,
+    "input_tokens": 11124652,
+    "cached_input_tokens": 10449112,
+    "output_tokens": 87237,
+    "model_calls": 218,
+    "tool_calls": 211,
+    "cost_usd": 3.054574,
+    "cost_method": "uncached=input-cached; reasoning tokens diagnostic only"
+  },
+  "failures": [
+    "The run was interrupted after repeated serial-child/unknown-agent control errors.",
+    "A reviewer session modified candidate files instead of returning read-only findings.",
+    "The calibrated evaluator is not implementation-independent and therefore cannot issue SEALED_PASS."
+  ]
+}

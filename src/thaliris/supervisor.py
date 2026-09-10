@@ -61,14 +61,17 @@ def resume_once(
     event_id = event.get("event_id")
     if not isinstance(activation_id, str) or not isinstance(event_id, str):
         return {"status": "INVALID_EVENT"}
+    # Claim before invoking Codex so a resumed Controller may reserve its next
+    # child without racing a post-resume claim against the new activation.
+    if not intent_audit.claim_activation(root, activation_id, event_id):
+        return {"status": "ALREADY_CLAIMED", "event_id": event_id}
     command = executable or os.environ.get("THALIRIS_CODEX_EXECUTABLE") or "codex"
     argv = [command, "exec", "resume", session_id, prompt]
     invoke = runner or subprocess.run
     result = invoke(argv, cwd=root, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         return {"status": "RESUME_FAILED", "event_id": event_id, "returncode": result.returncode}
-    claimed = intent_audit.claim_activation(root, activation_id, event_id)
-    return {"status": "RESUMED" if claimed else "ALREADY_CLAIMED", "event_id": event_id}
+    return {"status": "RESUMED", "event_id": event_id}
 
 
 def run(

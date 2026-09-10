@@ -1146,6 +1146,10 @@ def test_generated_agent_profiles_match_codex_schema_and_native_role_mapping(tmp
         assert profile["name"] == name
         assert isinstance(profile["description"], str) and profile["description"]
         assert isinstance(profile["developer_instructions"], str) and profile["developer_instructions"]
+        if role == "reviewer":
+            assert profile["sandbox_mode"] == "read-only"
+        else:
+            assert "sandbox_mode" not in profile
         if role == "reasoning-specialist":
             assert profile["model"] == "gpt-5.6-sol"
             assert profile["model_reasoning_effort"] == "xhigh"
@@ -1304,6 +1308,56 @@ def test_previous_reviewer_profile_bytes_upgrade_but_user_edit_is_preserved(tmp_
     preserved = init(edited)
     assert ".codex/agents/thaliris-reviewer.toml" in preserved["manual_migration_required"]
     assert edited_profile.read_bytes() == historical + b"# user customization\n"
+
+
+def test_0896_reviewer_profile_bytes_upgrade_to_native_read_only(tmp_path):
+    historical = (
+        b'name = "thaliris-reviewer"\n'
+        b'description = "Thaliris reviewer execution role"\n'
+        b'model = "gpt-5.6-terra"\n'
+        b'model_reasoning_effort = "high"\n'
+        b'developer_instructions = "Thaliris semantic role: reviewer. Work only inside your assigned role and return selected evidence-backed results. Review the current implementation as a read-only independent checker. Do not modify repository files, tests, or task semantic state; return only bounded findings with evidence references. Any correction belongs to a fresh Implementer, followed by a fresh Reviewer."\n'
+    )
+    root = repo(tmp_path / "legacy-0896")
+    profile = root / ".codex" / "agents" / "thaliris-reviewer.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_bytes(historical)
+    upgraded = init(root)
+    assert ".codex/agents/thaliris-reviewer.toml" in upgraded["files"]
+    rendered = tomllib.loads(profile.read_text(encoding="utf-8"))
+    assert rendered["sandbox_mode"] == "read-only"
+
+    edited = repo(tmp_path / "edited-0896")
+    edited_profile = edited / ".codex" / "agents" / "thaliris-reviewer.toml"
+    edited_profile.parent.mkdir(parents=True)
+    edited_profile.write_bytes(historical + b"# user customization\n")
+    preserved = init(edited)
+    assert ".codex/agents/thaliris-reviewer.toml" in preserved["manual_migration_required"]
+    assert edited_profile.read_bytes() == historical + b"# user customization\n"
+
+
+def test_645a_role_pack_bytes_upgrade_only_when_byte_exact(tmp_path):
+    historical = subprocess.run(
+        ["git", "show", "645a40e:docs/thaliris-role-packs.md"],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        check=True,
+    ).stdout
+    root = repo(tmp_path / "legacy-645a")
+    packs = root / "docs" / "thaliris-role-packs.md"
+    packs.parent.mkdir(parents=True)
+    packs.write_bytes(historical)
+    upgraded = init(root)
+    assert "docs/thaliris-role-packs.md" in upgraded["files"]
+    assert packs.read_bytes() == ROLE_PACKS.encode("utf-8")
+
+    edited = repo(tmp_path / "edited-645a")
+    edited_packs = edited / "docs" / "thaliris-role-packs.md"
+    edited_packs.parent.mkdir(parents=True)
+    edited_packs.write_bytes(historical + b"\n# user customization\n")
+    preserved = init(edited)
+    assert "docs/thaliris-role-packs.md" in preserved["manual_migration_required"]
+    assert edited_packs.read_bytes() == historical + b"\n# user customization\n"
 
 
 def test_previous_role_pack_bytes_upgrade_but_user_edit_is_preserved(tmp_path):

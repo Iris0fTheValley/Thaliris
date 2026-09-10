@@ -155,6 +155,10 @@ def main(argv: list[str] | None = None) -> int:
     runs = manifest.get("runs") if isinstance(manifest, dict) else None
     if not isinstance(runs, list):
         raise ValueError("manifest must contain a runs list")
+    if args.state_db and args.root_session_id and len(runs) != 1:
+        raise SystemExit(
+            "STATE_DB_SINGLE_RUN_REQUIRED: --state-db/--root-session-id identify exactly one manifested run"
+        )
     all_files = list(args.session_root.glob("*.jsonl"))
     output_runs: list[dict[str, Any]] = []
     for item in runs:

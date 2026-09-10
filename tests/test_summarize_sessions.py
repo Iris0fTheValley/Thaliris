@@ -33,3 +33,21 @@ def test_persistent_state_arguments_must_be_a_pair(tmp_path: Path):
     args = _args(tmp_path) + ["--state-db", str(tmp_path / "state.sqlite")]
     with pytest.raises(SystemExit):
         MODULE.main(args)
+
+
+def test_persistent_state_rejects_multi_run_manifest(tmp_path: Path):
+    (tmp_path / "sessions").mkdir()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"runs": [
+        {"run": "a", "root_file": "a.jsonl"},
+        {"run": "b", "root_file": "b.jsonl"},
+    ]}))
+    args = [
+        "--session-root", str(tmp_path / "sessions"),
+        "--manifest", str(manifest),
+        "--output", str(tmp_path / "out.json"),
+        "--state-db", str(tmp_path / "state.sqlite"),
+        "--root-session-id", "root",
+    ]
+    with pytest.raises(SystemExit, match="STATE_DB_SINGLE_RUN_REQUIRED"):
+        MODULE.main(args)

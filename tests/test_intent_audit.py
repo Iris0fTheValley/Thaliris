@@ -1281,6 +1281,31 @@ def test_first_decision_context_sol_profile_bytes_upgrade_but_user_edit_is_prese
     assert edited_profile.read_bytes() == historical + b"# user customization\n"
 
 
+def test_previous_reviewer_profile_bytes_upgrade_but_user_edit_is_preserved(tmp_path):
+    historical = (
+        b'name = "thaliris-reviewer"\n'
+        b'description = "Thaliris reviewer execution role"\n'
+        b'model = "gpt-5.6-terra"\n'
+        b'model_reasoning_effort = "high"\n'
+        b'developer_instructions = "Thaliris semantic role: reviewer. Work only inside your assigned role and return selected evidence-backed results."\n'
+    )
+    root = repo(tmp_path / "legacy-reviewer")
+    profile = root / ".codex" / "agents" / "thaliris-reviewer.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_bytes(historical)
+    upgraded = init(root)
+    assert ".codex/agents/thaliris-reviewer.toml" in upgraded["files"]
+    assert profile.read_bytes() == codex_adapter._agent_profile("thaliris-reviewer", "reviewer", "gpt-5.6-terra", "high")
+
+    edited = repo(tmp_path / "edited-reviewer")
+    edited_profile = edited / ".codex" / "agents" / "thaliris-reviewer.toml"
+    edited_profile.parent.mkdir(parents=True)
+    edited_profile.write_bytes(historical + b"# user customization\n")
+    preserved = init(edited)
+    assert ".codex/agents/thaliris-reviewer.toml" in preserved["manual_migration_required"]
+    assert edited_profile.read_bytes() == historical + b"# user customization\n"
+
+
 def test_previous_role_pack_bytes_upgrade_but_user_edit_is_preserved(tmp_path):
     historical = subprocess.run(
         ["git", "show", "5f24998:docs/thaliris-role-packs.md"],

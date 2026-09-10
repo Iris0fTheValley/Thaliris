@@ -54,6 +54,8 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     "13b3283ad629bb6d32fe3613462694be14fba3a24c547aa791e1e651c0b3106d",
     # Exact investigator profile bytes before artifact-first handoff guidance.
     "199d7b9cb1fb8d1a3536df07395a420b9476ee66d13a4a9ca6d6442215d9e7b8",
+    # Exact reviewer profile bytes before the explicit read-only boundary.
+    "c43274a3f9cb3f93cd662b6477f1dfd07c170c24324c1364df5f59205851b17b",
 })
 
 
@@ -80,6 +82,13 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
             "unknowns; do not use the final message as the primary evidence store."
             if role == "investigator" else
             f"Thaliris semantic role: {role}. Work only inside your assigned role and return selected evidence-backed results."
+            + (
+                " Review the current implementation as a read-only independent checker. "
+                "Do not modify repository files, tests, or task semantic state; return only "
+                "bounded findings with evidence references. Any correction belongs to a fresh "
+                "Implementer, followed by a fresh Reviewer."
+                if role == "reviewer" else ""
+            )
         )
     )
     return (

@@ -38,10 +38,10 @@ a completion signal.
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
 source directly. Larger work adds only the roles needed by risk and unknowns.
-After dispatch, end the Controller activation. A runtime/supervisor completion
-or deadline event resumes it exactly once; do not call `wait`, poll status, or
-use a timer to wake a model. The bounded supervisor is only an event/deadline
-bridge, not a worker, scheduler, retry system, or lifecycle runtime.
+After dispatch, end the Controller activation and use the native Codex
+collaboration or thread-continuation surface available to the current
+environment. Do not call `wait`, poll status, or use a timer to wake a model;
+Thaliris does not implement scheduling, deadlines, or agent lifecycle.
 
 After targeted investigation, escalate to
 `agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
@@ -75,11 +75,11 @@ a fresh Reasoning Specialist. If selected evidence is materially contradictory
 and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
 conflicting references and stop. Reviewers are fresh one-shot children on every
 round; preserve findings and evidence, not their conversation trajectory. End
-the current activation after dispatch and let the runtime/supervisor completion
-or deadline event resume it exactly once; do not call `wait`, poll status, or
-use a timer-driven model wake-up. Close completed one-shot Sol/Reviewer
-children with native controls. The bounded supervisor is only an event/deadline
-bridge, not a worker or generic lifecycle runtime.
+the current activation after dispatch and use the native Codex collaboration or
+thread-continuation surface available to the current environment. Do not call
+`wait`, poll status, or use a timer-driven model wake-up. Close completed
+one-shot Sol/Reviewer children with native controls. Thaliris does not
+implement scheduling, deadlines, or agent lifecycle.
 
 After a qualifying completed child, the Controller may run only the exact
 Verification Target when it is a known test command family: pytest, npm/pnpm/

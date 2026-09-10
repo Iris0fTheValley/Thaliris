@@ -22,11 +22,9 @@ from . import core
 HOOK_COMMAND_PREFIX = "context audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
 CODEX_ADAPTER_PROTOCOL_VERSION = 4
-# Private adapter lifecycle state.  This is deliberately separate from Core
-# state/schema: it records only bounded runtime provenance and a resumable
-# activation event for the external supervisor.
-LIFECYCLE_STATE_VERSION = 7
-ACTIVATION_DEADLINE_SECONDS = 30 * 60
+# Private adapter lifecycle state. This is deliberately separate from Core
+# state/schema and records only bounded native child provenance.
+LIFECYCLE_STATE_VERSION = 8
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed intent-audit hooks"
 AUDIT_INTERVAL = 5
 MAX_AUDIT_RESULTS = 32
@@ -660,9 +658,9 @@ def _lifecycle_path(root: Path, task_id: str) -> Path:
 
 def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     if not path.is_file():
-        return {"version": LIFECYCLE_STATE_VERSION, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "activation": None, "sequence": 0}
+        return {"version": LIFECYCLE_STATE_VERSION, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, 5, 6, LIFECYCLE_STATE_VERSION} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, 5, 6, 7, LIFECYCLE_STATE_VERSION} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
         raise ValueError("invalid lifecycle runtime state")
     prior_version = value.get("version")
     if prior_version in {1, 2, 3, 4, 5}:
@@ -675,12 +673,12 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
             if isinstance(child, dict):
                 child["managed"] = False
                 child["projection_ready"] = False
-    if prior_version in {1, 2, 3, 4, 5, 6}:
-        # v6 has valid child provenance but predates event-driven activation.
-        # Never infer a pending activation from an old lifecycle record.
+    if prior_version in {1, 2, 3, 4, 5, 6, 7}:
+        # Older records may contain activation/deadline state from the removed
+        # adapter supervisor. Preserve child observations but never reactivate
+        # or infer that state during migration.
         value["version"] = LIFECYCLE_STATE_VERSION
-        value["activation"] = None
-    value.setdefault("activation", None)
+        value.pop("activation", None)
     pending = value.get("pending_authorized_spawn")
     if pending is not None and (
         not isinstance(pending, dict)
@@ -691,127 +689,7 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
         or not isinstance(pending.get("authorized_sequence"), int)
     ):
         raise ValueError("invalid lifecycle authorized spawns")
-    activation = value.get("activation")
-    if activation is not None:
-        if not isinstance(activation, dict) or set(activation) - {
-            "activation_id", "task_id_hash", "session_id_hash", "role", "expected_agent_type",
-            "authorized_sequence", "child_agent_id_hash", "child_turn_id_hash", "deadline_ns",
-            "state", "event_id", "event_kind", "event_sequence", "resume_claimed"
-        }:
-            raise ValueError("invalid lifecycle activation")
-        if activation.get("task_id_hash") != _task_key(task_id) or activation.get("state") not in {"PENDING_START", "RUNNING", "READY", "CLAIMED", "EXPIRED"}:
-            raise ValueError("invalid lifecycle activation")
     return value
-
-
-def _activation_id(task_id: str, sequence: int, session_id_hash: str, agent_type: str) -> str:
-    material = f"{_task_key(task_id)}:{sequence}:{session_id_hash}:{agent_type}".encode("utf-8")
-    return hashlib.sha256(material).hexdigest()[:32]
-
-
-def _activation_event_id(activation: dict[str, Any], kind: str, payload: dict[str, Any] | None = None) -> str:
-    fields = [str(activation.get("activation_id", "")), kind, str(activation.get("event_sequence", ""))]
-    if payload is not None:
-        fields.extend(str(payload.get(key, "")) for key in ("agent_id", "turn_id", "session_id", "agent_type"))
-    return hashlib.sha256(":".join(fields).encode("utf-8")).hexdigest()[:32]
-
-
-def _activation_reserve(state: dict[str, Any], task_id: str, role: str, agent_type: str, session_hash: str) -> None:
-    sequence = int(state.get("sequence", 0))
-    activation_id = _activation_id(task_id, sequence, session_hash, agent_type)
-    state["activation"] = {
-        "activation_id": activation_id,
-        "task_id_hash": _task_key(task_id),
-        "session_id_hash": session_hash,
-        "role": role,
-        "expected_agent_type": agent_type,
-        "authorized_sequence": sequence,
-        "child_agent_id_hash": None,
-        "child_turn_id_hash": None,
-        "deadline_ns": time.time_ns() + int(ACTIVATION_DEADLINE_SECONDS * 1_000_000_000),
-        "state": "PENDING_START",
-        "event_id": None,
-        "event_kind": None,
-        "event_sequence": None,
-        "resume_claimed": False,
-    }
-
-
-def _activation_event_locked(state: dict[str, Any], kind: str, payload: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    activation = state.get("activation")
-    if not isinstance(activation, dict):
-        return None
-    if activation.get("state") in {"READY", "CLAIMED", "EXPIRED"}:
-        return dict(activation)
-    if kind == "timeout":
-        if activation.get("state") in {"PENDING_START", "RUNNING"}:
-            activation["state"] = "READY"
-    elif kind in {"completed", "failed"} and activation.get("state") == "RUNNING":
-        activation["state"] = "READY"
-    else:
-        return None
-    state["sequence"] = int(state.get("sequence", 0)) + 1
-    activation["event_sequence"] = state["sequence"]
-    activation["event_kind"] = kind
-    activation["event_id"] = _activation_event_id(activation, kind, payload)
-    return dict(activation)
-
-
-def activation_status(root: Path) -> dict[str, Any] | None:
-    """Return bounded activation state for the external supervisor."""
-    task_id = _active_task_id(root)
-    if task_id is None:
-        return None
-    try:
-        with core._lock(root):
-            path = _lifecycle_path(root, task_id)
-            state = _load_lifecycle(path, task_id)
-            activation = state.get("activation")
-            return dict(activation) if isinstance(activation, dict) else None
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return None
-
-
-def activation_timeout(root: Path, *, now_ns: int | None = None) -> dict[str, Any] | None:
-    """Convert an expired pending child into one idempotent supervisor event."""
-    task_id = _active_task_id(root)
-    if task_id is None:
-        return None
-    now = time.time_ns() if now_ns is None else now_ns
-    try:
-        with core._lock(root):
-            path = _lifecycle_path(root, task_id)
-            state = _load_lifecycle(path, task_id)
-            activation = state.get("activation")
-            if not isinstance(activation, dict) or activation.get("state") not in {"PENDING_START", "RUNNING"} or not isinstance(activation.get("deadline_ns"), int) or now < activation["deadline_ns"]:
-                return dict(activation) if isinstance(activation, dict) else None
-            result = _activation_event_locked(state, "timeout")
-            if isinstance(activation, dict) and activation.get("state") == "READY" and activation.get("event_kind") == "timeout":
-                state["pending_authorized_spawn"] = None
-            _write_capture(path, state)
-            return result
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return None
-
-
-def claim_activation(root: Path, activation_id: str, event_id: str) -> bool:
-    """Claim one completion/timeout event exactly once for Controller resume."""
-    task_id = _active_task_id(root)
-    if task_id is None:
-        return False
-    try:
-        with core._lock(root):
-            path = _lifecycle_path(root, task_id)
-            state = _load_lifecycle(path, task_id)
-            activation = state.get("activation")
-            if not isinstance(activation, dict) or activation.get("activation_id") != activation_id or activation.get("event_id") != event_id or activation.get("state") != "READY" or activation.get("resume_claimed") is True:
-                return False
-            activation["state"] = "CLAIMED"
-            activation["resume_claimed"] = True
-            _write_capture(path, state)
-            return True
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return False
 
 
 def _managed_spawn_role(payload: dict[str, Any]) -> str | None:
@@ -879,7 +757,6 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
                 "session_id_hash": session_id_hash,
                 "authorized_sequence": state["sequence"],
             }
-            _activation_reserve(state, task_id, role, expected_agent_type, session_id_hash)
             _runtime_metadata(state, payload)
             _write_capture(path, state)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
@@ -900,9 +777,6 @@ def _clear_pending_authorized_spawn(root: Path, payload: dict[str, Any]) -> None
         pending = state["pending_authorized_spawn"]
         if isinstance(pending, dict) and pending.get("session_id_hash") == session_id_hash:
             state["pending_authorized_spawn"] = None
-            activation = state.get("activation")
-            if isinstance(activation, dict) and activation.get("state") == "PENDING_START":
-                state["activation"] = None
             _runtime_metadata(state, payload)
             _write_capture(path, state)
 
@@ -947,11 +821,6 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
                 "stopped": None,
             })
         _runtime_metadata(state, payload)
-        activation = state.get("activation")
-        if authorized and isinstance(activation, dict) and activation.get("state") == "PENDING_START":
-            activation["child_agent_id_hash"] = child_hash
-            activation["child_turn_id_hash"] = turn_id_hash
-            activation["state"] = "RUNNING"
         _write_capture(path, state)
     # Keep only the old bounded identity-corroboration sample for diagnostics;
     # completion authority remains exclusively in the task-local lifecycle file.
@@ -989,41 +858,10 @@ def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> bool:
             ):
                 state["sequence"] = int(state.get("sequence", 0)) + 1
                 child["stopped"] = state["sequence"]
-                activation = state.get("activation")
-                if isinstance(activation, dict) and activation.get("state") == "RUNNING" and activation.get("child_agent_id_hash") == child_hash:
-                    kind = "failed" if (
-                        payload.get("error") or payload.get("failed") or payload.get("is_error")
-                        or child.get("projection_ready") is not True
-                    ) else "completed"
-                    _activation_event_locked(state, kind, payload)
                 _runtime_metadata(state, payload)
                 _write_capture(path, state)
                 return True
     return False
-
-
-def record_supervisor_completion(
-    root: Path,
-    *,
-    session_id: str,
-    agent_id: str,
-    turn_id: str,
-    agent_type: str,
-    failed: bool = False,
-) -> bool:
-    """Record a completion observed by the external runtime supervisor.
-
-    This uses the same exact Start -> Stop identity contract as the native
-    hook.  The supervisor must supply fields observed from Codex's completion
-    event; arbitrary model text cannot call this path.
-    """
-    return _record_subagent_stop(root, {
-        "session_id": session_id,
-        "turn_id": turn_id,
-        "agent_id": agent_id,
-        "agent_type": agent_type,
-        "failed": failed,
-    })
 
 
 def _mark_projection_ready(root: Path, payload: dict[str, Any]) -> bool:

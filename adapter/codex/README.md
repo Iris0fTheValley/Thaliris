@@ -49,15 +49,15 @@ the active task, semantic role, native `agent_type`, and shared session hash.
 The managed lifecycle is
 `authorized reservation -> matching SubagentStart -> Core projection emitted
 successfully -> matching session/turn/type SubagentStop -> persisted completion
-event -> one Controller reactivation`.
+event observed by the native Codex surface -> Controller continuation`.
 Unknown or
 mismatched starts remain observations and receive no projection. A pending
 reservation and every started managed child are in flight, so managed dispatch
 remains serial until the child stops. After dispatch the Controller activation
-ends; the narrow supervisor/deadline bridge consumes one completion or timeout
-event and resumes the existing Codex root session. It is not a second agent
-runtime and does not poll the model. Stop proves lifecycle completion, not work
-correctness. A projection-ready child is not a claim that the native child
+ends; Codex native collaboration or thread-continuation facilities are
+responsible for any later continuation. Thaliris does not provide a supervisor,
+deadline, scheduler, or polling loop. Stop proves lifecycle completion, not
+work correctness. A projection-ready child is not a claim that the native child
 confirmed receipt.
 
 The current trusted shell candidate is exactly Codex stable `Bash`. Codex CLI
@@ -99,11 +99,8 @@ started, so no `SubagentStart`/`SubagentStop` or marker observation was
 recorded. The result remains `NOT_OBSERVED`; generated profile presence and
 synthetic hook tests are not native projection proof.
 
-The event-driven bridge also depends on a runtime that keeps a dispatched child
-alive after the Controller activation ends and emits a matching completion or
-failure event. In the local `codex exec` probe, ending the root CLI activation
-aborted the still-running child; the supervisor recorded the native abort and a
-resume attempt failed. This is recorded as an infrastructure/runtime boundary,
-not as a synthetic child stop or verification result. A deployment that cannot
-provide a surviving child plus completion event must remain `UNKNOWN` for
-managed completion readiness.
+Continuation depends on the native Codex surface keeping a dispatched child
+alive and exposing a matching completion or failure event. If the selected
+surface cannot provide that continuation, managed completion readiness remains
+`UNKNOWN`; Thaliris does not emulate it with a process, deadline, or resume
+loop.

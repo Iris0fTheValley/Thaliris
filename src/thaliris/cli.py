@@ -8,7 +8,6 @@ import sys
 
 from . import __version__
 from . import codex_adapter
-from . import supervisor
 from .core import milestone_check, prepare, recall, rollback, stale, task_artifact, task_promote, task_show, task_status, task_update
 
 
@@ -64,12 +63,6 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("version")
     q = sub.add_parser("audit-hook", help=argparse.SUPPRESS)
     q.add_argument("event", choices=("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop"))
-    q = sub.add_parser("activation-supervise", help=argparse.SUPPRESS)
-    q.add_argument("--session-id", required=True)
-    q.add_argument("--prompt", required=True)
-    q.add_argument("--timeout-seconds", type=float, default=1800.0)
-    q.add_argument("--poll-interval-seconds", type=float, default=0.25)
-    q.add_argument("--codex-executable")
     return p
 
 
@@ -92,17 +85,6 @@ def main(argv: list[str] | None = None) -> int:
             if response:
                 sys.stdout.write(response)
             return 0
-        if args.command == "activation-supervise":
-            out = supervisor.run(
-                root,
-                args.session_id,
-                args.prompt,
-                timeout_seconds=args.timeout_seconds,
-                poll_interval_seconds=args.poll_interval_seconds,
-                executable=args.codex_executable,
-            )
-            print(json.dumps(out, sort_keys=True, separators=(",", ":")))
-            return 0 if out.get("status") in {"RESUMED", "ALREADY_CLAIMED"} else 3
         if args.command == "init": out = codex_adapter.init(root)
         elif args.command == "migrate": out = codex_adapter.migrate(root)
         elif args.command == "doctor": out = codex_adapter.doctor(root)

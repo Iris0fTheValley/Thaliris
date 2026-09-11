@@ -86,3 +86,27 @@ def run_preflight(
     checks["no_edit_identity"] = {"actual": no_edit_identity, "base": base_identity, "pass": no_edit_identity is not None and no_edit_identity == base_identity}
     passed = all(value.get("pass") is True for value in checks.values())
     return {"status": "PASS" if passed else "PREFLIGHT_FAIL", "checks": checks}
+
+
+def freeze_run_manifest(preflight: dict[str, Any], *, task_spec_identity: str, base_identity: str, gold_identity: str, pricing_snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Create the immutable identity record that gates a formal invocation."""
+    if preflight.get("status") != "PASS":
+        raise ValueError("cannot freeze a failed preflight")
+    checks = preflight.get("checks")
+    if not isinstance(checks, dict):
+        raise ValueError("preflight checks are missing")
+    payload = {
+        "version": 1,
+        "adapter_sha": checks["adapter_sha"]["actual"],
+        "product_protocol": checks["product_protocol"],
+        "benchmark_harness": checks["benchmark_harness"],
+        "evaluator": checks["evaluator"],
+        "trusted_surface": checks["trusted_surface"]["identity"],
+        "base_identity": base_identity,
+        "gold_identity": gold_identity,
+        "task_spec_identity": task_spec_identity,
+        "pricing_snapshot": pricing_snapshot,
+        "preflight_identity": hashlib.sha256(json.dumps(preflight, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return {"manifest": payload, "identity": hashlib.sha256(encoded).hexdigest()}

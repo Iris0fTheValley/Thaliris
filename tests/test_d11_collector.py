@@ -121,3 +121,12 @@ def test_preflight_is_fail_closed_without_clean_fixture_and_calibration(tmp_path
     assert result["checks"]["adapter_sha"]["pass"] is False
     assert result["checks"]["benchmark_harness"]["pass"] is False
     assert result["checks"]["gold"]["pass"] is False
+
+
+def test_run_manifest_cannot_be_frozen_from_failed_preflight() -> None:
+    try:
+        d11_preflight.freeze_run_manifest({"status": "PREFLIGHT_FAIL"}, task_spec_identity="task", base_identity="base", gold_identity="gold", pricing_snapshot={})
+    except ValueError as exc:
+        assert "failed preflight" in str(exc)
+    else:
+        raise AssertionError("failed preflight was frozen")

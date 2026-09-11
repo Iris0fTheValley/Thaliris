@@ -113,8 +113,10 @@ verification performed, unknowns, and contradictions; it does not preserve the
 exploration transcript or repeated tool output. Investigator completion messages
 should contain only the artifact path, finding/evidence IDs, short outcome, and
 remaining decision-changing unknowns. The Controller registers the pointer with
-`context task-artifact` and selects relevant content; artifact existence does
-not authorize automatic full-text projection. Downstream roles do not
+`context task-artifact --base-revision N --id ID --path repo/relative --summary
+TEXT --producer-role investigator` and selects relevant content; artifact
+existence does not authorize automatic full-text projection. Registration
+computes and stores the artifact content identity. Downstream roles do not
 receive it automatically: select the facts, constraints, contradictions,
 compatibility or lifecycle invariants, evidence summaries, unknowns, artifact
 pointers, and any other information that could materially change the next
@@ -138,9 +140,11 @@ end. Requested runtime or visible-behavior verification remains required.
 ## State And Retention
 
 `active_work` and `pending_results` are short controller-visible labels. Use
-`context task-artifact --base-revision N --id ID --path repo/relative --summary TEXT`
-to append a path-safe pointer to external work. Only the Controller registers
-the pointer; pass `--producer-role` to record which child produced it. Artifact
+`context task-artifact --base-revision N --id ID --path repo/relative --summary TEXT
+--producer-role investigator` to append a path-safe pointer to external work.
+Only the Controller registers the pointer; change the producer role when the
+producer is not an Investigator. Registration computes and stores the artifact
+content identity. Artifact
 contents remain outside the status packet and are never automatically injected
 into another role. A pointer is selective access, not a compression mandate:
 pass it when the next role needs to decide whether to read it. Raw task state

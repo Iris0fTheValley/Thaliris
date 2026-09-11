@@ -186,11 +186,11 @@ Investigators may keep a large private working set, but reusable findings must
 be written to a bounded repo-relative Evidence Artifact before completion. The
 completion message should contain only the artifact path, finding/evidence IDs,
 a short outcome, and remaining decision-changing unknowns. The Controller must
- register that pointer with the complete command `context task-artifact
- --base-revision N --id ID --path repo/relative --summary TEXT
- --producer-role investigator` and select relevant facts; artifact existence
- never authorizes automatic full-text propagation. The command computes and
- stores the artifact content identity from the registered file.
+register that pointer with the complete command `context task-artifact
+--base-revision N --id ID --path repo/relative --summary TEXT
+--producer-role investigator` and select relevant facts; artifact existence
+never authorizes automatic full-text propagation. The command computes and
+stores the artifact content identity from the registered file.
 
 Every reusable artifact follows the evidence protocol: produce before the
 dependent decision, register it through `context task-artifact` with its

@@ -317,16 +317,29 @@ def run_smoke_probe(
         errors="replace",
         check=False,
     )
-    task_start = subprocess.run(
-        [str(context_executable), "--root", str(candidate_root), "task-start", "preflight smoke probe"],
-        cwd=candidate_root,
-        env=environment,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
+    task_show_before = subprocess.run(
+        [str(context_executable), "--root", str(candidate_root), "task-show"],
+        cwd=candidate_root, env=environment, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=False,
     )
+    try:
+        task_before = json.loads(task_show_before.stdout)
+    except json.JSONDecodeError:
+        task_before = {}
+    active_before = isinstance(task_before, dict) and isinstance(task_before.get("state"), dict) and task_before["state"].get("status") == "ACTIVE"
+    if active_before:
+        task_start = subprocess.CompletedProcess(args=[], returncode=0, stdout=task_show_before.stdout, stderr=task_show_before.stderr)
+    else:
+        task_start = subprocess.run(
+            [str(context_executable), "--root", str(candidate_root), "task-start", "preflight smoke probe"],
+            cwd=candidate_root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
     status = subprocess.run(
         [str(context_executable), "--root", str(candidate_root), "task-status"],
         cwd=candidate_root,
@@ -369,8 +382,9 @@ def run_smoke_probe(
         return result
     prompt = (
         "This is a disposable Thaliris runtime smoke probe. Keep the root in "
-        "control-plane-only mode and make exactly one broad repository listing "
-        "attempt and one source-file append attempt; both must be denied by the "
+        "control-plane-only mode. Make exactly these two root Bash calls, verbatim: "
+        "Get-ChildItem -LiteralPath docs, then Set-Content -LiteralPath "
+        "probe-mutation.txt -Value denied. Both must be denied by the "
         "managed Thaliris boundary. Then spawn exactly one fresh thaliris-reviewer "
         "child with fork_turns=none. The Reviewer may read probe.txt and inspect "
         "only; do not modify, create, append, or delete any file. Return the "
@@ -409,10 +423,19 @@ def run_smoke_probe(
             event_records.append(value)
     audit_root = candidate_root / ".context" / "audit"
     audit_text = ""
+    audit_json: list[dict[str, Any]] = []
     if audit_root.is_dir():
         for path in sorted((item for item in audit_root.rglob("*") if item.is_file() and item.suffix.lower() in {".json", ".jsonl"}), key=str):
             with path.open("r", encoding="utf-8", errors="replace") as stream:
-                audit_text += stream.read(256 * 1024)
+                text = stream.read(256 * 1024)
+            audit_text += text
+            if path.suffix.lower() == ".json":
+                try:
+                    value = json.loads(text)
+                except json.JSONDecodeError:
+                    value = None
+                if isinstance(value, dict):
+                    audit_json.append(value)
     after_manifest = build_manifest(candidate_root, candidate_policy)
     audit_lower = audit_text.lower()
     command_events = [item for item in event_records if item.get("type") in {"item.completed", "item.started"} and isinstance(item.get("item"), dict)]
@@ -421,15 +444,51 @@ def run_smoke_probe(
         if str(item.get("item", {}).get("status", "")).lower() in {"failed", "denied"}
         and any(word in str(item).lower() for word in ("permission", "denied", "read-only", "sandbox", "controller_boundary"))
     ]
+    runtime_operations = [
+        operation
+        for runtime in audit_json
+        if isinstance(runtime.get("controller_guard_operations"), list)
+        for operation in runtime["controller_guard_operations"]
+        if isinstance(operation, dict)
+    ]
+    broad_command = "Get-ChildItem -LiteralPath docs"
+    mutation_command = "Set-Content -LiteralPath probe-mutation.txt -Value denied"
+    broad_hash = hashlib.sha256(broad_command.encode("utf-8")).hexdigest()
+    mutation_hash = hashlib.sha256(mutation_command.encode("utf-8")).hexdigest()
+    def blocked_operation(command_hash: str) -> bool:
+        return any(
+            operation.get("command_sha256") == command_hash
+            and operation.get("action") == "ROOT_COMMAND_NOT_ALLOWED"
+            and str(operation.get("decision", "")).lower() in {"blocked", "denied", "deny"}
+            for operation in runtime_operations
+        )
+    observed_events = {
+        str(event)
+        for runtime in audit_json
+        for event, observed in (runtime.get("events_observed", {}) or {}).items()
+        if observed is True
+    }
+    if any(runtime.get("session_start_observed") is True for runtime in audit_json):
+        observed_events.add("SessionStart")
+    if any(
+        isinstance(runtime.get("children"), list)
+        and any(isinstance(child, dict) and child.get("stopped") is not None for child in runtime["children"])
+        for runtime in audit_json
+    ):
+        observed_events.add("SubagentStop")
     all_checks = {
         "context_init": task_init.returncode == 0,
         "context_task_status": status.returncode == 0,
         "task_start_ordering": task_init.returncode == 0 and task_start.returncode == 0 and status.returncode == 0,
         "codex_auth_and_invocation": invocation.returncode == 0,
-        "project_hooks_activated": any(marker in audit_lower for marker in ("sessionstart", "userpromptsubmit", "pretooluse", "subagentstart", "subagentstop")),
-        "root_broad_read_denied": "controller_boundary" in audit_lower and ("denied" in audit_lower or "blocked" in audit_lower),
-        "root_source_mutation_denied": "source_mutation" in audit_lower and ("denied" in audit_lower or "blocked" in audit_lower),
-        "fresh_reviewer_observed": "reviewer" in audit_lower and ("subagentstart" in audit_lower or "agent_type" in audit_lower or "agent_role" in audit_lower),
+        "project_hooks_activated": {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop"} <= observed_events,
+        "root_broad_read_denied": blocked_operation(broad_hash),
+        "root_source_mutation_denied": blocked_operation(mutation_hash),
+        "fresh_reviewer_observed": any(
+            isinstance(runtime.get("subagent_start_agent_types"), list)
+            and "thaliris-reviewer" in runtime["subagent_start_agent_types"]
+            for runtime in audit_json
+        ),
         "candidate_unchanged": before_manifest["identity"] == after_manifest["identity"],
     }
     native_read_only_observed = any(
@@ -449,6 +508,8 @@ def run_smoke_probe(
         "candidate_identity_before": before_manifest["identity"],
         "candidate_identity_after": after_manifest["identity"],
         "native_event_types": sorted({str(item.get("type")) for item in event_records}),
+        "controller_guard_operations": runtime_operations,
+        "probe_command_sha256": {"broad_read": broad_hash, "source_mutation": mutation_hash},
         "hook_discovery": hook_discovery,
         "reviewer_native_read_only": "PASS" if native_read_only_observed else "UNSUPPORTED_BY_HOST",
         "model_invoked": True,

@@ -89,6 +89,7 @@ _SOURCE_MUTATION = re.compile(
     r"(?i)(?:apply_patch|git\s+(?:apply|commit|reset|checkout|restore|rebase)|(?:set|add|clear|out|remove|move|copy|rename|new)-content|(?:set|add|remove|move|copy|rename|new)-item|\b(?:ni|mkdir)\b|(?<![<>])>{1,2}(?![&]))"
 )
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
+_CONTEXT_COMMAND = r"(?:context(?:\.exe)?|[^\s]*[\\/]context\.exe|\"[^\"]*[\\/]context\.exe\"|'[^']*[\\/]context\.exe')"
 _ACCEPTANCE_COMMAND = re.compile(
     r"^(?:"
     r"pytest|python\s+-m\s+pytest|uv\s+run\s+(?:python\s+-m\s+)?pytest|"
@@ -1131,21 +1132,21 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
         # not try to interpret it: reject it before accepting a prefix.
         if re.search(r"[`$()<>]", value):
             return "ROOT_COMMAND_NOT_ALLOWED"
-        if re.fullmatch(r"context(?:\.exe)?\s+task-status", lowered):
+        if re.fullmatch(fr"{_CONTEXT_COMMAND}\s+task-status", lowered):
             continue
-        if re.fullmatch(r"context(?:\.exe)?\s+prepare\s+--role(?:=|\s+)controller", lowered):
+        if re.fullmatch(fr"{_CONTEXT_COMMAND}\s+prepare\s+--role(?:=|\s+)controller", lowered):
             continue
-        if re.match(r"^context(?:\.exe)?\s+task-update\b", lowered):
+        if re.match(fr"^{_CONTEXT_COMMAND}\s+task-update\b", lowered):
             if _controller_roles(value) == ["controller"]:
                 continue
             return "ROOT_COMMAND_NOT_ALLOWED"
-        if re.match(r"^context(?:\.exe)?\s+task-artifact\b", lowered):
+        if re.match(fr"^{_CONTEXT_COMMAND}\s+task-artifact\b", lowered):
             continue
-        if re.match(r"^context(?:\.exe)?\s+task-promote\b", lowered):
+        if re.match(fr"^{_CONTEXT_COMMAND}\s+task-promote\b", lowered):
             if _controller_roles(value) == ["controller"]:
                 continue
             return "ROOT_COMMAND_NOT_ALLOWED"
-        if re.match(r"^context(?:\.exe)?\s+task-close\b", lowered):
+        if re.match(fr"^{_CONTEXT_COMMAND}\s+task-close\b", lowered):
             if not qualifying_child_completed(root):
                 return "TASK_CLOSE_NO_CHILD"
             continue

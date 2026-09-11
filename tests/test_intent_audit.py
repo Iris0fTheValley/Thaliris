@@ -1470,6 +1470,7 @@ def test_controller_guard_allows_only_fixed_active_root_control_plane_commands(t
     for command in (
         "context task-status",
         "context.exe task-status",
+        ".\\.codex\\bin\\context.exe task-status",
         "context prepare --role controller",
         "git status --short",
         "git diff --check",

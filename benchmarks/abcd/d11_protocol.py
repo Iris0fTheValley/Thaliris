@@ -48,7 +48,10 @@ def validate_evidence(ledger: dict[str, Any]) -> dict[str, Any]:
             return _fail("EVIDENCE_ARTIFACT_PRODUCER", f"{artifact_id} has no semantic producer role")
         if not isinstance(artifact["task_id"], str) or not isinstance(artifact["revision"], int) or artifact["revision"] < 1:
             return _fail("EVIDENCE_ARTIFACT_IDENTITY", f"{artifact_id} has no task/revision identity")
-        if not isinstance(artifact["path"], str) or not artifact["path"] or "\\" in artifact["path"] or artifact["path"].startswith("."):
+        path = artifact["path"]
+        private_roots = (".git", ".context", ".agent-memory", ".milestones")
+        private_path = any(path == root or path.startswith(f"{root}/") for root in private_roots) if isinstance(path, str) else True
+        if not isinstance(path, str) or not path or "\\" in path or path in {".", ".."} or path.startswith("/") or ".." in path.split("/") or private_path:
             return _fail("EVIDENCE_ARTIFACT_PATH", f"{artifact_id} is not repo-relative")
         if not isinstance(artifact["content_sha256"], str) or len(artifact["content_sha256"]) != 64:
             return _fail("EVIDENCE_ARTIFACT_IDENTITY", f"{artifact_id} has no content SHA-256")
@@ -84,7 +87,7 @@ def validate_evidence(ledger: dict[str, Any]) -> dict[str, Any]:
     return {"status": "PASS", "required": "REQUIRED", "produced": len(artifacts), "registered": registered, "selected": selected, "consumed": consumed, "superseded": len(superseded_ids)}
 
 
-def validate_review_convergence(ledger: dict[str, Any]) -> dict[str, Any]:
+def validate_review_convergence(ledger: dict[str, Any], *, expected_candidate: str | None = None) -> dict[str, Any]:
     rounds = ledger.get("review_rounds")
     if not isinstance(rounds, list) or not rounds:
         return _fail("REVIEW_MISSING", "no fresh Reviewer round recorded")
@@ -96,6 +99,8 @@ def validate_review_convergence(ledger: dict[str, Any]) -> dict[str, Any]:
             return _fail("REVIEW_NOT_FRESH_READ_ONLY", "Reviewer round was not fresh and native read-only")
         if not isinstance(item["reviewer_session"], str) or not item["reviewer_session"]:
             return _fail("REVIEW_IDENTITY", "Reviewer session identity missing")
+        if expected_candidate is not None and item["candidate_identity"] != expected_candidate:
+            return _fail("REVIEW_CANDIDATE_MISMATCH", "a Reviewer round inspected a different candidate")
         if item["verdict"] == "READY":
             if item["packet"] is not None:
                 return _fail("REVIEW_READY_PACKET", "READY must not carry a correction packet")
@@ -187,7 +192,6 @@ def validate_documentation(*, protocol_path: Path, generated_text: str, tests_pa
 def validate_report(report: dict[str, Any], *, protocol_path: Path, generated_text: str) -> dict[str, Any]:
     checks = {
         "evidence_protocol": validate_evidence(report.get("evidence", {})),
-        "review_convergence": validate_review_convergence(report.get("reviews", {})),
         "candidate_provenance": validate_candidate_chain(report.get("candidate", {})),
         "cost": calculate_cost(report.get("sessions", [])),
         "documentation": validate_documentation(
@@ -197,6 +201,11 @@ def validate_report(report: dict[str, Any], *, protocol_path: Path, generated_te
             runtime_consistency=report.get("documentation", {}).get("runtime_consistency") is True,
         ),
     }
+    expected_candidate = checks["candidate_provenance"].get("candidate_identity")
+    checks["review_convergence"] = validate_review_convergence(
+        report.get("reviews", {}),
+        expected_candidate=expected_candidate if checks["candidate_provenance"].get("status") == "PASS" else None,
+    )
     status = "PASS" if all(item.get("status") == "PASS" for item in checks.values()) else "FAIL"
     return {"status": status, "checks": checks}
 

@@ -52,10 +52,17 @@ def test_evidence_supersession_and_fast_path():
     assert validate_evidence({"evidence_required": "NOT_REQUIRED", "artifacts": []})["status"] == "PASS"
 
 
+def test_task_local_scratch_artifact_is_repo_relative():
+    item = artifact()
+    item["path"] = ".scratch/evidence.md"
+    assert validate_evidence({"evidence_required": "REQUIRED", "artifacts": [item]})["status"] == "PASS"
+
+
 def test_review_convergence_requires_fresh_read_only_final_ready():
     ready = {"reviewer_session": "r2", "candidate_identity": "c1", "verdict": "READY", "packet": None, "fresh": True, "sandbox_mode": "read-only"}
     assert validate_review_convergence({"review_rounds": [ready]})["status"] == "PASS"
     assert validate_review_convergence({"review_rounds": [{**ready, "verdict": "EXTERNALLY_INCOMPLETE"}]})["code"] == "REVIEW_PACKET_SCHEMA"
+    assert validate_review_convergence({"review_rounds": [ready]}, expected_candidate="other") ["code"] == "REVIEW_CANDIDATE_MISMATCH"
 
 
 def test_candidate_chain_and_cost_are_fail_closed():

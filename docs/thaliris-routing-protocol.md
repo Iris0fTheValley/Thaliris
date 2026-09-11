@@ -57,6 +57,12 @@ decision route; the Implementer never becomes a fallback Investigator.
 Reviewers are fresh independent checkers for each candidate and are read-only
 where the host provides that native boundary. Preserve findings, constraints,
 candidate identities, and verification—not prior reasoning trajectories.
+Review is also a synchronization point for the candidate: no concurrent
+candidate-writing managed role may overlap an accepted review. A verdict is
+valid only when the host-computed candidate identity is unchanged from
+review-start through review completion. Native read-only isolation is used
+where the host provides it as defense in depth, not as the sole correctness
+mechanism.
 
 ## Runtime boundary
 

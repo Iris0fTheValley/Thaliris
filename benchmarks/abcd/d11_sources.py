@@ -61,7 +61,7 @@ def validate_event_shape(source_kind: str, event_type: str, value: dict[str, Any
         # Native session/sandbox/verdict/usage claims belong to other streams.
         if any(key in value for key in ("sandbox_mode", "verdict", "usage", "token_usage", "native_event_id")):
             return False
-        if value.get("stage") not in {"runtime-final", "review-start", "verification-start", "evaluator-start", "seal"}:
+        if value.get("stage") not in {"runtime-final", "review-start", "review-end", "verification-start", "evaluator-start", "seal"}:
             return False
         if not isinstance(value.get("candidate_identity"), str) or not re.fullmatch(r"[0-9a-f]{64}", value["candidate_identity"]):
             return False

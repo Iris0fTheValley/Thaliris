@@ -71,6 +71,10 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     "17616dddc351c20f5c98a30a0506253322d0cc5f6480d89690c7a08a70592557",
     "d24ee0de8a22409bd5a3c9f1359079c4d6c7ccfbb14f65842e84f21ab0a5aa96",
     "322534fb6f2b2abc312bd04a76e477e3e128cf6a194da5817ecaabd0678aa397",
+    # Exact Reviewer/Implementer profile bytes emitted before the review
+    # transaction-integrity wording was added.
+    "b038486edb2c381631e458adac2bff12fbcdc09233b5b1b8f59aeee9dc0e9774",
+    "360d49c46afe280f85d6857575a12a9eeeff93d1f9aedb4b00ef2a2aa7c8b078",
 })
 
 
@@ -109,7 +113,9 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
                 "Implementer, followed by a fresh Reviewer. Each finding must be returned as a "
                 "bounded Review Packet with finding_id, classification (MECHANICAL, LOCAL_SEMANTIC, "
                 "or ARCHITECTURAL), affected_surface, violated_invariant, and verification_requirement. "
-                "An external interruption is INCOMPLETE, never READY or PASS."
+                "An external interruption is INCOMPLETE, never READY or PASS. The verdict is a "
+                "transaction-scoped result for the exact candidate observed at review start and is "
+                "valid only if that candidate remains unchanged through completion."
                 if role == "reviewer" else ""
             )
             + (

@@ -162,12 +162,16 @@ def test_review_graph_binds_each_round_to_its_own_candidate_and_native_session(t
         {"event": "SubagentStart", "sequence": 1, "role": "reviewer", "session_id": "review-a"},
         {"event": "candidate_attestation", "stage": "review-start", "session_id": "review-a", "candidate_root": "unused", "candidate_identity": "candidate-a", "manifest_version": 2, "harness_identity": "h", "sandbox_mode": "read-only"},
         {"event": "review_verdict", "sequence": 2, "session_id": "review-a", "candidate_identity": "ignored", "verdict": "REQUEST_CHANGES", "finding_id": "F-1", "classification": "LOCAL_SEMANTIC"},
+        {"event": "SubagentStop", "sequence": 2.5, "role": "reviewer", "session_id": "review-a"},
+        {"event": "candidate_attestation", "stage": "review-end", "session_id": "review-a", "candidate_root": "unused", "candidate_identity": "candidate-a", "manifest_version": 2, "harness_identity": "h"},
         {"event": "implementer_dispatch", "sequence": 3, "session_id": "implementer-a", "candidate_from": "candidate-a", "finding_id": "F-1"},
         {"event": "source_mutation", "sequence": 4, "session_id": "implementer-a", "candidate_identity": "candidate-b"},
         {"event": "deterministic_verification", "sequence": 5, "candidate_identity": "candidate-b", "outcome": "PASSED"},
         {"event": "SubagentStart", "sequence": 6, "role": "reviewer", "session_id": "review-b"},
         {"event": "candidate_attestation", "stage": "review-start", "session_id": "review-b", "candidate_root": "unused", "candidate_identity": "candidate-b", "manifest_version": 2, "harness_identity": "h", "sandbox_mode": "read-only"},
         {"event": "review_verdict", "sequence": 7, "session_id": "review-b", "candidate_identity": "ignored", "verdict": "READY"},
+        {"event": "SubagentStop", "sequence": 8, "role": "reviewer", "session_id": "review-b"},
+        {"event": "candidate_attestation", "stage": "review-end", "session_id": "review-b", "candidate_root": "unused", "candidate_identity": "candidate-b", "manifest_version": 2, "harness_identity": "h"},
     ]))
     assert d11_protocol.validate_review_graph(facts, final_candidate="candidate-b")["status"] == "PASS"
     facts["review_rounds"][0]["reviewer_session"] = "review-b"
@@ -179,12 +183,41 @@ def test_review_graph_rejects_unchanged_cognitive_cycle(tmp_path: Path) -> None:
         {"event": "SubagentStart", "role": "reviewer", "session_id": "review-a"},
         {"event": "candidate_attestation", "stage": "review-start", "session_id": "review-a", "candidate_root": "unused", "candidate_identity": "candidate-a", "manifest_version": 2, "harness_identity": "h", "sandbox_mode": "read-only"},
         {"event": "review_verdict", "session_id": "review-a", "verdict": "REQUEST_CHANGES", "finding_id": "F-1", "classification": "LOCAL_SEMANTIC"},
+        {"event": "SubagentStop", "role": "reviewer", "session_id": "review-a"},
+        {"event": "candidate_attestation", "stage": "review-end", "session_id": "review-a", "candidate_root": "unused", "candidate_identity": "candidate-a", "manifest_version": 2, "harness_identity": "h"},
         {"event": "SubagentStart", "role": "reviewer", "session_id": "review-b"},
         {"event": "candidate_attestation", "stage": "review-start", "session_id": "review-b", "candidate_root": "unused", "candidate_identity": "candidate-a", "manifest_version": 2, "harness_identity": "h", "sandbox_mode": "read-only"},
         {"event": "review_verdict", "session_id": "review-b", "verdict": "REQUEST_CHANGES", "finding_id": "F-1", "classification": "LOCAL_SEMANTIC"},
+        {"event": "SubagentStop", "role": "reviewer", "session_id": "review-b"},
+        {"event": "candidate_attestation", "stage": "review-end", "session_id": "review-b", "candidate_root": "unused", "candidate_identity": "candidate-a", "manifest_version": 2, "harness_identity": "h"},
     ]
     facts = d11_collector.collect_review_graph(trusted_events(tmp_path, events))
     assert d11_protocol.validate_review_graph(facts, final_candidate="candidate-a")["code"] == "REVIEW_NO_PROGRESS"
+
+
+def _review_transaction_events(*, end_candidate: str = "candidate-a", mutation: bool = False, stop: bool = True) -> list[dict]:
+    events = [
+        {"event": "SubagentStart", "role": "reviewer", "session_id": "review"},
+        {"event": "candidate_attestation", "stage": "review-start", "session_id": "review", "candidate_root": "unused", "candidate_identity": "candidate-a", "manifest_version": 2, "harness_identity": "h"},
+        {"event": "review_verdict", "session_id": "review", "verdict": "READY"},
+    ]
+    if stop:
+        events.append({"event": "SubagentStop", "role": "reviewer", "session_id": "review"})
+    if mutation:
+        events.append({"event": "source_mutation", "session_id": "review", "candidate_identity": "candidate-a"})
+    events.append({"event": "candidate_attestation", "stage": "review-end", "session_id": "review", "candidate_root": "unused", "candidate_identity": end_candidate, "manifest_version": 2, "harness_identity": "h"})
+    return events
+
+
+def test_review_transaction_requires_matching_host_end_attestation_and_stop(tmp_path: Path) -> None:
+    good = d11_collector.collect_review_graph(trusted_events(tmp_path / "good", _review_transaction_events()))
+    assert d11_protocol.validate_review_graph(good, final_candidate="candidate-a")["status"] == "PASS"
+    changed = d11_collector.collect_review_graph(trusted_events(tmp_path / "changed", _review_transaction_events(end_candidate="candidate-b")))
+    assert d11_protocol.validate_review_graph(changed, final_candidate="candidate-a")["code"] == "REVIEW_TRANSACTION_INCOMPLETE"
+    mutated = d11_collector.collect_review_graph(trusted_events(tmp_path / "mutated", _review_transaction_events(mutation=True)))
+    assert d11_protocol.validate_review_graph(mutated, final_candidate="candidate-a")["code"] == "REVIEWER_MUTATION_OBSERVED"
+    incomplete = d11_collector.collect_review_graph(trusted_events(tmp_path / "incomplete", _review_transaction_events(stop=False)))
+    assert d11_protocol.validate_review_graph(incomplete, final_candidate="candidate-a")["code"] == "REVIEW_NATIVE_LIFECYCLE"
 
 
 def test_candidate_manifest_is_reproducible_and_excludes_runtime_state(tmp_path: Path) -> None:
@@ -233,8 +266,11 @@ def test_candidate_chain_is_bound_to_computed_manifest(tmp_path: Path) -> None:
     identity = candidate_manifest.candidate_identity(root)
     events = [
         {"event": "candidate_attestation", "stage": "runtime-final", "candidate_root": str(root.resolve()), "candidate_identity": identity, "manifest_version": 2, "harness_identity": "h"},
+        {"event": "SubagentStart", "role": "reviewer", "session_id": "review"},
         {"event": "candidate_attestation", "stage": "review-start", "session_id": "review", "candidate_root": str(root.resolve()), "candidate_identity": identity, "manifest_version": 2, "harness_identity": "h", "sandbox_mode": "read-only"},
         {"event": "review_verdict", "session_id": "review", "verdict": "READY", "candidate_identity": "ignored"},
+        {"event": "SubagentStop", "role": "reviewer", "session_id": "review"},
+        {"event": "candidate_attestation", "stage": "review-end", "session_id": "review", "candidate_root": str(root.resolve()), "candidate_identity": identity, "manifest_version": 2, "harness_identity": "h"},
         {"event": "candidate_attestation", "stage": "verification-start", "candidate_root": str(root.resolve()), "candidate_identity": identity, "manifest_version": 2, "harness_identity": "h"},
         {"event": "candidate_attestation", "stage": "evaluator-start", "candidate_root": str(root.resolve()), "candidate_identity": identity, "manifest_version": 2, "harness_identity": "h"},
         {"event": "candidate_attestation", "stage": "seal", "candidate_root": str(root.resolve()), "candidate_identity": identity, "manifest_version": 2, "harness_identity": "h"},

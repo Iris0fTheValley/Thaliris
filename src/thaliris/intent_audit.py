@@ -660,7 +660,12 @@ def _record_runtime_event(root: Path, payload: dict[str, Any], event: str, tool:
 
 
 def _record_controller_guard_event(root: Path, payload: dict[str, Any], action: str, decision: str) -> None:
-    """Persist only bounded action/decision evidence for the root guard."""
+    """Persist bounded, causal identity for one guarded tool operation.
+
+    The command itself is never retained.  A stable operation hash lets the
+    host collector bind PreToolUse, the deny decision, and the absence of a
+    side effect to the same call instead of combining unrelated observations.
+    """
     with core._lock(root):
         path = _session_dir(root, payload) / "runtime.json"
         state = _load_runtime(path)
@@ -681,6 +686,24 @@ def _record_controller_guard_event(root: Path, payload: dict[str, Any], action: 
         actions = state.setdefault("controller_actions_observed", [])
         if action not in actions and len(actions) < 16:
             actions.append(action)
+        call_id = payload.get("tool_call_id") or payload.get("call_id") or payload.get("id")
+        command = _bash_command(payload)
+        operation_id = hashlib.sha256(json.dumps({
+            "session_id": payload.get("session_id"),
+            "call_id": call_id,
+            "tool": raw_name,
+            "command": command,
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        operations = state.setdefault("controller_guard_operations", [])
+        if not any(isinstance(item, dict) and item.get("operation_id") == operation_id for item in operations) and len(operations) < 32:
+            operations.append({
+                "operation_id": operation_id,
+                "tool_call_id": str(call_id) if call_id is not None else None,
+                "tool": raw_name,
+                "command_sha256": hashlib.sha256(command.encode("utf-8")).hexdigest() if command else None,
+                "action": action,
+                "decision": decision,
+            })
         _write_capture(path, state)
 
 

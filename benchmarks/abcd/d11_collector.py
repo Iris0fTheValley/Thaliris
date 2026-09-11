@@ -406,7 +406,7 @@ def collect_candidate(root: Path, *, policy: dict[str, Any] | None = None) -> di
 
 def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_root: Path, policy: dict[str, Any], harness_identity: str, session_id: str | None = None, source_registry_identity: str | None = None) -> dict[str, Any]:
     """Host-owned stage attestation; identity is computed at the stage boundary."""
-    if not isinstance(run_id, str) or not run_id or stage not in {"runtime-final", "review-start", "verification-start", "evaluator-start", "seal"}:
+    if not isinstance(run_id, str) or not run_id or stage not in {"runtime-final", "review-start", "review-end", "verification-start", "evaluator-start", "seal"}:
         raise ValueError("invalid candidate attestation boundary")
     if not isinstance(harness_identity, str) or not harness_identity:
         raise ValueError("harness identity is required")
@@ -496,7 +496,7 @@ def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]], *, pol
     """Bind stage-time host attestations to the manifest computed now."""
     actual = str(build_manifest(root, policy)["identity"])
     ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
-    stages = {"runtime-final": "runtime_candidate", "review-start": "reviewed_candidate", "verification-start": "verified_candidate", "evaluator-start": "evaluator_candidate", "seal": "sealed_candidate"}
+    stages = {"runtime-final": "runtime_candidate", "review-start": "reviewed_candidate", "review-end": "review_end_candidate", "verification-start": "verified_candidate", "evaluator-start": "evaluator_candidate", "seal": "sealed_candidate"}
     values: dict[str, Any] = {}
     attestations = [event for event in ordered if _kind(event) == "candidate_attestation" and event.get("_trusted_source") == "harness_attestation" and (event.get("source_registry_identity") == event.get("_registry_identity") or event.get("_source_run_id") == "TEST_ONLY")]
     expected_policy_identity = hashlib.sha256(json.dumps(build_manifest(root, policy)["manifest"]["policy"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -520,10 +520,14 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """
     ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
     sessions: set[str] = set()
+    stops: dict[str, list[dict[str, Any]]] = {}
     graph: list[dict[str, Any]] = []
     for event in ordered:
         if _kind(event) in {"native_session_started", "SubagentStart"} and event.get("role") == "reviewer" and isinstance(event.get("session_id"), str):
             sessions.add(event["session_id"])
+        if _kind(event) in {"native_session_stopped", "SubagentStop"} and isinstance(event.get("session_id"), str):
+            stops.setdefault(event["session_id"], []).append(event)
+    for event in ordered:
         if _kind(event) != "review_verdict":
             continue
         session = event.get("session_id")
@@ -531,8 +535,19 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         if not isinstance(session, str) or not starts:
             continue
         candidate = starts[-1].get("candidate_identity")
-        observations = [obs for obs in ordered if _kind(obs) == "reviewer_native_observation" and obs.get("session_id") == session and obs.get("native_session_id") and obs.get("sandbox_mode") == "read-only"]
-        legacy_observation = any(obs.get("_source_run_id") == "TEST_ONLY" and obs.get("sandbox_mode") == "read-only" for obs in starts)
+        ends = [att for att in ordered if _kind(att) == "candidate_attestation" and att.get("stage") == "review-end" and att.get("session_id") == session and att.get("_trusted_source") == "harness_attestation"]
+        observations = [obs for obs in ordered if _kind(obs) == "reviewer_native_observation" and obs.get("session_id") == session and obs.get("native_session_id")]
+        mutations = [mutation for mutation in ordered if _kind(mutation) == "source_mutation" and mutation.get("session_id") == session]
+        stop = stops.get(session, [])
+        end = ends[-1] if ends else None
+        integrity = bool(
+            session in sessions
+            and stop
+            and end
+            and candidate
+            and end.get("candidate_identity") == candidate
+            and not mutations
+        )
         graph.append({
             "reviewer_session": session,
             "input_candidate_identity": candidate,
@@ -541,10 +556,17 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             "classification": event.get("classification"),
             "evidence_identity": event.get("evidence_identity"),
             "native_session": session in sessions,
-            "sandbox_mode": observations[-1].get("sandbox_mode") if observations else ("read-only" if legacy_observation else None),
+            "native_completion": bool(stop),
+            "review_end_observed": bool(end),
+            "start_candidate_identity": candidate,
+            "end_candidate_identity": end.get("candidate_identity") if end else None,
+            "review_transaction_integrity": integrity,
+            "reviewer_mutation_observed": bool(mutations),
+            "sandbox_mode": observations[-1].get("sandbox_mode") if observations else None,
             "native_observation_provenance": _provenance(observations[-1]) if observations else None,
             "order": _order(event, -1)[0],
             "attestation_provenance": _provenance(starts[-1]),
+            "review_end_provenance": _provenance(end),
             "verdict_provenance": _provenance(event),
         })
     corrections: list[dict[str, Any]] = []

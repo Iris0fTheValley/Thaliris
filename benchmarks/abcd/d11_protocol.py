@@ -139,8 +139,14 @@ def validate_review_graph(ledger: dict[str, Any], *, final_candidate: str) -> di
         if not isinstance(session, str) or not session or session in seen:
             return _fail("REVIEW_SESSION_REUSE", "reviewer session identity is missing or reused")
         seen.add(session)
-        if item.get("native_session") is not True or item.get("sandbox_mode") != "read-only":
-            return _fail("REVIEW_NOT_NATIVE_READ_ONLY", "native fresh read-only evidence is absent")
+        if item.get("native_session") is not True or item.get("native_completion") is not True:
+            return _fail("REVIEW_NATIVE_LIFECYCLE", "native fresh Reviewer completion is absent")
+        if item.get("review_transaction_integrity") is not True:
+            if item.get("reviewer_mutation_observed"):
+                return _fail("REVIEWER_MUTATION_OBSERVED", "Reviewer mutation invalidated the review transaction")
+            return _fail("REVIEW_TRANSACTION_INCOMPLETE", "review-start/review-end candidate transaction is incomplete")
+        if item.get("start_candidate_identity") != item.get("end_candidate_identity"):
+            return _fail("REVIEW_CANDIDATE_CHANGED", "candidate changed during the review transaction")
         if item.get("verdict") == "EXTERNALLY_INCOMPLETE":
             return _fail("REVIEW_EXTERNAL_INCOMPLETE", "external Reviewer interruption cannot pass")
         if item.get("verdict") not in {"READY", "REQUEST_CHANGES"}:
@@ -304,10 +310,16 @@ def validate_report(report: dict[str, Any], *, protocol_path: Path, generated_te
 
 def _observed_status(value: Any, *, name: str) -> dict[str, Any]:
     if isinstance(value, dict) and value.get("status") in {"PASS", "FAIL", "NOT_OBSERVED", "EXTERNALLY_INCOMPLETE"}:
-        # A plain status object is still a declaration.  Accepted host facts
-        # carry a producer marker (preflight/smoke/freeze) or collector
-        # provenance; model reports and hand-written booleans do not.
-        if not any(key in value for key in ("fact_source", "collector", "provenance", "checks", "manifest")):
+        # A status string is not an attestation.  Only a non-empty structured
+        # producer identity, provenance record, or independently computed
+        # check/manifest can enter the target gate.  Arbitrary fact_source
+        # strings and empty provenance are declarations.
+        structured = any(
+            isinstance(value.get(key), dict) and bool(value[key])
+            for key in ("fact_source", "collector", "provenance", "checks", "manifest")
+        )
+        identity = isinstance(value.get("identity"), str) and bool(value["identity"])
+        if not structured and not identity:
             return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_PROVENANCE_NOT_OBSERVED"}
         return value
     if isinstance(value, bool):
@@ -349,15 +361,19 @@ def validate_target(
     checks["candidate_chain"] = chain_check
     final_candidate = chain_check.get("candidate_identity") if chain_check.get("status") == "PASS" else None
     reviews = collected.get("reviews")
-    checks["review_graph"] = validate_review_graph(reviews, final_candidate=final_candidate) if isinstance(reviews, dict) and isinstance(final_candidate, str) else _observed_status(None, name="review_graph")
-    checks["reviewer_native_readonly"] = _observed_status(collected.get("reviewer_native_readonly"), name="reviewer_native_readonly")
+    review_check = validate_review_graph(reviews, final_candidate=final_candidate) if isinstance(reviews, dict) and isinstance(final_candidate, str) else _observed_status(None, name="review_graph")
+    checks["review_graph"] = review_check
+    checks["review_transaction_integrity"] = review_check
+    # Native sandbox support is a host capability diagnostic.  The hard
+    # correctness gate is the unchanged-candidate review transaction above.
+    checks["reviewer_native_readonly"] = _observed_status(collected.get("reviewer_native_readonly"), name="reviewer_native_readonly") if collected.get("reviewer_native_readonly") is not None else {"status": "UNSUPPORTED_BY_HOST", "fact_source": {"kind": "native_capability_diagnostic"}}
     checks["evaluator_calibration"] = _observed_status(collected.get("evaluator_calibration"), name="evaluator_calibration")
     checks["final_evaluator"] = _observed_status(collected.get("final_evaluator"), name="final_evaluator")
     checks["documentation_consistency"] = validate_documentation(protocol_path=protocol_path, generated_text=generated_text or "", tests_passed=None, runtime_consistency=None) if protocol_path is not None else _observed_status(None, name="documentation_consistency")
     checks["tests"] = _observed_status(tests, name="tests")
     checks["cost"] = validate_cost_gate(calculate_cost(collected.get("sessions", []))) if isinstance(collected.get("sessions"), list) else _observed_status(None, name="cost")
     checks["fast_path"] = validate_fast_path(fast_path) if isinstance(fast_path, dict) else _observed_status(None, name="fast_path")
-    statuses = {item.get("status") for item in checks.values()}
+    statuses = {item.get("status") for key, item in checks.items() if key != "reviewer_native_readonly"}
     status = "PASS" if statuses == {"PASS"} else ("NOT_OBSERVED" if "NOT_OBSERVED" in statuses else "FAIL")
     return {"status": status, "checks": checks}
 

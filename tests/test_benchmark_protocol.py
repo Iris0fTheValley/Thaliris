@@ -85,3 +85,11 @@ def test_target_gate_rejects_model_declared_boolean_facts():
     protocol = _MODULE.validate_target({}, preflight=True, smoke=True, freeze_pre=True, freeze_post=True)
     assert protocol["status"] == "NOT_OBSERVED"
     assert protocol["checks"]["preflight"]["code"] == "PREFLIGHT_DECLARATION_REJECTED"
+
+
+def test_target_gate_rejects_fake_or_empty_provenance_statuses():
+    observed = _MODULE._observed_status
+    assert observed({"status": "PASS", "fact_source": "made-up"}, name="x")["status"] == "NOT_OBSERVED"
+    assert observed({"status": "PASS", "provenance": {}}, name="x")["status"] == "NOT_OBSERVED"
+    assert observed({"status": "PASS", "checks": {}}, name="x")["status"] == "NOT_OBSERVED"
+    assert observed({"status": "PASS", "manifest": {}}, name="x")["status"] == "NOT_OBSERVED"

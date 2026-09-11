@@ -69,10 +69,18 @@ investigation or reasoning. A source mutation after READY invalidates that
 review and requires another fresh Reviewer. External interruption is
 `EXTERNALLY_INCOMPLETE`, never PASS.
 
+For each review round the host records `review-start`, the native fresh
+Reviewer lifecycle, the verdict, native completion, and `review-end`. The
+host-computed candidate identity at review-start must equal the identity at
+review-end. A verdict from a changed or incomplete review transaction is not
+accepted. Native sandbox mode is recorded as a host capability diagnostic;
+review correctness is the unchanged-candidate transaction proof.
+
 ## Candidate and cost proof
 
 The host harness computes an append-only stage attestation immediately at
-runtime-final, review-start, verification-start, evaluator-start, and seal.
+runtime-final, review-start, review-end, verification-start, evaluator-start,
+and seal.
 The same immutable candidate identity must be observed at every stage; a later
 mutation invalidates the chain. Reviewer sandbox mode is a native session fact,
 not a candidate attestation field.

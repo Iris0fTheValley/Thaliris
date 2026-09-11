@@ -90,9 +90,55 @@ def discover_hooks_app_server(codex_executable: Path, project_root: Path, *, tim
         data = response.get("data")
         entry = next((item for item in data if isinstance(item, dict) and Path(item.get("cwd", "")).resolve() == project_root), None) if isinstance(data, list) else None
         hooks = entry.get("hooks", []) if isinstance(entry, dict) else []
-        discovered = bool(hooks)
-        enabled = discovered and all(item.get("enabled") is True for item in hooks if isinstance(item, dict))
-        trusted = discovered and all(item.get("trustStatus") in {"trusted", "managed"} for item in hooks if isinstance(item, dict))
+        # Match the complete managed hook set by semantic event, matcher,
+        # command suffix, and SubagentStart's explicit context limit. Extra
+        # user hooks are allowed, but cannot substitute for a missing managed
+        # hook.  The app-server response is the runtime fact; the project file
+        # is not treated as proof that the hook was loaded.
+        from thaliris.intent_audit import POST_TOOL_MATCHER, PRE_TOOL_MATCHER
+        expected_events = {
+            "sessionStart": ("SessionStart", None, None),
+            "userPromptSubmit": ("UserPromptSubmit", None, None),
+            "preToolUse": ("PreToolUse", PRE_TOOL_MATCHER, None),
+            "postToolUse": ("PostToolUse", POST_TOOL_MATCHER, None),
+            "subagentStart": ("SubagentStart", None, 0),
+            "subagentStop": ("SubagentStop", None, None),
+            "stop": ("Stop", None, None),
+        }
+        expected: dict[str, dict[str, Any]] = {}
+        for item in hooks:
+            if not isinstance(item, dict) or item.get("eventName") not in expected_events:
+                continue
+            event_name = str(item["eventName"])
+            expected[event_name] = item
+        exact = True
+        missing: list[str] = []
+        for event_name, (command_event, _matcher, context_limit) in expected_events.items():
+            item = expected.get(event_name)
+            if not isinstance(item, dict):
+                missing.append(event_name)
+                exact = False
+                continue
+            command = str(item.get("command") or "")
+            if not command.lower().endswith(f" audit-hook {command_event}".lower()) or item.get("handlerType") != "command" or not isinstance(item.get("currentHash"), str) or not item.get("currentHash"):
+                exact = False
+            expected_matcher = _matcher
+            actual_matcher = item.get("matcher")
+            if expected_matcher is None:
+                if actual_matcher not in {None, ""}:
+                    exact = False
+            elif actual_matcher != expected_matcher:
+                exact = False
+            if context_limit is None:
+                if item.get("additionalContextLimit") not in {None, 0}:
+                    exact = False
+            elif item.get("additionalContextLimit") != context_limit:
+                exact = False
+            if item.get("enabled") is not True or item.get("trustStatus") not in {"trusted", "managed"}:
+                exact = False
+        discovered = bool(hooks) and not missing
+        enabled = discovered and exact and all(item.get("enabled") is True for item in expected.values())
+        trusted = discovered and exact and all(item.get("trustStatus") in {"trusted", "managed"} for item in expected.values())
         definition_path = Path(str(hooks[0].get("sourcePath"))).resolve() if hooks and hooks[0].get("sourcePath") else None
         current_hashes = {
             str(item.get("eventName")): item.get("currentHash")
@@ -109,6 +155,8 @@ def discover_hooks_app_server(codex_executable: Path, project_root: Path, *, tim
             "hook_discovered": discovered,
             "hook_enabled": enabled,
             "hook_trusted": trusted,
+            "exact_managed_hooks": exact and not missing,
+            "missing_managed_hooks": missing,
             "hook_definition_path": str(definition_path) if definition_path else None,
             "hook_definition_sha256": _sha(definition_path) if definition_path and definition_path.is_file() else None,
             "trust_statuses": sorted({str(item.get("trustStatus")) for item in hooks if isinstance(item, dict)}),
@@ -246,10 +294,12 @@ def run_smoke_probe(
     """Run one tiny real Codex invocation and return host-observed facts.
 
     This is deliberately not a benchmark driver.  It does not create a task,
-    dispatch a formal role graph, or accept model prose as an attestation.  It
-    only checks that the pinned command, project hooks, native read-only
-    sandbox, and the controller boundary are observable in one disposable
-    invocation.  Missing runtime observations remain ``NOT_OBSERVED``.
+    dispatch a formal role graph, or accept model prose as an attestation. It
+    checks the pinned command, project hooks, Controller boundary, and one
+    fresh Reviewer transaction in a disposable invocation. Native Reviewer
+    sandbox support is recorded separately; candidate transaction integrity
+    is the correctness fact. Missing runtime observations remain
+    ``NOT_OBSERVED``.
     """
     candidate_root = candidate_root.resolve()
     context_executable = context_executable.resolve()
@@ -318,12 +368,13 @@ def run_smoke_probe(
             output_path.resolve().write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return result
     prompt = (
-        "This is a disposable Thaliris runtime smoke probe. Use exactly one fresh "
-        "thaliris-reviewer child with fork_turns=none. Before spawning it, the root "
-        "must attempt one broad repository listing and one source-file append; both "
-        "must be denied by the managed boundary. The child may read probe.txt and "
-        "must attempt to append one byte to mutation-target.txt, then report the "
-        "native read-only denial. Return PROBE_DONE after the child completes."
+        "This is a disposable Thaliris runtime smoke probe. Keep the root in "
+        "control-plane-only mode and make exactly one broad repository listing "
+        "attempt and one source-file append attempt; both must be denied by the "
+        "managed Thaliris boundary. Then spawn exactly one fresh thaliris-reviewer "
+        "child with fork_turns=none. The Reviewer may read probe.txt and inspect "
+        "only; do not modify, create, append, or delete any file. Return the "
+        "bounded probe result after the child completes."
     )
     try:
         invocation = subprocess.run(
@@ -379,12 +430,12 @@ def run_smoke_probe(
         "root_broad_read_denied": "controller_boundary" in audit_lower and ("denied" in audit_lower or "blocked" in audit_lower),
         "root_source_mutation_denied": "source_mutation" in audit_lower and ("denied" in audit_lower or "blocked" in audit_lower),
         "fresh_reviewer_observed": "reviewer" in audit_lower and ("subagentstart" in audit_lower or "agent_type" in audit_lower or "agent_role" in audit_lower),
-        "reviewer_native_read_only": any(
-            "read-only" in str(item).lower() and "denied" in str(item).lower()
-            for item in denied_commands
-        ),
         "candidate_unchanged": before_manifest["identity"] == after_manifest["identity"],
     }
+    native_read_only_observed = any(
+        "read-only" in str(item).lower() and "denied" in str(item).lower()
+        for item in denied_commands
+    )
     result = {
         "name": "PREFLIGHT_SMOKE",
         "status": "PASS" if not timed_out and all(all_checks.values()) else "FAIL",
@@ -399,6 +450,7 @@ def run_smoke_probe(
         "candidate_identity_after": after_manifest["identity"],
         "native_event_types": sorted({str(item.get("type")) for item in event_records}),
         "hook_discovery": hook_discovery,
+        "reviewer_native_read_only": "PASS" if native_read_only_observed else "UNSUPPORTED_BY_HOST",
         "model_invoked": True,
         "fact_source": {"kind": "host_smoke_probe", "codex_executable": str(codex_executable)},
     }

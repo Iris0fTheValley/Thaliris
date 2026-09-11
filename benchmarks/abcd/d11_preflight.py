@@ -239,6 +239,7 @@ def run_smoke_probe(
     *,
     context_executable: Path,
     codex_executable: Path,
+    candidate_policy: dict[str, Any] | None = None,
     output_path: Path | None = None,
     timeout_seconds: int = 120,
 ) -> dict[str, Any]:
@@ -253,34 +254,19 @@ def run_smoke_probe(
     candidate_root = candidate_root.resolve()
     context_executable = context_executable.resolve()
     codex_executable = codex_executable.resolve()
-    before_manifest = build_manifest(candidate_root)
-    hook_discovery = discover_hooks_app_server(codex_executable, candidate_root, timeout_seconds=min(10.0, max(1.0, timeout_seconds / 10)))
-    # Do not spend model tokens on a supposedly managed probe when the native
-    # host has already reported that the project hooks are untrusted.  This is
-    # a host-capability result, not a Thaliris PASS/FAIL assertion.
-    if hook_discovery.get("status") != "PASS":
-        result = {
-            "name": "PREFLIGHT_SMOKE",
-            "status": "HOST_CAPABILITY_UNSUPPORTED" if hook_discovery.get("hook_discovered") else "NOT_OBSERVED",
-            "failure_code": "HOOK_TRUST_NOT_OBSERVED" if hook_discovery.get("hook_discovered") else "HOOK_RUNTIME_NOT_OBSERVED",
-            "hook_discovery": hook_discovery,
-            "checks": {
-                "auth": "NOT_OBSERVED", "project_trust": "NOT_OBSERVED", "hooks_activated": "NOT_OBSERVED",
-                "controller_boundary": "NOT_OBSERVED", "reviewer_native_read_only": "NOT_OBSERVED",
-                "trusted_runtime_isolation": "NOT_OBSERVED", "candidate_unchanged": True,
-            },
-            "model_invoked": False,
-            "candidate_identity_before": before_manifest["identity"],
-            "candidate_identity_after": before_manifest["identity"],
-            "fact_source": {"kind": "host_smoke_probe", "codex_executable": str(codex_executable)},
-        }
-        result["identity"] = hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        if output_path is not None:
-            output_path.resolve().write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        return result
     environment = os.environ.copy()
     environment["THALIRIS_CONTEXT_EXECUTABLE"] = str(context_executable)
     environment["THALIRIS_CONTEXT_EXECUTABLE_SHA256"] = _sha(context_executable) if context_executable.is_file() else ""
+    task_init = subprocess.run(
+        [str(context_executable), "--root", str(candidate_root), "init"],
+        cwd=candidate_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     task_start = subprocess.run(
         [str(context_executable), "--root", str(candidate_root), "task-start", "preflight smoke probe"],
         cwd=candidate_root,
@@ -301,6 +287,36 @@ def run_smoke_probe(
         errors="replace",
         check=False,
     )
+    # Core initialization writes only task-state/instruction metadata.  Take
+    # the candidate baseline after that setup so the probe measures runtime
+    # side effects, not disposable fixture bring-up.
+    before_manifest = build_manifest(candidate_root, candidate_policy)
+    # Init may materialize the pinned SubagentStart command, so trust is
+    # checked at the actual invocation boundary rather than before setup.
+    hook_discovery = discover_hooks_app_server(codex_executable, candidate_root, timeout_seconds=min(10.0, max(1.0, timeout_seconds / 10)))
+    if hook_discovery.get("status") != "PASS":
+        result = {
+            "name": "PREFLIGHT_SMOKE",
+            "status": "HOST_CAPABILITY_UNSUPPORTED" if hook_discovery.get("hook_discovered") else "NOT_OBSERVED",
+            "failure_code": "HOOK_TRUST_NOT_OBSERVED" if hook_discovery.get("hook_discovered") else "HOOK_RUNTIME_NOT_OBSERVED",
+            "hook_discovery": hook_discovery,
+            "checks": {
+                "context_init": task_init.returncode == 0,
+                "task_start_ordering": task_init.returncode == 0 and task_start.returncode == 0 and status.returncode == 0,
+                "context_task_status": status.returncode == 0,
+                "auth": "NOT_OBSERVED", "project_trust": "NOT_OBSERVED", "hooks_activated": "NOT_OBSERVED",
+                "controller_boundary": "NOT_OBSERVED", "reviewer_native_read_only": "NOT_OBSERVED",
+                "trusted_runtime_isolation": "NOT_OBSERVED", "candidate_unchanged": True,
+            },
+            "model_invoked": False,
+            "candidate_identity_before": before_manifest["identity"],
+            "candidate_identity_after": before_manifest["identity"],
+            "fact_source": {"kind": "host_smoke_probe", "codex_executable": str(codex_executable)},
+        }
+        result["identity"] = hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if output_path is not None:
+            output_path.resolve().write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return result
     prompt = (
         "This is a disposable Thaliris runtime smoke probe. Use exactly one fresh "
         "thaliris-reviewer child with fork_turns=none. Before spawning it, the root "
@@ -343,10 +359,10 @@ def run_smoke_probe(
     audit_root = candidate_root / ".context" / "audit"
     audit_text = ""
     if audit_root.is_dir():
-        for path in sorted(audit_root.rglob("*.jsonl"), key=str):
+        for path in sorted((item for item in audit_root.rglob("*") if item.is_file() and item.suffix.lower() in {".json", ".jsonl"}), key=str):
             with path.open("r", encoding="utf-8", errors="replace") as stream:
                 audit_text += stream.read(256 * 1024)
-    after_manifest = build_manifest(candidate_root)
+    after_manifest = build_manifest(candidate_root, candidate_policy)
     audit_lower = audit_text.lower()
     command_events = [item for item in event_records if item.get("type") in {"item.completed", "item.started"} and isinstance(item.get("item"), dict)]
     denied_commands = [
@@ -355,8 +371,9 @@ def run_smoke_probe(
         and any(word in str(item).lower() for word in ("permission", "denied", "read-only", "sandbox", "controller_boundary"))
     ]
     all_checks = {
+        "context_init": task_init.returncode == 0,
         "context_task_status": status.returncode == 0,
-        "task_start_ordering": task_start.returncode == 0,
+        "task_start_ordering": task_init.returncode == 0 and task_start.returncode == 0 and status.returncode == 0,
         "codex_auth_and_invocation": invocation.returncode == 0,
         "project_hooks_activated": any(marker in audit_lower for marker in ("sessionstart", "userpromptsubmit", "pretooluse", "subagentstart", "subagentstop")),
         "root_broad_read_denied": "controller_boundary" in audit_lower and ("denied" in audit_lower or "blocked" in audit_lower),
@@ -373,6 +390,8 @@ def run_smoke_probe(
         "status": "PASS" if not timed_out and all(all_checks.values()) else "FAIL",
         "checks": all_checks,
         "context_returncode": status.returncode,
+        "context_init_returncode": task_init.returncode,
+        "task_start_returncode": task_start.returncode,
         "codex_returncode": invocation.returncode,
         "timed_out": timed_out,
         "event_count": len(event_records),

@@ -157,9 +157,14 @@ def _hook_command_prefix() -> str:
     """Resolve the hook executable, allowing audited runs to pin a checkout."""
     configured = _trusted_context_executable()
     if configured is not None:
-        # Quote paths for the native command hook shell while preserving the
-        # CLI argument boundary on Windows and POSIX.
-        return f'"{configured}" audit-hook'
+        # Keep the exact pinned executable identity while avoiding a leading
+        # quote for the common Windows console-script path.  Codex's native
+        # hook runner accepts the unquoted absolute form reliably; quote only
+        # when whitespace makes the argument boundary ambiguous.
+        executable = str(configured)
+        if any(char.isspace() for char in executable):
+            executable = f'"{executable}"'
+        return f'{executable} audit-hook'
     return HOOK_COMMAND_PREFIX
 
 

@@ -43,7 +43,10 @@ def _unexpected_status(status: str | None) -> str:
     allowed = {".codex/", ".agent-memory/", ".milestones/", ".context/", "AGENTS.md", ".gitignore", "docs/thaliris-role-packs.md"}
     kept: list[str] = []
     for line in status.splitlines():
-        path = line[3:] if len(line) >= 4 else line
+        # Porcelain status always reserves two columns (XY), but either
+        # column may contain a status letter, so do not assume a leading
+        # space before the path.
+        path = line[2:] if len(line) >= 3 else line
         if " -> " in path:
             path = path.rsplit(" -> ", 1)[-1]
         normalized = path.replace("\\", "/")
@@ -299,7 +302,10 @@ def run_preflight(
     checks["no_edit_identity"] = {"actual": no_edit_identity, "base": base_identity, "pass": no_edit_identity is not None and no_edit_identity == base_identity}
     checks["smoke"] = {"result": smoke_result, "pass": isinstance(smoke_result, dict) and smoke_result.get("status") == "PASS"}
     checks["calibration"] = {"attestation": calibration_attestation, "pass": isinstance(calibration_attestation, dict) and calibration_attestation.get("status") == "PASS"}
-    passed = all(value.get("pass") is True for value in checks.values())
+    passed = all(
+        isinstance(value, dict) and value.get("pass") is True
+        for value in checks.values()
+    )
     checks["adapter_root"] = str(adapter_root)
     checks["candidate_root"] = str(candidate_root)
     result = {"status": "PASS" if passed else "PREFLIGHT_FAIL", "checks": checks}

@@ -46,7 +46,7 @@ def _unexpected_status(status: str | None) -> str:
         # Porcelain status always reserves two columns (XY), but either
         # column may contain a status letter, so do not assume a leading
         # space before the path.
-        path = line[2:] if len(line) >= 3 else line
+        path = line[2:].lstrip() if len(line) >= 3 else line
         if " -> " in path:
             path = path.rsplit(" -> ", 1)[-1]
         normalized = path.replace("\\", "/")

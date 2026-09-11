@@ -25,9 +25,7 @@ SOURCE_EVENTS = {
     }),
     "harness_attestation": frozenset({
         "candidate_attestation", "invocation_attestation", "verification_attestation",
-        "evaluator_attestation", "seal_attestation", "review_verdict", "artifact_produced",
-        "artifact_written", "artifact_registered", "artifact_selected", "handoff", "role_dispatch",
-        "implementer_dispatch", "source_mutation", "deterministic_verification", "verification",
+        "evaluator_attestation", "seal_attestation", "deterministic_verification", "verification",
     }),
     "evaluator_result": frozenset({"evaluator_result", "evaluator_calibration_attestation"}),
 }
@@ -48,6 +46,15 @@ def validate_event_shape(source_kind: str, event_type: str, value: dict[str, Any
     if source_kind == "evaluator_result" and not isinstance(value.get("exit_code"), int):
         return False
     return True
+
+
+def chain_payload(value: dict[str, Any]) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if key not in {"sequence", "previous_hash", "payload_hash", "record_hash"}}
+
+
+def hash_chain_record(value: dict[str, Any]) -> str:
+    payload = chain_payload(value)
+    return hashlib.sha256(json.dumps({"run_id": value.get("run_id"), "sequence": value.get("sequence"), "previous_hash": value.get("previous_hash"), "payload_hash": value.get("payload_hash"), "payload": payload}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def _sha(path: Path) -> str:

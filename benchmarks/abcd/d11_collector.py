@@ -14,7 +14,7 @@ import time
 import uuid
 
 from candidate_manifest import MANIFEST_VERSION, build_manifest
-from d11_sources import SOURCE_EVENTS, SOURCE_KINDS, _sha_prefix, create_source_registry, registry_sources, validate_event_shape
+from d11_sources import SOURCE_EVENTS, SOURCE_KINDS, _sha_prefix, chain_payload, create_source_registry, hash_chain_record, registry_sources, validate_event_shape
 
 
 TRUSTED_SOURCE_KINDS = SOURCE_KINDS
@@ -42,6 +42,9 @@ def load_trusted_events(registry: dict[str, Any]) -> list[dict[str, Any]]:
         session_identity = None
         role_identity = None
         model_identity = None
+        previous_chain_hash = "0" * 64
+        expected_sequence = 1
+        test_stream = bool(registry.get("registry", {}).get("test_only"))
         with path.open("r", encoding="utf-8") as stream:
             for line_number, line in enumerate(stream, 1):
                 try:
@@ -65,6 +68,16 @@ def load_trusted_events(registry: dict[str, Any]) -> list[dict[str, Any]]:
                     continue
                 if not validate_event_shape(kind, normalized_kind, raw):
                     raise ValueError(f"{normalized_kind} has an invalid {kind} schema")
+                if kind == "harness_attestation" and not test_stream:
+                    if not all(key in raw for key in ("run_id", "sequence", "previous_hash", "payload_hash", "record_hash", "source_registry_identity", "harness_identity")):
+                        raise ValueError("formal harness attestation is missing hash-chain fields")
+                    if raw.get("run_id") != source["run_id"] or raw.get("source_registry_identity") != registry_identity or raw.get("sequence") != expected_sequence or raw.get("previous_hash") != previous_chain_hash:
+                        raise ValueError("formal harness attestation hash-chain ordering is invalid")
+                    payload_hash = hashlib.sha256(json.dumps(chain_payload(raw), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                    if raw.get("payload_hash") != payload_hash or raw.get("record_hash") != hash_chain_record(raw):
+                        raise ValueError("formal harness attestation hash-chain identity is invalid")
+                    previous_chain_hash = raw["record_hash"]
+                    expected_sequence += 1
                 native_id = raw.get("native_event_id") or raw.get("event_id") or f"{kind}:{path}:{line_number}"
                 records.append({
                     **raw,
@@ -318,7 +331,7 @@ def collect_candidate(root: Path, *, policy: dict[str, Any] | None = None) -> di
     return build_manifest(root, policy)
 
 
-def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_root: Path, policy: dict[str, Any], harness_identity: str, session_id: str | None = None) -> dict[str, Any]:
+def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_root: Path, policy: dict[str, Any], harness_identity: str, session_id: str | None = None, source_registry_identity: str | None = None) -> dict[str, Any]:
     """Host-owned stage attestation; identity is computed at the stage boundary."""
     if not isinstance(run_id, str) or not run_id or stage not in {"runtime-final", "review-start", "verification-start", "evaluator-start", "seal"}:
         raise ValueError("invalid candidate attestation boundary")
@@ -342,6 +355,19 @@ def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_ro
     }
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if source_registry_identity is not None:
+        previous = "0" * 64
+        sequence = 1
+        if output_path.is_file() and output_path.stat().st_size:
+            lines = output_path.read_text(encoding="utf-8").splitlines()
+            last = json.loads(lines[-1])
+            previous = str(last["record_hash"])
+            sequence = int(last["sequence"]) + 1
+        event["source_registry_identity"] = source_registry_identity
+        event["sequence"] = sequence
+        event["previous_hash"] = previous
+        event["payload_hash"] = hashlib.sha256(json.dumps(chain_payload(event), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        event["record_hash"] = hash_chain_record(event)
     with output_path.open("a", encoding="utf-8", newline="\n") as stream:
         stream.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
     return event

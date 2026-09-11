@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import queue
+import threading
 from typing import Any, Iterable
 
 from candidate_manifest import build_manifest
@@ -56,6 +58,62 @@ def _adapter_generated_hashes(adapter_root: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def discover_hooks_app_server(codex_executable: Path, project_root: Path, *, timeout_seconds: float = 10.0) -> dict[str, Any]:
+    """Ask the native app-server for hook metadata; never infer trust from files."""
+    project_root = project_root.resolve()
+    request = json.dumps({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "thaliris-preflight", "version": "1"}}}) + "\n"
+    request += json.dumps({"id": 2, "method": "hooks/list", "params": {"cwds": [str(project_root)]}}) + "\n"
+    try:
+        process = subprocess.Popen([str(codex_executable.resolve()), "app-server", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        assert process.stdin is not None and process.stdout is not None
+        process.stdin.write(request)
+        process.stdin.flush()
+        lines: queue.Queue[str] = queue.Queue()
+        reader = threading.Thread(target=lambda: [lines.put(line) for line in process.stdout], daemon=True)
+        reader.start()
+        response = None
+        deadline = __import__("time").monotonic() + timeout_seconds
+        while __import__("time").monotonic() < deadline:
+            try:
+                line = lines.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict) and value.get("id") == 2:
+                response = value.get("result")
+                break
+        if not isinstance(response, dict):
+            return {"status": "NOT_OBSERVED", "code": "HOOK_INTROSPECTION_NOT_OBSERVED"}
+        data = response.get("data")
+        entry = next((item for item in data if isinstance(item, dict) and Path(item.get("cwd", "")).resolve() == project_root), None) if isinstance(data, list) else None
+        hooks = entry.get("hooks", []) if isinstance(entry, dict) else []
+        discovered = bool(hooks)
+        enabled = discovered and all(item.get("enabled") is True for item in hooks if isinstance(item, dict))
+        trusted = discovered and all(item.get("trustStatus") in {"trusted", "managed"} for item in hooks if isinstance(item, dict))
+        definition_path = Path(str(hooks[0].get("sourcePath"))).resolve() if hooks and hooks[0].get("sourcePath") else None
+        return {
+            "status": "PASS" if discovered and enabled and trusted else "FAIL",
+            "project_discovered": entry is not None,
+            "hook_discovered": discovered,
+            "hook_enabled": enabled,
+            "hook_trusted": trusted,
+            "hook_definition_path": str(definition_path) if definition_path else None,
+            "hook_definition_sha256": _sha(definition_path) if definition_path and definition_path.is_file() else None,
+            "trust_statuses": sorted({str(item.get("trustStatus")) for item in hooks if isinstance(item, dict)}),
+            "hooks": hooks,
+        }
+    except (OSError, AssertionError, subprocess.SubprocessError) as exc:
+        return {"status": "NOT_OBSERVED", "code": "HOOK_INTROSPECTION_NOT_OBSERVED", "error": str(exc)}
+    finally:
+        try:
+            process.terminate()
+        except (UnboundLocalError, OSError):
+            pass
+
+
 def run_preflight(
     adapter_root: Path,
     candidate_root: Path,
@@ -74,6 +132,7 @@ def run_preflight(
     source_registry: dict[str, Any] | None = None,
     trusted_runtime_attack_result: str | None = None,
     calibration_attestation: dict[str, Any] | None = None,
+    hook_discovery: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a fact ledger suitable for freezing, never a model report."""
     adapter_root = adapter_root.resolve()
@@ -106,6 +165,7 @@ def run_preflight(
         "pass": probe_bound and mutation_result == "DENIED" and trusted_runtime_attack_result == "DENIED",
     }
     checks["source_registry"] = {"identity": source_registry.get("identity") if isinstance(source_registry, dict) else None, "pass": isinstance(source_registry, dict) and verify_source_registry(source_registry)}
+    checks["hook_discovery"] = {"result": hook_discovery, "pass": isinstance(hook_discovery, dict) and hook_discovery.get("status") == "PASS"}
     adapter_status = _git(adapter_root, "status", "--porcelain", "--untracked-files=all")
     candidate_status = _git(candidate_root, "status", "--porcelain", "--untracked-files=all")
     checks["clean_checkouts"] = {"adapter_status": adapter_status, "candidate_status": candidate_status, "pass": adapter_status in {"", None} and candidate_status in {"", None}}

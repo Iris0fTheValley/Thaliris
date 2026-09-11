@@ -292,10 +292,12 @@ def test_source_registry_rejects_arbitrary_paths_and_wrong_source_events(tmp_pat
 
 def test_source_registry_append_only_stream_keeps_identity_and_tracks_provenance(tmp_path: Path) -> None:
     stream = tmp_path / "attest.jsonl"
-    attestation = {"event": "candidate_attestation", "stage": "seal", "candidate_root": ".", "candidate_identity": "a" * 64, "manifest_version": 2, "harness_identity": "h"}
-    stream.write_text(json.dumps(attestation) + "\n", encoding="utf-8")
+    root = repo(tmp_path / "candidate")
+    stream.write_text("", encoding="utf-8")
     registry = d11_sources.create_source_registry([{"kind": "harness_attestation", "path": stream, "stream_identity_policy": "append_only"}], run_id="run-2")
-    stream.write_text(stream.read_text(encoding="utf-8") + json.dumps(attestation) + "\n", encoding="utf-8")
+    policy = candidate_manifest.build_manifest(root)["manifest"]["policy"]
+    d11_collector.attest_candidate(stream, run_id="run-2", stage="runtime-final", candidate_root=root, policy=policy, harness_identity="h", source_registry_identity=registry["identity"])
+    d11_collector.attest_candidate(stream, run_id="run-2", stage="seal", candidate_root=root, policy=policy, harness_identity="h", source_registry_identity=registry["identity"])
     events = d11_collector.load_trusted_events(registry)
     assert len(events) == 2 and events[0]["_source_id"] == registry["registry"]["sources"][0]["source_id"]
 
@@ -304,12 +306,28 @@ def test_host_candidate_attestation_computes_identity_without_caller_identity(tm
     root = repo(tmp_path / "candidate")
     (root / "product.py").write_text("VALUE = 1\n", encoding="utf-8")
     stream = tmp_path / "attest.jsonl"
+    stream.write_text("", encoding="utf-8")
     policy = candidate_manifest.build_manifest(root)["manifest"]["policy"]
-    event = d11_collector.attest_candidate(stream, run_id="run-3", stage="runtime-final", candidate_root=root, policy=policy, harness_identity="harness-sha")
+    registry = d11_sources.create_source_registry([{"kind": "harness_attestation", "path": stream, "stream_identity_policy": "append_only"}], run_id="run-3")
+    event = d11_collector.attest_candidate(stream, run_id="run-3", stage="runtime-final", candidate_root=root, policy=policy, harness_identity="harness-sha", source_registry_identity=registry["identity"])
     assert event["candidate_identity"] == candidate_manifest.candidate_identity(root, policy)
     assert "sandbox_mode" not in event
-    registry = d11_sources.create_source_registry([{"kind": "harness_attestation", "path": stream}], run_id="run-3")
     assert d11_collector.load_trusted_events(registry)[0]["_registry_identity"] == registry["identity"]
+
+
+def test_formal_attestation_stream_has_verified_hash_chain(tmp_path: Path) -> None:
+    root = repo(tmp_path / "candidate")
+    stream = tmp_path / "attest.jsonl"
+    stream.write_text("", encoding="utf-8")
+    registry = d11_sources.create_source_registry([{"kind": "harness_attestation", "path": stream, "stream_identity_policy": "append_only"}], run_id="run-chain")
+    policy = candidate_manifest.build_manifest(root)["manifest"]["policy"]
+    d11_collector.attest_candidate(stream, run_id="run-chain", stage="runtime-final", candidate_root=root, policy=policy, harness_identity="h", source_registry_identity=registry["identity"])
+    d11_collector.attest_candidate(stream, run_id="run-chain", stage="seal", candidate_root=root, policy=policy, harness_identity="h", source_registry_identity=registry["identity"])
+    events = d11_collector.load_trusted_events(registry)
+    assert [event["sequence"] for event in events] == [1, 2]
+    stream.write_text(stream.read_text(encoding="utf-8").replace('"sequence":2', '"sequence":7'), encoding="utf-8")
+    with pytest.raises(ValueError, match="hash-chain"):
+        d11_collector.load_trusted_events(registry)
 
 
 def test_manifest_includes_ignored_observable_file_and_closes_symlink_identity(tmp_path: Path) -> None:

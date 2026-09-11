@@ -100,6 +100,16 @@ changes, Core uses only the task-start-to-current Git interval to identify paths
 that need attribution; it does not claim to distinguish concurrent human commits
 from task commits automatically.
 
+The benchmark evidence and review protocol is defined in
+`docs/thaliris-benchmark-protocol.md`. Reusable evidence is registered before
+the dependent decision, selected explicitly, and consumed by named downstream
+roles. A stale artifact is never silently treated as current; replacement
+artifacts explicitly supersede prior pointers. Review findings carry a
+classification and bounded correction packet. Only architectural findings can
+reopen broad investigation; mechanical and local semantic findings receive one
+fresh targeted correction/review pair. These are adapter/benchmark routing
+contracts, not a second lifecycle runtime.
+
 Working set is not handoff set. Retention is not propagation. Availability is
 not injection. A Controller packet contains task identity, active work, pending
 results, unresolved questions, accepted constraints and decisions, modification

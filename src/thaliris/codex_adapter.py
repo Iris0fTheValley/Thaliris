@@ -59,6 +59,10 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     # Exact profile bytes emitted by adapter 0896fe3 before native reviewer
     # sandbox_mode was added.
     "d0f488e226888c6a8f6e39ab1deeb1125d3c0e9474dba47af47ec3eab2da45c2",
+    # Exact Reviewer/Implementer profile bytes emitted before the benchmark
+    # review-convergence and bounded Correction Packet guidance was added.
+    "ae51394874f0b35dc2b39577d471bf2f07533962363cdb7ad56e6e08a3860887",
+    "a1c7a46981512c7e8067dd5e40e193a0b54e34384aefc2b28950d5c6ccb5af9a",
 })
 
 
@@ -89,8 +93,17 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
                 " Review the current implementation as a read-only independent checker. "
                 "Do not modify repository files, tests, or task semantic state; return only "
                 "bounded findings with evidence references. Any correction belongs to a fresh "
-                "Implementer, followed by a fresh Reviewer."
+                "Implementer, followed by a fresh Reviewer. Each finding must be returned as a "
+                "bounded Review Packet with finding_id, classification (MECHANICAL, LOCAL_SEMANTIC, "
+                "or ARCHITECTURAL), affected_surface, violated_invariant, and verification_requirement. "
+                "An external interruption is INCOMPLETE, never READY or PASS."
                 if role == "reviewer" else ""
+            )
+            + (
+                " Accept only the selected Modification Boundary and, when correcting a review, its "
+                "bounded Correction Packet. Preserve accepted constraints and verify only the named "
+                "surface; do not reopen repository-wide investigation unless the packet is ARCHITECTURAL."
+                if role == "implementer" else ""
             )
         )
     )
@@ -177,6 +190,15 @@ register that pointer with `context task-artifact --producer-role investigator`
 and select relevant facts; artifact existence never authorizes automatic full
 text propagation.
 
+Every reusable artifact follows the evidence protocol: produce before the
+dependent decision, register it through `context task-artifact` with its
+producer role and content identity, select only the needed facts for the next
+role, and record downstream consumption in the benchmark ledger. A changed
+artifact is stale; a replacement must explicitly supersede it. Never silently
+continue consuming stale or contradictory evidence. Fast paths that have no
+cross-role evidence need record `evidence_required=NOT_REQUIRED` and must not
+manufacture an artifact.
+
 After targeted investigation, escalate to
 `agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
 when a material implementation choice remains unresolved by available
@@ -200,7 +222,18 @@ conversation history. Use native surviving-child/thread continuation when the
  and, if still running, use another long native wait. A wait count alone is not
  failure. Never use short model-driven wait/list polling loops or timer-driven
  wake-ups. Close completed one-shot Sol and Reviewer children with native Codex
- controls. Thaliris does not implement scheduling, deadlines, or agent lifecycle.
+controls. Thaliris does not implement scheduling, deadlines, or agent lifecycle.
+
+Review convergence is packet-driven. A Reviewer classifies each finding as
+MECHANICAL, LOCAL_SEMANTIC, or ARCHITECTURAL and names the exact affected
+surface, invariant, and verification requirement. MECHANICAL and LOCAL_SEMANTIC
+findings receive one fresh Implementer with a bounded Correction Packet and one
+fresh targeted Reviewer. They do not restart Investigator/Sol or a repository-
+wide review. ARCHITECTURAL findings may reopen the larger route. A fresh
+Reviewer is still mandatory after every source mutation; a READY verdict seals
+the source and any later mutation invalidates that review. External Reviewer
+failure remains INCOMPLETE and has bounded recovery; it is never converted to
+success.
 {MANAGED_END}
 """
 
@@ -236,6 +269,13 @@ candidates only and does not accept or propagate them. `context task-show` is an
 out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller
 path. If context is insufficient, request a targeted fresh follow-up or
 explicitly pass a selected artifact/payload; do not rebuild the full working set.
+
+Use `docs/thaliris-benchmark-protocol.md` as the authoritative evidence and
+review-convergence contract. Register reusable artifacts before the dependent
+decision, select only the facts needed by the next role, and record downstream
+consumption. Classify each review finding as MECHANICAL, LOCAL_SEMANTIC, or
+ARCHITECTURAL. The first two receive one fresh Implementer Correction Packet
+and one fresh targeted Reviewer; only the last may reopen broad investigation.
 
 Every active task uses serial fresh execution children with `fork_turns=\"none\"`.
 This cuts implicit parent-task-history propagation, not all context: applicable
@@ -393,6 +433,8 @@ KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "432f122986f11e28568674e06d509ac22636f0eed4e86fbdffd46d4ab79d8fa6",
     # Exact role-pack bytes emitted by the supervisor-era 645a40e release.
     "30213f6b50822047e691673b3e1f27718e795ce450989bf74c53c08f8f98921d",
+    # Exact role-pack bytes before the review-convergence protocol reference.
+    "7fd54f2f8c7e97ab54aefa31bb3f53f7864f2d00e4d2e9b1d27309f115945d3d",
 })
 
 

@@ -18,6 +18,13 @@ out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller
 path. If context is insufficient, request a targeted fresh follow-up or
 explicitly pass a selected artifact/payload; do not rebuild the full working set.
 
+Use `docs/thaliris-benchmark-protocol.md` as the authoritative evidence and
+review-convergence contract. Register reusable artifacts before the dependent
+decision, select only the facts needed by the next role, and record downstream
+consumption. Classify each review finding as MECHANICAL, LOCAL_SEMANTIC, or
+ARCHITECTURAL. The first two receive one fresh Implementer Correction Packet
+and one fresh targeted Reviewer; only the last may reopen broad investigation.
+
 Every active task uses serial fresh execution children with `fork_turns="none"`.
 This cuts implicit parent-task-history propagation, not all context: applicable
 system/developer instructions, AGENTS, custom-agent instructions, environment,

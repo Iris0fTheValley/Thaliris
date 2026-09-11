@@ -1173,6 +1173,38 @@ def test_reasoning_specialist_profile_is_bounded_and_requests_missing_evidence()
     assert "native Codex" in codex_adapter.MANAGED
 
 
+def test_benchmark_protocol_is_referenced_by_generated_surfaces():
+    protocol = Path(__file__).parents[1] / "docs" / "thaliris-benchmark-protocol.md"
+    assert protocol.is_file()
+    assert "docs/thaliris-benchmark-protocol.md" in codex_adapter.ROLE_PACKS
+    assert "evidence protocol" in codex_adapter.MANAGED
+    reviewer = codex_adapter._agent_profile("thaliris-reviewer", "reviewer", "gpt-5.6-terra", "high").decode()
+    assert "classification (MECHANICAL, LOCAL_SEMANTIC, or ARCHITECTURAL)" in reviewer
+    implementer = codex_adapter._agent_profile("thaliris-implementer", "implementer", "gpt-5.6-terra", "medium").decode()
+    assert "bounded Correction Packet" in implementer
+
+
+def test_benchmark_protocol_migration_preserves_user_edits(tmp_path):
+    old_review = codex_adapter._agent_profile("thaliris-reviewer", "reviewer", "gpt-5.6-terra", "high").replace(
+        b" Each finding must be returned as a bounded Review Packet with finding_id, classification (MECHANICAL, LOCAL_SEMANTIC, or ARCHITECTURAL), affected_surface, violated_invariant, and verification_requirement. An external interruption is INCOMPLETE, never READY or PASS.", b""
+    )
+    old_implementer = codex_adapter._agent_profile("thaliris-implementer", "implementer", "gpt-5.6-terra", "medium").replace(
+        b" Accept only the selected Modification Boundary and, when correcting a review, its bounded Correction Packet. Preserve accepted constraints and verify only the named surface; do not reopen repository-wide investigation unless the packet is ARCHITECTURAL.", b""
+    )
+    root = repo(tmp_path / "protocol-migration")
+    init(root)
+    review = root / ".codex" / "agents" / "thaliris-reviewer.toml"
+    implementer = root / ".codex" / "agents" / "thaliris-implementer.toml"
+    review.write_bytes(old_review); implementer.write_bytes(old_implementer)
+    migrated = init(root)
+    assert str(review.relative_to(root)).replace("\\", "/") in migrated["files"]
+    assert review.read_bytes() == codex_adapter._agent_profile("thaliris-reviewer", "reviewer", "gpt-5.6-terra", "high")
+    assert implementer.read_bytes() == codex_adapter._agent_profile("thaliris-implementer", "implementer", "gpt-5.6-terra", "medium")
+    review.write_bytes(old_review + b"\nuser edit\n")
+    preserved = init(root)
+    assert str(review.relative_to(root)).replace("\\", "/") in preserved["manual_migration_required"]
+
+
 def test_profile_only_update_requires_restart_without_hook_trust(tmp_path):
     root = repo(tmp_path)
     init(root)

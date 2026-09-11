@@ -18,8 +18,9 @@ out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller
 path. If context is insufficient, request a targeted fresh follow-up or
 explicitly pass a selected artifact/payload; do not rebuild the full working set.
 
-Use `docs/thaliris-benchmark-protocol.md` as the authoritative evidence and
-review-convergence contract. Register reusable artifacts before the dependent
+Use `docs/thaliris-routing-protocol.md` as the authoritative product evidence
+and review-convergence contract. The benchmark protocol is an observation and
+判定 layer only. Register reusable artifacts before the dependent
 decision, select only the facts needed by the next role, and record downstream
 consumption. Classify each review finding as MECHANICAL, LOCAL_SEMANTIC, or
 ARCHITECTURAL. The first two receive one fresh Implementer Correction Packet
@@ -115,8 +116,9 @@ should contain only the artifact path, finding/evidence IDs, short outcome, and
 remaining decision-changing unknowns. The Controller registers the pointer with
 `context task-artifact --base-revision N --id ID --path repo/relative --summary
 TEXT --producer-role investigator` and selects relevant content; artifact
-creation should use one direct shell write followed by verification, rather than
-repeated file-change or patch-helper retries for the same artifact. Artifact
+creation must produce stable bytes and verify their identity before registration.
+The concrete write mechanism is a Codex operational concern, not an Evidence
+semantic invariant. Artifact
 existence does not authorize automatic full-text projection. Registration
 computes and stores the artifact content identity. Downstream roles do not
 receive it automatically: select the facts, constraints, contradictions,

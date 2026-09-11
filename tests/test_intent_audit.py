@@ -1167,6 +1167,8 @@ def test_reasoning_specialist_profile_is_bounded_and_requests_missing_evidence()
     assert "INSUFFICIENT_OR_CONTRADICTORY" in instructions
     assert "EvidenceRequest" in instructions
     assert "repository-wide investigation" in instructions
+    assert "IMPLEMENTATION_GAP" in instructions
+    assert "multiple compliant implementations" in instructions
     assert "Do not modify repository files or task semantic state" in instructions
     assert "fresh Investigator" in ROLE_PACKS
     assert "one-shot children" in codex_adapter.MANAGED
@@ -1176,7 +1178,10 @@ def test_reasoning_specialist_profile_is_bounded_and_requests_missing_evidence()
 def test_benchmark_protocol_is_referenced_by_generated_surfaces():
     protocol = Path(__file__).parents[1] / "docs" / "thaliris-benchmark-protocol.md"
     assert protocol.is_file()
-    assert "docs/thaliris-benchmark-protocol.md" in codex_adapter.ROLE_PACKS
+    routing = Path(__file__).parents[1] / "docs" / "thaliris-routing-protocol.md"
+    assert routing.is_file()
+    assert "docs/thaliris-routing-protocol.md" in codex_adapter.ROLE_PACKS
+    assert "docs/thaliris-routing-protocol.md" in protocol.read_text(encoding="utf-8")
     assert "evidence protocol" in codex_adapter.MANAGED
     reviewer = codex_adapter._agent_profile("thaliris-reviewer", "reviewer", "gpt-5.6-terra", "high").decode()
     assert "classification (MECHANICAL, LOCAL_SEMANTIC, or ARCHITECTURAL)" in reviewer
@@ -1471,7 +1476,6 @@ def test_controller_guard_allows_only_fixed_active_root_control_plane_commands(t
         "context task-status",
         "context.exe task-status",
         "context.cmd task-status",
-        ".\\.codex\\bin\\context.exe task-status",
         "context prepare --role controller",
         "git status --short",
         "git diff --check",
@@ -1481,6 +1485,8 @@ def test_controller_guard_allows_only_fixed_active_root_control_plane_commands(t
     ):
         assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})) == ""
     for command in (
+        ".\\.codex\\bin\\context.exe task-status",
+        "evil/context.cmd task-status",
         'python -c "print(open(\'harmless.txt\').read())"',
         'python -c "from pathlib import Path; Path(\'harmless.txt\').write_text(\'x\')"',
         "node -e \"process.stdout.write('x')\"",
@@ -1494,6 +1500,35 @@ def test_controller_guard_allows_only_fixed_active_root_control_plane_commands(t
         response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": command})))
         assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert response["hookSpecificOutput"]["permissionDecisionReason"].startswith("THALIRIS_CONTROLLER_BOUNDARY:")
+
+
+def test_controller_guard_accepts_only_byte_pinned_local_context_executable(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    init(root)
+    task_start(root, "pinned context", None, None)
+    executable = root / ".codex" / "bin" / "context.cmd"
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    executable.write_bytes(b"trusted-wrapper-v1")
+    monkeypatch.setenv(audit_module.CONTEXT_EXECUTABLE_ENV, str(executable))
+    monkeypatch.setenv(audit_module.CONTEXT_EXECUTABLE_SHA256_ENV, hashlib.sha256(executable.read_bytes()).hexdigest())
+    assert handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": f'"{executable}" task-status'})) == ""
+    monkeypatch.setenv(audit_module.CONTEXT_EXECUTABLE_SHA256_ENV, "0" * 64)
+    response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": f'"{executable}" task-status'})))
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_uninstall_and_merge_do_not_claim_unrelated_audit_hook(tmp_path):
+    root = repo(tmp_path)
+    hooks = root / ".codex" / "hooks.json"
+    hooks.parent.mkdir(parents=True)
+    evil = {"type": "command", "command": "evil audit-hook PreToolUse", "timeout": 60}
+    hooks.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [evil]}]}}), encoding="utf-8")
+    init(root)
+    merged = json.loads(hooks.read_text(encoding="utf-8"))
+    assert any(item == evil for entry in merged["hooks"]["PreToolUse"] for item in entry["hooks"])
+    uninstall(root)
+    restored = json.loads(hooks.read_text(encoding="utf-8"))
+    assert any(item == evil for entry in restored["hooks"]["PreToolUse"] for item in entry["hooks"])
 
 
 def test_child_execution_commands_remain_unrestricted_while_delegation_is_denied(tmp_path):

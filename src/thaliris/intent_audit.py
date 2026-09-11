@@ -36,6 +36,7 @@ AUDIT_ENV = "THALIRIS_INTENT_AUDIT_ACTIVE"
 AUDIT_RUNNER_ENV = "THALIRIS_CODEX_EXECUTABLE"
 AUDIT_AUTH_FILE_ENV = "THALIRIS_INTENT_AUDIT_AUTH_FILE"
 CONTEXT_EXECUTABLE_ENV = "THALIRIS_CONTEXT_EXECUTABLE"
+CONTEXT_EXECUTABLE_SHA256_ENV = "THALIRIS_CONTEXT_EXECUTABLE_SHA256"
 INTENT_AUDITOR_MODEL = "gpt-5.6-luna"
 INTENT_AUDITOR_REASONING = "high"
 _COLLABORATION_TOOL_NAMES = (
@@ -89,7 +90,6 @@ _SOURCE_MUTATION = re.compile(
     r"(?i)(?:apply_patch|git\s+(?:apply|commit|reset|checkout|restore|rebase)|(?:set|add|clear|out|remove|move|copy|rename|new)-content|(?:set|add|remove|move|copy|rename|new)-item|\b(?:ni|mkdir)\b|(?<![<>])>{1,2}(?![&]))"
 )
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
-_CONTEXT_COMMAND = r"(?:context(?:\.(?:exe|cmd))?|[^\s]*[\\/]context\.(?:exe|cmd)|\"[^\"]*[\\/]context\.(?:exe|cmd)\"|'[^']*[\\/]context\.(?:exe|cmd)')"
 _ACCEPTANCE_COMMAND = re.compile(
     r"^(?:"
     r"pytest|python\s+-m\s+pytest|uv\s+run\s+(?:python\s+-m\s+)?pytest|"
@@ -155,20 +155,75 @@ def _managed_handler(event: str) -> dict[str, Any]:
 
 def _hook_command_prefix() -> str:
     """Resolve the hook executable, allowing audited runs to pin a checkout."""
-    configured = os.environ.get(CONTEXT_EXECUTABLE_ENV)
-    if configured and Path(configured).is_file():
+    configured = _trusted_context_executable()
+    if configured is not None:
         # Quote paths for the native command hook shell while preserving the
         # CLI argument boundary on Windows and POSIX.
         return f'"{configured}" audit-hook'
     return HOOK_COMMAND_PREFIX
 
 
+def _digest_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _trusted_context_executable() -> Path | None:
+    """Return a host-pinned executable only when its bytes match the pin.
+
+    A configured path by itself is not trust.  The canonical PATH-relative
+    ``context`` invocation remains valid; an absolute/local wrapper requires
+    both an explicit path and an exact host-provided SHA-256 pin.
+    """
+    configured = os.environ.get(CONTEXT_EXECUTABLE_ENV)
+    expected = os.environ.get(CONTEXT_EXECUTABLE_SHA256_ENV, "").lower()
+    if not configured or not re.fullmatch(r"[0-9a-f]{64}", expected):
+        return None
+    path = Path(configured)
+    try:
+        if not path.is_file() or path.is_symlink():
+            return None
+        resolved = path.resolve(strict=True)
+        return resolved if _digest_file(resolved) == expected else None
+    except (OSError, RuntimeError):
+        return None
+
+
+def _context_arguments(command: str) -> str | None:
+    """Extract arguments only from canonical or byte-pinned context invocations."""
+    match = re.match(r"^\s*(\"[^\"]+\"|'[^']+'|[^\s]+)(?:\s+(.*?))?\s*$", command)
+    if not match:
+        return None
+    token = match.group(1)
+    executable = token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in {'\"', "'"} else token
+    lowered = executable.lower()
+    canonical = lowered in {"context", "context.exe", "context.cmd"} and not any(char in executable for char in "\\/")
+    pinned = False
+    trusted = _trusted_context_executable()
+    if trusted is not None:
+        try:
+            pinned = Path(executable).resolve(strict=True) == trusted
+        except (OSError, RuntimeError):
+            pinned = False
+    if not (canonical or pinned):
+        return None
+    return match.group(2) or ""
+
+
 def is_managed_handler(value: object, event: str) -> bool:
     if value == _managed_handler(event):
         return True
-    # Permit upgrading an older PATH-relative hook to a pinned executable
-    # without creating duplicate handlers during merge.
-    return isinstance(value, dict) and value.get("type") == "command" and value.get("command", "").endswith(f" audit-hook {event}") and value.get("timeout") == 60 and (event != "SubagentStart" or value.get("additionalContextLimit") in {None, 0})
+    # Permit only exact historical generated forms.  A suffix match is unsafe:
+    # ``evil audit-hook PreToolUse`` is user-owned, not Thaliris-owned.
+    if not isinstance(value, dict) or value.get("type") != "command" or value.get("timeout") != 60:
+        return False
+    if event == "SubagentStart" and value.get("additionalContextLimit") not in {None, 0}:
+        return False
+    historical = {f"context audit-hook {event}", f"context.exe audit-hook {event}", f"context.cmd audit-hook {event}"}
+    return value.get("command") in historical
 
 
 def merge_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -1127,26 +1182,27 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
         value = segment.strip()
         if not value:
             continue
+        context_args = _context_arguments(value)
         lowered = value.lower()
         # Complex shell syntax is outside the fixed command vocabulary.  Do
         # not try to interpret it: reject it before accepting a prefix.
         if re.search(r"[`$()<>]", value):
             return "ROOT_COMMAND_NOT_ALLOWED"
-        if re.fullmatch(fr"{_CONTEXT_COMMAND}\s+task-status", lowered):
+        if context_args.lower() == "task-status" if context_args is not None else False:
             continue
-        if re.fullmatch(fr"{_CONTEXT_COMMAND}\s+prepare\s+--role(?:=|\s+)controller", lowered):
+        if context_args is not None and re.fullmatch(r"prepare\s+--role(?:=|\s+)controller", context_args, re.IGNORECASE):
             continue
-        if re.match(fr"^{_CONTEXT_COMMAND}\s+task-update\b", lowered):
+        if context_args is not None and re.match(r"^task-update\b", context_args, re.IGNORECASE):
             if _controller_roles(value) == ["controller"]:
                 continue
             return "ROOT_COMMAND_NOT_ALLOWED"
-        if re.match(fr"^{_CONTEXT_COMMAND}\s+task-artifact\b", lowered):
+        if context_args is not None and re.match(r"^task-artifact\b", context_args, re.IGNORECASE):
             continue
-        if re.match(fr"^{_CONTEXT_COMMAND}\s+task-promote\b", lowered):
+        if context_args is not None and re.match(r"^task-promote\b", context_args, re.IGNORECASE):
             if _controller_roles(value) == ["controller"]:
                 continue
             return "ROOT_COMMAND_NOT_ALLOWED"
-        if re.match(fr"^{_CONTEXT_COMMAND}\s+task-close\b", lowered):
+        if context_args is not None and re.match(r"^task-close\b", context_args, re.IGNORECASE):
             if not qualifying_child_completed(root):
                 return "TASK_CLOSE_NO_CHILD"
             continue

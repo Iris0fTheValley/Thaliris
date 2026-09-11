@@ -593,7 +593,7 @@ def _bounded_lines(value: object, field: str) -> None:
 
 
 def _artifact_ref(root: Path, value: object, *, require_target: bool = True, require_semantic_producer: bool = False, require_identity: bool = False) -> None:
-    if not isinstance(value, dict) or not {"id", "path", "summary"}.issubset(value) or set(value) - {"id", "path", "summary", "producer_role", "registered_by", "scope", "evidence_refs", "content_sha256"}:
+    if not isinstance(value, dict) or not {"id", "path", "summary"}.issubset(value) or set(value) - {"id", "path", "summary", "producer_role", "registered_by", "scope", "evidence_refs", "content_sha256", "supersedes", "task_id", "revision"}:
         raise ValueError("invalid artifact reference")
     identifier, path, summary = value["id"], value["path"], value["summary"]
     if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", identifier):
@@ -623,15 +623,62 @@ def _artifact_ref(root: Path, value: object, *, require_target: bool = True, req
         raise ValueError("artifact producer_role must be a semantic execution role")
     if "registered_by" in value and value["registered_by"] != "controller":
         raise ValueError("artifact pointers must be registered by Controller")
+    if "task_id" in value:
+        try:
+            uuid.UUID(str(value["task_id"]))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ValueError("invalid artifact task identity") from exc
+    if "revision" in value and (type(value["revision"]) is not int or value["revision"] < 1):
+        raise ValueError("invalid artifact revision identity")
     if "scope" in value and (not isinstance(value["scope"], str) or not value["scope"].strip() or _bad_text(value["scope"]) or len(value["scope"]) > 300):
         raise ValueError("invalid artifact reference")
     if "evidence_refs" in value and (not isinstance(value["evidence_refs"], list) or len(value["evidence_refs"]) > 16 or not all(isinstance(ref, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", ref) for ref in value["evidence_refs"])):
         raise ValueError("invalid artifact reference")
+    if "supersedes" in value and (not isinstance(value["supersedes"], list) or len(value["supersedes"]) > 16 or len(set(value["supersedes"])) != len(value["supersedes"]) or not all(isinstance(item, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,63}", item) for item in value["supersedes"])):
+        raise ValueError("invalid artifact supersession")
+    if "supersedes" in value and value["id"] in value["supersedes"]:
+        raise ValueError("artifact cannot supersede itself")
     identity = value.get("content_sha256")
     if require_identity and identity is None:
         raise ValueError("artifact reference requires content identity")
     if identity is not None and (not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity)):
         raise ValueError("invalid artifact content identity")
+
+
+def _artifact_supersession(state: dict[str, object]) -> tuple[set[str], set[str]]:
+    """Return (all ids, ids made inactive by append-only supersession edges)."""
+    artifacts = state.get("artifact_refs")
+    if not isinstance(artifacts, list):
+        raise ValueError("invalid artifact_refs")
+    by_id = {item["id"]: item for item in artifacts if isinstance(item, dict) and isinstance(item.get("id"), str)}
+    inactive: set[str] = set()
+    edges: dict[str, list[str]] = {}
+    for artifact_id, item in by_id.items():
+        targets = item.get("supersedes", [])
+        if not isinstance(targets, list) or any(target not in by_id or target == artifact_id for target in targets):
+            raise ValueError("artifact supersession target is not registered")
+        edges[artifact_id] = list(targets)
+        inactive.update(targets)
+    visiting: set[str] = set()
+    visited: set[str] = set()
+    def visit(identifier: str) -> None:
+        if identifier in visiting:
+            raise ValueError("artifact supersession cycle")
+        if identifier in visited:
+            return
+        visiting.add(identifier)
+        for target in edges.get(identifier, []):
+            visit(target)
+        visiting.remove(identifier)
+        visited.add(identifier)
+    for identifier in by_id:
+        visit(identifier)
+    return set(by_id), inactive
+
+
+def _artifact_is_active(state: dict[str, object], artifact_id: str) -> bool:
+    ids, inactive = _artifact_supersession(state)
+    return artifact_id in ids and artifact_id not in inactive
 
 
 def _artifact_freshness(root: Path, artifact: dict[str, object]) -> str:
@@ -835,6 +882,7 @@ def _validate_state(root: Path, state: object, *, enforce_fresh: bool = False) -
         if artifact["id"] in artifact_ids:
             raise ValueError("duplicate artifact reference id")
         artifact_ids.add(artifact["id"])
+    _artifact_supersession(state)
     milestone = state["current_milestone"]
     if milestone is not None and (not isinstance(milestone, str) or not _milestone_exists(root, milestone)):
         raise ValueError("current_milestone must be linked by the top-level milestone index")
@@ -1117,7 +1165,7 @@ def _controller_packet(state: dict[str, object], root: Path | None = None) -> di
         "Active Work": state["active_work"],
         "Pending Results": state["pending_results"],
         "Unresolved Questions": statements("unknowns"),
-        "Artifact Refs": [dict(item) | ({"freshness": _artifact_freshness(root, item)} if root is not None else {}) for item in state["artifact_refs"]],
+        "Artifact Refs": [dict(item) | ({"freshness": _artifact_freshness(root, item), "active": _artifact_is_active(state, item["id"])} if root is not None else {}) for item in state["artifact_refs"]],
         "Accepted Constraints": statements("constraints"),
         "Accepted Decisions": statements("decisions"),
         "Modification Boundary": {
@@ -1163,7 +1211,7 @@ def task_status(root: Path) -> dict[str, object]:
     return _controller_packet(_load_state(root), root)
 
 
-def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer_role: str | None = None, registered_by: str = "controller", scope: str | None = None, evidence_refs: list[str] | None = None) -> dict[str, object]:
+def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer_role: str | None = None, registered_by: str = "controller", scope: str | None = None, evidence_refs: list[str] | None = None, supersedes: list[str] | None = None) -> dict[str, object]:
     root = _repo_root(root)
     if registered_by != "controller":
         raise ValueError("only Controller may register artifact pointers")
@@ -1171,6 +1219,7 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
     if producer_role is not None: artifact["producer_role"] = producer_role
     if scope is not None: artifact["scope"] = scope
     if evidence_refs is not None: artifact["evidence_refs"] = evidence_refs
+    if supersedes is not None: artifact["supersedes"] = supersedes
     _artifact_ref(root, artifact, require_semantic_producer=True)
     with _lock(root):
         state = _load_state(root, active=True)
@@ -1178,12 +1227,20 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
             raise ValueError("task revision conflict")
         if artifact_id in {item["id"] for item in state["artifact_refs"]}:
             raise ValueError("artifact reference id already exists")
+        if supersedes is not None:
+            known_ids = {item["id"] for item in state["artifact_refs"]}
+            if any(item not in known_ids for item in supersedes):
+                raise ValueError("artifact supersession target is not registered")
+        artifact["task_id"] = state["task_id"]
+        artifact["revision"] = base_revision + 1
+        artifact["registered_by"] = registered_by
         target = _safe(root, path)
         if target.is_symlink() or not target.is_file():
             raise ValueError("artifact path must name an existing regular file")
         artifact["content_sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
         _artifact_ref(root, artifact, require_semantic_producer=True, require_identity=True)
         state["artifact_refs"].append(artifact)
+        _artifact_supersession(state)
         state["revision"] = base_revision + 1
         _write_state(root, state, enforce_fresh=False)
     return _controller_ack(state, ["artifact_refs"])
@@ -1205,7 +1262,7 @@ def _verification_bindings(root: Path, state: dict[str, object]) -> set[str]:
         paths = set(target["changed_surface"])
         for artifact_id in target["artifact_refs"]:
             artifact = artifact_by_id[artifact_id]
-            if _artifact_freshness(root, artifact) != "FRESH":
+            if not _artifact_is_active(state, artifact_id) or _artifact_freshness(root, artifact) != "FRESH":
                 raise ValueError("verification target artifact is no longer current")
             paths.add(artifact["path"])
     if not paths:

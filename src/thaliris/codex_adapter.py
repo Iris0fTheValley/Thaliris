@@ -63,6 +63,13 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     # review-convergence and bounded Correction Packet guidance was added.
     "ae51394874f0b35dc2b39577d471bf2f07533962363cdb7ad56e6e08a3860887",
     "a1c7a46981512c7e8067dd5e40e193a0b54e34384aefc2b28950d5c6ccb5af9a",
+    # Exact profile bytes emitted before direct-write guidance was removed
+    # from the runtime-neutral role contract.
+    "44781edb6a654db482adafdc20b16f75cdebded2e62e8d86376aefc577a3ae55",
+    "f6827c30074554b809b50414bde31146354ec6898fe8bd13a43402134c8b6476",
+    "17616dddc351c20f5c98a30a0506253322d0cc5f6480d89690c7a08a70592557",
+    "d24ee0de8a22409bd5a3c9f1359079c4d6c7ccfbb14f65842e84f21ab0a5aa96",
+    "322534fb6f2b2abc312bd04a76e477e3e128cf6a194da5817ecaabd0678aa397",
 })
 
 
@@ -77,7 +84,10 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
         "stop. If the selected evidence is materially contradictory and cannot be safely resolved, return "
         "INSUFFICIENT_OR_CONTRADICTORY with the conflicting references and stop. Otherwise return DECISION "
         "with the selected decision, rationale, must-preserve invariants, compatibility constraints, and "
-        "remaining decision-changing unknowns. Do not modify repository "
+        "remaining decision-changing unknowns. Treat the supplied Task Specification as authoritative: "
+        "a missing required implementation is an IMPLEMENTATION_GAP and requires a DECISION, not NEED_EVIDENCE. "
+        "Return NEED_EVIDENCE only for an unresolved repository or runtime fact that changes the choice among "
+        "multiple compliant implementations. Do not modify repository "
         "files or task semantic state. Return the decision to the Controller; implementation belongs to "
         "the Implementer."
         if role == "reasoning-specialist"
@@ -86,9 +96,9 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
             "will be reused, persist reusable evidence in a bounded repo-relative artifact preserving facts, "
             "evidence refs, affected files/symbols, verification, unknowns, and contradictions. Return only "
             "artifact path, finding/evidence identifiers, short outcome, and remaining decision-changing "
-            "unknowns; do not use the final message as the primary evidence store. For a required artifact, "
-            "use one direct shell write and verify it; do not repeatedly invoke file-change or patch helpers "
-            "for the same artifact."
+            "unknowns; do not use the final message as the primary evidence store. The artifact contract is "
+            "stable bytes, verified content identity, Controller registration, and immutable historical pointers; "
+            "the concrete file-writing mechanism is runtime-specific and is not part of this role contract."
             if role == "investigator" else
             f"Thaliris semantic role: {role}. Work only inside your assigned role and return selected evidence-backed results."
             + (
@@ -104,7 +114,9 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
             + (
                 " Accept only the selected Modification Boundary and, when correcting a review, its "
                 "bounded Correction Packet. Preserve accepted constraints and verify only the named "
-                "surface; do not reopen repository-wide investigation unless the packet is ARCHITECTURAL."
+                "surface. For MECHANICAL or LOCAL_SEMANTIC packets, do not investigate beyond the named "
+                "surface. For an ARCHITECTURAL packet, return to the Controller for a fresh accepted "
+                "decision; do not reopen repository-wide investigation or act as a fallback Investigator."
                 if role == "implementer" else ""
             )
         )
@@ -274,8 +286,9 @@ out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller
 path. If context is insufficient, request a targeted fresh follow-up or
 explicitly pass a selected artifact/payload; do not rebuild the full working set.
 
-Use `docs/thaliris-benchmark-protocol.md` as the authoritative evidence and
-review-convergence contract. Register reusable artifacts before the dependent
+Use `docs/thaliris-routing-protocol.md` as the authoritative product evidence
+and review-convergence contract. The benchmark protocol is an observation and
+判定 layer only. Register reusable artifacts before the dependent
 decision, select only the facts needed by the next role, and record downstream
 consumption. Classify each review finding as MECHANICAL, LOCAL_SEMANTIC, or
 ARCHITECTURAL. The first two receive one fresh Implementer Correction Packet
@@ -371,8 +384,9 @@ should contain only the artifact path, finding/evidence IDs, short outcome, and
 remaining decision-changing unknowns. The Controller registers the pointer with
 `context task-artifact --base-revision N --id ID --path repo/relative --summary
 TEXT --producer-role investigator` and selects relevant content; artifact
-creation should use one direct shell write followed by verification, rather than
-repeated file-change or patch-helper retries for the same artifact. Artifact
+creation must produce stable bytes and verify their identity before registration.
+The concrete write mechanism is a Codex operational concern, not an Evidence
+semantic invariant. Artifact
 existence does not authorize automatic full-text projection. Registration
 computes and stores the artifact content identity. Downstream roles do not
 receive it automatically: select the facts, constraints, contradictions,
@@ -445,6 +459,8 @@ KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "30213f6b50822047e691673b3e1f27718e795ce450989bf74c53c08f8f98921d",
     # Exact role-pack bytes before the review-convergence protocol reference.
     "7fd54f2f8c7e97ab54aefa31bb3f53f7864f2d00e4d2e9b1d27309f115945d3d",
+    # Exact role-pack bytes emitted before the product-protocol split.
+    "fb9aa6827d9aba1ff0a03295f007b46c7e03c72894c20a78438eb35fdfd5cc5b",
 })
 
 

@@ -1,5 +1,9 @@
 # Thaliris Benchmark Protocol
 
+The runtime-neutral product rules are defined in
+`docs/thaliris-routing-protocol.md`. This document only defines how a
+benchmark observes, freezes, and scores those rules.
+
 This document is the authoritative protocol for benchmark evidence, review
 convergence, candidate identity, and fast-path accounting. Role packs and the
 benchmark validator derive their required fields from these rules.
@@ -23,9 +27,8 @@ files/symbols, confirmed facts, inferences, unknowns, contradictions, and
 verification performed. Registration must precede the dependent decision.
 Selection and every downstream consumer must be recorded.
 
-The required artifact is written once with a direct shell operation and verified
-before registration; repeated file-change or patch-helper retries for the same
-artifact are not part of the protocol.
+The benchmark records the actual producer, registration, selection, consumer,
+and byte-identity events. It does not prescribe a particular file-writing tool.
 
 The artifact pointer is selective access, not automatic full-text injection.
 Content changes make the pointer stale. A replacement must explicitly name the
@@ -77,6 +80,6 @@ reason.
 
 ## Documentation consistency
 
-The benchmark validator checks that this document is referenced by generated
-role-pack output and by the benchmark protocol tests. Runtime observations are
-reported separately from supported behavior and host limitations.
+The benchmark validator checks the authoritative routing-protocol identity and
+its generated runtime projections. Runtime observations are reported
+separately from supported behavior and host limitations.

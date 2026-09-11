@@ -457,6 +457,36 @@ def test_verification_gate_tracks_artifact_identity_and_current_surface(tmp_path
         core.task_close(root, verified["revision"])
 
 
+def test_artifact_supersession_is_append_only_and_inactive_pointers_cannot_verify(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    artifact = root / "evidence.md"
+    artifact.write_text("v1", encoding="utf-8")
+    started = core.task_start(root, "supersede evidence", None, None)
+    old = core.task_artifact(root, started["revision"], "evidence-v1", "evidence.md", "first evidence", producer_role="investigator")
+    artifact.write_text("v2", encoding="utf-8")
+    new = core.task_artifact(root, old["revision"], "evidence-v2", "evidence.md", "replacement evidence", producer_role="investigator", supersedes=["evidence-v1"])
+    refs = core.task_show(root)["state"]["artifact_refs"]
+    assert refs[0]["id"] == "evidence-v1" and "supersedes" not in refs[0]
+    assert refs[1]["supersedes"] == ["evidence-v1"]
+    status = core.task_status(root)["Artifact Refs"]
+    assert status[0]["active"] is False and status[1]["active"] is True
+    configured = core.task_update(root, "controller", new["revision"], input_file(root.parent, {
+        "verification_target": {"description": "old evidence", "artifact_refs": ["evidence-v1"], "changed_surface": []},
+    }, "superseded-target.json"))
+    with pytest.raises(ValueError, match="no longer current"):
+        core._verification_bindings(root, core.task_show(root)["state"])
+
+
+def test_artifact_supersession_rejects_self_reference_and_cycles(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    (root / "evidence.md").write_text("evidence", encoding="utf-8")
+    started = core.task_start(root, "invalid supersession", None, None)
+    with pytest.raises(ValueError, match="cannot supersede itself"):
+        core.task_artifact(root, started["revision"], "self", "evidence.md", "bad", producer_role="investigator", supersedes=["self"])
+
+
 def test_verification_target_rejects_bare_model_claim(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.init(root)

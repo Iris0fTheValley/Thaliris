@@ -47,6 +47,7 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--path", required=True)
     q.add_argument("--summary", required=True)
     q.add_argument("--producer-role", choices=codex_adapter.ROLE_CHOICES)
+    q.add_argument("--supersedes", action="append", default=[])
     q = sub.add_parser("task-close")
     q.add_argument("--base-revision", required=True, type=int)
     q = sub.add_parser(
@@ -98,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "task-update": out = task_update(root, codex_adapter.semantic_role(args.role), args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
         elif args.command == "task-status": out = task_status(root)
-        elif args.command == "task-artifact": out = task_artifact(root, args.base_revision, args.id, args.path, args.summary, producer_role=(codex_adapter.semantic_role(args.producer_role) if getattr(args, "producer_role", None) else None))
+        elif args.command == "task-artifact": out = task_artifact(root, args.base_revision, args.id, args.path, args.summary, producer_role=(codex_adapter.semantic_role(args.producer_role) if getattr(args, "producer_role", None) else None), supersedes=args.supersedes or None)
         elif args.command == "task-close": out = codex_adapter.task_close(root, args.base_revision)
         elif args.command == "task-promote": out = task_promote(root, codex_adapter.semantic_role(args.role), args.base_revision, args.input)
         elif args.command == "rollback": out = rollback(root, args.backup)

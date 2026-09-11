@@ -87,6 +87,52 @@ def validate_evidence(ledger: dict[str, Any]) -> dict[str, Any]:
     return {"status": "PASS", "required": "REQUIRED", "produced": len(artifacts), "registered": registered, "selected": selected, "consumed": consumed, "superseded": len(superseded_ids)}
 
 
+def validate_collected_evidence(ledger: dict[str, Any]) -> dict[str, Any]:
+    """Validate facts emitted by d11_collector, never report declarations."""
+    required = ledger.get("evidence_required")
+    artifacts = ledger.get("artifacts")
+    if required == "NOT_REQUIRED":
+        return {"status": "PASS", "required": "NOT_REQUIRED", "produced": 0}
+    if required != "REQUIRED" or not isinstance(artifacts, list) or not artifacts:
+        return _fail("EVIDENCE_COLLECTOR_MISSING", "collector did not observe required artifacts")
+    for item in artifacts:
+        if not isinstance(item, dict):
+            return _fail("EVIDENCE_COLLECTOR_SCHEMA", "collector artifact is not an object")
+        if item.get("producer_role") not in {"investigator", "curator"} or item.get("registered_by") != "controller":
+            return _fail("EVIDENCE_COLLECTOR_PROVENANCE", "artifact producer or registration is not Core-backed")
+        if item.get("bytes_match") is not True:
+            return _fail("EVIDENCE_CONTENT_IDENTITY", "registered artifact bytes do not match Core identity")
+        if not item.get("produced_before_registration") or not item.get("registered_before_dispatch"):
+            return _fail("EVIDENCE_ORDERING", "production, registration, and dispatch ordering was not observed")
+        if not item.get("used") or not item.get("carried_content_identity"):
+            return _fail("EVIDENCE_ARTIFACT_UNUSED", "registered evidence has no provenance-backed downstream consumer")
+    return {"status": "PASS", "required": "REQUIRED", "produced": len(artifacts), "consumed": sum(len(item.get("consumer_roles", [])) for item in artifacts)}
+
+
+def validate_review_graph(ledger: dict[str, Any], *, final_candidate: str) -> dict[str, Any]:
+    """Validate fresh native Reviewer sessions against their own candidates."""
+    rounds = ledger.get("review_rounds")
+    if not isinstance(rounds, list) or not rounds:
+        return _fail("REVIEW_MISSING", "collector observed no review verdict")
+    seen: set[str] = set()
+    for item in rounds:
+        if not isinstance(item, dict):
+            return _fail("REVIEW_COLLECTOR_SCHEMA", "review fact is not an object")
+        session = item.get("reviewer_session")
+        if not isinstance(session, str) or not session or session in seen:
+            return _fail("REVIEW_SESSION_REUSE", "reviewer session identity is missing or reused")
+        seen.add(session)
+        if item.get("native_session") is not True or item.get("sandbox_mode") != "read-only":
+            return _fail("REVIEW_NOT_NATIVE_READ_ONLY", "native fresh read-only evidence is absent")
+        if item.get("verdict") == "EXTERNALLY_INCOMPLETE":
+            return _fail("REVIEW_EXTERNAL_INCOMPLETE", "external Reviewer interruption cannot pass")
+        if item.get("verdict") not in {"READY", "REQUEST_CHANGES"}:
+            return _fail("REVIEW_VERDICT", "unknown Reviewer verdict")
+    if rounds[-1].get("verdict") != "READY" or rounds[-1].get("input_candidate_identity") != final_candidate:
+        return _fail("REVIEW_FINAL_CANDIDATE", "final READY is not bound to the final candidate")
+    return {"status": "PASS", "rounds": len(rounds), "sessions": sorted(seen)}
+
+
 def validate_review_convergence(ledger: dict[str, Any], *, expected_candidate: str | None = None) -> dict[str, Any]:
     rounds = ledger.get("review_rounds")
     if not isinstance(rounds, list) or not rounds:
@@ -181,10 +227,11 @@ def validate_fast_path(report: dict[str, Any]) -> dict[str, Any]:
 def validate_documentation(*, protocol_path: Path, generated_text: str, tests_passed: bool, runtime_consistency: bool) -> dict[str, Any]:
     if not protocol_path.is_file():
         return _fail("DOCUMENTATION_MISSING", str(protocol_path))
-    if "docs/thaliris-benchmark-protocol.md" not in generated_text:
-        return _fail("DOCUMENTATION_DEAD_TEXT", "generated role-pack does not reference authoritative protocol")
-    if not tests_passed or not runtime_consistency:
-        return _fail("DOCUMENTATION_RUNTIME_DRIFT", "documentation test or runtime consistency is not PASS")
+    routing = protocol_path.parent / "thaliris-routing-protocol.md"
+    if not routing.is_file() or "docs/thaliris-routing-protocol.md" not in generated_text:
+        return _fail("DOCUMENTATION_DEAD_TEXT", "generated role-pack does not reference authoritative product protocol")
+    if "docs/thaliris-routing-protocol.md" not in protocol_path.read_text(encoding="utf-8"):
+        return _fail("DOCUMENTATION_RUNTIME_DRIFT", "benchmark protocol does not reference product protocol")
     digest = hashlib.sha256(protocol_path.read_bytes()).hexdigest()
     return {"status": "PASS", "protocol_sha256": digest}
 

@@ -342,7 +342,7 @@ def run_frozen_evaluator_calibration(
     def invoke(root: Path) -> dict[str, Any]:
         candidate = build_manifest(root, candidate_policy)
         command = [str(item).replace("{candidate_root}", str(root.resolve())) for item in template]
-        result = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
         stdout = result.stdout or ""
         stderr = result.stderr or ""
         parsed = None

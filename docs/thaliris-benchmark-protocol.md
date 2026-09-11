@@ -23,6 +23,10 @@ files/symbols, confirmed facts, inferences, unknowns, contradictions, and
 verification performed. Registration must precede the dependent decision.
 Selection and every downstream consumer must be recorded.
 
+The required artifact is written once with a direct shell operation and verified
+before registration; repeated file-change or patch-helper retries for the same
+artifact are not part of the protocol.
+
 The artifact pointer is selective access, not automatic full-text injection.
 Content changes make the pointer stale. A replacement must explicitly name the
 superseded artifact; stale or contradictory artifacts cannot remain silently

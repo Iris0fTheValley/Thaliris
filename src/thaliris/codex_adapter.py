@@ -86,7 +86,9 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
             "will be reused, persist reusable evidence in a bounded repo-relative artifact preserving facts, "
             "evidence refs, affected files/symbols, verification, unknowns, and contradictions. Return only "
             "artifact path, finding/evidence identifiers, short outcome, and remaining decision-changing "
-            "unknowns; do not use the final message as the primary evidence store."
+            "unknowns; do not use the final message as the primary evidence store. For a required artifact, "
+            "use one direct shell write and verify it; do not repeatedly invoke file-change or patch helpers "
+            "for the same artifact."
             if role == "investigator" else
             f"Thaliris semantic role: {role}. Work only inside your assigned role and return selected evidence-backed results."
             + (
@@ -369,6 +371,8 @@ should contain only the artifact path, finding/evidence IDs, short outcome, and
 remaining decision-changing unknowns. The Controller registers the pointer with
 `context task-artifact --base-revision N --id ID --path repo/relative --summary
 TEXT --producer-role investigator` and selects relevant content; artifact
+creation should use one direct shell write followed by verification, rather than
+repeated file-change or patch-helper retries for the same artifact. Artifact
 existence does not authorize automatic full-text projection. Registration
 computes and stores the artifact content identity. Downstream roles do not
 receive it automatically: select the facts, constraints, contradictions,

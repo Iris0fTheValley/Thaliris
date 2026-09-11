@@ -115,6 +115,8 @@ should contain only the artifact path, finding/evidence IDs, short outcome, and
 remaining decision-changing unknowns. The Controller registers the pointer with
 `context task-artifact --base-revision N --id ID --path repo/relative --summary
 TEXT --producer-role investigator` and selects relevant content; artifact
+creation should use one direct shell write followed by verification, rather than
+repeated file-change or patch-helper retries for the same artifact. Artifact
 existence does not authorize automatic full-text projection. Registration
 computes and stores the artifact content identity. Downstream roles do not
 receive it automatically: select the facts, constraints, contradictions,

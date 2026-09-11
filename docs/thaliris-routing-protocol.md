@@ -1,6 +1,6 @@
 # Thaliris Routing and Evidence Protocol
 
-<!-- thaliris-routing-protocol: v1 -->
+<!-- thaliris-routing-protocol: thaliris-routing-v1 -->
 
 This document is the runtime-neutral product protocol for placing correct,
 current information into the next reasoning context. Benchmark documents may

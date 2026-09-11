@@ -258,7 +258,8 @@ def validate_documentation(*, protocol_path: Path, generated_text: str, tests_pa
     routing = protocol_path.parent / "thaliris-routing-protocol.md"
     if not routing.is_file() or "docs/thaliris-routing-protocol.md" not in generated_text:
         return _fail("DOCUMENTATION_DEAD_TEXT", "generated role-pack does not reference authoritative product protocol")
-    if "docs/thaliris-routing-protocol.md" not in protocol_path.read_text(encoding="utf-8"):
+    routing_text = routing.read_text(encoding="utf-8")
+    if "thaliris-routing-protocol: thaliris-routing-v1" not in routing_text or "docs/thaliris-routing-protocol.md" not in protocol_path.read_text(encoding="utf-8"):
         return _fail("DOCUMENTATION_RUNTIME_DRIFT", "benchmark protocol does not reference product protocol")
     digest = hashlib.sha256(protocol_path.read_bytes()).hexdigest()
     return {"status": "PASS", "protocol_sha256": digest}

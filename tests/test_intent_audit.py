@@ -1182,11 +1182,14 @@ def test_benchmark_protocol_is_referenced_by_generated_surfaces():
     assert routing.is_file()
     assert "docs/thaliris-routing-protocol.md" in codex_adapter.ROLE_PACKS
     assert "docs/thaliris-routing-protocol.md" in protocol.read_text(encoding="utf-8")
+    assert "thaliris-routing-protocol: thaliris-routing-v1" in routing.read_text(encoding="utf-8")
     assert "evidence protocol" in codex_adapter.MANAGED
     reviewer = codex_adapter._agent_profile("thaliris-reviewer", "reviewer", "gpt-5.6-terra", "high").decode()
     assert "classification (MECHANICAL, LOCAL_SEMANTIC, or ARCHITECTURAL)" in reviewer
     implementer = codex_adapter._agent_profile("thaliris-implementer", "implementer", "gpt-5.6-terra", "medium").decode()
     assert "bounded Correction Packet" in implementer
+    assert "ARCHITECTURAL packet, return to the Controller" in implementer
+    assert "fallback Investigator" in implementer
 
 
 def test_benchmark_protocol_migration_preserves_user_edits(tmp_path):

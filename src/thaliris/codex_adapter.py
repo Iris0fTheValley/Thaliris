@@ -9,6 +9,7 @@ import subprocess
 import tomllib
 
 from . import core, intent_audit
+from .protocol import ROUTING_PROTOCOL_VERSION
 from .intent_audit import MANAGED_HOOKS_DESCRIPTION, bind_unbound_intent, cleanup_task_audit, handle_hook, merge_hooks, remove_hooks, task_close_audit
 
 CODEX_ROLE_MAP = {

@@ -48,7 +48,8 @@ def run_preflight(
     actual_adapter = _git(root, "rev-parse", "HEAD")
     checks["adapter_sha"] = {"expected": expected_adapter_sha, "actual": actual_adapter, "pass": actual_adapter == expected_adapter_sha}
     routing = root / "docs" / "thaliris-routing-protocol.md"
-    checks["product_protocol"] = {"path": str(routing), "sha256": _sha(routing) if routing.is_file() else None, "pass": routing.is_file()}
+    protocol_text = routing.read_text(encoding="utf-8") if routing.is_file() else ""
+    checks["product_protocol"] = {"path": str(routing), "sha256": _sha(routing) if routing.is_file() else None, "version": "thaliris-routing-v1" if "thaliris-routing-protocol: thaliris-routing-v1" in protocol_text else None, "pass": routing.is_file() and "thaliris-routing-protocol: thaliris-routing-v1" in protocol_text}
     harness = [Path(path) for path in harness_paths]
     checks["benchmark_harness"] = {"sha256": _hash_files(harness) if all(path.is_file() for path in harness) else None, "pass": bool(harness) and all(path.is_file() for path in harness)}
     checks["evaluator"] = {"path": str(evaluator_path), "sha256": _sha(evaluator_path) if evaluator_path.is_file() else None, "pass": evaluator_path.is_file()}

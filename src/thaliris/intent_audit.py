@@ -1131,21 +1131,21 @@ def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | Non
         # not try to interpret it: reject it before accepting a prefix.
         if re.search(r"[`$()<>]", value):
             return "ROOT_COMMAND_NOT_ALLOWED"
-        if re.fullmatch(r"context\s+task-status", lowered):
+        if re.fullmatch(r"context(?:\.exe)?\s+task-status", lowered):
             continue
-        if re.fullmatch(r"context\s+prepare\s+--role(?:=|\s+)controller", lowered):
+        if re.fullmatch(r"context(?:\.exe)?\s+prepare\s+--role(?:=|\s+)controller", lowered):
             continue
-        if re.match(r"^context\s+task-update\b", lowered):
+        if re.match(r"^context(?:\.exe)?\s+task-update\b", lowered):
             if _controller_roles(value) == ["controller"]:
                 continue
             return "ROOT_COMMAND_NOT_ALLOWED"
-        if re.match(r"^context\s+task-artifact\b", lowered):
+        if re.match(r"^context(?:\.exe)?\s+task-artifact\b", lowered):
             continue
-        if re.match(r"^context\s+task-promote\b", lowered):
+        if re.match(r"^context(?:\.exe)?\s+task-promote\b", lowered):
             if _controller_roles(value) == ["controller"]:
                 continue
             return "ROOT_COMMAND_NOT_ALLOWED"
-        if re.match(r"^context\s+task-close\b", lowered):
+        if re.match(r"^context(?:\.exe)?\s+task-close\b", lowered):
             if not qualifying_child_completed(root):
                 return "TASK_CLOSE_NO_CHILD"
             continue

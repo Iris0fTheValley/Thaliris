@@ -8,7 +8,7 @@ from thaliris import core
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "benchmarks" / "abcd"))
-for name in ("candidate_manifest", "d11_collector", "d11_protocol", "trusted_surface"):
+for name in ("candidate_manifest", "d11_collector", "d11_protocol", "trusted_surface", "d11_preflight"):
     spec = importlib.util.spec_from_file_location(name, ROOT / "benchmarks" / "abcd" / f"{name}.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -106,3 +106,18 @@ def test_candidate_chain_is_bound_to_computed_manifest(tmp_path: Path) -> None:
     assert d11_protocol.validate_candidate_chain(chain)["status"] == "PASS"
     source.write_text("VALUE = 2\n", encoding="utf-8")
     assert d11_protocol.validate_candidate_chain(d11_collector.collect_candidate_chain(root, events))["code"] == "CANDIDATE_IDENTITY_MISMATCH"
+
+
+def test_preflight_is_fail_closed_without_clean_fixture_and_calibration(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    (root / "dirty.py").write_text("dirty", encoding="utf-8")
+    result = d11_preflight.run_preflight(
+        root,
+        expected_adapter_sha="0" * 40,
+        harness_paths=[root / "missing-harness.py"],
+        evaluator_path=root / "missing-evaluator.py",
+    )
+    assert result["status"] == "PREFLIGHT_FAIL"
+    assert result["checks"]["adapter_sha"]["pass"] is False
+    assert result["checks"]["benchmark_harness"]["pass"] is False
+    assert result["checks"]["gold"]["pass"] is False

@@ -13,7 +13,11 @@ need -> fresh Investigator -> bounded artifact -> Controller registration
      -> selected facts -> downstream consumer -> decision/implementation/review
 ```
 
-An artifact record must identify its producer role, task and revision,
+The Controller registers the artifact pointer before the dependent decision with
+`context task-artifact --base-revision N --id ID --path repo/relative
+--summary TEXT --producer-role investigator` (or the corresponding curator role).
+Registration computes the artifact content identity. An artifact record must
+identify its producer role, task and revision,
 repo-relative path and content SHA-256, source references, affected
 files/symbols, confirmed facts, inferences, unknowns, contradictions, and
 verification performed. Registration must precede the dependent decision.

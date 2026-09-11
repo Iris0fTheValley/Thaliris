@@ -186,9 +186,11 @@ Investigators may keep a large private working set, but reusable findings must
 be written to a bounded repo-relative Evidence Artifact before completion. The
 completion message should contain only the artifact path, finding/evidence IDs,
 a short outcome, and remaining decision-changing unknowns. The Controller must
-register that pointer with `context task-artifact --producer-role investigator`
-and select relevant facts; artifact existence never authorizes automatic full
-text propagation.
+ register that pointer with the complete command `context task-artifact
+ --base-revision N --id ID --path repo/relative --summary TEXT
+ --producer-role investigator` and select relevant facts; artifact existence
+ never authorizes automatic full-text propagation. The command computes and
+ stores the artifact content identity from the registered file.
 
 Every reusable artifact follows the evidence protocol: produce before the
 dependent decision, register it through `context task-artifact` with its
@@ -365,8 +367,10 @@ verification performed, unknowns, and contradictions; it does not preserve the
 exploration transcript or repeated tool output. Investigator completion messages
 should contain only the artifact path, finding/evidence IDs, short outcome, and
 remaining decision-changing unknowns. The Controller registers the pointer with
-`context task-artifact` and selects relevant content; artifact existence does
-not authorize automatic full-text projection. Downstream roles do not
+`context task-artifact --base-revision N --id ID --path repo/relative --summary
+TEXT --producer-role investigator` and selects relevant content; artifact
+existence does not authorize automatic full-text projection. Registration
+computes and stores the artifact content identity. Downstream roles do not
 receive it automatically: select the facts, constraints, contradictions,
 compatibility or lifecycle invariants, evidence summaries, unknowns, artifact
 pointers, and any other information that could materially change the next
@@ -390,9 +394,11 @@ end. Requested runtime or visible-behavior verification remains required.
 ## State And Retention
 
 `active_work` and `pending_results` are short controller-visible labels. Use
-`context task-artifact --base-revision N --id ID --path repo/relative --summary TEXT`
-to append a path-safe pointer to external work. Only the Controller registers
-the pointer; pass `--producer-role` to record which child produced it. Artifact
+`context task-artifact --base-revision N --id ID --path repo/relative --summary TEXT
+--producer-role investigator` to append a path-safe pointer to external work.
+Only the Controller registers the pointer; change the producer role when the
+producer is not an Investigator. Registration computes and stores the artifact
+content identity. Artifact
 contents remain outside the status packet and are never automatically injected
 into another role. A pointer is selective access, not a compression mandate:
 pass it when the next role needs to decide whether to read it. Raw task state

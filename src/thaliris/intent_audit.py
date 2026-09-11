@@ -89,7 +89,7 @@ _SOURCE_MUTATION = re.compile(
     r"(?i)(?:apply_patch|git\s+(?:apply|commit|reset|checkout|restore|rebase)|(?:set|add|clear|out|remove|move|copy|rename|new)-content|(?:set|add|remove|move|copy|rename|new)-item|\b(?:ni|mkdir)\b|(?<![<>])>{1,2}(?![&]))"
 )
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
-_CONTEXT_COMMAND = r"(?:context(?:\.exe)?|[^\s]*[\\/]context\.exe|\"[^\"]*[\\/]context\.exe\"|'[^']*[\\/]context\.exe')"
+_CONTEXT_COMMAND = r"(?:context(?:\.(?:exe|cmd))?|[^\s]*[\\/]context\.(?:exe|cmd)|\"[^\"]*[\\/]context\.(?:exe|cmd)\"|'[^']*[\\/]context\.(?:exe|cmd)')"
 _ACCEPTANCE_COMMAND = re.compile(
     r"^(?:"
     r"pytest|python\s+-m\s+pytest|uv\s+run\s+(?:python\s+-m\s+)?pytest|"

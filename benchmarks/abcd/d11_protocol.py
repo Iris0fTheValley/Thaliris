@@ -166,33 +166,23 @@ def validate_review_graph(ledger: dict[str, Any], *, final_candidate: str) -> di
 
 
 def validate_review_convergence(ledger: dict[str, Any], *, expected_candidate: str | None = None) -> dict[str, Any]:
+    """Compatibility entry point using review transaction integrity.
+
+    Older report-shaped rounds that only contain ``fresh`` and
+    ``sandbox_mode`` are intentionally not accepted: native read-only is a
+    capability diagnostic, while the hard invariant is the host-attested
+    unchanged-candidate transaction validated by :func:`validate_review_graph`.
+    """
     rounds = ledger.get("review_rounds")
     if not isinstance(rounds, list) or not rounds:
         return _fail("REVIEW_MISSING", "no fresh Reviewer round recorded")
-    corrections = 0
-    for item in rounds:
-        if not isinstance(item, dict) or set(item) != {"reviewer_session", "candidate_identity", "verdict", "packet", "fresh", "sandbox_mode"}:
-            return _fail("REVIEW_ROUND_SCHEMA", "review round is incomplete")
-        if item["fresh"] is not True or item["sandbox_mode"] != "read-only":
-            return _fail("REVIEW_NOT_FRESH_READ_ONLY", "Reviewer round was not fresh and native read-only")
-        if not isinstance(item["reviewer_session"], str) or not item["reviewer_session"]:
-            return _fail("REVIEW_IDENTITY", "Reviewer session identity missing")
-        if expected_candidate is not None and item["candidate_identity"] != expected_candidate:
-            return _fail("REVIEW_CANDIDATE_MISMATCH", "a Reviewer round inspected a different candidate")
-        if item["verdict"] == "READY":
-            if item["packet"] is not None:
-                return _fail("REVIEW_READY_PACKET", "READY must not carry a correction packet")
-            continue
-        packet = item["packet"]
-        if item["verdict"] != "REQUEST_CHANGES" or not isinstance(packet, dict) or set(packet) != {"finding_id", "classification", "affected_surface", "violated_invariant", "verification_requirement"}:
-            return _fail("REVIEW_PACKET_SCHEMA", "non-READY review lacks a bounded Review Packet")
-        if packet["classification"] not in CLASSIFICATIONS:
-            return _fail("REVIEW_CLASSIFICATION", "unknown review finding classification")
-        if packet["classification"] in {"MECHANICAL", "LOCAL_SEMANTIC"}:
-            corrections += 1
-    if rounds[-1]["verdict"] != "READY":
-        return _fail("REVIEW_NOT_READY", "final fresh Reviewer did not return READY")
-    return {"status": "PASS", "rounds": len(rounds), "corrections": corrections}
+    if any(not isinstance(item, dict) or "start_candidate_identity" not in item for item in rounds):
+        return _fail("REVIEW_ROUND_SCHEMA", "legacy report round lacks host transaction facts")
+    final = expected_candidate or rounds[-1].get("end_candidate_identity")
+    return validate_review_graph(
+        {"review_rounds": rounds, "correction_edges": ledger.get("correction_edges", []), "no_progress_cycles": ledger.get("no_progress_cycles", [])},
+        final_candidate=final,
+    )
 
 
 def validate_candidate_chain(chain: dict[str, Any]) -> dict[str, Any]:

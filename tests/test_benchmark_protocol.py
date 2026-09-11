@@ -58,11 +58,17 @@ def test_task_local_scratch_artifact_is_repo_relative():
     assert validate_evidence({"evidence_required": "REQUIRED", "artifacts": [item]})["status"] == "PASS"
 
 
-def test_review_convergence_requires_fresh_read_only_final_ready():
+def test_review_convergence_requires_host_attested_transaction_final_ready():
     ready = {"reviewer_session": "r2", "candidate_identity": "c1", "verdict": "READY", "packet": None, "fresh": True, "sandbox_mode": "read-only"}
-    assert validate_review_convergence({"review_rounds": [ready]})["status"] == "PASS"
-    assert validate_review_convergence({"review_rounds": [{**ready, "verdict": "EXTERNALLY_INCOMPLETE"}]})["code"] == "REVIEW_PACKET_SCHEMA"
-    assert validate_review_convergence({"review_rounds": [ready]}, expected_candidate="other") ["code"] == "REVIEW_CANDIDATE_MISMATCH"
+    assert validate_review_convergence({"review_rounds": [ready]})["code"] == "REVIEW_ROUND_SCHEMA"
+    modern = {
+        "reviewer_session": "r2", "input_candidate_identity": "c1",
+        "start_candidate_identity": "c1", "end_candidate_identity": "c1",
+        "verdict": "READY", "native_session": True, "native_completion": True,
+        "review_transaction_integrity": True, "reviewer_mutation_observed": False,
+    }
+    assert validate_review_convergence({"review_rounds": [modern]})["status"] == "PASS"
+    assert validate_review_convergence({"review_rounds": [modern]}, expected_candidate="other")["code"] == "REVIEW_FINAL_CANDIDATE"
 
 
 def test_candidate_chain_and_cost_are_fail_closed():

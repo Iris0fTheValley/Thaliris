@@ -79,6 +79,37 @@ def test_collector_does_not_accept_report_booleans_or_unproven_consumption(tmp_p
     assert d11_protocol.validate_collected_evidence(facts)["code"] == "EVIDENCE_ORDERING"
 
 
+def test_controller_probe_requires_same_operation_for_pretool_and_deny(tmp_path: Path) -> None:
+    event_path = tmp_path / "controller" / "events.jsonl"
+    event_path.parent.mkdir(parents=True, exist_ok=True)
+    event_path.write_text("".join(json.dumps(event) + "\n" for event in [
+        {"event": "hook_observation", "operation_id": "op-good", "tool": "Bash"},
+        {"event": "guard_denial", "operation_id": "op-other", "decision": "DENIED"},
+    ]), encoding="utf-8")
+    records = d11_collector.load_test_events([{"kind": "thaliris_audit", "path": event_path}])
+    result = d11_preflight.probe_controller_enforcement(
+        records, candidate_identity_before="A", candidate_identity_after="A", operation_id="op-good"
+    )
+    assert result["status"] == "NOT_OBSERVED"
+    assert result["exact_operation_bound"] is True
+
+
+def test_controller_probe_rejects_bound_operation_with_side_effect(tmp_path: Path) -> None:
+    event_path = tmp_path / "controller-side-effect" / "events.jsonl"
+    event_path.parent.mkdir(parents=True, exist_ok=True)
+    event_path.write_text("".join(json.dumps(event) + "\n" for event in [
+        {"event": "hook_observation", "operation_id": "op", "tool": "Bash"},
+        {"event": "guard_denial", "operation_id": "op", "decision": "DENIED"},
+        {"event": "source_mutation", "operation_id": "op", "outcome": "EXECUTED"},
+    ]), encoding="utf-8")
+    records = d11_collector.load_test_events([{"kind": "thaliris_audit", "path": event_path}])
+    result = d11_preflight.probe_controller_enforcement(
+        records, candidate_identity_before="A", candidate_identity_after="B", operation_id="op"
+    )
+    assert result["status"] == "FAIL"
+    assert result["code"] == "HOST_CONTROLLER_ENFORCEMENT_UNSUPPORTED"
+
+
 def test_untrusted_dict_cannot_enter_collector_and_missing_artifact_stays_required(tmp_path: Path) -> None:
     root = repo(tmp_path / "missing")
     core.init(root)
@@ -207,6 +238,15 @@ def _review_transaction_events(*, end_candidate: str = "candidate-a", mutation: 
         events.append({"event": "source_mutation", "session_id": "review", "candidate_identity": "candidate-a"})
     events.append({"event": "candidate_attestation", "stage": "review-end", "session_id": "review", "candidate_root": "unused", "candidate_identity": end_candidate, "manifest_version": 2, "harness_identity": "h"})
     return events
+
+
+def test_review_end_must_follow_verdict_and_native_stop(tmp_path: Path) -> None:
+    events = _review_transaction_events()
+    end = events.pop()
+    events.insert(2, end)
+    facts = d11_collector.collect_review_graph(trusted_events(tmp_path / "review-order", events))
+    assert facts["review_rounds"][0]["review_transaction_integrity"] is False
+    assert facts["review_rounds"][0]["verdict_before_review_end"] is False
 
 
 def test_review_transaction_requires_matching_host_end_attestation_and_stop(tmp_path: Path) -> None:

@@ -404,7 +404,7 @@ def collect_candidate(root: Path, *, policy: dict[str, Any] | None = None) -> di
     return build_manifest(root, policy)
 
 
-def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_root: Path, policy: dict[str, Any], harness_identity: str, session_id: str | None = None, source_registry_identity: str | None = None) -> dict[str, Any]:
+def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_root: Path, policy: dict[str, Any], harness_identity: str, session_id: str | None = None, source_registry_identity: str | None = None, caused_by: str | None = None) -> dict[str, Any]:
     """Host-owned stage attestation; identity is computed at the stage boundary."""
     if not isinstance(run_id, str) or not run_id or stage not in {"runtime-final", "review-start", "review-end", "verification-start", "evaluator-start", "seal"}:
         raise ValueError("invalid candidate attestation boundary")
@@ -426,6 +426,10 @@ def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_ro
         "session_id": session_id,
         "order_identity": time.time_ns(),
     }
+    if caused_by is not None:
+        if not isinstance(caused_by, str) or not caused_by:
+            raise ValueError("candidate attestation causal identity is invalid")
+        event["caused_by"] = caused_by
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if source_registry_identity is not None:
@@ -513,10 +517,11 @@ def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]], *, pol
 
 
 def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
-    """Collect reviewer edges from native session and review events.
+    """Collect reviewer edges from native lifecycle and review transactions.
 
-    A caller must provide native session identity and sandbox observation.  The
-    collector never treats a prose ``fresh`` flag as proof of either property.
+    Native sandbox mode is retained as a capability diagnostic only.  The hard
+    correctness fact is a fresh native session with matching stop and
+    host-attested start/end candidate identities.
     """
     ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
     sessions: set[str] = set()
@@ -540,10 +545,14 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         mutations = [mutation for mutation in ordered if _kind(mutation) == "source_mutation" and mutation.get("session_id") == session]
         stop = stops.get(session, [])
         end = ends[-1] if ends else None
+        completion_before_end = bool(stop and end and any(_before(item, end) for item in stop))
+        verdict_before_end = bool(_before(event, end)) if end else False
         integrity = bool(
             session in sessions
             and stop
             and end
+            and completion_before_end
+            and verdict_before_end
             and candidate
             and end.get("candidate_identity") == candidate
             and not mutations
@@ -558,6 +567,8 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             "native_session": session in sessions,
             "native_completion": bool(stop),
             "review_end_observed": bool(end),
+            "completion_before_review_end": completion_before_end,
+            "verdict_before_review_end": verdict_before_end,
             "start_candidate_identity": candidate,
             "end_candidate_identity": end.get("candidate_identity") if end else None,
             "review_transaction_integrity": integrity,

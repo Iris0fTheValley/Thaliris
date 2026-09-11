@@ -460,14 +460,63 @@ def run_smoke_probe(
     return result
 
 
-def probe_controller_enforcement(events: Iterable[dict[str, Any]], *, candidate_identity_before: str | None, candidate_identity_after: str | None) -> dict[str, Any]:
-    """Classify a completed root probe from trusted hook/audit observations."""
-    records = list(events)
-    pretool = any(item.get("_trusted_source") == "thaliris_audit" and str(item.get("_normalized_kind") or item.get("event") or item.get("kind")) in {"PreToolUse", "pretool_use", "hook_observation"} for item in records)
-    denied = any(item.get("_trusted_source") == "thaliris_audit" and str(item.get("_normalized_kind") or item.get("event") or item.get("kind")) in {"guard_denial", "controller_boundary"} and str(item.get("decision") or item.get("outcome") or item.get("action") or "").upper() in {"DENY", "DENIED", "BLOCK", "BLOCKED"} for item in records)
+def _operation_id(event: dict[str, Any]) -> str | None:
+    value = event.get("operation_id")
+    if isinstance(value, str) and value:
+        return value
+    value = event.get("controller_operation_id")
+    return value if isinstance(value, str) and value else None
+
+
+def probe_controller_enforcement(
+    events: Iterable[dict[str, Any]],
+    *,
+    candidate_identity_before: str | None,
+    candidate_identity_after: str | None,
+    operation_id: str | None = None,
+) -> dict[str, Any]:
+    """Classify one root operation using exact trusted causal identity.
+
+    An unrelated PreToolUse, denial, or unchanged candidate cannot be joined
+    into a PASS.  The host must provide one operation identity on the
+    PreToolUse and matching denial, and must provide a bound execution/side
+    effect observation (or explicit ``execution_absent`` attestation).
+    """
+    records = [item for item in events if isinstance(item, dict) and item.get("_trusted_source") == "thaliris_audit"]
+    target = operation_id
+    if target is None:
+        ids = {_operation_id(item) for item in records if _operation_id(item) is not None}
+        if len(ids) == 1:
+            target = next(iter(ids))
+    scoped = [item for item in records if target is not None and _operation_id(item) == target]
+    pretool = any(str(item.get("_normalized_kind") or item.get("event") or item.get("kind")) in {"PreToolUse", "pretool_use", "hook_observation"} for item in scoped)
+    denied = any(
+        str(item.get("_normalized_kind") or item.get("event") or item.get("kind")) in {"guard_denial", "controller_boundary"}
+        and str(item.get("decision") or item.get("outcome") or item.get("action") or "").upper() in {"DENY", "DENIED", "BLOCK", "BLOCKED"}
+        for item in scoped
+    )
+    side_effect = any(
+        str(item.get("_normalized_kind") or item.get("event") or item.get("kind")) in {"source_mutation", "side_effect", "tool_execution"}
+        and str(item.get("outcome") or item.get("status") or item.get("decision") or "").upper() in {"PASS", "SUCCEEDED", "SUCCESS", "ALLOWED", "EXECUTED"}
+        for item in scoped
+    )
+    explicit_absent = any(
+        str(item.get("_normalized_kind") or item.get("event") or item.get("kind")) in {"execution_absent", "side_effect_absent"}
+        and str(item.get("outcome") or item.get("status") or "").upper() in {"PASS", "ABSENT", "NONE", "NOT_EXECUTED"}
+        for item in scoped
+    )
     unchanged = candidate_identity_before is not None and candidate_identity_before == candidate_identity_after
-    result = {"status": "PASS" if pretool and denied and unchanged else "NOT_OBSERVED", "pretool_observed": pretool, "deny_observed": denied, "side_effect_absent": unchanged, "fact_source": "trusted_thaliris_audit"}
-    if pretool and denied and not unchanged:
+    absent = explicit_absent or unchanged
+    result = {
+        "status": "PASS" if pretool and denied and absent and not side_effect else "NOT_OBSERVED",
+        "operation_id": target,
+        "pretool_observed": pretool,
+        "deny_observed": denied,
+        "side_effect_absent": absent,
+        "exact_operation_bound": target is not None and bool(scoped),
+        "fact_source": {"kind": "trusted_thaliris_audit", "operation_id": target},
+    }
+    if pretool and denied and side_effect:
         result["status"] = "FAIL"
         result["code"] = "HOST_CONTROLLER_ENFORCEMENT_UNSUPPORTED"
     return result

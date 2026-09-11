@@ -114,7 +114,7 @@ def validate_collected_evidence(ledger: dict[str, Any]) -> dict[str, Any]:
             return _fail("EVIDENCE_ORDERING", "production, registration, and dispatch ordering was not observed")
         if item.get("active") is not True and item.get("used"):
             return _fail("EVIDENCE_SUPERSEDED_CONSUMED", "superseded evidence was selected for a downstream handoff")
-        if item.get("active") is True and (not item.get("used") or not item.get("carried_content_identity") or not item.get("selected_item_ids_valid")):
+        if item.get("active") is True and (not item.get("source_refs_valid") or not item.get("used") or not item.get("consumed") or not item.get("carried_content_identity") and not item.get("pointer_consumers") or not item.get("selected_item_ids_valid") and not item.get("pointer_consumers")):
             return _fail("EVIDENCE_ARTIFACT_UNUSED", "registered evidence has no provenance-backed downstream consumer")
     return {"status": "PASS", "required": "REQUIRED", "produced": len(artifacts), "consumed": sum(len(item.get("consumer_roles", [])) for item in artifacts)}
 
@@ -297,6 +297,63 @@ def validate_report(report: dict[str, Any], *, protocol_path: Path, generated_te
     expected_candidate = checks["candidate_provenance"].get("candidate_identity")
     checks["review_convergence"] = validate_review_graph(collected.get("reviews", {}), final_candidate=expected_candidate) if isinstance(expected_candidate, str) else _fail("REVIEW_FINAL_CANDIDATE", "candidate identity is not collector-backed")
     status = "PASS" if all(item.get("status") == "PASS" for item in checks.values()) else "FAIL"
+    return {"status": status, "checks": checks}
+
+
+def _observed_status(value: Any, *, name: str) -> dict[str, Any]:
+    if isinstance(value, dict) and value.get("status") in {"PASS", "FAIL", "NOT_OBSERVED", "EXTERNALLY_INCOMPLETE"}:
+        return value
+    if value is True:
+        return {"status": "PASS", "source": name}
+    if value is False:
+        return _fail(name.upper(), f"{name} is false")
+    return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_NOT_OBSERVED"}
+
+
+def validate_target(
+    collected: dict[str, Any],
+    *,
+    preflight: dict[str, Any] | None = None,
+    smoke: dict[str, Any] | None = None,
+    freeze_pre: Any = None,
+    freeze_post: Any = None,
+    tests: dict[str, Any] | None = None,
+    fast_path: dict[str, Any] | None = None,
+    protocol_path: Path | None = None,
+    generated_text: str | None = None,
+) -> dict[str, Any]:
+    """Mechanical final gate over collector/harness facts only."""
+    if not isinstance(collected, dict):
+        return {"status": "NOT_OBSERVED", "code": "COLLECTOR_NOT_OBSERVED"}
+    checks: dict[str, dict[str, Any]] = {}
+    checks["preflight"] = _observed_status(preflight, name="preflight")
+    checks["smoke"] = _observed_status(smoke, name="smoke")
+    checks["freeze_pre"] = _observed_status(freeze_pre, name="freeze_pre")
+    checks["freeze_post"] = _observed_status(freeze_post, name="freeze_post")
+    checks["controller_boundary"] = _observed_status(collected.get("controller_boundary"), name="controller_boundary")
+    checks["trusted_runtime"] = _observed_status(collected.get("trusted_runtime"), name="trusted_runtime")
+    checks["routing"] = _observed_status(collected.get("routing"), name="routing")
+    evidence = collected.get("evidence")
+    checks["evidence_protocol"] = validate_collected_evidence(evidence) if isinstance(evidence, dict) else _observed_status(None, name="evidence_protocol")
+    checks["evidence_source_provenance"] = _observed_status(collected.get("evidence_source_provenance"), name="evidence_source_provenance")
+    checks["evidence_consumption"] = _observed_status(collected.get("evidence_consumption"), name="evidence_consumption")
+    checks["supersession"] = _observed_status(collected.get("supersession"), name="supersession")
+    checks["bounded_sol"] = _observed_status(collected.get("bounded_sol"), name="bounded_sol")
+    chain = collected.get("candidate_chain")
+    chain_check = validate_candidate_chain(chain) if isinstance(chain, dict) else _observed_status(None, name="candidate_chain")
+    checks["candidate_chain"] = chain_check
+    final_candidate = chain_check.get("candidate_identity") if chain_check.get("status") == "PASS" else None
+    reviews = collected.get("reviews")
+    checks["review_graph"] = validate_review_graph(reviews, final_candidate=final_candidate) if isinstance(reviews, dict) and isinstance(final_candidate, str) else _observed_status(None, name="review_graph")
+    checks["reviewer_native_readonly"] = _observed_status(collected.get("reviewer_native_readonly"), name="reviewer_native_readonly")
+    checks["evaluator_calibration"] = _observed_status(collected.get("evaluator_calibration"), name="evaluator_calibration")
+    checks["final_evaluator"] = _observed_status(collected.get("final_evaluator"), name="final_evaluator")
+    checks["documentation_consistency"] = validate_documentation(protocol_path=protocol_path, generated_text=generated_text or "", tests_passed=None, runtime_consistency=None) if protocol_path is not None else _observed_status(None, name="documentation_consistency")
+    checks["tests"] = _observed_status(tests, name="tests")
+    checks["cost"] = validate_cost_gate(calculate_cost(collected.get("sessions", []))) if isinstance(collected.get("sessions"), list) else _observed_status(None, name="cost")
+    checks["fast_path"] = validate_fast_path(fast_path) if isinstance(fast_path, dict) else _observed_status(None, name="fast_path")
+    statuses = {item.get("status") for item in checks.values()}
+    status = "PASS" if statuses == {"PASS"} else ("NOT_OBSERVED" if "NOT_OBSERVED" in statuses else "FAIL")
     return {"status": status, "checks": checks}
 
 

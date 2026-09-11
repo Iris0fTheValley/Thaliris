@@ -11,6 +11,7 @@ import sys
 from typing import Any, Iterable
 
 from candidate_manifest import build_manifest
+from d11_sources import verify_source_registry
 from trusted_surface import identity as trusted_identity, mutation_probe, verify as verify_trusted
 from thaliris.protocol import ROUTING_PROTOCOL_MARKER, ROUTING_PROTOCOL_VERSION
 
@@ -70,6 +71,9 @@ def run_preflight(
     no_edit_identity: str | None = None,
     base_identity: str | None = None,
     smoke_result: dict[str, Any] | None = None,
+    source_registry: dict[str, Any] | None = None,
+    trusted_runtime_attack_result: str | None = None,
+    calibration_attestation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a fact ledger suitable for freezing, never a model report."""
     adapter_root = adapter_root.resolve()
@@ -94,7 +98,14 @@ def run_preflight(
     checks["trusted_surface"] = {"identity": frozen_trusted, "paths": [str(path.resolve()) for path in trusted], "outside_candidate_root": outside_candidate, "pass": bool(trusted) and outside_candidate and frozen_trusted is not None and verify_trusted(frozen_trusted, trusted)}
     mutation_result = mutation_probe(trusted_mutation_probe_path) if trusted_mutation_probe_path is not None else "NOT_OBSERVED"
     probe_bound = bool(trusted_mutation_probe_path and any(trusted_mutation_probe_path.resolve() == path.resolve() for path in trusted))
-    checks["trusted_runtime_immutability"] = {"probe_path": str(trusted_mutation_probe_path) if trusted_mutation_probe_path else None, "probe_bound_to_trusted_surface": probe_bound, "mutation_probe": mutation_result, "pass": probe_bound and mutation_result == "DENIED"}
+    checks["trusted_runtime_immutability"] = {
+        "probe_path": str(trusted_mutation_probe_path) if trusted_mutation_probe_path else None,
+        "probe_bound_to_trusted_surface": probe_bound,
+        "mutation_probe": mutation_result,
+        "attack_principal_result": trusted_runtime_attack_result or "NOT_OBSERVED",
+        "pass": probe_bound and mutation_result == "DENIED" and trusted_runtime_attack_result == "DENIED",
+    }
+    checks["source_registry"] = {"identity": source_registry.get("identity") if isinstance(source_registry, dict) else None, "pass": isinstance(source_registry, dict) and verify_source_registry(source_registry)}
     adapter_status = _git(adapter_root, "status", "--porcelain", "--untracked-files=all")
     candidate_status = _git(candidate_root, "status", "--porcelain", "--untracked-files=all")
     checks["clean_checkouts"] = {"adapter_status": adapter_status, "candidate_status": candidate_status, "pass": adapter_status in {"", None} and candidate_status in {"", None}}
@@ -135,10 +146,13 @@ def run_preflight(
         checks["control_plane"] = {"pass": False}
     manifest = build_manifest(candidate_root, candidate_policy)
     checks["candidate_manifest_reproducible"] = {"candidate_root": str(candidate_root), "identity": manifest["identity"], "pass": build_manifest(candidate_root, candidate_policy)["identity"] == manifest["identity"]}
-    checks["gold"] = {"result": gold_result, "pass": isinstance(gold_result, dict) and gold_result.get("status") == "PASS"}
-    checks["untouched_base"] = {"result": base_result, "pass": isinstance(base_result, dict) and base_result.get("status") == "FAIL"}
+    calibration_gold = calibration_attestation.get("gold", {}).get("result") if isinstance(calibration_attestation, dict) else gold_result
+    calibration_base = calibration_attestation.get("base", {}).get("result") if isinstance(calibration_attestation, dict) else base_result
+    checks["gold"] = {"result": calibration_gold, "pass": isinstance(calibration_gold, dict) and calibration_gold.get("status") == "PASS"}
+    checks["untouched_base"] = {"result": calibration_base, "pass": isinstance(calibration_base, dict) and calibration_base.get("status") == "FAIL"}
     checks["no_edit_identity"] = {"actual": no_edit_identity, "base": base_identity, "pass": no_edit_identity is not None and no_edit_identity == base_identity}
     checks["smoke"] = {"result": smoke_result, "pass": isinstance(smoke_result, dict) and smoke_result.get("status") == "PASS"}
+    checks["calibration"] = {"attestation": calibration_attestation, "pass": isinstance(calibration_attestation, dict) and calibration_attestation.get("status") == "PASS"}
     passed = all(value.get("pass") is True for value in checks.values())
     checks["adapter_root"] = str(adapter_root)
     checks["candidate_root"] = str(candidate_root)
@@ -174,6 +188,8 @@ def run_smoke_probe(
         env=environment,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     status = subprocess.run(
@@ -182,6 +198,8 @@ def run_smoke_probe(
         env=environment,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     prompt = (
@@ -195,14 +213,16 @@ def run_smoke_probe(
     try:
         invocation = subprocess.run(
             [
-                str(codex_executable), "exec", "--ephemeral", "--json", "--sandbox", "read-only",
-                "--skip-git-repo-check", "--dangerously-bypass-hook-trust", "-C", str(candidate_root),
+                str(codex_executable), "exec", "--ephemeral", "--json", "--sandbox", "workspace-write",
+                "-C", str(candidate_root),
                 "-m", "gpt-5.6-luna", prompt,
             ],
             cwd=candidate_root,
             env=environment,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_seconds,
             check=False,
         )
@@ -297,6 +317,78 @@ def _file_attestation(path: Path) -> dict[str, str]:
     return {"path": str(path), "sha256": _sha(path)}
 
 
+def run_frozen_evaluator_calibration(
+    evaluator_path: Path,
+    *,
+    base_candidate_root: Path,
+    gold_candidate_root: Path,
+    candidate_policy: dict[str, Any] | None,
+    command_template: Iterable[str] | None = None,
+    output_path: Path | None = None,
+) -> dict[str, Any]:
+    """Execute the evaluator against Gold and BASE and attest the results.
+
+    Status is derived from the evaluator process/result.  Caller-provided
+    ``gold_result`` or ``base_result`` values are deliberately not accepted.
+    ``{candidate_root}`` in a command template is replaced by the actual
+    candidate path.
+    """
+    evaluator_path = evaluator_path.resolve()
+    if not evaluator_path.is_file():
+        raise ValueError("evaluator is missing")
+    template = list(command_template) if command_template is not None else [sys.executable, str(evaluator_path), "{candidate_root}"]
+    evaluator_sha = _sha(evaluator_path)
+
+    def invoke(root: Path) -> dict[str, Any]:
+        candidate = build_manifest(root, candidate_policy)
+        command = [str(item).replace("{candidate_root}", str(root.resolve())) for item in template]
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        parsed = None
+        try:
+            parsed = json.loads(stdout)
+        except json.JSONDecodeError:
+            pass
+        result_status = parsed.get("status") if isinstance(parsed, dict) else None
+        return {
+            "candidate_identity": candidate["identity"],
+            "evaluator_sha256": evaluator_sha,
+            "exit_code": result.returncode,
+            "status": result_status if isinstance(result_status, str) else ("PASS" if result.returncode == 0 else "FAIL"),
+            "result": parsed if isinstance(parsed, dict) else {"status": "PASS" if result.returncode == 0 else "FAIL"},
+            "stdout_sha256": hashlib.sha256(stdout.encode()).hexdigest(),
+            "stderr_sha256": hashlib.sha256(stderr.encode()).hexdigest(),
+        }
+
+    gold = invoke(gold_candidate_root)
+    base = invoke(base_candidate_root)
+    payload = {
+        "attestation_id": hashlib.sha256(json.dumps({"gold": gold, "base": base}, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+        "evaluator_sha256": evaluator_sha,
+        "gold": gold,
+        "base": base,
+        "no_edit_identity": build_manifest(base_candidate_root, candidate_policy)["identity"],
+        "gold_status": gold["status"],
+        "base_status": base["status"],
+    }
+    payload["status"] = "PASS" if payload["gold_status"] == "PASS" and payload["base_status"] == "FAIL" else "FAIL"
+    if output_path is not None:
+        output_path.resolve().write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return payload
+
+
+def verify_calibration_attestation(value: dict[str, Any], *, evaluator_path: Path, base_identity: str, gold_identity: str) -> bool:
+    try:
+        if value.get("status") != "PASS" or value.get("gold_status") != "PASS" or value.get("base_status") != "FAIL":
+            return False
+        if value.get("evaluator_sha256") != _sha(evaluator_path) or value.get("no_edit_identity") != base_identity:
+            return False
+        return value["gold"]["candidate_identity"] == gold_identity and value["base"]["candidate_identity"] == base_identity and value["gold"]["status"] == "PASS" and value["base"]["status"] == "FAIL"
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+
+
 def freeze_run_manifest(
     preflight: dict[str, Any],
     *,
@@ -308,6 +400,8 @@ def freeze_run_manifest(
     calibration: dict[str, Any],
     pricing_snapshot: dict[str, Any],
     candidate_policy: dict[str, Any] | None = None,
+    source_registry: dict[str, Any] | None = None,
+    calibration_attestation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create the immutable identity record that gates a formal invocation."""
     if preflight.get("status") != "PASS":
@@ -317,16 +411,19 @@ def freeze_run_manifest(
         raise ValueError("preflight checks are missing")
     if not validate_pricing_snapshot(pricing_snapshot):
         raise ValueError("pricing snapshot is empty or invalid")
-    if not isinstance(calibration, dict) or calibration.get("gold_status") != "PASS" or calibration.get("base_status") != "FAIL":
-        raise ValueError("calibration is not independently validated")
+    calibration = calibration_attestation if calibration_attestation is not None else calibration
+    if not isinstance(calibration, dict) or not calibration.get("attestation_id") or calibration.get("gold_status") != "PASS" or calibration.get("base_status") != "FAIL":
+        raise ValueError("calibration is not a host-owned attestation")
+    if not isinstance(source_registry, dict) or not verify_source_registry(source_registry):
+        raise ValueError("source registry is not frozen and verified")
     base = _verified_candidate(base_candidate_root, base_candidate, candidate_policy)
     gold = _verified_candidate(gold_candidate_root, gold_candidate, candidate_policy)
     if (
-        calibration.get("gold_identity") != gold["identity"]
-        or calibration.get("base_identity") != base["identity"]
+        calibration.get("gold", {}).get("candidate_identity") != gold["identity"]
+        or calibration.get("base", {}).get("candidate_identity") != base["identity"]
         or calibration.get("no_edit_identity") != base["identity"]
-        or calibration.get("gold_result") != checks.get("gold", {}).get("result")
-        or calibration.get("base_result") != checks.get("untouched_base", {}).get("result")
+        or calibration.get("gold", {}).get("result") != checks.get("gold", {}).get("result")
+        or calibration.get("base", {}).get("result") != checks.get("untouched_base", {}).get("result")
         or checks.get("no_edit_identity", {}).get("actual") != base["identity"]
         or checks.get("no_edit_identity", {}).get("base") != base["identity"]
     ):
@@ -340,6 +437,7 @@ def freeze_run_manifest(
         "benchmark_harness": checks["benchmark_harness"],
         "evaluator": checks["evaluator"],
         "trusted_surface": checks["trusted_surface"]["identity"],
+        "source_registry": source_registry,
         "task_spec": _file_attestation(task_spec_path),
         "base_candidate": base,
         "gold_candidate": gold,
@@ -352,7 +450,7 @@ def freeze_run_manifest(
     return {"manifest": payload, "identity": hashlib.sha256(encoded).hexdigest()}
 
 
-def verify_frozen_manifest(frozen: dict[str, Any], *, preflight: dict[str, Any], task_spec_path: Path, base_candidate_root: Path, gold_candidate_root: Path, pricing_snapshot: dict[str, Any], candidate_policy: dict[str, Any] | None = None, adapter_root: Path | None = None, evaluator_path: Path | None = None, harness_paths: Iterable[Path] | None = None, trusted_paths: Iterable[Path] | None = None) -> bool:
+def verify_frozen_manifest(frozen: dict[str, Any], *, preflight: dict[str, Any], task_spec_path: Path, base_candidate_root: Path, gold_candidate_root: Path, pricing_snapshot: dict[str, Any], candidate_policy: dict[str, Any] | None = None, adapter_root: Path | None = None, evaluator_path: Path | None = None, harness_paths: Iterable[Path] | None = None, trusted_paths: Iterable[Path] | None = None, source_registry: dict[str, Any] | None = None) -> bool:
     try:
         manifest = frozen["manifest"]
         if frozen.get("identity") != hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest():
@@ -360,6 +458,11 @@ def verify_frozen_manifest(frozen: dict[str, Any], *, preflight: dict[str, Any],
         if manifest.get("preflight_identity") != hashlib.sha256(json.dumps(preflight, sort_keys=True, separators=(",", ":")).encode()).hexdigest():
             return False
         if manifest.get("task_spec") != _file_attestation(task_spec_path) or manifest.get("pricing_snapshot") != pricing_snapshot or not validate_pricing_snapshot(pricing_snapshot):
+            return False
+        registry = source_registry if source_registry is not None else manifest.get("source_registry")
+        if not isinstance(registry, dict) or not verify_source_registry(registry):
+            return False
+        if manifest.get("source_registry", {}).get("identity") != registry.get("identity"):
             return False
         checks = preflight.get("checks", {})
         adapter_path = adapter_root or Path(checks.get("adapter_root", ""))
@@ -386,11 +489,12 @@ def verify_frozen_manifest(frozen: dict[str, Any], *, preflight: dict[str, Any],
         return (
             manifest.get("base_candidate", {}).get("identity") == base_identity
             and manifest.get("gold_candidate", {}).get("identity") == gold_identity
-            and calibration.get("gold_identity") == gold_identity
-            and calibration.get("base_identity") == base_identity
+            and calibration.get("gold", {}).get("candidate_identity") == gold_identity
+            and calibration.get("base", {}).get("candidate_identity") == base_identity
             and calibration.get("no_edit_identity") == base_identity
-            and calibration.get("gold_result") == checks.get("gold", {}).get("result")
-            and calibration.get("base_result") == checks.get("untouched_base", {}).get("result")
+            and calibration.get("base", {}).get("result") == checks.get("untouched_base", {}).get("result")
+            and calibration.get("gold", {}).get("result") == checks.get("gold", {}).get("result")
+            and calibration.get("evaluator_sha256") == manifest.get("evaluator", {}).get("sha256")
         )
     except (KeyError, OSError, TypeError, ValueError):
         return False

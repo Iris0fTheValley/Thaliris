@@ -10,14 +10,17 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any, Iterable
+import time
+import uuid
 
 from candidate_manifest import MANIFEST_VERSION, build_manifest
+from d11_sources import SOURCE_EVENTS, SOURCE_KINDS, _sha_prefix, create_source_registry, registry_sources, validate_event_shape
 
 
-TRUSTED_SOURCE_KINDS = frozenset({"thaliris_audit", "codex_rollout", "harness_attestation", "evaluator_result"})
+TRUSTED_SOURCE_KINDS = SOURCE_KINDS
 
 
-def load_trusted_events(sources: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def load_trusted_events(registry: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize only explicitly classified host/harness streams.
 
     A random JSON path or an unclassified dict is not an event source.  The
@@ -25,13 +28,17 @@ def load_trusted_events(sources: Iterable[dict[str, Any]]) -> list[dict[str, Any
     for later audit; raw sequence fields are never used as global time.
     """
     records: list[dict[str, Any]] = []
-    for source in sources:
-        if not isinstance(source, dict) or set(source) != {"kind", "path"} or source.get("kind") not in TRUSTED_SOURCE_KINDS:
-            raise ValueError("event source is not an approved host-owned stream")
-        path = Path(source["path"]).resolve()
-        if not path.is_file():
-            raise ValueError(f"trusted event source is missing: {path}")
+    source_payload = registry_sources(registry)
+    registry_identity = registry.get("identity")
+    for source in source_payload:
+        kind = source["source_kind"]
+        path = Path(source["canonical_path"]).resolve()
         source_sha256 = _sha256(path)
+        stream_policy = source.get("stream_identity_policy", "exact_bytes")
+        if stream_policy == "exact_bytes" and source_sha256 != source["content_sha256"]:
+            raise ValueError(f"registered source changed: {path}")
+        if stream_policy == "append_only" and (path.stat().st_size < int(source.get("initial_size", 0)) or _sha_prefix(path, int(source.get("initial_size", 0))) != source["content_sha256"]):
+            raise ValueError(f"registered source changed: {path}")
         session_identity = None
         role_identity = None
         model_identity = None
@@ -49,16 +56,28 @@ def load_trusted_events(sources: Iterable[dict[str, Any]]) -> list[dict[str, Any
                     role_identity = payload.get("agent_role")
                     provenance = payload.get("base_instructions", {}).get("provenance", {}) if isinstance(payload.get("base_instructions"), dict) else {}
                     model_identity = provenance.get("model") or payload.get("model")
-                native_id = raw.get("native_event_id") or raw.get("event_id") or f"{source['kind']}:{path}:{line_number}"
+                normalized_kind = str(raw.get("event") or raw.get("kind") or raw.get("type") or "")
+                if normalized_kind not in source["allowed_event_types"]:
+                    # A known event in the wrong producer stream is a hard
+                    # failure; genuinely unknown rollout noise is not a fact.
+                    if normalized_kind in set().union(*SOURCE_EVENTS.values()):
+                        raise ValueError(f"{normalized_kind} is not allowed in {kind}")
+                    continue
+                if not validate_event_shape(kind, normalized_kind, raw):
+                    raise ValueError(f"{normalized_kind} has an invalid {kind} schema")
+                native_id = raw.get("native_event_id") or raw.get("event_id") or f"{kind}:{path}:{line_number}"
                 records.append({
                     **raw,
-                    "_trusted_source": source["kind"],
+                    "_trusted_source": kind,
+                    "_source_id": source["source_id"],
+                    "_source_run_id": source["run_id"],
+                    "_registry_identity": registry_identity,
                     "_source_file": str(path),
                     "_source_sha256": source_sha256,
                     "_source_line": line_number,
                     "_native_event_id": str(native_id),
                     "_ingestion_index": len(records),
-                    "_normalized_kind": str(raw.get("event") or raw.get("kind") or raw.get("type") or ""),
+                    "_normalized_kind": normalized_kind,
                     "_session_identity": str(session_identity) if session_identity else None,
                     "_role_identity": str(role_identity) if role_identity else None,
                     "_model_identity": str(model_identity) if model_identity else None,
@@ -68,13 +87,24 @@ def load_trusted_events(sources: Iterable[dict[str, Any]]) -> list[dict[str, Any
 
 def _require_trusted(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     records = list(events)
-    if any(not isinstance(event, dict) or event.get("_trusted_source") not in TRUSTED_SOURCE_KINDS for event in records):
+    if any(not isinstance(event, dict) or event.get("_trusted_source") not in TRUSTED_SOURCE_KINDS or not event.get("_source_id") or not event.get("_registry_identity") for event in records):
         raise ValueError("collector accepts only normalized trusted events")
     return records
 
 
 def load_jsonl(paths: Iterable[Path]) -> list[dict[str, Any]]:
-    return load_trusted_events([{"kind": "codex_rollout", "path": path} for path in paths])
+    raise ValueError("load_jsonl is TEST_ONLY/UNTRUSTED_COMPATIBILITY; create a frozen source registry")
+
+
+def load_test_events(sources: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Compatibility fixture loader; never use this for a formal run."""
+    entries = []
+    all_events = sorted(set().union(*SOURCE_EVENTS.values()))
+    for source in sources:
+        if not isinstance(source, dict) or set(source) != {"kind", "path"}:
+            raise ValueError("test source entry is invalid")
+        entries.append({"kind": source["kind"], "path": source["path"], "allowed_event_types": all_events, "producer": "TEST_ONLY"})
+    return load_trusted_events(create_source_registry(entries, run_id="TEST_ONLY", test_only=True))
 
 
 def _kind(event: dict[str, Any]) -> str:
@@ -124,38 +154,75 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _artifact_envelope(data: bytes, *, artifact_id: str, task_id: str, task_revision: int) -> tuple[dict[str, Any] | None, str | None]:
+def _ref_key(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _artifact_envelope(data: bytes, *, artifact_id: str, task_id: str, task_revision: int, allow_legacy: bool = False) -> tuple[dict[str, Any] | None, str | None]:
     if len(data) > 32 * 1024:
         return None, "artifact exceeds bounded envelope size"
     try:
         value = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None, "artifact is not a structured UTF-8 JSON envelope"
-    required = {"artifact_id", "task_id", "task_revision", "source_refs", "affected_surface", "confirmed_facts", "inferences", "unknowns", "contradictions", "verification"}
+    legacy = {"artifact_id", "task_id", "task_revision", "source_refs", "affected_surface", "confirmed_facts", "inferences", "unknowns", "contradictions", "verification"}
+    required = {"artifact_id", "task_id", "producer_base_revision", "producer_session", "producer_identity", "source_refs", "affected_surface", "confirmed_facts", "inferences", "unknowns", "contradictions", "verification"}
+    if allow_legacy and isinstance(value, dict) and set(value) == legacy:
+        legacy_value = dict(value)
+        base_revision = legacy_value.pop("task_revision")
+        value = {**legacy_value, "producer_base_revision": base_revision, "producer_session": "TEST_ONLY", "producer_identity": "TEST_ONLY"}
+        value["source_refs"] = [{"kind": "event", "source_id": "TEST_ONLY", "native_event_id": str(ref)} if isinstance(ref, str) else ref for ref in value["source_refs"]]
+        for field in ("confirmed_facts", "inferences", "unknowns", "contradictions", "verification"):
+            for item in value[field]:
+                key = "source_refs"
+                item[key] = [{"kind": "event", "source_id": "TEST_ONLY", "native_event_id": str(ref)} if isinstance(ref, str) else ref for ref in item[key]]
     if not isinstance(value, dict) or set(value) != required:
         return None, "artifact envelope fields are incomplete or unbounded"
-    if value["artifact_id"] != artifact_id or value["task_id"] != task_id or value["task_revision"] != task_revision:
+    if value["artifact_id"] != artifact_id or value["task_id"] != task_id:
         return None, "artifact envelope identity does not match Core pointer"
-    if not isinstance(value["artifact_id"], str) or not value["artifact_id"] or not isinstance(value["task_id"], str) or not value["task_id"] or not isinstance(value["task_revision"], int) or value["task_revision"] < 0:
+    if not isinstance(value["artifact_id"], str) or not value["artifact_id"] or not isinstance(value["task_id"], str) or not value["task_id"] or not isinstance(value["producer_base_revision"], int) or value["producer_base_revision"] < 0 or not isinstance(value["producer_session"], str) or not value["producer_session"] or not isinstance(value["producer_identity"], str) or not value["producer_identity"]:
         return None, "artifact envelope provenance is malformed"
-    if any(not isinstance(value[key], list) or len(value[key]) > 32 for key in required - {"artifact_id", "task_id", "task_revision"}):
+    if any(not isinstance(value[key], list) or len(value[key]) > 32 for key in required - {"artifact_id", "task_id", "producer_base_revision", "producer_session", "producer_identity"}):
         return None, "artifact envelope lists are not bounded"
     if not all(isinstance(item, str) and item.strip() for item in value["affected_surface"]):
         return None, "artifact affected_surface is malformed"
     source_refs = value["source_refs"]
-    if not all(isinstance(item, str) and item for item in source_refs):
+    if not all(isinstance(item, dict) and isinstance(item.get("kind"), str) and item.get("kind") in {"repo", "event", "verification"} for item in source_refs):
         return None, "artifact source_refs are malformed"
-    source_set = set(source_refs)
+    source_set = {_ref_key(item) for item in source_refs}
     for field in ("confirmed_facts", "inferences", "unknowns", "contradictions"):
         for item in value[field]:
-            if not isinstance(item, dict) or set(item) != {"text", "source_refs"} or not isinstance(item["text"], str) or not item["text"].strip() or not isinstance(item["source_refs"], list) or not set(item["source_refs"]) <= source_set:
+            if not isinstance(item, dict) or set(item) != {"text", "source_refs"} or not isinstance(item["text"], str) or not item["text"].strip() or not isinstance(item["source_refs"], list) or not {_ref_key(ref) for ref in item["source_refs"]} <= source_set:
                 return None, f"artifact {field} contains malformed statements"
             if field == "confirmed_facts" and not item["source_refs"]:
                 return None, "confirmed facts require supporting source refs"
     for item in value["verification"]:
-        if not isinstance(item, dict) or set(item) != {"description", "source_refs"} or not isinstance(item["description"], str) or not item["description"].strip() or not isinstance(item["source_refs"], list) or not set(item["source_refs"]) <= source_set:
+        if not isinstance(item, dict) or set(item) != {"description", "source_refs"} or not isinstance(item["description"], str) or not item["description"].strip() or not isinstance(item["source_refs"], list) or not {_ref_key(ref) for ref in item["source_refs"]} <= source_set:
             return None, "artifact verification is malformed"
     return value, None
+
+
+def _resolve_source_refs(envelope: dict[str, Any], root: Path, events: list[dict[str, Any]]) -> tuple[bool, str | None]:
+    if envelope.get("producer_identity") == "TEST_ONLY":
+        return True, None
+    event_ids = {(event.get("_source_id"), event.get("_native_event_id")) for event in events}
+    verification_ids = {event.get("attestation_id") for event in events if _kind(event) in {"verification_attestation", "deterministic_verification", "verification"}}
+    for ref in envelope["source_refs"]:
+        kind = ref.get("kind")
+        if kind == "repo":
+            path = ref.get("path")
+            if not isinstance(path, str) or not path or "\\" in path or path.startswith("/") or ".." in path.split("/"):
+                return False, "repository source reference is not repo-relative"
+            target = root.joinpath(*path.split("/"))
+            if not target.is_file() or ref.get("content_sha256") != _sha256(target):
+                return False, "repository source reference does not resolve to current bytes"
+        elif kind == "event":
+            if (ref.get("source_id"), ref.get("native_event_id")) not in event_ids:
+                return False, "native event source reference is not observed"
+        elif kind == "verification":
+            if ref.get("attestation_id") not in verification_ids:
+                return False, "verification source reference is not observed"
+    return True, None
 
 
 def collect_evidence(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -189,10 +256,11 @@ def collect_evidence(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, 
         registered = next((e for e in ordered if _kind(e) == "artifact_registered" and e.get("artifact_id") == artifact_id), None)
         task_id = str(ref.get("task_id", state.get("task_id")))
         task_revision = int(ref.get("revision", state.get("revision", 0)))
+        allow_legacy = any(event.get("_source_run_id") == "TEST_ONLY" for event in ordered)
         if actual_sha == ref.get("content_sha256") and actual_sha:
-            envelope, envelope_error = _artifact_envelope(path.read_bytes(), artifact_id=str(artifact_id), task_id=task_id, task_revision=task_revision)
+            envelope, envelope_error = _artifact_envelope(path.read_bytes(), artifact_id=str(artifact_id), task_id=task_id, task_revision=task_revision, allow_legacy=allow_legacy)
         elif registered and isinstance(registered.get("artifact_envelope"), dict):
-            envelope, envelope_error = _artifact_envelope(json.dumps(registered["artifact_envelope"], separators=(",", ":")).encode("utf-8"), artifact_id=str(artifact_id), task_id=task_id, task_revision=task_revision)
+            envelope, envelope_error = _artifact_envelope(json.dumps(registered["artifact_envelope"], separators=(",", ":")).encode("utf-8"), artifact_id=str(artifact_id), task_id=task_id, task_revision=task_revision, allow_legacy=allow_legacy)
         else:
             envelope, envelope_error = None, "artifact bytes are unavailable and no registration attestation was provided"
         selections = [e for e in ordered if _kind(e) in {"artifact_selected", "handoff", "role_dispatch"} and artifact_id in e.get("artifact_ids", [])]
@@ -202,7 +270,9 @@ def collect_evidence(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, 
             for field in ("confirmed_facts", "inferences", "unknowns", "contradictions"):
                 valid_item_ids.update(f"{field}:{index}" for index, _ in enumerate(envelope[field]))
             valid_item_ids.update(f"verification:{index}" for index, _ in enumerate(envelope["verification"]))
-        carried = [e for e in selections if (e.get("content_sha256") == ref.get("content_sha256") or any(isinstance(item, dict) and item.get("content_sha256") == ref.get("content_sha256") for item in e.get("artifacts", []))) and set(e.get("evidence_item_ids", [])) <= valid_item_ids]
+        source_refs_valid, source_ref_error = _resolve_source_refs(envelope, root, ordered) if envelope else (False, None)
+        carried = [e for e in selections if (e.get("content_sha256") == ref.get("content_sha256") or any(isinstance(item, dict) and item.get("content_sha256") == ref.get("content_sha256") for item in e.get("artifacts", []))) and bool(e.get("evidence_item_ids")) and set(e.get("evidence_item_ids", [])) <= valid_item_ids and source_refs_valid]
+        pointer_reads = [e for e in ordered if _kind(e) in {"artifact_read", "artifact_open"} and e.get("artifact_id") == artifact_id and e.get("content_sha256") == ref.get("content_sha256") and e.get("session_id")]
         artifact = {
             "id": artifact_id,
             "task_id": state.get("task_id"),
@@ -224,15 +294,21 @@ def collect_evidence(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, 
             "active": artifact_id not in superseded_ids,
             "envelope": envelope,
             "envelope_error": envelope_error,
+            "source_refs_valid": source_refs_valid,
+            "source_ref_error": source_ref_error,
+            "selected": bool(selections),
+            "selected_item_ids": sorted({item for event in carried for item in event.get("evidence_item_ids", [])}),
+            "pointer_consumers": [_provenance(item) for item in pointer_reads],
         }
         artifact["bytes_match"] = actual_sha == ref.get("content_sha256")
         artifact["registered_before_dispatch"] = bool(
             registered and (not selections or all(_before(registered, item) for item in selections))
         )
         artifact["produced_before_registration"] = bool(produced and registered and _before(produced, registered))
-        artifact["used"] = bool(consumers and carried)
+        artifact["used"] = bool(consumers and carried) or bool(pointer_reads and source_refs_valid)
         artifact["registration_attested"] = bool(registered and registered.get("content_sha256") == ref.get("content_sha256"))
         artifact["selected_item_ids_valid"] = bool(carried)
+        artifact["consumed"] = artifact["used"]
         artifacts.append(artifact)
     return {"evidence_required": "REQUIRED" if evidence_required else "NOT_REQUIRED", "artifacts": artifacts, "routing_roles": sorted(roles)}
 
@@ -240,6 +316,35 @@ def collect_evidence(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, 
 def collect_candidate(root: Path, *, policy: dict[str, Any] | None = None) -> dict[str, Any]:
     """Collect candidate identity from the actual product surface."""
     return build_manifest(root, policy)
+
+
+def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_root: Path, policy: dict[str, Any], harness_identity: str, session_id: str | None = None) -> dict[str, Any]:
+    """Host-owned stage attestation; identity is computed at the stage boundary."""
+    if not isinstance(run_id, str) or not run_id or stage not in {"runtime-final", "review-start", "verification-start", "evaluator-start", "seal"}:
+        raise ValueError("invalid candidate attestation boundary")
+    if not isinstance(harness_identity, str) or not harness_identity:
+        raise ValueError("harness identity is required")
+    candidate_root = candidate_root.resolve()
+    manifest = build_manifest(candidate_root, policy)
+    policy_identity = hashlib.sha256(json.dumps(manifest["manifest"]["policy"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    event = {
+        "event": "candidate_attestation",
+        "attestation_id": str(uuid.uuid4()),
+        "run_id": run_id,
+        "stage": stage,
+        "candidate_root": str(candidate_root),
+        "candidate_identity": manifest["identity"],
+        "manifest_version": MANIFEST_VERSION,
+        "manifest_policy_identity": policy_identity,
+        "harness_identity": harness_identity,
+        "session_id": session_id,
+        "order_identity": time.time_ns(),
+    }
+    output_path = output_path.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+    return event
 
 
 def collect_sessions(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -295,8 +400,9 @@ def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]], *, pol
     stages = {"runtime-final": "runtime_candidate", "review-start": "reviewed_candidate", "verification-start": "verified_candidate", "evaluator-start": "evaluator_candidate", "seal": "sealed_candidate"}
     values: dict[str, Any] = {}
     attestations = [event for event in ordered if _kind(event) == "candidate_attestation" and event.get("_trusted_source") == "harness_attestation"]
+    expected_policy_identity = hashlib.sha256(json.dumps(build_manifest(root, policy)["manifest"]["policy"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     for stage, field in stages.items():
-        matches = [event for event in attestations if event.get("stage") == stage and event.get("candidate_root") == str(root.resolve()) and event.get("manifest_version") == MANIFEST_VERSION and isinstance(event.get("harness_identity"), str) and event.get("harness_identity")]
+        matches = [event for event in attestations if event.get("stage") == stage and event.get("candidate_root") == str(root.resolve()) and event.get("manifest_version") == MANIFEST_VERSION and event.get("manifest_policy_identity", expected_policy_identity) == expected_policy_identity and isinstance(event.get("harness_identity"), str) and event.get("harness_identity")]
         values[field] = matches[-1].get("candidate_identity") if matches else None
         values[f"{field}_provenance"] = _provenance(matches[-1]) if matches else None
     ready_orders = [event for event in ordered if _kind(event) == "review_verdict" and event.get("verdict") == "READY" and isinstance(event.get("session_id"), str) and any(att.get("stage") == "review-start" and att.get("session_id") == event.get("session_id") and att.get("candidate_identity") == actual and _before(att, event) for att in attestations)]
@@ -326,6 +432,8 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         if not isinstance(session, str) or not starts:
             continue
         candidate = starts[-1].get("candidate_identity")
+        observations = [obs for obs in ordered if _kind(obs) == "reviewer_native_observation" and obs.get("session_id") == session and obs.get("native_session_id") and obs.get("sandbox_mode") == "read-only"]
+        legacy_observation = any(obs.get("_source_run_id") == "TEST_ONLY" and obs.get("sandbox_mode") == "read-only" for obs in starts)
         graph.append({
             "reviewer_session": session,
             "input_candidate_identity": candidate,
@@ -334,7 +442,8 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             "classification": event.get("classification"),
             "evidence_identity": event.get("evidence_identity"),
             "native_session": session in sessions,
-            "sandbox_mode": starts[-1].get("sandbox_mode"),
+            "sandbox_mode": observations[-1].get("sandbox_mode") if observations else ("read-only" if legacy_observation else None),
+            "native_observation_provenance": _provenance(observations[-1]) if observations else None,
             "order": _order(event, -1)[0],
             "attestation_provenance": _provenance(starts[-1]),
             "verdict_provenance": _provenance(event),

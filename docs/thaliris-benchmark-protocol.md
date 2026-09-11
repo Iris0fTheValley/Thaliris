@@ -4,9 +4,9 @@ The runtime-neutral product rules are defined in
 `docs/thaliris-routing-protocol.md`. This document only defines how a
 benchmark observes, freezes, and scores those rules.
 
-This document is the authoritative protocol for benchmark evidence, review
-convergence, candidate identity, and fast-path accounting. Role packs and the
-benchmark validator derive their required fields from these rules.
+This document is an observation and scoring protocol. The product semantics
+are authoritative only in `docs/thaliris-routing-protocol.md`; this document
+does not add requirements to ordinary Thaliris tasks.
 
 ## Evidence lifecycle
 
@@ -25,7 +25,16 @@ identify its producer role, task and revision,
 repo-relative path and content SHA-256, source references, affected
 files/symbols, confirmed facts, inferences, unknowns, contradictions, and
 verification performed. Registration must precede the dependent decision.
-Selection and every downstream consumer must be recorded.
+Selection and every downstream consumer must be recorded separately. Selecting
+an artifact pointer is not consumption: selected-fact propagation must name at
+least one evidence item, or a downstream native session must read the exact
+pointer/content identity.
+
+Formal collection accepts only a frozen source registry. Core/audit,
+native-rollout, host-attestation, and evaluator-result streams have separate
+allowlists and source identities; an arbitrary JSONL file is not a native fact.
+Candidate identities are filesystem-grounded under an explicit frozen policy;
+`.gitignore` and directory names do not decide the observable surface.
 
 The benchmark records the actual producer, registration, selection, consumer,
 and byte-identity events. It does not prescribe a particular file-writing tool.
@@ -62,10 +71,11 @@ review and requires another fresh Reviewer. External interruption is
 
 ## Candidate and cost proof
 
-The same immutable candidate identity must be recorded after the final source
-mutation and attached to runtime production, final Reviewer, deterministic
-verification, frozen evaluator, and seal. A later mutation invalidates the
-chain.
+The host harness computes an append-only stage attestation immediately at
+runtime-final, review-start, verification-start, evaluator-start, and seal.
+The same immutable candidate identity must be observed at every stage; a later
+mutation invalidates the chain. Reviewer sandbox mode is a native session fact,
+not a candidate attestation field.
 
 Telemetry reports observed-all invocations, including failed or orphaned child
 sessions. Cost uses model-specific uncached input (`input-cached_input`) plus

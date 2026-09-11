@@ -11,7 +11,7 @@ from thaliris.protocol import ROUTING_PROTOCOL_MARKER
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "benchmarks" / "abcd"))
-for name in ("candidate_manifest", "d11_collector", "d11_protocol", "trusted_surface", "d11_preflight"):
+for name in ("candidate_manifest", "d11_sources", "d11_collector", "d11_protocol", "trusted_surface", "d11_preflight"):
     spec = importlib.util.spec_from_file_location(name, ROOT / "benchmarks" / "abcd" / f"{name}.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -28,7 +28,7 @@ def trusted_events(tmp_path: Path, events: list[dict]) -> list[dict]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     stream = tmp_path / "trusted-events.jsonl"
     stream.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
-    return d11_collector.load_trusted_events([{"kind": "harness_attestation", "path": stream}])
+    return d11_collector.load_test_events([{"kind": "harness_attestation", "path": stream}])
 
 
 def evidence_envelope(task_id: str, revision: int, artifact_id: str) -> str:
@@ -278,3 +278,110 @@ def test_run_manifest_cannot_be_frozen_from_failed_preflight() -> None:
         assert "failed preflight" in str(exc)
     else:
         raise AssertionError("failed preflight was frozen")
+
+
+def test_source_registry_rejects_arbitrary_paths_and_wrong_source_events(tmp_path: Path) -> None:
+    stream = tmp_path / "stream.jsonl"
+    stream.write_text(json.dumps({"event": "SubagentStart", "session_id": "x"}) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        d11_collector.load_trusted_events([{"kind": "harness_attestation", "path": stream}])
+    registry = d11_sources.create_source_registry([{"kind": "harness_attestation", "path": stream}], run_id="run-1")
+    with pytest.raises(ValueError, match="not allowed"):
+        d11_collector.load_trusted_events(registry)
+
+
+def test_source_registry_append_only_stream_keeps_identity_and_tracks_provenance(tmp_path: Path) -> None:
+    stream = tmp_path / "attest.jsonl"
+    attestation = {"event": "candidate_attestation", "stage": "seal", "candidate_root": ".", "candidate_identity": "a" * 64, "manifest_version": 2, "harness_identity": "h"}
+    stream.write_text(json.dumps(attestation) + "\n", encoding="utf-8")
+    registry = d11_sources.create_source_registry([{"kind": "harness_attestation", "path": stream, "stream_identity_policy": "append_only"}], run_id="run-2")
+    stream.write_text(stream.read_text(encoding="utf-8") + json.dumps(attestation) + "\n", encoding="utf-8")
+    events = d11_collector.load_trusted_events(registry)
+    assert len(events) == 2 and events[0]["_source_id"] == registry["registry"]["sources"][0]["source_id"]
+
+
+def test_host_candidate_attestation_computes_identity_without_caller_identity(tmp_path: Path) -> None:
+    root = repo(tmp_path / "candidate")
+    (root / "product.py").write_text("VALUE = 1\n", encoding="utf-8")
+    stream = tmp_path / "attest.jsonl"
+    policy = candidate_manifest.build_manifest(root)["manifest"]["policy"]
+    event = d11_collector.attest_candidate(stream, run_id="run-3", stage="runtime-final", candidate_root=root, policy=policy, harness_identity="harness-sha")
+    assert event["candidate_identity"] == candidate_manifest.candidate_identity(root, policy)
+    assert "sandbox_mode" not in event
+    registry = d11_sources.create_source_registry([{"kind": "harness_attestation", "path": stream}], run_id="run-3")
+    assert d11_collector.load_trusted_events(registry)[0]["_registry_identity"] == registry["identity"]
+
+
+def test_manifest_includes_ignored_observable_file_and_closes_symlink_identity(tmp_path: Path) -> None:
+    root = repo(tmp_path / "candidate")
+    (root / ".gitignore").write_text("ignored.cfg\n", encoding="utf-8")
+    ignored = root / "ignored.cfg"
+    ignored.write_text("A", encoding="utf-8")
+    first = candidate_manifest.build_manifest(root)
+    assert "ignored.cfg" in {item["path"] for item in first["manifest"]["files"]}
+    ignored.write_text("B", encoding="utf-8")
+    assert candidate_manifest.candidate_identity(root) != first["identity"]
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    link = root / "external-link"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    with pytest.raises(ValueError, match="EXTERNAL_SYMLINK_SURFACE"):
+        candidate_manifest.build_manifest(root)
+
+
+def test_evaluator_calibration_is_host_invoked_and_freezes_real_identities(tmp_path: Path) -> None:
+    base = repo(tmp_path / "base")
+    gold = repo(tmp_path / "gold")
+    (base / "marker.txt").write_text("base", encoding="utf-8")
+    (gold / "marker.txt").write_text("gold", encoding="utf-8")
+    evaluator = tmp_path / "evaluator.py"
+    evaluator.write_text("import json, pathlib, sys; print(json.dumps({'status': 'PASS' if pathlib.Path(sys.argv[1], 'marker.txt').read_text() == 'gold' else 'FAIL'}))\n", encoding="utf-8")
+    calibration = d11_preflight.run_frozen_evaluator_calibration(
+        evaluator,
+        base_candidate_root=base,
+        gold_candidate_root=gold,
+        candidate_policy=candidate_manifest.build_manifest(base)["manifest"]["policy"],
+    )
+    assert calibration["status"] == "PASS"
+    assert calibration["gold"]["exit_code"] == 0 and calibration["base"]["exit_code"] == 0
+    assert d11_preflight.verify_calibration_attestation(
+        calibration,
+        evaluator_path=evaluator,
+        base_identity=candidate_manifest.candidate_identity(base),
+        gold_identity=candidate_manifest.candidate_identity(gold),
+    ) is True
+
+
+def test_structured_evidence_source_ref_is_resolved_against_actual_bytes(tmp_path: Path) -> None:
+    root = repo(tmp_path / "candidate")
+    core.init(root)
+    (root / "src").mkdir()
+    source = root / "src" / "product.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    started = core.task_start(root, "source-backed evidence", None, None)
+    task_id = core.task_show(root)["state"]["task_id"]
+    source_sha = __import__("hashlib").sha256(source.read_bytes()).hexdigest()
+    ref = {"kind": "repo", "path": "src/product.py", "content_sha256": source_sha}
+    envelope = {
+        "artifact_id": "evidence-1", "task_id": task_id, "producer_base_revision": started["revision"],
+        "producer_session": "investigator-1", "producer_identity": "session-attestation-1",
+        "source_refs": [ref], "affected_surface": ["src/product.py"],
+        "confirmed_facts": [{"text": "entrypoint is present", "source_refs": [ref]}],
+        "inferences": [], "unknowns": [], "contradictions": [],
+        "verification": [{"description": "read source", "source_refs": [ref]}],
+    }
+    artifact_path = root / "evidence.json"
+    artifact_path.write_text(json.dumps(envelope, separators=(",", ":")), encoding="utf-8")
+    registered = core.task_artifact(root, started["revision"], "evidence-1", "evidence.json", "bounded fact", producer_role="investigator")
+    sha = __import__("hashlib").sha256(artifact_path.read_bytes()).hexdigest()
+    facts = d11_collector.collect_evidence(root, trusted_events(tmp_path / "events", [
+        {"event": "artifact_produced", "artifact_id": "evidence-1"},
+        {"event": "artifact_registered", "artifact_id": "evidence-1", "content_sha256": sha},
+        {"event": "role_dispatch", "role": "reasoning-specialist", "artifact_ids": ["evidence-1"], "content_sha256": sha, "evidence_item_ids": ["confirmed_facts:0"]},
+    ]))
+    assert facts["artifacts"][0]["source_refs_valid"] is True
+    assert d11_protocol.validate_collected_evidence(facts)["status"] == "PASS"
+    assert registered["revision"] > started["revision"]

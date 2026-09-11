@@ -22,9 +22,12 @@ Use `docs/thaliris-routing-protocol.md` as the authoritative product evidence
 and review-convergence contract. The benchmark protocol is an observation and
 判定 layer only. Register reusable artifacts before the dependent
 decision, select only the facts needed by the next role, and record downstream
-consumption. Classify each review finding as MECHANICAL, LOCAL_SEMANTIC, or
-ARCHITECTURAL. The first two receive one fresh Implementer Correction Packet
-and one fresh targeted Reviewer; only the last may reopen broad investigation.
+consumption provenance. Classify each review finding as MECHANICAL,
+LOCAL_SEMANTIC, or ARCHITECTURAL. The first two receive a fresh bounded
+Implementer Correction Packet and fresh targeted Reviewer; distinct new
+findings may continue, while an unchanged finding/candidate/evidence state may
+not repeat the same cognitive cycle. Only the last may reopen broad
+investigation.
 
 Every active task uses serial fresh execution children with `fork_turns="none"`.
 This cuts implicit parent-task-history propagation, not all context: applicable

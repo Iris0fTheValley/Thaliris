@@ -210,11 +210,11 @@ stores the artifact content identity from the registered file.
 Every reusable artifact follows the evidence protocol: produce before the
 dependent decision, register it through `context task-artifact` with its
 producer role and content identity, select only the needed facts for the next
-role, and record downstream consumption in the benchmark ledger. A changed
-artifact is stale; a replacement must explicitly supersede it. Never silently
-continue consuming stale or contradictory evidence. Fast paths that have no
-cross-role evidence need record `evidence_required=NOT_REQUIRED` and must not
-manufacture an artifact.
+role, and record downstream consumption provenance. A changed artifact is
+stale; a replacement must explicitly supersede it. Never silently continue
+consuming stale or contradictory evidence. When no reusable cross-role
+evidence exists, no Evidence Artifact is required and none should be
+manufactured.
 
 After targeted investigation, escalate to
 `agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
@@ -291,9 +291,12 @@ Use `docs/thaliris-routing-protocol.md` as the authoritative product evidence
 and review-convergence contract. The benchmark protocol is an observation and
 判定 layer only. Register reusable artifacts before the dependent
 decision, select only the facts needed by the next role, and record downstream
-consumption. Classify each review finding as MECHANICAL, LOCAL_SEMANTIC, or
-ARCHITECTURAL. The first two receive one fresh Implementer Correction Packet
-and one fresh targeted Reviewer; only the last may reopen broad investigation.
+consumption provenance. Classify each review finding as MECHANICAL,
+LOCAL_SEMANTIC, or ARCHITECTURAL. The first two receive a fresh bounded
+Implementer Correction Packet and fresh targeted Reviewer; distinct new
+findings may continue, while an unchanged finding/candidate/evidence state may
+not repeat the same cognitive cycle. Only the last may reopen broad
+investigation.
 
 Every active task uses serial fresh execution children with `fork_turns=\"none\"`.
 This cuts implicit parent-task-history propagation, not all context: applicable
@@ -462,6 +465,9 @@ KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "7fd54f2f8c7e97ab54aefa31bb3f53f7864f2d00e4d2e9b1d27309f115945d3d",
     # Exact role-pack bytes emitted before the product-protocol split.
     "fb9aa6827d9aba1ff0a03295f007b46c7e03c72894c20a78438eb35fdfd5cc5b",
+    # Exact role-pack bytes before benchmark terminology was removed from the
+    # product router.
+    "a9d8d947339c5d57c8fb9ca06ca07df4a1c5f1b37a42100482b2f913cd8ab6a6",
 })
 
 

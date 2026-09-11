@@ -19,6 +19,7 @@ import thaliris.codex_adapter as codex_adapter
 import thaliris.core as core_module
 import thaliris.intent_audit as audit_module
 from thaliris.intent_audit import handle_hook, hooks_health
+from thaliris.protocol import ROUTING_PROTOCOL_MARKER
 
 
 def repo(tmp_path: Path) -> Path:
@@ -1182,7 +1183,7 @@ def test_benchmark_protocol_is_referenced_by_generated_surfaces():
     assert routing.is_file()
     assert "docs/thaliris-routing-protocol.md" in codex_adapter.ROLE_PACKS
     assert "docs/thaliris-routing-protocol.md" in protocol.read_text(encoding="utf-8")
-    assert "thaliris-routing-protocol: thaliris-routing-v1" in routing.read_text(encoding="utf-8")
+    assert ROUTING_PROTOCOL_MARKER in routing.read_text(encoding="utf-8")
     assert "evidence protocol" in codex_adapter.MANAGED
     reviewer = codex_adapter._agent_profile("thaliris-reviewer", "reviewer", "gpt-5.6-terra", "high").decode()
     assert "classification (MECHANICAL, LOCAL_SEMANTIC, or ARCHITECTURAL)" in reviewer
@@ -1518,6 +1519,15 @@ def test_controller_guard_accepts_only_byte_pinned_local_context_executable(tmp_
     monkeypatch.setenv(audit_module.CONTEXT_EXECUTABLE_SHA256_ENV, "0" * 64)
     response = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="Bash", tool_input={"command": f'"{executable}" task-status'})))
     assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_managed_shadow_context_is_rejected_when_exact_pin_is_active(tmp_path, monkeypatch):
+    shadow = tmp_path / "context.cmd"
+    shadow.write_bytes(b"shadow")
+    monkeypatch.setenv(audit_module.CONTEXT_EXECUTABLE_ENV, str(shadow))
+    monkeypatch.setenv(audit_module.CONTEXT_EXECUTABLE_SHA256_ENV, hashlib.sha256(shadow.read_bytes()).hexdigest())
+    assert audit_module._context_arguments("context task-status") is None
+    assert audit_module._context_arguments(f'"{shadow}" task-status') == "task-status"
 
 
 def test_uninstall_and_merge_do_not_claim_unrelated_audit_hook(tmp_path):

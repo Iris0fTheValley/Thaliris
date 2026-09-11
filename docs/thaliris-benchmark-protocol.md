@@ -49,8 +49,10 @@ violated_invariant
 verification_requirement
 ```
 
-MECHANICAL and LOCAL_SEMANTIC findings permit exactly one fresh Implementer
-Correction Packet followed by exactly one fresh targeted Reviewer. The packet
+MECHANICAL and LOCAL_SEMANTIC findings require a fresh bounded Implementer
+Correction Packet followed by a fresh targeted Reviewer. A distinct later
+finding may continue the correction graph; an unchanged finding/candidate/
+evidence state may not repeat the same cognitive cycle. The packet
 contains only the finding, affected surface, invariant, and verification
 requirement; it does not carry Reviewer conversation history. An
 ARCHITECTURAL finding is the only classification that may reopen broad

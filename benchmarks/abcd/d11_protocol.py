@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from thaliris.protocol import ROUTING_PROTOCOL_MARKER
+
 
 CLASSIFICATIONS = {"MECHANICAL", "LOCAL_SEMANTIC", "ARCHITECTURAL"}
 REQUIRED_ARTIFACT_FIELDS = {
@@ -100,11 +102,19 @@ def validate_collected_evidence(ledger: dict[str, Any]) -> dict[str, Any]:
             return _fail("EVIDENCE_COLLECTOR_SCHEMA", "collector artifact is not an object")
         if item.get("producer_role") not in {"investigator", "curator"} or item.get("registered_by") != "controller":
             return _fail("EVIDENCE_COLLECTOR_PROVENANCE", "artifact producer or registration is not Core-backed")
-        if item.get("bytes_match") is not True:
-            return _fail("EVIDENCE_CONTENT_IDENTITY", "registered artifact bytes do not match Core identity")
-        if not item.get("produced_before_registration") or not item.get("registered_before_dispatch"):
+        if item.get("envelope") is None:
+            return _fail("EVIDENCE_ARTIFACT_SCHEMA", str(item.get("envelope_error") or "artifact envelope is absent"))
+        if item.get("active") is True and item.get("bytes_match") is not True:
+            return _fail("EVIDENCE_CONTENT_IDENTITY", "active artifact bytes do not match Core identity")
+        if item.get("active") is not True and item.get("registration_attested") is not True:
+            return _fail("EVIDENCE_HISTORICAL_IDENTITY", "superseded artifact lacks registration-time identity attestation")
+        if not item.get("produced_before_registration") or (
+            item.get("dispatch_orders") and not item.get("registered_before_dispatch")
+        ):
             return _fail("EVIDENCE_ORDERING", "production, registration, and dispatch ordering was not observed")
-        if not item.get("used") or not item.get("carried_content_identity"):
+        if item.get("active") is not True and item.get("used"):
+            return _fail("EVIDENCE_SUPERSEDED_CONSUMED", "superseded evidence was selected for a downstream handoff")
+        if item.get("active") is True and (not item.get("used") or not item.get("carried_content_identity") or not item.get("selected_item_ids_valid")):
             return _fail("EVIDENCE_ARTIFACT_UNUSED", "registered evidence has no provenance-backed downstream consumer")
     return {"status": "PASS", "required": "REQUIRED", "produced": len(artifacts), "consumed": sum(len(item.get("consumer_roles", [])) for item in artifacts)}
 
@@ -118,6 +128,8 @@ def validate_review_graph(ledger: dict[str, Any], *, final_candidate: str) -> di
     edges = ledger.get("correction_edges", [])
     if not isinstance(edges, list):
         return _fail("CORRECTION_EDGE_SCHEMA", "collector correction edges are malformed")
+    if ledger.get("no_progress_cycles"):
+        return _fail("REVIEW_NO_PROGRESS", "the same candidate/finding/evidence state was reviewed again without new information")
     for item in rounds:
         if not isinstance(item, dict):
             return _fail("REVIEW_COLLECTOR_SCHEMA", "review fact is not an object")
@@ -204,7 +216,7 @@ def calculate_cost(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     by_model: dict[str, dict[str, float]] = {}
     for session in sessions:
         model = session.get("model")
-        usage = session.get("usage")
+        usage = session.get("usage") if isinstance(session.get("usage"), dict) else session
         if model not in PRICES or not isinstance(usage, dict):
             return _fail("COST_TELEMETRY_INVALID", "model or usage is absent")
         try:
@@ -259,7 +271,7 @@ def validate_documentation(*, protocol_path: Path, generated_text: str, tests_pa
     if not routing.is_file() or "docs/thaliris-routing-protocol.md" not in generated_text:
         return _fail("DOCUMENTATION_DEAD_TEXT", "generated role-pack does not reference authoritative product protocol")
     routing_text = routing.read_text(encoding="utf-8")
-    if "thaliris-routing-protocol: thaliris-routing-v1" not in routing_text or "docs/thaliris-routing-protocol.md" not in protocol_path.read_text(encoding="utf-8"):
+    if ROUTING_PROTOCOL_MARKER not in routing_text or "docs/thaliris-routing-protocol.md" not in protocol_path.read_text(encoding="utf-8"):
         return _fail("DOCUMENTATION_RUNTIME_DRIFT", "benchmark protocol does not reference product protocol")
     digest = hashlib.sha256(protocol_path.read_bytes()).hexdigest()
     return {"status": "PASS", "protocol_sha256": digest}

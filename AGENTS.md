@@ -26,11 +26,11 @@ stores the artifact content identity from the registered file.
 Every reusable artifact follows the evidence protocol: produce before the
 dependent decision, register it through `context task-artifact` with its
 producer role and content identity, select only the needed facts for the next
-role, and record downstream consumption in the benchmark ledger. A changed
-artifact is stale; a replacement must explicitly supersede it. Never silently
-continue consuming stale or contradictory evidence. Fast paths that have no
-cross-role evidence need record `evidence_required=NOT_REQUIRED` and must not
-manufacture an artifact.
+role, and record downstream consumption provenance. A changed artifact is
+stale; a replacement must explicitly supersede it. Never silently continue
+consuming stale or contradictory evidence. When no reusable cross-role
+evidence exists, no Evidence Artifact is required and none should be
+manufactured.
 
 After targeted investigation, escalate to
 `agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only

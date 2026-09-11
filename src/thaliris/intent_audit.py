@@ -192,6 +192,11 @@ def _trusted_context_executable() -> Path | None:
         return None
 
 
+def managed_context_executable_pinned() -> bool:
+    """Whether managed control-plane trust has an explicit path+byte pin."""
+    return _trusted_context_executable() is not None
+
+
 def _context_arguments(command: str) -> str | None:
     """Extract arguments only from canonical or byte-pinned context invocations."""
     match = re.match(r"^\s*(\"[^\"]+\"|'[^']+'|[^\s]+)(?:\s+(.*?))?\s*$", command)
@@ -208,7 +213,8 @@ def _context_arguments(command: str) -> str | None:
             pinned = Path(executable).resolve(strict=True) == trusted
         except (OSError, RuntimeError):
             pinned = False
-    if not (canonical or pinned):
+    pin_requested = bool(os.environ.get(CONTEXT_EXECUTABLE_ENV) or os.environ.get(CONTEXT_EXECUTABLE_SHA256_ENV))
+    if not ((pinned if pin_requested else canonical) or (pinned and not pin_requested)):
         return None
     return match.group(2) or ""
 

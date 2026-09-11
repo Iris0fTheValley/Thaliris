@@ -37,3 +37,20 @@ def verify(expected: dict[str, Any], paths: Iterable[Path]) -> bool:
         return identity(paths) == expected
     except (OSError, ValueError):
         return False
+
+
+def mutation_probe(path: Path) -> str:
+    """Probe the actual write boundary, restoring bytes if the host allows it."""
+    path = path.resolve()
+    if not path.is_file() or path.is_symlink():
+        return "NOT_OBSERVED"
+    original = path.read_bytes()
+    try:
+        with path.open("ab") as stream:
+            stream.write(b"\0")
+        path.write_bytes(original)
+        return "ALLOWED"
+    except PermissionError:
+        return "DENIED"
+    except OSError:
+        return "NOT_OBSERVED"

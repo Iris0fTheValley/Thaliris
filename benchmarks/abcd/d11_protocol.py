@@ -104,9 +104,11 @@ def validate_collected_evidence(ledger: dict[str, Any]) -> dict[str, Any]:
             return _fail("EVIDENCE_COLLECTOR_PROVENANCE", "artifact producer or registration is not Core-backed")
         if item.get("envelope") is None:
             return _fail("EVIDENCE_ARTIFACT_SCHEMA", str(item.get("envelope_error") or "artifact envelope is absent"))
-        if item.get("active") is True and item.get("bytes_match") is not True:
+        if item.get("producer_lifecycle_valid") is not True:
+            return _fail("EVIDENCE_PRODUCER_LIFECYCLE", "artifact producer is not bound to an observed native child lifecycle")
+        if item.get("active") is True and (item.get("bytes_match") is not True or item.get("current_freshness") != "FRESH"):
             return _fail("EVIDENCE_CONTENT_IDENTITY", "active artifact bytes do not match Core identity")
-        if item.get("active") is not True and item.get("registration_attested") is not True:
+        if item.get("active") is not True and (item.get("registration_attested") is not True or item.get("historical_validity") != "PASS" or item.get("current_freshness") != "STALE"):
             return _fail("EVIDENCE_HISTORICAL_IDENTITY", "superseded artifact lacks registration-time identity attestation")
         if not item.get("produced_before_registration") or (
             item.get("dispatch_orders") and not item.get("registered_before_dispatch")
@@ -302,11 +304,14 @@ def validate_report(report: dict[str, Any], *, protocol_path: Path, generated_te
 
 def _observed_status(value: Any, *, name: str) -> dict[str, Any]:
     if isinstance(value, dict) and value.get("status") in {"PASS", "FAIL", "NOT_OBSERVED", "EXTERNALLY_INCOMPLETE"}:
+        # A plain status object is still a declaration.  Accepted host facts
+        # carry a producer marker (preflight/smoke/freeze) or collector
+        # provenance; model reports and hand-written booleans do not.
+        if not any(key in value for key in ("fact_source", "collector", "provenance", "checks", "manifest")):
+            return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_PROVENANCE_NOT_OBSERVED"}
         return value
-    if value is True:
-        return {"status": "PASS", "source": name}
-    if value is False:
-        return _fail(name.upper(), f"{name} is false")
+    if isinstance(value, bool):
+        return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_DECLARATION_REJECTED"}
     return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_NOT_OBSERVED"}
 
 

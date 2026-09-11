@@ -991,6 +991,22 @@ def doctor(root: Path) -> dict[str, object]:
             compatible_project_hooks_observed="YES" if events else "UNKNOWN",
         ),
     }
+    # Keep configuration discovery separate from live host observations.  A
+    # local hooks.json or trusted project entry cannot stand in for a native
+    # hook run, a deny, or a Reviewer sandbox observation.
+    host = result.get("host_capability") if isinstance(result.get("host_capability"), dict) else {}
+    host.update({
+        "hook_runtime_observed": "YES" if events else "UNKNOWN",
+        "controller_pretool_observed": "YES" if "PreToolUse" in events else "UNKNOWN",
+        "subagent_lifecycle_observed": "YES" if lifecycle_start and lifecycle_stop else "UNKNOWN",
+        "hook_hash_match": "YES" if events else host.get("hook_hash_match", "UNKNOWN"),
+        "hook_trust_status": "UNKNOWN",
+        "controller_deny_observed": "UNKNOWN",
+        "controller_side_effect_prevented": "UNKNOWN",
+        "reviewer_native_readonly_observed": "UNKNOWN",
+        "trusted_runtime_isolation_observed": "UNKNOWN",
+    })
+    result["host_capability"] = host
     task = result.get("context", {}).get("task_state", {}) if isinstance(result.get("context"), dict) else {}
     target = task.get("verification_target") if isinstance(task, dict) else None
     if isinstance(target, str) and intent_audit._ACCEPTANCE_COMMAND.fullmatch(target):

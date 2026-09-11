@@ -350,6 +350,59 @@ def test_manifest_includes_ignored_observable_file_and_closes_symlink_identity(t
         candidate_manifest.build_manifest(root)
 
 
+def test_manifest_requires_attested_external_file_link_and_rejects_directory_links(tmp_path: Path) -> None:
+    root = repo(tmp_path / "candidate")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    link = root / "external-link"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    with pytest.raises(ValueError, match="EXTERNAL_SYMLINK_SURFACE"):
+        candidate_manifest.build_manifest(root, {
+            "task_state_surface": [".git", ".context", ".agent-memory", ".milestones"],
+            "trusted_runtime_surface": [],
+            "benchmark_infrastructure_surface": [],
+            "external_symlink_surface": [{"path": "external-link", "content_sha256": "0" * 64, "attestation_id": "dep-1"}],
+        })
+    external_policy = {
+        "task_state_surface": [".git", ".context", ".agent-memory", ".milestones"],
+        "trusted_runtime_surface": [],
+        "benchmark_infrastructure_surface": [],
+        "external_symlink_surface": [{
+            "path": "external-link",
+            "content_sha256": __import__("hashlib").sha256(outside.read_bytes()).hexdigest(),
+            "attestation_id": "dep-1",
+        }],
+    }
+    assert candidate_manifest.build_manifest(root, external_policy)["manifest"]["files"][0]["external"] is True
+    link.unlink()
+    outside_dir = tmp_path / "outside-dir"
+    outside_dir.mkdir()
+    (outside_dir / "product.py").write_text("VALUE = 1\n", encoding="utf-8")
+    link.symlink_to(outside_dir, target_is_directory=True)
+    with pytest.raises(ValueError, match="EXTERNAL_SYMLINK_SURFACE"):
+        candidate_manifest.build_manifest(root)
+
+
+def test_formal_candidate_attestation_rejects_native_claims(tmp_path: Path) -> None:
+    stream = tmp_path / "attest.jsonl"
+    stream.write_text("", encoding="utf-8")
+    registry = d11_sources.create_source_registry([{"kind": "harness_attestation", "path": stream, "stream_identity_policy": "append_only"}], run_id="run")
+    event = {
+        "event": "candidate_attestation", "run_id": "run", "sequence": 1,
+        "previous_hash": "0" * 64, "source_registry_identity": registry["identity"], "harness_identity": "h",
+        "stage": "review-start", "candidate_root": str(tmp_path),
+        "candidate_identity": "0" * 64, "manifest_version": 2, "sandbox_mode": "read-only",
+    }
+    event["payload_hash"] = __import__("hashlib").sha256(json.dumps(d11_sources.chain_payload(event), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    event["record_hash"] = d11_sources.hash_chain_record(event)
+    stream.write_text(json.dumps(event) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid harness_attestation schema"):
+        d11_collector.load_trusted_events(registry)
+
+
 def test_evaluator_calibration_is_host_invoked_and_freezes_real_identities(tmp_path: Path) -> None:
     base = repo(tmp_path / "base")
     gold = repo(tmp_path / "gold")

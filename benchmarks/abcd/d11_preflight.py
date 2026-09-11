@@ -94,8 +94,17 @@ def discover_hooks_app_server(codex_executable: Path, project_root: Path, *, tim
         enabled = discovered and all(item.get("enabled") is True for item in hooks if isinstance(item, dict))
         trusted = discovered and all(item.get("trustStatus") in {"trusted", "managed"} for item in hooks if isinstance(item, dict))
         definition_path = Path(str(hooks[0].get("sourcePath"))).resolve() if hooks and hooks[0].get("sourcePath") else None
+        current_hashes = {
+            str(item.get("eventName")): item.get("currentHash")
+            for item in hooks if isinstance(item, dict) and item.get("eventName")
+        }
+        managed_flags = {
+            str(item.get("eventName")): item.get("isManaged")
+            for item in hooks if isinstance(item, dict) and item.get("eventName")
+        }
         return {
             "status": "PASS" if discovered and enabled and trusted else "FAIL",
+            "project_identity": str(project_root),
             "project_discovered": entry is not None,
             "hook_discovered": discovered,
             "hook_enabled": enabled,
@@ -103,6 +112,8 @@ def discover_hooks_app_server(codex_executable: Path, project_root: Path, *, tim
             "hook_definition_path": str(definition_path) if definition_path else None,
             "hook_definition_sha256": _sha(definition_path) if definition_path and definition_path.is_file() else None,
             "trust_statuses": sorted({str(item.get("trustStatus")) for item in hooks if isinstance(item, dict)}),
+            "current_hashes": current_hashes,
+            "managed_flags": managed_flags,
             "hooks": hooks,
         }
     except (OSError, AssertionError, subprocess.SubprocessError) as exc:
@@ -110,6 +121,7 @@ def discover_hooks_app_server(codex_executable: Path, project_root: Path, *, tim
     finally:
         try:
             process.terminate()
+            process.wait(timeout=1)
         except (UnboundLocalError, OSError):
             pass
 
@@ -216,7 +228,10 @@ def run_preflight(
     passed = all(value.get("pass") is True for value in checks.values())
     checks["adapter_root"] = str(adapter_root)
     checks["candidate_root"] = str(candidate_root)
-    return {"status": "PASS" if passed else "PREFLIGHT_FAIL", "checks": checks}
+    result = {"status": "PASS" if passed else "PREFLIGHT_FAIL", "checks": checks}
+    result["fact_source"] = {"kind": "host_preflight", "adapter_root": str(adapter_root), "candidate_root": str(candidate_root)}
+    result["identity"] = hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return result
 
 
 def run_smoke_probe(
@@ -239,6 +254,30 @@ def run_smoke_probe(
     context_executable = context_executable.resolve()
     codex_executable = codex_executable.resolve()
     before_manifest = build_manifest(candidate_root)
+    hook_discovery = discover_hooks_app_server(codex_executable, candidate_root, timeout_seconds=min(10.0, max(1.0, timeout_seconds / 10)))
+    # Do not spend model tokens on a supposedly managed probe when the native
+    # host has already reported that the project hooks are untrusted.  This is
+    # a host-capability result, not a Thaliris PASS/FAIL assertion.
+    if hook_discovery.get("status") != "PASS":
+        result = {
+            "name": "PREFLIGHT_SMOKE",
+            "status": "HOST_CAPABILITY_UNSUPPORTED" if hook_discovery.get("hook_discovered") else "NOT_OBSERVED",
+            "failure_code": "HOOK_TRUST_NOT_OBSERVED" if hook_discovery.get("hook_discovered") else "HOOK_RUNTIME_NOT_OBSERVED",
+            "hook_discovery": hook_discovery,
+            "checks": {
+                "auth": "NOT_OBSERVED", "project_trust": "NOT_OBSERVED", "hooks_activated": "NOT_OBSERVED",
+                "controller_boundary": "NOT_OBSERVED", "reviewer_native_read_only": "NOT_OBSERVED",
+                "trusted_runtime_isolation": "NOT_OBSERVED", "candidate_unchanged": True,
+            },
+            "model_invoked": False,
+            "candidate_identity_before": before_manifest["identity"],
+            "candidate_identity_after": before_manifest["identity"],
+            "fact_source": {"kind": "host_smoke_probe", "codex_executable": str(codex_executable)},
+        }
+        result["identity"] = hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if output_path is not None:
+            output_path.resolve().write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return result
     environment = os.environ.copy()
     environment["THALIRIS_CONTEXT_EXECUTABLE"] = str(context_executable)
     environment["THALIRIS_CONTEXT_EXECUTABLE_SHA256"] = _sha(context_executable) if context_executable.is_file() else ""
@@ -340,10 +379,46 @@ def run_smoke_probe(
         "candidate_identity_before": before_manifest["identity"],
         "candidate_identity_after": after_manifest["identity"],
         "native_event_types": sorted({str(item.get("type")) for item in event_records}),
+        "hook_discovery": hook_discovery,
+        "model_invoked": True,
+        "fact_source": {"kind": "host_smoke_probe", "codex_executable": str(codex_executable)},
     }
+    result["identity"] = hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if output_path is not None:
         output_path.resolve().write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return result
+
+
+def probe_controller_enforcement(events: Iterable[dict[str, Any]], *, candidate_identity_before: str | None, candidate_identity_after: str | None) -> dict[str, Any]:
+    """Classify a completed root probe from trusted hook/audit observations."""
+    records = list(events)
+    pretool = any(item.get("_trusted_source") == "thaliris_audit" and str(item.get("_normalized_kind") or item.get("event") or item.get("kind")) in {"PreToolUse", "pretool_use", "hook_observation"} for item in records)
+    denied = any(item.get("_trusted_source") == "thaliris_audit" and str(item.get("_normalized_kind") or item.get("event") or item.get("kind")) in {"guard_denial", "controller_boundary"} and str(item.get("decision") or item.get("outcome") or item.get("action") or "").upper() in {"DENY", "DENIED", "BLOCK", "BLOCKED"} for item in records)
+    unchanged = candidate_identity_before is not None and candidate_identity_before == candidate_identity_after
+    result = {"status": "PASS" if pretool and denied and unchanged else "NOT_OBSERVED", "pretool_observed": pretool, "deny_observed": denied, "side_effect_absent": unchanged, "fact_source": "trusted_thaliris_audit"}
+    if pretool and denied and not unchanged:
+        result["status"] = "FAIL"
+        result["code"] = "HOST_CONTROLLER_ENFORCEMENT_UNSUPPORTED"
+    return result
+
+
+def probe_reviewer_native_readonly(events: Iterable[dict[str, Any]], *, candidate_identity_before: str | None, candidate_identity_after: str | None) -> dict[str, Any]:
+    """Require native Reviewer session/profile observations, not prose."""
+    records = list(events)
+    starts = [item for item in records if item.get("_trusted_source") == "codex_rollout" and str(item.get("_normalized_kind") or item.get("event")) in {"SubagentStart", "native_session_started"} and str(item.get("role") or item.get("agent_role") or "").lower() == "reviewer"]
+    observations = [item for item in records if item.get("_trusted_source") == "codex_rollout" and str(item.get("_normalized_kind") or item.get("event")) == "reviewer_native_observation" and item.get("sandbox_mode") == "read-only"]
+    read_ok = any(str(item.get("operation") or item.get("action") or "").lower() in {"read", "inspect", "read_file"} and str(item.get("outcome") or item.get("status") or "").upper() in {"PASS", "SUCCEEDED", "SUCCESS", "ALLOWED"} for item in observations + records)
+    mutation_denied = any(str(item.get("operation") or item.get("action") or "").lower() in {"write", "modify", "create", "append"} and str(item.get("outcome") or item.get("status") or "").upper() in {"DENY", "DENIED", "FAILED", "BLOCKED"} for item in records)
+    unchanged = candidate_identity_before is not None and candidate_identity_before == candidate_identity_after
+    status = "PASS" if starts and observations and read_ok and mutation_denied and unchanged else "NOT_OBSERVED"
+    return {"status": status, "fresh_session_observed": bool(starts), "native_read_only_observed": bool(observations), "read_allowed": read_ok, "mutation_denied": mutation_denied, "side_effect_absent": unchanged, "fact_source": "native_codex_rollout"}
+
+
+def probe_trusted_runtime_isolation(*, attack_principal_result: str, before_identity: dict[str, Any] | None, paths: Iterable[Path]) -> dict[str, Any]:
+    """Separate managed-principal isolation from host-side integrity checks."""
+    integrity = verify_trusted(before_identity, list(paths)) if isinstance(before_identity, dict) else False
+    status = "PASS" if attack_principal_result == "DENIED" and integrity else "NOT_OBSERVED"
+    return {"status": status, "attack_principal_result": attack_principal_result, "integrity_after_probe": integrity, "fact_source": "host_runtime_probe"}
 
 
 PRICING_MODELS = {

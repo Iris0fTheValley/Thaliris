@@ -72,11 +72,21 @@ def _entry(root: Path, path: str, policy: dict[str, list[str]]) -> dict[str, Any
         except ValueError:
             relative_target = str(resolved)
             external = True
-        if external and path not in policy.get(_EXTERNAL_SYMLINK_POLICY, []):
+        registrations = policy.get(_EXTERNAL_SYMLINK_POLICY, [])
+        registration = next((item for item in registrations if isinstance(item, dict) and item.get("path") == path), None)
+        if external and not isinstance(registration, dict):
             raise ValueError(f"EXTERNAL_SYMLINK_SURFACE: {path}")
         target_sha = None
         if resolved.is_file():
             target_sha = _file_sha(resolved)
+        if resolved.is_dir():
+            raise ValueError(f"EXTERNAL_SYMLINK_SURFACE: directory link {path}")
+        if external and (
+            registration.get("content_sha256") != target_sha
+            or not isinstance(registration.get("attestation_id"), str)
+            or not registration["attestation_id"]
+        ):
+            raise ValueError(f"EXTERNAL_SYMLINK_SURFACE: unverified dependency {path}")
         link = target.readlink().as_posix().encode("utf-8")
         return {
             "path": path,
@@ -106,11 +116,29 @@ def _policy(value: dict[str, Any] | None) -> dict[str, list[str]]:
     selected = {key: list(values) for key, values in DEFAULT_POLICY.items()}
     if value is not None:
         required = set(DEFAULT_POLICY)
-        if not required <= set(value) or any(key not in required | {_EXTERNAL_SYMLINK_POLICY} or not isinstance(values, list) or not all(isinstance(item, str) and item for item in values) for key, values in value.items()):
+        invalid = any(
+            key not in required | {_EXTERNAL_SYMLINK_POLICY}
+            or not isinstance(values, list)
+            or key != _EXTERNAL_SYMLINK_POLICY and not all(isinstance(item, str) and item for item in values)
+            for key, values in value.items()
+        )
+        if not required <= set(value) or invalid:
             raise ValueError("candidate manifest policy must name all explicit surfaces")
         selected = {key: list(value[key]) for key in DEFAULT_POLICY}
         if _EXTERNAL_SYMLINK_POLICY in value:
-            selected[_EXTERNAL_SYMLINK_POLICY] = list(value[_EXTERNAL_SYMLINK_POLICY])
+            external = value[_EXTERNAL_SYMLINK_POLICY]
+            if not isinstance(external, list) or any(
+                not isinstance(item, dict)
+                or not isinstance(item.get("path"), str)
+                or not item["path"]
+                or not isinstance(item.get("content_sha256"), str)
+                or len(item["content_sha256"]) != 64
+                or not isinstance(item.get("attestation_id"), str)
+                or not item["attestation_id"]
+                for item in external
+            ):
+                raise ValueError("external symlink policy requires frozen content attestations")
+            selected[_EXTERNAL_SYMLINK_POLICY] = list(external)
     return selected
 
 

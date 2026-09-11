@@ -79,3 +79,9 @@ def test_fast_path_and_documentation_gate():
     root = Path(__file__).parents[1]
     result = validate_documentation(protocol_path=root / "docs" / "thaliris-benchmark-protocol.md", generated_text=ROLE_PACKS, tests_passed=True, runtime_consistency=True)
     assert result["status"] == "PASS"
+
+
+def test_target_gate_rejects_model_declared_boolean_facts():
+    protocol = _MODULE.validate_target({}, preflight=True, smoke=True, freeze_pre=True, freeze_post=True)
+    assert protocol["status"] == "NOT_OBSERVED"
+    assert protocol["checks"]["preflight"]["code"] == "PREFLIGHT_DECLARATION_REJECTED"

@@ -139,6 +139,53 @@ def _codex_config() -> tuple[dict[str, object], bool]:
     except (OSError, tomllib.TOMLDecodeError): return {}, False
 
 
+def _project_trust(root: Path) -> str:
+    """Report configured project trust without confusing it with hook trust.
+
+    Codex keeps project trust and executable-hook trust as separate facts.  A
+    trusted project therefore never upgrades the hook/runtime observations in
+    this diagnostic.
+    """
+    config, available = _codex_config()
+    if not available:
+        return UNKNOWN
+    projects = config.get("projects") if isinstance(config, dict) else None
+    if not isinstance(projects, dict):
+        return UNKNOWN
+    wanted = str(root.resolve()).lower()
+    for path, value in projects.items():
+        if str(path).lower() != wanted:
+            continue
+        if isinstance(value, dict) and value.get("trust_level") == "trusted":
+            return "YES"
+        if isinstance(value, dict) and value.get("trust_level") == "untrusted":
+            return "NO"
+    return UNKNOWN
+
+
+def _host_capability(root: Path, *, hooks: dict[str, object], lifecycle: dict[str, object], events: set[str]) -> dict[str, object]:
+    """Expose static discovery and live observations as separate fields."""
+    configured = hooks.get("hooks_configured") == "YES"
+    runtime = hooks.get("runtime_observed") == "YES"
+    trust = hooks.get("hook_trust_runtime_status", UNKNOWN)
+    if trust not in {"YES", "NO", UNKNOWN}:
+        trust = UNKNOWN
+    return {
+        "project_config_discovered": "YES" if (root / ".codex" / "hooks.json").is_file() else "NO",
+        "project_trust": _project_trust(root),
+        "hook_definition_discovered": "YES" if configured else "NO",
+        "hook_hash_match": hooks.get("current_hook_hash_observed", UNKNOWN),
+        "hook_trust_status": trust,
+        "hook_runtime_observed": "YES" if runtime else UNKNOWN,
+        "controller_pretool_observed": "YES" if "PreToolUse" in events else UNKNOWN,
+        "controller_deny_observed": UNKNOWN,
+        "controller_side_effect_prevented": UNKNOWN,
+        "subagent_lifecycle_observed": "YES" if lifecycle.get("start") and lifecycle.get("stop") else UNKNOWN,
+        "reviewer_native_readonly_observed": UNKNOWN,
+        "trusted_runtime_isolation_observed": UNKNOWN,
+    }
+
+
 def _states(configured: str = UNKNOWN, enabled: str = UNKNOWN) -> dict[str, str]:
     return {"configured": configured, "enabled": enabled}
 
@@ -239,4 +286,6 @@ def report(root: Path) -> dict[str, object]:
         "task_state_valid": task_state_valid,
         "role_routing_ready": routing_ready,
     }
-    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "intent_audit": hooks_health(root), "context_isolation": _context_isolation(root), "controller_boundary": {"observed": _controller_boundary_evidence(root)}, "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}
+    audit = hooks_health(root)
+    isolation = _context_isolation(root)
+    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "intent_audit": audit, "context_isolation": isolation, "controller_boundary": {"observed": _controller_boundary_evidence(root)}, "host_capability": _host_capability(root, hooks=audit, lifecycle={"start": False, "stop": False}, events=set()), "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any, Iterable
 
 SOURCE_KINDS = frozenset({"thaliris_audit", "codex_rollout", "harness_attestation", "evaluator_result"})
@@ -16,6 +17,7 @@ SOURCE_EVENTS = {
         "hook_observation", "guard_denial", "controller_boundary", "child_lifecycle",
         "artifact_produced", "artifact_written", "artifact_registered", "artifact_selected",
         "handoff", "role_dispatch", "implementer_dispatch", "source_mutation",
+        "source_snapshot_attestation",
         "SubagentStart", "SubagentStop", "native_session_started", "task_start", "task_status",
     }),
     "codex_rollout": frozenset({
@@ -36,12 +38,36 @@ def validate_event_shape(source_kind: str, event_type: str, value: dict[str, Any
     required = {
         "candidate_attestation": {"stage", "candidate_root", "candidate_identity", "manifest_version", "harness_identity"},
         "reviewer_native_observation": {"session_id", "native_session_id", "sandbox_mode"},
+        "source_snapshot_attestation": {"observation_id", "path", "content_sha256", "session_id"},
         "evaluator_result": {"evaluator_sha256", "candidate_identity", "exit_code"},
         "evaluator_calibration_attestation": {"attestation_id", "evaluator_sha256", "gold", "base"},
     }.get(event_type, set())
     if required and not required <= set(value):
         return False
     if event_type == "reviewer_native_observation" and value.get("sandbox_mode") not in {"read-only", "workspace-write", "danger-full-access"}:
+        return False
+    if event_type == "source_snapshot_attestation":
+        path = value.get("path")
+        if not isinstance(path, str) or not path or "\\" in path or path.startswith("/") or ".." in path.split("/"):
+            return False
+        if not isinstance(value.get("observation_id"), str) or not value["observation_id"]:
+            return False
+        if not isinstance(value.get("content_sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", value["content_sha256"]):
+            return False
+        if not isinstance(value.get("session_id"), str) or not value["session_id"]:
+            return False
+    if event_type == "candidate_attestation":
+        # Candidate stage identity is the only authority this source owns.
+        # Native session/sandbox/verdict/usage claims belong to other streams.
+        if any(key in value for key in ("sandbox_mode", "verdict", "usage", "token_usage", "native_event_id")):
+            return False
+        if value.get("stage") not in {"runtime-final", "review-start", "verification-start", "evaluator-start", "seal"}:
+            return False
+        if not isinstance(value.get("candidate_identity"), str) or not re.fullmatch(r"[0-9a-f]{64}", value["candidate_identity"]):
+            return False
+        if not isinstance(value.get("manifest_version"), int) or value["manifest_version"] < 1:
+            return False
+    if event_type == "evaluator_result" and any(key in value for key in ("verdict", "sandbox_mode", "session_id", "token_usage")):
         return False
     if source_kind == "evaluator_result" and not isinstance(value.get("exit_code"), int):
         return False

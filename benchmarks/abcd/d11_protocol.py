@@ -115,6 +115,9 @@ def validate_review_graph(ledger: dict[str, Any], *, final_candidate: str) -> di
     if not isinstance(rounds, list) or not rounds:
         return _fail("REVIEW_MISSING", "collector observed no review verdict")
     seen: set[str] = set()
+    edges = ledger.get("correction_edges", [])
+    if not isinstance(edges, list):
+        return _fail("CORRECTION_EDGE_SCHEMA", "collector correction edges are malformed")
     for item in rounds:
         if not isinstance(item, dict):
             return _fail("REVIEW_COLLECTOR_SCHEMA", "review fact is not an object")
@@ -128,6 +131,15 @@ def validate_review_graph(ledger: dict[str, Any], *, final_candidate: str) -> di
             return _fail("REVIEW_EXTERNAL_INCOMPLETE", "external Reviewer interruption cannot pass")
         if item.get("verdict") not in {"READY", "REQUEST_CHANGES"}:
             return _fail("REVIEW_VERDICT", "unknown Reviewer verdict")
+        if item.get("verdict") == "REQUEST_CHANGES" and not any(
+            isinstance(edge, dict)
+            and edge.get("from_candidate") == item.get("input_candidate_identity")
+            and edge.get("finding_id") == item.get("finding_id")
+            and edge.get("to_candidate") not in {None, item.get("input_candidate_identity")}
+            and isinstance(edge.get("implementer_session"), str)
+            for edge in edges
+        ):
+            return _fail("CORRECTION_EDGE_MISSING", "REQUEST_CHANGES has no observed implementer mutation and verification edge")
     if rounds[-1].get("verdict") != "READY" or rounds[-1].get("input_candidate_identity") != final_candidate:
         return _fail("REVIEW_FINAL_CANDIDATE", "final READY is not bound to the final candidate")
     return {"status": "PASS", "rounds": len(rounds), "sessions": sorted(seen)}
@@ -168,6 +180,9 @@ def validate_candidate_chain(chain: dict[str, Any]) -> dict[str, Any]:
     values = [chain.get(field) for field in fields]
     if any(not isinstance(value, str) or not value for value in values):
         return _fail("CANDIDATE_IDENTITY_MISSING", "candidate identity is missing from the provenance chain")
+    computed = chain.get("computed_candidate")
+    if computed is not None and (not isinstance(computed, str) or computed != values[0] or any(value != computed for value in values)):
+        return _fail("CANDIDATE_IDENTITY_MISMATCH", "a recorded stage differs from the manifest computed from the candidate surface")
     if len(set(values)) != 1:
         return _fail("CANDIDATE_IDENTITY_MISMATCH", "runtime, review, verification, evaluator, and seal identities differ")
     if chain.get("review_verdict") != "READY":
@@ -212,6 +227,19 @@ def calculate_cost(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     return {"status": "PASS", "usd": round(total, 6), "by_model": by_model}
 
 
+def validate_cost_gate(cost: dict[str, Any], *, d6b_ceiling: float = 5.49, d10c_reference: float = 8.79) -> dict[str, Any]:
+    if cost.get("status") != "PASS":
+        return _fail("COST_TELEMETRY_INVALID", "cost telemetry did not validate")
+    usd = cost.get("usd")
+    if not isinstance(usd, (int, float)):
+        return _fail("COST_NOT_OBSERVED", "observed cost is absent")
+    if usd > d6b_ceiling:
+        return _fail("COST_D6B_THRESHOLD", f"formal cost {usd} exceeds D6b ceiling {d6b_ceiling}")
+    if usd >= d10c_reference:
+        return _fail("COST_D10C_NOT_BEATEN", f"formal cost {usd} does not beat D10c reference {d10c_reference}")
+    return {"status": "PASS", "usd": usd, "d6b_ceiling": d6b_ceiling, "d10c_reference": d10c_reference}
+
+
 def validate_fast_path(report: dict[str, Any]) -> dict[str, Any]:
     if report.get("evidence_required") != "NOT_REQUIRED":
         return _fail("FAST_PATH_EVIDENCE", "simple task did not declare evidence not required")
@@ -237,22 +265,24 @@ def validate_documentation(*, protocol_path: Path, generated_text: str, tests_pa
 
 
 def validate_report(report: dict[str, Any], *, protocol_path: Path, generated_text: str) -> dict[str, Any]:
+    # Only a collector-produced ledger is admissible here.  The historical
+    # declaration-shaped report is intentionally rejected closed.
+    collected = report.get("collector")
+    if not isinstance(collected, dict):
+        return {"status": "FAIL", "checks": {"collector": _fail("COLLECTOR_REQUIRED", "validator accepts only collector-produced facts")}}
     checks = {
-        "evidence_protocol": validate_evidence(report.get("evidence", {})),
-        "candidate_provenance": validate_candidate_chain(report.get("candidate", {})),
-        "cost": calculate_cost(report.get("sessions", [])),
+        "evidence_protocol": validate_collected_evidence(collected.get("evidence", {})),
+        "candidate_provenance": validate_candidate_chain(collected.get("candidate_chain", {})),
+        "cost": validate_cost_gate(calculate_cost(collected.get("sessions", []))),
         "documentation": validate_documentation(
             protocol_path=protocol_path,
             generated_text=generated_text,
-            tests_passed=report.get("documentation", {}).get("tests_passed") is True,
-            runtime_consistency=report.get("documentation", {}).get("runtime_consistency") is True,
+            tests_passed=None,
+            runtime_consistency=None,
         ),
     }
     expected_candidate = checks["candidate_provenance"].get("candidate_identity")
-    checks["review_convergence"] = validate_review_convergence(
-        report.get("reviews", {}),
-        expected_candidate=expected_candidate if checks["candidate_provenance"].get("status") == "PASS" else None,
-    )
+    checks["review_convergence"] = validate_review_graph(collected.get("reviews", {}), final_candidate=expected_candidate) if isinstance(expected_candidate, str) else _fail("REVIEW_FINAL_CANDIDATE", "candidate identity is not collector-backed")
     status = "PASS" if all(item.get("status") == "PASS" for item in checks.values()) else "FAIL"
     return {"status": status, "checks": checks}
 

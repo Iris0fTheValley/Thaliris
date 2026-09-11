@@ -99,6 +99,32 @@ def collect_candidate(root: Path) -> dict[str, Any]:
     return build_manifest(root)
 
 
+def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Bind every externally reported stage to the manifest computed now."""
+    actual = str(build_manifest(root)["identity"])
+    ordered = sorted(list(events), key=lambda item: _order(item, item.get("_line", 0)))
+    stages = {
+        "runtime_candidate": "candidate_produced",
+        "reviewed_candidate": "review_verdict",
+        "verified_candidate": "deterministic_verification",
+        "evaluator_candidate": "evaluator_result",
+        "sealed_candidate": "candidate_sealed",
+    }
+    values: dict[str, Any] = {}
+    for field, kind in stages.items():
+        matches = [event for event in ordered if _kind(event) == kind]
+        if not matches:
+            values[field] = None
+        else:
+            values[field] = matches[-1].get("candidate_identity")
+    ready_orders = [_order(event, -1) for event in ordered if _kind(event) == "review_verdict" and event.get("verdict") == "READY" and event.get("candidate_identity") == actual]
+    values["review_verdict"] = "READY" if ready_orders else None
+    ready_order = max(ready_orders) if ready_orders else None
+    values["source_mutations_after_ready"] = bool(ready_order and any(_order(event, -1) > ready_order and _kind(event) == "source_mutation" for event in ordered))
+    values["computed_candidate"] = actual
+    return values
+
+
 def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Collect reviewer edges from native session and review events.
 
@@ -127,4 +153,20 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             "sandbox_mode": event.get("native_sandbox_mode"),
             "order": _order(event, -1)[0],
         })
-    return {"review_rounds": graph, "native_reviewer_sessions": sorted(sessions)}
+    corrections: list[dict[str, Any]] = []
+    for review in graph:
+        if review.get("verdict") != "REQUEST_CHANGES":
+            continue
+        dispatch = next((e for e in ordered if _kind(e) == "implementer_dispatch" and e.get("candidate_from") == review["input_candidate_identity"] and e.get("finding_id") == review.get("finding_id")), None)
+        if dispatch is None:
+            continue
+        implementer_session = dispatch.get("session_id")
+        mutation = next((e for e in ordered if _kind(e) == "source_mutation" and e.get("session_id") == implementer_session and _order(e, -1) > _order(dispatch, -1)), None)
+        if mutation is None:
+            continue
+        candidate_to = mutation.get("candidate_identity")
+        verification = next((e for e in ordered if _kind(e) in {"deterministic_verification", "verification"} and e.get("candidate_identity") == candidate_to and e.get("outcome") == "PASSED" and _order(e, -1) > _order(mutation, -1)), None)
+        if verification is None:
+            continue
+        corrections.append({"from_candidate": review["input_candidate_identity"], "finding_id": review.get("finding_id"), "implementer_session": implementer_session, "to_candidate": candidate_to, "verification_order": _order(verification, -1)[0]})
+    return {"review_rounds": graph, "correction_edges": corrections, "native_reviewer_sessions": sorted(sessions)}

@@ -15,7 +15,7 @@ import tempfile
 import unicodedata
 import uuid
 
-from .markdown import Entry, evidence_status, parse
+from .markdown import Entry, evidence_status, parse, parse_text
 from .models import ContextConfig
 
 IGNORE_START = "# thaliris:begin"
@@ -137,6 +137,25 @@ def _entry(title: str, body: str, *, status: str = "DRAFT", evidence: str = "NON
     audience = ["all"] if audience is None else audience
     topics = [] if topics is None else topics
     symbols = [] if symbols is None else symbols
+    for field, value, maximum in (
+        ("title", title, 300),
+        ("status", status, 128),
+        ("evidence", evidence, 65_536),
+        ("confidence", confidence, 128),
+        ("applicability", applicability, 128),
+    ):
+        if not isinstance(value, str) or not value.strip() or len(value) > maximum or "\n" in value or "\r" in value:
+            raise ValueError(f"invalid durable {field}")
+    if not isinstance(body, str):
+        raise ValueError("invalid durable body")
+    if kind is not None and (not isinstance(kind, str) or not kind.strip() or len(kind) > 128 or "\n" in kind or "\r" in kind):
+        raise ValueError("invalid durable kind")
+    for field, values in (("audience", audience), ("topics", topics), ("symbols", symbols)):
+        if not isinstance(values, list) or len(values) > 64 or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 256 or "\n" in item or "\r" in item
+            for item in values
+        ):
+            raise ValueError(f"invalid durable {field}")
     optional = ""
     for key, value in (("Audience", audience), ("Topics", topics), ("Symbols", symbols)):
         if not include_routing:
@@ -144,7 +163,9 @@ def _entry(title: str, body: str, *, status: str = "DRAFT", evidence: str = "NON
         if value is not None:
             optional += f"{key}: {json.dumps(value, ensure_ascii=False)}\n"
     kind_line = f"Kind: {kind}\n" if kind is not None else ""
-    return (f"---\nEvidence: {evidence}\nRevision: 1\nStatus: {status}\nApplicability: {applicability}\nConfidence: {confidence}\n{kind_line}{optional}---\n\n# {title}\n\n{body}\n").encode()
+    rendered = f"---\nEvidence: {evidence}\nRevision: 1\nStatus: {status}\nApplicability: {applicability}\nConfidence: {confidence}\n{kind_line}{optional}---\n\n# {title}\n\n{body}\n"
+    parse_text(rendered)
+    return rendered.encode()
 
 
 def _template_files(*, include_routing: bool = True, include_kind: bool = True, decision_link: bool = True) -> dict[str, bytes]:
@@ -822,17 +843,14 @@ def _normalize_new_record(value: object, *, producer: str, revision: int, known_
     return record
 
 
-def _controller_ack(state: dict[str, object], changed: list[str], *, include_packet: bool = False, root: Path | None = None) -> dict[str, object]:
-    result: dict[str, object] = {
+def _controller_ack(state: dict[str, object], changed: list[str]) -> dict[str, object]:
+    return {
         "ok": True,
         "task_id": state["task_id"],
         "revision": state["revision"],
         "status": state["status"],
         "changed": sorted(set(changed)),
     }
-    if include_packet:
-        result["controller_packet"] = _controller_packet(state, root)
-    return result
 
 
 def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None) -> dict[str, object]:
@@ -860,7 +878,7 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
             state["records"].append(record)
             known.add(str(record["id"]))
         _write_state(root, state)
-    return _controller_ack(state, ["task"], include_packet=True, root=root)
+    return _controller_ack(state, ["task"])
 
 
 def task_update(root: Path, role: str, base_revision: int, input_file: str | None) -> dict[str, object]:
@@ -914,42 +932,38 @@ def task_show(root: Path) -> dict[str, object]:
     return {"ok": True, "state": state, "task_surface_delta": _surface_delta(root, state["task_surface_baseline"])}
 
 
-def _controller_packet(state: dict[str, object], root: Path | None = None) -> dict[str, object]:
-    artifacts = [dict(item) for item in state["artifact_refs"]]
-    if root is not None:
-        active = _artifact_activity(state["artifact_refs"])
-        for item in artifacts:
-            item["freshness"] = _artifact_freshness(root, item)
-            item["active"] = item["id"] in active
-    packet = {
+def _controller_status(state: dict[str, object]) -> dict[str, object]:
+    """Return current routing mechanics without replaying the durable ledger."""
+    goal = str(state["goal"])
+    artifact_ids = [str(item["id"]) for item in state["artifact_refs"]]
+    return {
         "ok": True,
         "schema_version": state["schema_version"],
         "role": "controller",
         "Task": {
             "id": state["task_id"],
-            "goal": state["goal"],
+            "goal_preview": goal[:1024],
+            "goal_truncated": len(goal) > 1024,
             "status": state["status"],
             "revision": state["revision"],
             "milestone": state["current_milestone"],
         },
-        "Records": state["records"],
         "Active Work": state["active_work"],
         "Pending Results": state["pending_results"],
-        "Artifact Refs": artifacts,
-        "Verification Observations": state["verification_results"],
+        "Counts": {
+            "records": len(state["records"]),
+            "sources": len(state["evidence_refs"]),
+            "artifacts": len(state["artifact_refs"]),
+            "verification_observations": len(state["verification_results"]),
+        },
+        "Recent Artifact IDs": artifact_ids[-8:],
+        "Active Artifact Count": len(_artifact_activity(state["artifact_refs"])),
     }
-    if root is not None:
-        packet["Task Surface"] = {
-            "start_head": state["task_base_head"],
-            "current_head": _git_head(root),
-            "delta": _surface_delta(root, state["task_surface_baseline"]),
-        }
-    return packet
 
 
 def task_status(root: Path) -> dict[str, object]:
     root = _repo_root(root)
-    return _controller_packet(_load_state(root), root)
+    return _controller_status(_load_state(root))
 
 
 def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer_role: str | None = None, registered_by: str = "controller", scope: str | None = None, evidence_refs: list[str] | None = None, supersedes: list[str] | None = None) -> dict[str, object]:
@@ -1080,42 +1094,78 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
         state = _load_state(root, active=True)
         if state["revision"] != base_revision:
             raise ValueError("task revision conflict")
-        known_refs = {str(item["id"]) for item in state["evidence_refs"]} | {str(item["id"]) for item in state["artifact_refs"]}
+        sources = {str(item["id"]): item for item in state["evidence_refs"]}
+        artifacts = {str(item["id"]): item for item in state["artifact_refs"]}
+        known_refs = set(sources) | set(artifacts)
         writes: dict[str, bytes] = {}
         promoted: list[str] = []
         for value in payload["records"]:
             if not isinstance(value, dict):
                 raise ValueError("invalid promotion record")
-            allowed = {"id", "kind", "type", "title", "text", "source_refs", "evidence_refs", "status", "supersedes", "audience", "topics", "symbols", "applicability", "confidence"}
+            allowed = {"id", "kind", "title", "text", "source_refs", "status", "audience", "topics", "symbols", "applicability", "confidence"}
             if set(value) - allowed:
                 raise ValueError("invalid promotion record")
             identifier = _bounded_label(value.get("id"), "promotion id")
             title = value.get("title", identifier)
             text = value.get("text")
-            if not isinstance(title, str) or not title.strip() or len(title) > 300 or not isinstance(text, str) or not text.strip() or len(text) > 16_384:
+            if not isinstance(title, str) or not title.strip() or len(title) > 300 or "\n" in title or "\r" in title or not isinstance(text, str) or not text.strip() or len(text) > 16_384:
                 raise ValueError("invalid promotion record")
-            refs = value.get("source_refs", value.get("evidence_refs", []))
-            if not isinstance(refs, list) or any(ref not in known_refs for ref in refs):
+            refs = value.get("source_refs", [])
+            if not isinstance(refs, list) or len(refs) > 64 or len(set(refs)) != len(refs) or any(not isinstance(ref, str) or ref not in known_refs for ref in refs):
                 raise ValueError("promotion source reference is unknown")
+            descriptors: list[dict[str, object]] = []
+            for ref in refs:
+                if ref in sources and ref in artifacts:
+                    raise ValueError("promotion source reference is ambiguous")
+                if ref in artifacts:
+                    artifact = artifacts[ref]
+                    descriptors.append({
+                        "type": "artifact",
+                        "artifact_id": artifact["id"],
+                        "path": artifact["path"],
+                        "content_sha256": artifact["content_sha256"],
+                        "producer": artifact["producer"],
+                        "task_id": artifact["task_id"],
+                        "revision": artifact["revision"],
+                    })
+                else:
+                    source = sources[ref]
+                    descriptor = {
+                        "type": "source",
+                        "source_id": source["id"],
+                        "kind": source["kind"],
+                        "locator": source["locator"],
+                    }
+                    if "confidence" in source:
+                        descriptor["confidence"] = source["confidence"]
+                    descriptors.append(descriptor)
             relative = f".agent-memory/promoted/{identifier}.md"
             if _safe(root, relative).exists():
                 raise ValueError("promotion refuses to overwrite an existing durable target")
-            kind = str(value.get("kind", value.get("type", "record")))
-            status = str(value.get("status", "ACTIVE"))
-            confidence = str(value.get("confidence", "MODEL_AUTHORED"))
-            source_text = json.dumps(refs, ensure_ascii=False)
-            writes[relative] = _entry(
+            kind = value.get("kind", "record")
+            status = value.get("status", "ACTIVE")
+            confidence = value.get("confidence", "MODEL_AUTHORED")
+            applicability = value.get("applicability", "PROJECT")
+            audience = value.get("audience", ["all"])
+            topics = value.get("topics", [])
+            symbols = value.get("symbols", [])
+            durable_body = text
+            if descriptors:
+                durable_body += "\n\n## Durable Source Descriptors\n\n```json\n" + json.dumps(descriptors, ensure_ascii=False, sort_keys=True, indent=2) + "\n```"
+            rendered = _entry(
                 title,
-                text,
+                durable_body,
                 status=status,
-                evidence=source_text,
+                evidence="DURABLE_SOURCE_DESCRIPTORS" if descriptors else "NONE",
                 confidence=confidence,
-                applicability=str(value.get("applicability", "PROJECT")),
-                audience=value.get("audience") if isinstance(value.get("audience"), list) else ["all"],
-                topics=value.get("topics") if isinstance(value.get("topics"), list) else [],
-                symbols=value.get("symbols") if isinstance(value.get("symbols"), list) else [],
+                applicability=applicability,
+                audience=audience,
+                topics=topics,
+                symbols=symbols,
                 kind=kind,
             )
+            parse_text(rendered.decode("utf-8"), Path(relative))
+            writes[relative] = rendered
             promoted.append(relative)
         backup = _apply_with_backup(root, writes, [], "task-promote")
     return {"ok": True, "task_id": state["task_id"], "state_revision": state["revision"], "promoted": promoted, "backup": backup}

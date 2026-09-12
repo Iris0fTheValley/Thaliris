@@ -5,6 +5,7 @@ import importlib.util
 import hashlib
 from pathlib import Path
 import subprocess
+import pytest
 
 from thaliris import codex_adapter, core
 
@@ -54,13 +55,13 @@ def test_artifact_freshness_is_observation_only(tmp_path: Path) -> None:
     registered = core.task_artifact(root, started["revision"], "evidence", "evidence.md", "evidence", producer_role="investigator")
     artifact.write_text("after", encoding="utf-8")
 
-    status = core.task_status(root)
-    assert status["Artifact Refs"][0]["freshness"] == "CHANGED"
-    assert status["Records"][0]["text"] == "keep model conclusion"
-    assert status["Records"][0]["status"] == "accepted"
-    serialized = json.dumps(status)
+    shown = core.task_show(root)
+    assert core._artifact_freshness(root, shown["state"]["artifact_refs"][0]) == "CHANGED"
+    assert shown["state"]["records"][0]["text"] == "keep model conclusion"
+    assert shown["state"]["records"][0]["status"] == "accepted"
+    serialized = json.dumps(shown)
     assert "REVALIDATION_REQUIRED" not in serialized and "STALE_PROVENANCE" not in serialized
-    assert registered["revision"] == status["Task"]["revision"]
+    assert registered["revision"] == shown["state"]["revision"]
 
 
 def test_verification_and_task_surface_are_observations_not_close_authority(tmp_path: Path) -> None:
@@ -104,6 +105,70 @@ def test_promotion_stores_controller_selection_without_confidence_gate(tmp_path:
     assert candidates[0]["path"] == ".agent-memory/promoted/selected.md"
     fetched = core.memory_get(root, candidates[0]["path"])
     assert "MODEL_SELECTED_TEXT" in fetched["body"]
+
+
+def test_promoted_provenance_survives_task_state_and_round_trips(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "promotion provenance", None, write_json(root.parent / "sources.json", {
+        "evidence_refs": [{
+            "id": "source-1", "kind": "repository", "locator": "src/module.py#symbol", "summary": "source",
+        }],
+    }))
+    artifact_path = root / "details.md"
+    artifact_path.write_text("artifact details", encoding="utf-8")
+    registered = core.task_artifact(
+        root, started["revision"], "artifact-7", "details.md", "details",
+        producer_role="investigator", evidence_refs=["source-1"],
+    )
+    promotion = write_json(root.parent / "durable.json", {"records": [{
+        "id": "durable-decision",
+        "kind": "decision",
+        "title": "Durable decision",
+        "text": "Keep this conclusion",
+        "source_refs": ["artifact-7", "source-1"],
+        "status": "accepted",
+        "confidence": "model-authored",
+        "applicability": "project",
+        "audience": ["controller", "reviewer"],
+        "topics": ["routing"],
+        "symbols": ["module.symbol"],
+    }]})
+    result = core.task_promote(root, "controller", registered["revision"], promotion)
+    durable_path = result["promoted"][0]
+    (root / ".context" / "state.json").unlink()
+
+    fetched = core.memory_get(root, durable_path)
+    assert fetched["metadata"]["Kind"] == "decision"
+    assert fetched["metadata"]["Audience"] == ["controller", "reviewer"]
+    assert "artifact-7" in fetched["body"]
+    assert "details.md" in fetched["body"]
+    assert hashlib.sha256(b"artifact details").hexdigest() in fetched["body"]
+    assert started["task_id"] in fetched["body"]
+    assert "source-1" in fetched["body"]
+    assert "src/module.py#symbol" in fetched["body"]
+    assert core.recall(root, "Durable decision", "controller")["candidates"][0]["path"] == durable_path
+
+
+@pytest.mark.parametrize("field,value", [
+    ("kind", "bad\nkind"),
+    ("status", "bad\nstatus"),
+    ("confidence", "bad\nconfidence"),
+    ("applicability", "bad\napplicability"),
+    ("audience", ["bad\naudience"]),
+    ("topics", ["bad\ntopic"]),
+    ("symbols", ["bad\nsymbol"]),
+    ("title", "bad\ntitle"),
+    ("kind", "x" * 129),
+    ("audience", ["x" * 257]),
+])
+def test_invalid_promotion_metadata_is_rejected_without_writing(tmp_path: Path, field: str, value: object) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "invalid promotion", None, None)
+    record = {"id": "invalid", "kind": "decision", "title": "Title", "text": "body", field: value}
+    promotion = write_json(root.parent / "invalid.json", {"records": [record]})
+    with pytest.raises(ValueError):
+        core.task_promote(root, "controller", started["revision"], promotion)
+    assert not (root / ".agent-memory" / "promoted" / "invalid.md").exists()
 
 
 def test_memory_audience_is_search_metadata_not_access_control(tmp_path: Path) -> None:
@@ -199,8 +264,80 @@ def test_objective_freshness_reports_missing_without_semantic_mutation(tmp_path:
     core.task_artifact(root, started["revision"], "gone", "disappears.md", "gone")
     path.unlink()
 
+    shown = core.task_show(root)
+    assert core._artifact_freshness(root, shown["state"]["artifact_refs"][0]) == "MISSING"
+    assert shown["state"]["records"][0]["text"] == "model keeps this"
+    assert shown["state"]["records"][0]["status"] == "accepted"
+    assert shown["state"]["records"][0]["source_refs"] == []
+
+
+def test_task_start_does_not_echo_initial_ledger(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    sentinel = "INITIAL_RECORD_BODY_MUST_NOT_ECHO"
+    started = core.task_start(root, "start", None, write_json(root.parent / "initial.json", {
+        "records": [{"id": "initial", "kind": "note", "text": sentinel}],
+    }))
+    assert "controller_packet" not in started
+    assert sentinel not in json.dumps(started)
+    assert {"task_id", "revision", "status"} <= set(started)
+
+
+def test_large_task_status_is_bounded_while_task_show_retains_full_ledger(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    body = "HISTORICAL_RECORD_BODY_" + "x" * 256
+    started = core.task_start(root, "bounded status", None, write_json(root.parent / "large.json", {
+        "records": [
+            {"id": f"record-{index}", "kind": "note", "text": f"{body}{index}"}
+            for index in range(500)
+        ],
+    }))
+    with core._lock(root):
+        state = core._load_state(root, active=True)
+        for index in range(200):
+            artifact_path = root / f"artifact-{index}.md"
+            artifact_path.write_text(f"ARTIFACT_BODY_{index}", encoding="utf-8")
+            state["artifact_refs"].append({
+                "id": f"artifact-{index}",
+                "path": f"artifact-{index}.md",
+                "summary": f"summary {index}",
+                "producer": "investigator",
+                "registered_by": "controller",
+                "source_refs": [],
+                "supersedes": [],
+                "task_id": state["task_id"],
+                "revision": started["revision"],
+                "content_sha256": hashlib.sha256(f"ARTIFACT_BODY_{index}".encode()).hexdigest(),
+                "created_at": "2026-01-01T00:00:00+00:00",
+            })
+            material = {
+                "id": f"verification-{index}",
+                "kind": "test",
+                "outcome": "PASSED",
+                "summary": f"VERIFICATION_BODY_{index}",
+                "observed_by": "native-tool",
+                "candidate_identity": "a" * 64,
+                "observed_files": [],
+            }
+            state["verification_results"].append({
+                **material,
+                "observed_at": "2026-01-01T00:00:00+00:00",
+                "observed_at_revision": started["revision"],
+                "result_hash": hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest(),
+            })
+        core._write_state(root, state)
+
     status = core.task_status(root)
-    assert status["Artifact Refs"][0]["freshness"] == "MISSING"
-    assert status["Records"][0]["text"] == "model keeps this"
-    assert status["Records"][0]["status"] == "accepted"
-    assert status["Records"][0]["source_refs"] == []
+    serialized = json.dumps(status)
+    assert status["Counts"] == {
+        "records": 500, "sources": 0, "artifacts": 200, "verification_observations": 200,
+    }
+    assert len(status["Recent Artifact IDs"]) == 8
+    assert len(serialized.encode()) < 8 * 1024
+    for forbidden in ("HISTORICAL_RECORD_BODY", "ARTIFACT_BODY", "VERIFICATION_BODY", "Task Surface"):
+        assert forbidden not in serialized
+
+    shown = core.task_show(root)
+    assert len(shown["state"]["records"]) == 500
+    assert len(shown["state"]["artifact_refs"]) == 200
+    assert len(shown["state"]["verification_results"]) == 200
+    assert "HISTORICAL_RECORD_BODY" in json.dumps(shown)

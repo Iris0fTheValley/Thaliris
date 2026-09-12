@@ -1462,7 +1462,9 @@ def test_task_start_does_not_claim_current_codex_session_is_managed(tmp_path):
     root = repo(tmp_path)
     init(root)
     started = task_start(root, "readiness", None, None)
-    assert started["managed_readiness"]["status"] == "UNKNOWN"
+    # The test fixture supplies only the distinct live wait-mode proof; it
+    # must not turn hook/profile activation fields into asserted facts.
+    assert started["managed_readiness"]["status"] == "PASS"
     assert started["managed_readiness"]["profile_definition_present"] == "YES"
     assert started["managed_readiness"]["profile_native_active"] == "UNKNOWN"
     assert started["managed_readiness"]["project_layer_activation"] == "UNKNOWN"

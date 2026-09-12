@@ -82,6 +82,9 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     # transaction-integrity wording was added.
     "b038486edb2c381631e458adac2bff12fbcdc09233b5b1b8f59aeee9dc0e9774",
     "360d49c46afe280f85d6857575a12a9eeeff93d1f9aedb4b00ef2a2aa7c8b078",
+    # Exact reviewer profile emitted before the bounded Review Packet fields
+    # were added. Retained for conservative profile migration.
+    "720ef66c9f6023d961ddc1a3329ec4ae3fdf7fe2f6b1252034a7117f5990a125",
 })
 
 

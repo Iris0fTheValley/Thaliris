@@ -21,10 +21,10 @@ from . import core
 
 HOOK_COMMAND_PREFIX = "context audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
-CODEX_ADAPTER_PROTOCOL_VERSION = 5
+CODEX_ADAPTER_PROTOCOL_VERSION = 6
 # Private adapter lifecycle state. This is deliberately separate from Core
 # state/schema and records only bounded native child provenance.
-LIFECYCLE_STATE_VERSION = 9
+LIFECYCLE_STATE_VERSION = 10
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed intent-audit hooks"
 AUDIT_INTERVAL = 5
 MAX_AUDIT_RESULTS = 32
@@ -760,7 +760,7 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     if not path.is_file():
         return {"version": LIFECYCLE_STATE_VERSION, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, LIFECYCLE_STATE_VERSION} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, LIFECYCLE_STATE_VERSION} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
         raise ValueError("invalid lifecycle runtime state")
     prior_version = value.get("version")
     if prior_version in {1, 2, 3, 4, 5}:
@@ -772,8 +772,7 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
         for child in value["children"]:
             if isinstance(child, dict):
                 child["managed"] = False
-                child["projection_ready"] = False
-    if prior_version in {1, 2, 3, 4, 5, 6, 7, 8}:
+    if prior_version in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
         # Older records may contain activation/deadline state from the removed
         # adapter supervisor. Preserve child observations but never reactivate
         # or infer that state during migration.
@@ -790,18 +789,27 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
                 )
                 child.setdefault("native_terminal_status", None)
                 child.setdefault("task_name_hash", None)
+                # A legacy projection event cannot prove delivery of a
+                # Controller-authored handoff after the projection path is
+                # removed. Keep the observation, but do not reactivate it.
+                child["managed"] = False
+                child.pop("projection_ready", None)
+                child.setdefault("handoff_bound", False)
         value.setdefault("stall", None)
-        pending_value = value.get("pending_authorized_spawn")
-        if isinstance(pending_value, dict):
-            pending_value.setdefault("task_name_hash", None)
+        value["pending_authorized_spawn"] = None
     pending = value.get("pending_authorized_spawn")
     if pending is not None and (
         not isinstance(pending, dict)
-        or set(pending) != {"role", "expected_agent_type", "session_id_hash", "authorized_sequence", "task_name_hash"}
+        or set(pending) != {"role", "expected_agent_type", "session_id_hash", "authorized_sequence", "task_name_hash", "handoff_id", "task_revision", "producer", "payload_hash", "created_at_ns"}
         or pending.get("role") not in set(_NATIVE_AGENT_ROLES.values())
         or pending.get("expected_agent_type") not in _NATIVE_AGENT_ROLES
         or not isinstance(pending.get("session_id_hash"), str)
         or not isinstance(pending.get("authorized_sequence"), int)
+        or not isinstance(pending.get("handoff_id"), str)
+        or type(pending.get("task_revision")) is not int
+        or pending.get("producer") != "controller"
+        or not isinstance(pending.get("payload_hash"), str)
+        or type(pending.get("created_at_ns")) is not int
     ):
         raise ValueError("invalid lifecycle authorized spawns")
     return value
@@ -876,12 +884,25 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
                     return _permission_deny("ORCHESTRATION_STALLED: the managed child lifecycle has no new terminal information; stop recovery attempts until a native lifecycle event arrives.")
                 return _permission_deny("THALIRIS_SERIAL_CHILD_REQUIRED: wait for the managed child reservation to complete before spawning another child.")
             state["sequence"] = int(state.get("sequence", 0)) + 1
+            task_state = core._load_state(root, active=True)
+            if task_state.get("task_id") != task_id:
+                return _permission_deny("THALIRIS_MANAGED_SPAWN_UNAVAILABLE: the active task changed before authorization.")
+            handoff_text = _delegation_text(_delegation_input(payload))
+            if not isinstance(handoff_text, str) or not handoff_text.strip():
+                return _permission_deny("THALIRIS_HANDOFF_REQUIRED: managed spawn requires an explicit Controller handoff message.")
+            payload_hash = hashlib.sha256(handoff_text.encode("utf-8")).hexdigest()
+            handoff_material = f"{task_id}\0{task_state['revision']}\0{session_id_hash}\0{state['sequence']}\0{payload_hash}"
             state["pending_authorized_spawn"] = {
                 "role": role,
                 "expected_agent_type": expected_agent_type,
                 "session_id_hash": session_id_hash,
                 "authorized_sequence": state["sequence"],
                 "task_name_hash": None,
+                "handoff_id": f"handoff-{hashlib.sha256(handoff_material.encode('utf-8')).hexdigest()[:32]}",
+                "task_revision": task_state["revision"],
+                "producer": "controller",
+                "payload_hash": payload_hash,
+                "created_at_ns": time.time_ns(),
             }
             state["stall"] = None
             _runtime_metadata(state, payload)
@@ -908,8 +929,8 @@ def _clear_pending_authorized_spawn(root: Path, payload: dict[str, Any]) -> None
             _write_capture(path, state)
 
 
-def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
-    """Record a bounded child start and return its Core-owned projection role."""
+def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
+    """Bind an authorized native child to its explicit Controller handoff."""
     task_id = _active_task_id(root)
     agent_id = payload.get("agent_id")
     agent_type = payload.get("agent_type")
@@ -918,7 +939,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
     session_id_hash = _session_id_hash(payload)
     turn_id_hash = _turn_id_hash(payload)
     if task_id is None or not isinstance(agent_id, str) or not agent_id or role is None:
-        return None
+        return False
     with core._lock(root):
         path = _lifecycle_path(root, task_id)
         state = _load_lifecycle(path, task_id)
@@ -943,7 +964,12 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
                 "turn_id_hash": turn_id_hash,
                 "role": role,
                 "managed": authorized,
-                "projection_ready": False,
+                "handoff_bound": authorized,
+                "handoff_id": pending.get("handoff_id") if authorized else None,
+                "task_revision": pending.get("task_revision") if authorized else None,
+                "producer": pending.get("producer") if authorized else None,
+                "payload_hash": pending.get("payload_hash") if authorized else None,
+                "handoff_created_at_ns": pending.get("created_at_ns") if authorized else None,
                 "started": state["sequence"],
                 "stopped": None,
                 "terminal_state": "RUNNING",
@@ -963,7 +989,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
         _bounded_append(runtime, "subagent_start_agent_types", agent_type[:80] if isinstance(agent_type, str) else None)
         runtime.setdefault("events_observed", {})["SubagentStart"] = True
         _write_capture(runtime_path, runtime)
-    return role if authorized else None
+    return authorized
 
 
 def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> bool:
@@ -1139,57 +1165,12 @@ def _reconcile_lifecycle_post_tool(root: Path, payload: dict[str, Any], tool: st
             _write_capture(path, state)
 
 
-def _mark_projection_ready(root: Path, payload: dict[str, Any]) -> bool:
-    """Record that the adapter successfully emitted the Core projection."""
-    task_id = _active_task_id(root)
-    agent_id = payload.get("agent_id")
-    if task_id is None or not isinstance(agent_id, str) or not agent_id:
-        return False
-    try:
-        with core._lock(root):
-            path = _lifecycle_path(root, task_id)
-            state = _load_lifecycle(path, task_id)
-            child_hash = _identity_hash(agent_id)
-            for child in state["children"]:
-                if (
-                    child.get("agent_id_hash") == child_hash
-                    and child.get("managed") is True
-                    and child.get("stopped") is None
-                ):
-                    child["projection_ready"] = True
-                    _runtime_metadata(state, payload)
-                    _write_capture(path, state)
-                    return True
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return False
-    return False
-
-
 def _subagent_start_output(root: Path, payload: dict[str, Any]) -> str:
-    role = _record_subagent_start(root, payload)
-    if role is None:
-        return ""
-    try:
-        projection = core.prepare(root, None, role)
-        response = json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "SubagentStart",
-                    "additionalContext": json.dumps(
-                        {"thaliris_role": role, "projection": projection},
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
-                }
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return ""
-    if not _mark_projection_ready(root, payload):
-        return ""
-    return response
+    # SubagentStart is lifecycle-only. The native spawn message is the sole
+    # task-specific semantic input; returning additionalContext here would
+    # create a second router and duplicate the Controller's handoff.
+    _record_subagent_start(root, payload)
+    return ""
 
 
 def _bounded_append(state: dict[str, Any], key: str, value: str | None) -> None:
@@ -1229,7 +1210,7 @@ def _bash_command(payload: dict[str, Any]) -> str | None:
 
 
 def qualifying_child_completed(root: Path) -> bool:
-    """Require exact authorized native start, emitted projection, stop, and no in-flight work."""
+    """Require an authorized handoff binding, matching stop, and no in-flight work."""
     task_id = _active_task_id(root)
     if task_id is None:
         return False
@@ -1246,7 +1227,7 @@ def qualifying_child_completed(root: Path) -> bool:
         and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
         and value.get("pending_authorized_spawn") is None
         and not _managed_child_active(root)
-        and any(isinstance(child, dict) and child.get("managed") is True and child.get("projection_ready") is True and child.get("terminal_state") == "STOP_ATTESTED" and child.get("native_terminal_status") not in {"interrupted", "errored", "shutdown"} and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
+        and any(isinstance(child, dict) and child.get("managed") is True and child.get("handoff_bound") is True and isinstance(child.get("handoff_id"), str) and isinstance(child.get("payload_hash"), str) and child.get("terminal_state") == "STOP_ATTESTED" and child.get("native_terminal_status") not in {"interrupted", "errored", "shutdown"} and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
     )
 
 
@@ -1259,6 +1240,32 @@ def _managed_child_active(root: Path) -> bool:
     except (OSError, ValueError, json.JSONDecodeError):
         return False
     return isinstance(value, dict) and value.get("version") == LIFECYCLE_STATE_VERSION and value.get("managed_hook_spec_hash") == managed_hook_spec_hash() and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION and any(isinstance(child, dict) and child.get("managed") is True and child.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"} for child in value.get("children", []))
+
+
+def managed_dependency_pending(root: Path) -> bool:
+    """Report whether a managed reservation or live child can be waited on."""
+    task_id = _active_task_id(root)
+    if task_id is None:
+        return False
+    try:
+        value = json.loads(_lifecycle_path(root, task_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(value, dict)
+        and value.get("version") == LIFECYCLE_STATE_VERSION
+        and value.get("managed_hook_spec_hash") == managed_hook_spec_hash()
+        and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
+        and (
+            isinstance(value.get("pending_authorized_spawn"), dict)
+            or any(
+                isinstance(child, dict)
+                and child.get("managed") is True
+                and child.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"}
+                for child in value.get("children", [])
+            )
+        )
+    )
 
 
 def _post_tool_response(payload: dict[str, Any]) -> object:

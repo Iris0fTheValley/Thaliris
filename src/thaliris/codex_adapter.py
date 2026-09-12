@@ -1,4 +1,4 @@
-"""Codex-specific mapping for Thaliris Core projections and lifecycle hooks."""
+"""Codex adapter for explicit handoff delivery and native lifecycle hooks."""
 from __future__ import annotations
 
 import json
@@ -1035,32 +1035,11 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
     return result
 
 
-def child_bootstrap(role: str) -> str:
-    """Return the minimal native task instruction for a fresh execution child.
-
-    The parent sends this marker as the delegation task. The child loads its
-    own projection in its own session; the parent never preloads child-only
-    pack content.
-    """
-    role = semantic_role(role)
-    if role not in core._PACK_ROLES or role == "controller":
-        raise ValueError("child role must be an execution role")
-    return f"Obtain your Thaliris role context by running `context prepare --role {role}` in this fresh child, then perform the assigned task and explicitly select the information to return. Large selected details are allowed when needed for correctness. Do not delegate to another child."
-
-
-def prepare_child(root: Path, role: str) -> dict[str, object]:
-    """Load a role projection from inside the child runtime boundary."""
-    role = semantic_role(role)
-    if role not in core._PACK_ROLES or role == "controller":
-        raise ValueError("child role must be an execution role")
-    return core.prepare(root, None, role)
-
-
 def task_close(root: Path, base_revision: int) -> dict[str, object]:
     state = core.task_show(root)["state"]
     task_id = str(state["task_id"])
     if not intent_audit.qualifying_child_completed(core._repo_root(root)):
-        raise ValueError("task-close requires an authorized native SubagentStart, an emitted Core projection, a matching session/turn/type SubagentStop, and no pending or active managed work")
+        raise ValueError("task-close requires an authorized explicit handoff, a matching native SubagentStart/Stop identity, and no pending or active managed work")
     try:
         audit = task_close_audit(core._repo_root(root), task_id, cleanup=False)
     except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
@@ -1085,7 +1064,11 @@ def audit_hook(root: Path, event: str, payload: object) -> str:
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str) or intent_audit._tool_basename(tool) != "wait_agent":
         return ""
-    if intent_audit._active_task_id(root) is None or selected_continuation_mode(root) != "BLOCKING_WAIT":
+    if (
+        intent_audit._active_task_id(root) is None
+        or selected_continuation_mode(root) != "BLOCKING_WAIT"
+        or not intent_audit.managed_dependency_pending(root)
+    ):
         return ""
     capability = host_explicit_blocking_wait()
     if capability.get("status") != "PASS":
@@ -1185,9 +1168,7 @@ def doctor(root: Path) -> dict[str, object]:
         "spawn_pretool_observed": "YES" if "PreToolUse" in events else "UNKNOWN",
         "subagent_start_observed": "YES" if lifecycle_start else "UNKNOWN",
         "subagent_stop_observed": "YES" if lifecycle_stop else "UNKNOWN",
-        # A hook response was emitted locally, but only a native child probe
-        # can show that Codex delivered additionalContext to the child.
-        "role_projection_injection_observed": "UNKNOWN",
+        "explicit_handoff_binding_observed": "YES" if lifecycle_start else "UNKNOWN",
         "controller_activation_bridge": "CODEX_NATIVE",
         "NATIVE_CHILD_COMPLETION_REENTERS_ROOT": native_child_completion_reenters_root(),
         "HOST_EXPLICIT_BLOCKING_WAIT": host_explicit_blocking_wait().get("status"),

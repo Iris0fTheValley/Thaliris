@@ -1,25 +1,16 @@
 """Frozen, source-specific input boundary for formal benchmark collection."""
 from __future__ import annotations
 
-import builtins
 import hashlib
 import json
 from pathlib import Path
 import re
 from typing import Any, Iterable, Protocol
 
+from thaliris.host_authority import is_d11_host_registry
+
 SOURCE_KINDS = frozenset({"thaliris_audit", "codex_rollout", "harness_attestation", "evaluator_result"})
 SOURCE_REGISTRY_VERSION = 2
-_REGISTRY_SEAL_NAME = "_thaliris_d11_authority_registry_seal"
-if not hasattr(builtins, _REGISTRY_SEAL_NAME):
-    setattr(builtins, _REGISTRY_SEAL_NAME, object())
-_REGISTRY_SEAL = getattr(builtins, _REGISTRY_SEAL_NAME)
-
-
-class CaptureAuthority(Protocol):
-    """Read-only capability used to validate a host-captured rollout."""
-
-    def verify(self, descriptor: Any, *, path: Path) -> bool: ...
 
 
 class AuthorityRegistry(Protocol):
@@ -28,46 +19,13 @@ class AuthorityRegistry(Protocol):
     def verify_capture(self, descriptor: Any, *, path: Path, binding: dict[str, Any]) -> bool: ...
 
 
-class _SealedAuthorityRegistry:
-    """Verifier-only registry. Receipt issuance remains outside production."""
-    def __init__(self, verifier: CaptureAuthority, *, provenance: str, epoch: str,
-                 intent: str, policy: str) -> None:
-        self._verifier = verifier
-        self._seal = _REGISTRY_SEAL
-        self.provenance = provenance
-        self._epoch = epoch
-        self._intent = intent
-        self._policy = policy
-
-    def verify_capture(self, descriptor: Any, *, path: Path, binding: dict[str, Any]) -> bool:
-        if self.provenance != "HOST" or not isinstance(descriptor, dict):
-            return False
-        expected = _identity({k: v for k, v in descriptor.items() if k != "digest"})
-        try:
-            return (descriptor.get("provenance") == "HOST" and descriptor.get("binding") == binding
-                    and descriptor.get("epoch") == self._epoch and descriptor.get("intent") == self._intent
-                    and descriptor.get("policy") == self._policy and descriptor.get("digest") == expected
-                    and bool(self._verifier.verify(descriptor, path=path)))
-        except (OSError, TypeError, ValueError):
-            return False
-
-
-def _provision_test_authority_registry(verifier: CaptureAuthority, *, epoch: str,
-                                       intent: str = "formal-collection",
-                                       policy: str = "codex-rollout-capture") -> AuthorityRegistry:
-    """Fixture-only provisioning; production receives an opaque registry."""
-    if not all(isinstance(value, str) and value for value in (epoch, intent, policy)) or not callable(getattr(verifier, "verify", None)):
-        raise ValueError("host authority composition is invalid")
-    return _SealedAuthorityRegistry(verifier, provenance="HOST", epoch=epoch, intent=intent, policy=policy)
-
-
 def verify_capture_authority(registry: AuthorityRegistry | None, descriptor: Any, *, path: Path,
                              binding: dict[str, Any]) -> bool:
     """Fail closed unless a host-composed registry verifies the exact receipt."""
     try:
         return bool(
             registry
-            and getattr(registry, "_seal", None) is _REGISTRY_SEAL
+            and is_d11_host_registry(registry)
             and registry.provenance == "HOST"
             and registry.verify_capture(descriptor, path=path, binding=binding)
         )

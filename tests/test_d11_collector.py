@@ -459,15 +459,20 @@ def test_rollout_authority_rejects_static_or_tampered_descriptors_and_accepts_te
     with pytest.raises(ValueError, match="authority"):
         d11_sources.create_source_registry([source], run_id="task", authority_registry=ForgedRegistry())
     assert not hasattr(d11_sources, "compose_host_authority_registry")
+    assert not hasattr(d11_sources, "_provision_test_authority_registry")
+    assert not hasattr(d11_sources, "_SealedAuthorityRegistry")
     issuer = d11_authority.capture_authority(d11_sources)
     descriptor = d11_authority.issue_capture(issuer, authority_ref="capture-1", task_id="task", task_revision=2, reservation_id="reservation", session_id="r", path=stream)
-    registry = d11_sources.create_source_registry([{**source, "capture_authority": descriptor}], run_id="task", authority_registry=issuer.registry)
-    assert d11_sources.verify_source_registry(registry, authority_registry=issuer.registry)
+    formal_authority = d11_authority.host_bootstrap(issuer)
+    with pytest.raises(ValueError, match="authority"):
+        d11_sources.create_source_registry([{**source, "capture_authority": descriptor}], run_id="task", authority_registry=issuer.registry)
+    registry = d11_sources.create_source_registry([{**source, "capture_authority": descriptor}], run_id="task", authority_registry=formal_authority)
+    assert d11_sources.verify_source_registry(registry, authority_registry=formal_authority)
     copied = dict(descriptor); copied["reservation_id"] = "other"
     with pytest.raises(ValueError, match="authority"):
-        d11_sources.create_source_registry([{**source, "capture_authority": copied}], run_id="task", authority_registry=issuer.registry)
+        d11_sources.create_source_registry([{**source, "capture_authority": copied}], run_id="task", authority_registry=formal_authority)
     stream.write_text(stream.read_text(encoding="utf-8") + "{}\n", encoding="utf-8")
-    assert d11_sources.verify_source_registry(registry, authority_registry=issuer.registry) is False
+    assert d11_sources.verify_source_registry(registry, authority_registry=formal_authority) is False
     assert not hasattr(d11_sources, "_TestCaptureAuthorityWriter")
 
 
@@ -485,11 +490,11 @@ def test_formal_multisource_fixture_replay_has_no_test_only_bypass(tmp_path: Pat
          "task_id": "formal-fixture", "task_revision": 1,
          "reservation_id": "fixture-reservation", "session_id": "review-fixture"},
         {"kind": "harness_attestation", "path": harness, "stream_identity_policy": "append_only"},
-    ], run_id="formal-fixture", authority_registry=authority.registry)
+    ], run_id="formal-fixture", authority_registry=d11_authority.host_bootstrap(authority))
     policy = candidate_manifest.build_manifest(root)["manifest"]["policy"]
     start = d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-start", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], attestation_id="review-start-attestation", reviewer_binding={"task_id": "formal-fixture", "task_revision": 1, "controller_session_id": "fixture-controller", "reservation_id": "fixture-reservation", "projection_id": "fixture-projection", "parent_session_id": "fixture-controller", "native_sequence": 1})
     d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-end", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], caused_by="event:rollout-review-stop")
-    events = d11_collector.load_trusted_events(registry, authority_registry=authority.registry)
+    events = d11_collector.load_trusted_events(registry, authority_registry=d11_authority.host_bootstrap(authority))
     assert events and all(event["_source_run_id"] == "formal-fixture" for event in events)
     assert not any(event["_source_run_id"] == "TEST_ONLY" for event in events)
     graph = d11_collector.collect_review_graph(events)
@@ -579,9 +584,9 @@ def test_frozen_formal_manifest_accepts_only_injected_host_registry(tmp_path: Pa
              "task_id": "formal-freeze", "task_revision": 1,
              "reservation_id": "freeze-reservation", "session_id": "freeze-session"},
             {"kind": "harness_attestation", "path": stream},
-        ], run_id="formal-freeze", authority_registry=host.registry,
+        ], run_id="formal-freeze", authority_registry=d11_authority.host_bootstrap(host),
     )
-    authority = host.registry
+    authority = d11_authority.host_bootstrap(host)
     task_spec = tmp_path / "task.md"
     task_spec.write_text("task", encoding="utf-8")
     harness = ROOT / "tests" / "test_d11_collector.py"
@@ -820,12 +825,12 @@ def test_structured_evidence_source_ref_is_resolved_against_actual_bytes(tmp_pat
         {"kind": "codex_rollout", "path": rollout, "capture_authority": descriptor,
          "task_id": "formal-source", "task_revision": 1, "reservation_id": "source-reservation", "session_id": "investigator-1"},
         {"kind": "thaliris_audit", "path": audit},
-    ], run_id="formal-source", authority_registry=authority.registry)
-    facts = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry, authority_registry=authority.registry))
+    ], run_id="formal-source", authority_registry=d11_authority.host_bootstrap(authority))
+    facts = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry, authority_registry=d11_authority.host_bootstrap(authority)))
     assert facts["artifacts"][0]["source_refs_valid"] is True
     assert d11_protocol.validate_collected_evidence(facts)["status"] == "PASS"
     source.write_text("VALUE = 2\n", encoding="utf-8")
-    stale = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry, authority_registry=authority.registry))
+    stale = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry, authority_registry=d11_authority.host_bootstrap(authority)))
     assert stale["artifacts"][0]["source_refs_valid"] is False
     assert stale["artifacts"][0]["historical_validity"] == "PASS"
     assert d11_protocol.validate_collected_evidence(stale)["code"] == "EVIDENCE_ARTIFACT_UNUSED"

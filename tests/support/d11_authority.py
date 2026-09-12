@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from thaliris import host_authority
+
 
 def _digest(value: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -26,12 +28,20 @@ class _FixtureHostVerifier:
                     and descriptor.get("content_sha256") == _sha(path))
 
 
+class _TestRegistry:
+    """Fixture-only marker that the production formal boundary must reject."""
+    provenance = "TEST"
+
+    def verify_capture(self, descriptor: Any, *, path: Path, binding: dict[str, Any]) -> bool:
+        return False
+
+
 class FixtureHost:
     def __init__(self, sources: Any, issuer: str) -> None:
         self.issuer = issuer
         self.epoch = "fixture-epoch"; self.intent = "formal-collection"; self.policy = "codex-rollout-capture"
         self._verifier = _FixtureHostVerifier()
-        self.registry = sources._provision_test_authority_registry(self._verifier, epoch=self.epoch, intent=self.intent, policy=self.policy)
+        self.registry = _TestRegistry()
 
     def issue(self, *, authority_ref: str, task_id: str, task_revision: int, reservation_id: str, session_id: str, path: Any) -> dict[str, Any]:
         path = Path(path).resolve()
@@ -46,6 +56,13 @@ class FixtureHost:
 
 def capture_authority(sources: Any, *, issuer: str = "test-native-capture") -> FixtureHost:
     return FixtureHost(sources, issuer)
+
+
+def host_bootstrap(authority: FixtureHost) -> Any:
+    """Request an opaque formal registry from the adapter host boundary."""
+    return host_authority._bootstrap_d11_host_registry(
+        authority._verifier, epoch=authority.epoch, intent=authority.intent, policy=authority.policy
+    )
 
 
 def issue_capture(authority: FixtureHost, *, authority_ref: str, task_id: str,

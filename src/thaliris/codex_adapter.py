@@ -39,7 +39,7 @@ _AGENT_PROFILES = {
 _NATIVE_PROFILE_NAMES = frozenset(name.removesuffix(".toml") for name in _AGENT_PROFILES)
 _KNOWN_HOST_WAIT_CAPABILITIES = {
     # These are release-pinned observations, not a cross-version assumption.
-    "0.153.4": {"min": 10_000, "default": 30_000, "max": 3_600_000, "project_config_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
+    "0.153.4": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "project_config_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
 }
 _WAIT_CONFIG_MARKER = "# thaliris:managed-blocking-wait"
 _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
@@ -208,46 +208,6 @@ def host_wait_mode(executable: str | None = None) -> dict[str, object]:
     return dict(_host_wait_mode_cached(executable or os.environ.get("THALIRIS_CODEX_EXECUTABLE") or "codex"))
 
 
-def _merge_blocking_wait_config(current: str, timeout_ms: int) -> tuple[str | None, str | None]:
-    """Add only the missing project-scoped default without rewriting user TOML."""
-    try:
-        parsed = tomllib.loads(current) if current.strip() else {}
-    except tomllib.TOMLDecodeError:
-        return None, "project config is not valid TOML"
-    features = parsed.get("features")
-    multi = features.get("multi_agent_v2") if isinstance(features, dict) else None
-    if isinstance(multi, dict) and "default_wait_timeout_ms" in multi:
-        return (current, None) if multi["default_wait_timeout_ms"] == timeout_ms else (None, "project config already sets a different default_wait_timeout_ms")
-    header = re.compile(r"(?m)^\s*\[\s*features\.multi_agent_v2\s*\]\s*(?:#.*)?$")
-    found = header.search(current)
-    line = f"{_WAIT_CONFIG_MARKER}\ndefault_wait_timeout_ms = {timeout_ms}\n"
-    if found is not None:
-        next_header = re.search(r"(?m)^\s*\[[^\[]", current[found.end():])
-        insert_at = found.end() + (next_header.start() if next_header else len(current[found.end():]))
-        prefix = current[:insert_at]
-        suffix = current[insert_at:]
-        if prefix and not prefix.endswith("\n"):
-            prefix += "\n"
-        return prefix + line + suffix, None
-    if isinstance(features, dict) and not isinstance(multi, dict):
-        return None, "project config expresses features.multi_agent_v2 in a non-table form"
-    separator = "" if not current or current.endswith("\n") else "\n"
-    return current + separator + "[features.multi_agent_v2]\n" + line, None
-
-
-def _blocking_wait_config_plan(root: Path) -> tuple[dict[str, bytes], list[str], dict[str, object]]:
-    capability = host_wait_mode()
-    if capability.get("status") != "PASS" or capability.get("project_config_supported") is not True:
-        return {}, [".codex/config.toml"], capability
-    path = core._safe(root, ".codex/config.toml")
-    current = _read_text(path) if path.is_file() else ""
-    rendered, reason = _merge_blocking_wait_config(current, int(capability["max"]))
-    if rendered is None:
-        return {}, [".codex/config.toml"], {**capability, "reason": reason}
-    writes = {} if rendered == current else {".codex/config.toml": rendered.encode("utf-8")}
-    return writes, [], capability
-
-
 def blocking_wait_configured(root: Path, executable: str | None = None) -> dict[str, object]:
     """Validate only the project-file part of blocking-wait readiness.
 
@@ -293,6 +253,29 @@ def blocking_wait_mode(root: Path, executable: str | None = None) -> dict[str, o
     return blocking_wait_active(root, executable)
 
 
+def host_explicit_blocking_wait(executable: str | None = None) -> dict[str, object]:
+    """Return version-pinned support for an explicit, bounded native wait.
+
+    This is a Host tool contract, not project configuration.  An explicit
+    ``timeout_ms`` reaches the native wait primitive in the current tool call,
+    so it neither relies on a default nor requires a session reload.
+    """
+    host = host_wait_mode(executable)
+    if host.get("status") != "PASS":
+        status = "UNSUPPORTED" if host.get("version") == "UNKNOWN" else "UNKNOWN"
+        return {"status": status, "host": host}
+    if host.get("explicit_timeout_supported") is not True:
+        return {"status": "UNSUPPORTED", "host": host}
+    return {
+        "status": "PASS",
+        "version": host["version"],
+        "min_wait_timeout_ms": host["min"],
+        "default_wait_timeout_ms": host["default"],
+        "max_wait_timeout_ms": host["max"],
+        "explicit_timeout_supported": True,
+    }
+
+
 def native_child_completion_reenters_root(executable: str | None = None) -> str:
     """Return only PASS, UNSUPPORTED, or UNKNOWN for native re-entry."""
     capability = host_wait_mode(executable)
@@ -304,7 +287,7 @@ def selected_continuation_mode(root: Path, executable: str | None = None) -> str
     continuation = native_child_completion_reenters_root(executable)
     if continuation == "PASS":
         return "EVENT_DRIVEN"
-    if blocking_wait_active(root, executable).get("status") == "PASS":
+    if host_explicit_blocking_wait(executable).get("status") == "PASS":
         return "BLOCKING_WAIT"
     return "UNAVAILABLE"
 
@@ -327,7 +310,7 @@ Codex remains the runtime. Thaliris stores bounded task control and pointers; it
 
 Controller uses `context task-status` or `context prepare --role controller` for the default low-noise context base. `context task-show` is an explicit out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller path. `context task-artifact` passes pointers, not contents.
 
-During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn creates one authorization reservation; the next matching native `SubagentStart` receives its Thaliris role projection, and only a successfully emitted projection followed by the matching `SubagentStop` qualifies for acceptance or task-close. Large selected information remains valid when needed for correctness. Pending reservations and started managed children are serial in flight; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside this enforcement envelope. `NATIVE_CHILD_COMPLETION_REENTERS_ROOT` is a probe-bound Host capability: only `PASS` permits EVENT_DRIVEN mode. BLOCKING_WAIT requires both `BLOCKING_WAIT_CONFIGURED=PASS` and live `BLOCKING_WAIT_ACTIVE=PASS`; a config file alone is not activation. Otherwise managed start is unavailable. A matching `SubagentStop` is stop attestation, not native `completed`; only an identity-bound native terminal fact supplies that status, and terminal reconciliation never accepts a successful result. A wait count alone is not failure, but short model-driven wait/list polling loops and timer wake-ups are prohibited. Codex owns execution; Thaliris does not recreate an agent runtime.
+During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn creates one authorization reservation; the next matching native `SubagentStart` receives its Thaliris role projection, and only a successfully emitted projection followed by the matching `SubagentStop` qualifies for acceptance or task-close. Large selected information remains valid when needed for correctness. Pending reservations and started managed children are serial in flight; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside this enforcement envelope. `NATIVE_CHILD_COMPLETION_REENTERS_ROOT` is a probe-bound Host capability: only `PASS` permits EVENT_DRIVEN mode. Otherwise `HOST_EXPLICIT_BLOCKING_WAIT=PASS` selects BLOCKING_WAIT: PreToolUse rewrites a managed root `wait_agent` call to an explicit Host-bounded long timeout in the same native call, without deny/retry or project-default activation. A matching `SubagentStop` is stop attestation, not native `completed`; only an identity-bound native terminal fact supplies that status, and terminal reconciliation never accepts a successful result. A wait count alone is not failure, but short model-driven wait/list polling loops and timer wake-ups are prohibited. Codex owns execution; Thaliris does not recreate an agent runtime.
 
 Read detailed role packs only when needed. Raw findings, evidence, transcripts,
 logs, and tool output do not enter Controller packets or durable memory
@@ -372,8 +355,9 @@ the Controller sends that request to a fresh Investigator, persists a bounded
 evidence artifact, then uses a fresh Reasoning Specialist. Reviewers are fresh
 one-shot children for each review round; retain findings, not reviewer
 conversation history. Use EVENT_DRIVEN mode only when the probe-bound native
-continuation capability is `PASS`; otherwise use host-bounded BLOCKING_WAIT
-only when both configured and live-active capability are `PASS`. On timeout perform one status check and, if still running,
+continuation capability is `PASS`; otherwise use BLOCKING_WAIT when the Host
+supports explicit bounded waits. PreToolUse normalizes the current root wait to
+the Host maximum without a retry. On timeout perform one status check and, if still running,
 use another long wait. A wait count alone is not
  failure. Never use short model-driven wait/list polling loops or timer-driven
  wake-ups. Close completed one-shot Sol and Reviewer children with native Codex
@@ -459,9 +443,9 @@ For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
 source directly. Larger work adds only the roles needed by risk and unknowns.
 After dispatch, use EVENT_DRIVEN mode only when the probe-bound native
-continuation capability is `PASS`; otherwise use host-bounded BLOCKING_WAIT
-only when both configured and live-active capability are `PASS`. A config file
-alone is not activation. After timeout, check status once and wait again if still
+continuation capability is `PASS`; otherwise use BLOCKING_WAIT when the Host
+supports explicit bounded waits. PreToolUse normalizes the current root wait to
+the Host maximum without a retry. After timeout, check status once and wait again if still
 running. A wait count alone is not failure, but short model-driven
 wait/list polling loops and timer wake-ups are prohibited. Thaliris does not
 implement scheduling, deadlines, or agent lifecycle.
@@ -499,8 +483,8 @@ and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
 conflicting references and stop. Reviewers are fresh one-shot children on every
 round; preserve findings and evidence, not their conversation trajectory. Use
 EVENT_DRIVEN mode only when the probe-bound native continuation capability is
-`PASS`; otherwise use host-bounded BLOCKING_WAIT only when both configured and
-live-active capability are `PASS`. After
+`PASS`; otherwise use BLOCKING_WAIT when the Host supports explicit bounded
+waits. After
 timeout, check status once and wait again if still running. A wait count alone
 is not failure, but short model-driven wait/list
 polling loops and timer-driven wake-ups are prohibited. Close completed one-shot
@@ -807,9 +791,8 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
     else:
         merged, _ = merge_hooks({"description": MANAGED_HOOKS_DESCRIPTION})
         writes[".codex/hooks.json"] = (json.dumps(merged, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    wait_writes, wait_manual, _capability = _blocking_wait_config_plan(root)
-    writes.update(wait_writes)
-    manual.extend(wait_manual)
+    # Explicit timeout_ms normalization controls managed waits in the current
+    # native call. Do not create or depend on project config defaults.
     return writes, manual
 
 
@@ -1034,6 +1017,7 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
     readiness = {
         "status": "PASS" if mode in {"EVENT_DRIVEN", "BLOCKING_WAIT"} else "MANAGED_CONTINUATION_UNAVAILABLE",
         "NATIVE_CHILD_COMPLETION_REENTERS_ROOT": native_child_completion_reenters_root(),
+        "HOST_EXPLICIT_BLOCKING_WAIT": host_explicit_blocking_wait().get("status"),
         "BLOCKING_WAIT_CONFIGURED": configured.get("status"),
         "BLOCKING_WAIT_ACTIVE": active.get("status"),
         "selected_continuation_mode": mode,
@@ -1092,7 +1076,34 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
 
 
 def audit_hook(root: Path, event: str, payload: object) -> str:
-    return handle_hook(root, event, payload)
+    result = handle_hook(root, event, payload)
+    if result or event != "PreToolUse" or not isinstance(payload, dict):
+        return result
+    if payload.get("agent_id") is not None:
+        return ""
+    root = core._repo_root(root)
+    tool = payload.get("tool_name") or payload.get("tool")
+    if not isinstance(tool, str) or intent_audit._tool_basename(tool) != "wait_agent":
+        return ""
+    if intent_audit._active_task_id(root) is None or selected_continuation_mode(root) != "BLOCKING_WAIT":
+        return ""
+    capability = host_explicit_blocking_wait()
+    if capability.get("status") != "PASS":
+        return ""
+    original = payload.get("tool_input")
+    if not isinstance(original, dict):
+        return ""
+    target = int(capability["max_wait_timeout_ms"])
+    if original.get("timeout_ms") == target:
+        return ""
+    # Copy rather than reconstruct: future native arguments survive unchanged.
+    updated = dict(original)
+    updated["timeout_ms"] = target
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "updatedInput": updated,
+    }}, ensure_ascii=False, separators=(",", ":"))
 
 
 def doctor(root: Path) -> dict[str, object]:
@@ -1179,6 +1190,8 @@ def doctor(root: Path) -> dict[str, object]:
         "role_projection_injection_observed": "UNKNOWN",
         "controller_activation_bridge": "CODEX_NATIVE",
         "NATIVE_CHILD_COMPLETION_REENTERS_ROOT": native_child_completion_reenters_root(),
+        "HOST_EXPLICIT_BLOCKING_WAIT": host_explicit_blocking_wait().get("status"),
+        "BLOCKING_WAIT_MODE": "PASS" if selected_continuation_mode(root) == "BLOCKING_WAIT" else "FAIL",
         "BLOCKING_WAIT_CONFIGURED": blocking_wait_configured(root).get("status"),
         "BLOCKING_WAIT_ACTIVE": blocking_wait_active(root).get("status"),
         "selected_continuation_mode": selected_continuation_mode(root),

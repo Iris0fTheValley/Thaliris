@@ -56,9 +56,10 @@ remains serial until the child reaches a terminal execution state. `SubagentStop
 remains the preferred stop-attestation proof, but does not itself assert native
 `completed`. `NATIVE_CHILD_COMPLETION_REENTERS_ROOT` is a Host capability, not
 an unconditional product claim: only `PASS` selects EVENT_DRIVEN mode;
-otherwise BLOCKING_WAIT requires both `BLOCKING_WAIT_CONFIGURED=PASS` and a
-fresh-session `BLOCKING_WAIT_ACTIVE=PASS`. A project config file alone selects
-nothing. A timeout permits one status
+otherwise a version-pinned `HOST_EXPLICIT_BLOCKING_WAIT=PASS` selects
+BLOCKING_WAIT. The managed root's PreToolUse hook rewrites `wait_agent` to an
+explicit Host-bounded long `timeout_ms` in the same native call; no project
+config activation, denial, or model retry is required. A timeout permits one status
 observation, then another long wait only while the child is still running.
 Thaliris provides no supervisor, deadline, scheduler, or polling loop. Stop
 proves lifecycle completion, not work correctness. A projection-ready child is
@@ -104,12 +105,10 @@ recorded. The result remains `NOT_OBSERVED`; generated profile presence and
 synthetic hook tests are not native projection proof.
 
 Codex CLI `0.153.4` has a release-pinned 10 s / 30 s / 1 h V2 wait
-minimum/default/maximum and supports trusted project `.codex/config.toml`.
-The adapter conservatively sets only a missing project
-`default_wait_timeout_ms` to that Host maximum; a conflicting user value is
-left untouched and makes BLOCKING_WAIT unavailable. Configuration is recorded
-as `BLOCKING_WAIT_CONFIGURED`; it is not `BLOCKING_WAIT_ACTIVE` until a trusted
-fresh Host session proves the effective value. The same release sends
+minimum/default/maximum and accepts explicit valid `timeout_ms` values. The
+adapter uses that explicit Host capability for correctness and normalizes a
+managed root wait to the Host maximum. An existing project default is only a
+convenience and is neither rewritten nor used for readiness. The same release sends
 child-completion communication with `trigger_turn=false`, so
 `NATIVE_CHILD_COMPLETION_REENTERS_ROOT = UNSUPPORTED` unless a fresh Host probe
 records stronger evidence. A native terminal status observed through the

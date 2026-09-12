@@ -10,10 +10,9 @@ the same behaviour.
 - matching upstream release: `rust-v0.153.4` (`3d2ee51c…`)
 - V2 wait defaults in that release: minimum `10000`, default `30000`, maximum
   `3600000` milliseconds
-- trusted project `.codex/config.toml`: implemented by the release config
-  loader; a correct file is `BLOCKING_WAIT_CONFIGURED=PASS`, while effective
-  project-layer activation remains `UNKNOWN` until a trusted fresh
-  Host session proves the loaded default
+- explicit `wait_agent(timeout_ms=...)`: accepts values in the release's
+  min/max range and blocks natively until activity, input, or timeout;
+  `HOST_EXPLICIT_BLOCKING_WAIT=PASS` is independent of project config loading
 
 The release's child-completion path sends its inter-agent completion message
 with `trigger_turn = false`. Therefore this release records
@@ -30,7 +29,7 @@ no Thaliris hooks, task state, Controller, or child profile.
 The temporary project's PostToolUse capture hook did not receive an event.
 Consequently it is not payload evidence for `spawn_agent`, `wait_agent`,
 `interrupt_agent`, or `list_agents`, and it does not prove project hook/config
-activation. It does demonstrate that a single native wait can return normally
+activation. It does demonstrate that a single explicit native wait can return normally
 without a timer/retry loop. The release source establishes that the wait occurs
 inside tool execution; no intermediate Root model activation was observed by
 the probe, but no model-activation counter is exposed by this Host.
@@ -42,6 +41,14 @@ the isolated home had no transferable authentication (`401` before any tool
 call). A normal authenticated process with hooks enabled started, but did not
 call the requested `list_agents` tool and wrote no capture. Neither attempt is
 live evidence of effective project configuration or PostToolUse payload shape.
+
+A third fresh process used the existing authenticated Codex home, a disposable
+Git root, minimal `PostToolUse` capture configured for `Bash`, and explicitly
+enabled hook execution for that invocation. It performed one ordinary native
+command execution, but no project capture was written. Its command failed in
+the local Windows Bash service, which is immaterial to hook delivery. Therefore
+`PROJECT_POST_TOOL_HOOK_ACTIVE = LIVE_NOT_OBSERVED`; no collaboration payload
+probe was attempted.
 
 ## Reconciliation surface
 

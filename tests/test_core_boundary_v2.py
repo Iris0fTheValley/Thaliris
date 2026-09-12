@@ -14,16 +14,6 @@ from thaliris import codex_adapter
 from thaliris.intent_audit import handle_hook
 
 
-@pytest.fixture(autouse=True)
-def _unit_runtime_wait_activation(monkeypatch):
-    """Adapter lifecycle tests model separately-established live Host evidence."""
-    monkeypatch.setattr(
-        codex_adapter,
-        "blocking_wait_active",
-        lambda *_args, **_kwargs: {"status": "PASS", "default_wait_timeout_ms": 3_600_000},
-    )
-
-
 def repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     return tmp_path

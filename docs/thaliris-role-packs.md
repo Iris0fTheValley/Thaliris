@@ -52,9 +52,9 @@ For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
 source directly. Larger work adds only the roles needed by risk and unknowns.
 After dispatch, use EVENT_DRIVEN mode only when the probe-bound native
-continuation capability is `PASS`; otherwise use host-bounded BLOCKING_WAIT
-only when both configured and live-active capability are `PASS`. A config file
-alone is not activation. After timeout, check status once and wait again if still
+continuation capability is `PASS`; otherwise use BLOCKING_WAIT when the Host
+supports explicit bounded waits. PreToolUse normalizes the current root wait to
+the Host maximum without a retry. After timeout, check status once and wait again if still
 running. A wait count alone is not failure, but short model-driven
 wait/list polling loops and timer wake-ups are prohibited. Thaliris does not
 implement scheduling, deadlines, or agent lifecycle.
@@ -92,8 +92,8 @@ and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
 conflicting references and stop. Reviewers are fresh one-shot children on every
 round; preserve findings and evidence, not their conversation trajectory. Use
 EVENT_DRIVEN mode only when the probe-bound native continuation capability is
-`PASS`; otherwise use host-bounded BLOCKING_WAIT only when both configured and
-live-active capability are `PASS`. After
+`PASS`; otherwise use BLOCKING_WAIT when the Host supports explicit bounded
+waits. After
 timeout, check status once and wait again if still running. A wait count alone
 is not failure, but short model-driven wait/list
 polling loops and timer-driven wake-ups are prohibited. Close completed one-shot

@@ -73,7 +73,7 @@ def test_review_convergence_requires_host_attested_transaction_final_ready():
 
 def test_candidate_chain_and_cost_are_fail_closed():
     chain = {key: "c1" for key in ("runtime_candidate", "reviewed_candidate", "verified_candidate", "evaluator_candidate", "sealed_candidate")}
-    chain["review_verdict"] = "READY"; chain["source_mutations_after_ready"] = False
+    chain.update({"review_verdict": "READY", "source_mutations_after_ready": False, "formal_collection": True, "stage_provenance_complete": True, "review_verdict_collector_backed": True, "review_verdict_provenance": {"source": "codex_rollout"}})
     assert validate_candidate_chain(chain)["status"] == "PASS"
     assert validate_candidate_chain({**chain, "sealed_candidate": "c2"})["code"] == "CANDIDATE_IDENTITY_MISMATCH"
     cost = calculate_cost([{"model": "gpt-5.6-terra", "usage": {"input": 2_000_000, "cached_input": 1_000_000, "output": 1_000_000}}])
@@ -111,7 +111,7 @@ def test_target_fact_identity_is_content_bound():
 
 def test_candidate_chain_rejects_duplicate_or_reordered_host_stages():
     chain = {key: "c1" for key in ("runtime_candidate", "reviewed_candidate", "verified_candidate", "evaluator_candidate", "sealed_candidate")}
-    chain.update({"review_verdict": "READY", "source_mutations_after_ready": False})
+    chain.update({"review_verdict": "READY", "source_mutations_after_ready": False, "formal_collection": True, "stage_provenance_complete": True, "review_verdict_collector_backed": True, "review_verdict_provenance": {"source": "codex_rollout"}})
     stages = {stage: 1 for stage in ("runtime-final", "review-start", "review-end", "verification-start", "evaluator-start", "seal")}
     chain["stage_counts"] = {**stages, "seal": 2}
     assert _MODULE.validate_candidate_chain(chain)["code"] == "CANDIDATE_STAGE_DUPLICATE"

@@ -8,7 +8,7 @@ import re
 from typing import Any, Iterable
 
 SOURCE_KINDS = frozenset({"thaliris_audit", "codex_rollout", "harness_attestation", "evaluator_result"})
-SOURCE_REGISTRY_VERSION = 1
+SOURCE_REGISTRY_VERSION = 2
 
 # Producer labels are part of the trust boundary.  A registry entry may use
 # one of these stable aliases for its source kind, but arbitrary user labels
@@ -18,6 +18,15 @@ SOURCE_PRODUCERS = {
     "codex_rollout": frozenset({"codex_rollout", "codex", "codex-app-server"}),
     "harness_attestation": frozenset({"harness_attestation", "harness"}),
     "evaluator_result": frozenset({"evaluator_result", "evaluator"}),
+}
+
+# A producer is selected by the host-owned capture boundary for a source
+# kind.  Registry callers do not get to nominate a producer label.
+CAPTURE_BOUNDARIES = {
+    "thaliris_audit": "thaliris-audit-capture",
+    "codex_rollout": "codex-rollout-capture",
+    "harness_attestation": "harness-attestation-capture",
+    "evaluator_result": "evaluator-result-capture",
 }
 
 # These are intentionally event names, not arbitrary JSON keys.  A source
@@ -141,14 +150,19 @@ def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, te
         source_id = source.get("source_id") or f"{kind}:{_sha(path)}"
         if not isinstance(source_id, str) or not source_id:
             raise ValueError("source registry source_id is invalid")
-        producer = source.get("producer", kind)
-        if not isinstance(producer, str) or not producer or (not test_only and producer not in SOURCE_PRODUCERS[kind]):
-            raise ValueError("source registry producer is invalid")
+        # ``producer`` was formerly caller-controlled.  It is deliberately
+        # rejected even when it spells a known alias: an arbitrary JSONL file
+        # must not obtain Codex authority by declaring ``producer=codex``.
+        if "producer" in source and not test_only:
+            raise ValueError("source registry producer is host-derived")
+        producer = "TEST_ONLY" if test_only else kind
+        boundary = "TEST_ONLY" if test_only else CAPTURE_BOUNDARIES[kind]
         entries.append({
             "source_id": source_id,
             "source_kind": kind,
             "canonical_path": str(path),
             "producer": producer,
+            "capture_boundary": boundary,
             "allowed_event_types": sorted(set(allowed)),
             "content_sha256": _sha(path),
             "stream_identity_policy": source.get("stream_identity_policy", "exact_bytes"),
@@ -176,7 +190,10 @@ def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = Non
             canonical = str(path.resolve())
             if item["source_id"] in seen or canonical in {str(Path(other["canonical_path"]).resolve()) for other in sources if other is not item} or item["source_kind"] not in SOURCE_KINDS or path.is_symlink() or not path.is_file():
                 return False
-            if not isinstance(item.get("producer"), str) or not item.get("producer") or (not payload.get("test_only") and item.get("producer") not in SOURCE_PRODUCERS[item["source_kind"]]):
+            if payload.get("test_only"):
+                if item.get("producer") != "TEST_ONLY" or item.get("capture_boundary") != "TEST_ONLY":
+                    return False
+            elif item.get("producer") != item["source_kind"] or item.get("capture_boundary") != CAPTURE_BOUNDARIES[item["source_kind"]]:
                 return False
             policy = item.get("stream_identity_policy", "exact_bytes")
             if policy not in {"exact_bytes", "append_only"} or policy == "exact_bytes" and _sha(path) != item["content_sha256"] or policy == "append_only" and (path.stat().st_size < int(item.get("initial_size", 0)) or _sha_prefix(path, int(item.get("initial_size", 0))) != item["content_sha256"]):

@@ -71,23 +71,41 @@ def _setup_overlay_manifest(root: Path, status: str | None) -> dict[str, Any]:
     """
     root = root.resolve()
     allowed = {".codex/", ".agent-memory/", ".milestones/", ".context/", "AGENTS.md", ".gitignore", "docs/thaliris-role-packs.md"}
-    entries: list[dict[str, Any]] = []
+    status_by_path: dict[str, str] = {}
+    unknown: list[str] = []
     for line in (status or "").splitlines():
         path = line[2:].lstrip() if len(line) >= 3 else line
         if " -> " in path:
             path = path.rsplit(" -> ", 1)[-1]
         normalized = path.replace("\\", "/")
         if not any(normalized == item or normalized.startswith(item) for item in allowed):
-            continue
+            unknown.append(line)
+        else:
+            status_by_path[normalized] = line[:2]
+    # Git does not list ignored setup state.  Enumerate the explicitly
+    # allowed surface itself so .context/state/audit (and similar initial
+    # artifacts) are frozen by exact bytes even when porcelain is empty.
+    paths: set[str] = set(status_by_path)
+    for allowed_path in allowed:
+        target = root.joinpath(*allowed_path.rstrip("/").split("/"))
+        if target.is_file():
+            paths.add(allowed_path)
+        elif target.is_dir() and not target.is_symlink():
+            for child in target.rglob("*"):
+                if child.is_file() and not child.is_symlink():
+                    paths.add(child.relative_to(root).as_posix())
+    entries = []
+    for normalized in sorted(paths):
         target = root.joinpath(*normalized.split("/"))
-        entries.append({
-            "path": normalized,
-            "status": line[:2],
-            "sha256": _sha(target) if target.is_file() else None,
-        })
+        if not target.is_file() or target.is_symlink():
+            # A deleted/status-only path is part of the frozen state too.
+            entries.append({"path": normalized, "status": status_by_path.get(normalized), "sha256": None})
+            continue
+        entries.append({"path": normalized, "status": status_by_path.get(normalized, "  "), "sha256": _sha(target)})
     entries.sort(key=lambda item: item["path"])
-    identity = hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return {"root": str(root), "paths": entries, "identity": identity}
+    payload = {"root": str(root), "paths": entries, "unknown_status": sorted(unknown), "valid": not unknown}
+    identity = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return {**payload, "identity": identity}
 
 
 def _adapter_generated_hashes(adapter_root: Path) -> dict[str, Any] | None:

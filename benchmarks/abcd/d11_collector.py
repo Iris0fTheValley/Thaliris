@@ -256,6 +256,8 @@ def _artifact_envelope(data: bytes, *, artifact_id: str, task_id: str, task_revi
 
 def _resolve_source_refs(envelope: dict[str, Any], root: Path, events: list[dict[str, Any]]) -> tuple[bool, str | None]:
     test_stream = any(event.get("_source_run_id") == "TEST_ONLY" for event in events)
+    # Diagnostic fixtures remain inspectable.  Formal gates reject their
+    # candidate/review chain before a diagnostic ledger can be reported.
     if envelope.get("producer_identity") == "TEST_ONLY" or test_stream:
         return True, None
     event_ids = {(event.get("_source_id"), event.get("_native_event_id")) for event in events}
@@ -283,8 +285,17 @@ def _resolve_source_refs(envelope: dict[str, Any], root: Path, events: list[dict
                 or observed.get("run_id") not in {event.get("_source_run_id") for event in events if event.get("_source_run_id")}
             ):
                 return False, "repository source reference does not match its trusted observation"
-            if not target.is_file():
+            # Recompute at consumption time.  The source snapshot proves
+            # historical observation; it does not make later bytes fresh.
+            if target.is_symlink() or not target.is_file() or _sha256(target) != ref.get("content_sha256"):
                 return False, "repository source reference target is unavailable"
+            if observed.get("_trusted_source") != "thaliris_audit":
+                return False, "repository source observation is outside the trusted capture boundary"
+            if observed.get("session_id") != envelope.get("producer_session") or observed.get("producer_identity") != envelope.get("producer_identity"):
+                return False, "repository source observation is not bound to the artifact producer"
+            starts = [event for event in events if event.get("_trusted_source") == "codex_rollout" and _kind(event) in {"SubagentStart", "native_session_started"} and event.get("session_id") == envelope.get("producer_session")]
+            if not starts or not any(envelope.get("producer_identity") in {event.get("session_id"), event.get("native_event_id"), event.get("_native_event_id"), event.get("producer_identity"), event.get("session_identity")} for event in starts):
+                return False, "repository source observation lacks a trusted producer lifecycle"
         elif kind == "event":
             if (ref.get("source_id"), ref.get("native_event_id")) not in event_ids:
                 return False, "native event source reference is not observed"
@@ -314,7 +325,7 @@ def _producer_lifecycle(envelope: dict[str, Any] | None, artifact_id: str, produ
     observed_role = str(start.get("role") or start.get("agent_role") or "").lower()
     if observed_role not in {"investigator", "curator"} or observed_role != str(producer_role or "").lower():
         return False, "producer native role does not match artifact producer role"
-    identities = {session_id, str(start.get("native_event_id") or ""), str(start.get("producer_identity") or ""), str(start.get("session_identity") or "")}
+    identities = {session_id, str(start.get("native_event_id") or start.get("_native_event_id") or ""), str(start.get("producer_identity") or ""), str(start.get("session_identity") or "")}
     if identity not in identities:
         return False, "producer identity is not bound to native session"
     if produced is None or produced.get("producer_session") != session_id:
@@ -415,7 +426,7 @@ def collect_evidence(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, 
         artifact["selected_item_ids_valid"] = bool(carried)
         artifact["consumed"] = artifact["used"]
         artifacts.append(artifact)
-    return {"evidence_required": "REQUIRED" if evidence_required else "NOT_REQUIRED", "artifacts": artifacts, "routing_roles": sorted(roles), "producer_lifecycle_observed": all(item.get("producer_lifecycle_valid") for item in artifacts) if artifacts else not evidence_required}
+    return {"evidence_required": "REQUIRED" if evidence_required else "NOT_REQUIRED", "artifacts": artifacts, "routing_roles": sorted(roles), "producer_lifecycle_observed": all(item.get("producer_lifecycle_valid") for item in artifacts) if artifacts else not evidence_required, "formal_collection": bool(ordered) and not any(event.get("_source_run_id") == "TEST_ONLY" for event in ordered)}
 
 
 def collect_candidate(root: Path, *, policy: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -525,7 +536,8 @@ def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]], *, pol
     ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
     stages = {"runtime-final": "runtime_candidate", "review-start": "reviewed_candidate", "review-end": "review_end_candidate", "verification-start": "verified_candidate", "evaluator-start": "evaluator_candidate", "seal": "sealed_candidate"}
     values: dict[str, Any] = {}
-    attestations = [event for event in ordered if _kind(event) == "candidate_attestation" and event.get("_trusted_source") == "harness_attestation" and (event.get("source_registry_identity") == event.get("_registry_identity") or event.get("_source_run_id") == "TEST_ONLY")]
+    formal = bool(ordered) and not any(event.get("_source_run_id") == "TEST_ONLY" for event in ordered)
+    attestations = [event for event in ordered if _kind(event) == "candidate_attestation" and event.get("_trusted_source") == "harness_attestation" and event.get("source_registry_identity") == event.get("_registry_identity")]
     expected_policy_identity = hashlib.sha256(json.dumps(build_manifest(root, policy)["manifest"]["policy"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     stage_counts: dict[str, int] = {}
     stage_orders: list[int] = []
@@ -543,6 +555,10 @@ def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]], *, pol
     values["computed_candidate"] = actual
     values["stage_counts"] = stage_counts
     values["stage_order_valid"] = len(stage_orders) == len(stages) and stage_orders == sorted(stage_orders)
+    values["formal_collection"] = formal
+    values["stage_provenance_complete"] = all(values.get(f"{field}_provenance") for field in stages.values())
+    values["review_verdict_provenance"] = _provenance(ready_order)
+    values["review_verdict_collector_backed"] = bool(ready_order and ready_order.get("_trusted_source") == "codex_rollout")
     return values
 
 
@@ -656,4 +672,4 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
                 "provenance": review.get("verdict_provenance"),
             })
         seen_states.add(state)
-    return {"review_rounds": graph, "correction_edges": corrections, "native_reviewer_sessions": sorted(sessions), "no_progress_cycles": no_progress}
+    return {"review_rounds": graph, "correction_edges": corrections, "native_reviewer_sessions": sorted(sessions), "no_progress_cycles": no_progress, "formal_collection": bool(ordered) and not test_stream}

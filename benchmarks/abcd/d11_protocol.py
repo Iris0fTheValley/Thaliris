@@ -186,6 +186,8 @@ def validate_review_convergence(ledger: dict[str, Any], *, expected_candidate: s
 
 
 def validate_candidate_chain(chain: dict[str, Any]) -> dict[str, Any]:
+    if chain.get("formal_collection") is not True:
+        return _fail("CANDIDATE_CHAIN_NONFORMAL", "TEST_ONLY or unregistered candidate provenance is diagnostic only")
     fields = ("runtime_candidate", "reviewed_candidate", "verified_candidate", "evaluator_candidate", "sealed_candidate")
     values = [chain.get(field) for field in fields]
     if any(not isinstance(value, str) or not value for value in values):
@@ -202,6 +204,10 @@ def validate_candidate_chain(chain: dict[str, Any]) -> dict[str, Any]:
             return _fail("CANDIDATE_STAGE_DUPLICATE", "candidate provenance stages must each have one host attestation")
     if chain.get("stage_order_valid") is False:
         return _fail("CANDIDATE_STAGE_ORDER", "candidate provenance stages are not causally ordered")
+    if chain.get("stage_provenance_complete") is not True:
+        return _fail("CANDIDATE_STAGE_PROVENANCE", "every candidate stage requires collector-backed attestation provenance")
+    if chain.get("review_verdict_collector_backed") is not True or not isinstance(chain.get("review_verdict_provenance"), dict):
+        return _fail("FINAL_REVIEW_PROVENANCE", "final Reviewer READY lacks collector-backed native provenance")
     if chain.get("review_verdict") != "READY":
         return _fail("FINAL_REVIEW_NOT_READY", "the exact sealed candidate lacks final Reviewer READY")
     if chain.get("source_mutations_after_ready"):
@@ -288,6 +294,9 @@ def validate_report(report: dict[str, Any], *, protocol_path: Path, generated_te
     collected = report.get("collector")
     if not isinstance(collected, dict):
         return {"status": "FAIL", "checks": {"collector": _fail("COLLECTOR_REQUIRED", "validator accepts only collector-produced facts")}}
+    formal_parts = (collected.get("evidence"), collected.get("candidate_chain"), collected.get("reviews"))
+    if any(not isinstance(part, dict) or part.get("formal_collection") is not True for part in formal_parts):
+        return {"status": "FAIL", "checks": {"collector": _fail("COLLECTOR_NONFORMAL", "formal collection rejects TEST_ONLY or unregistered diagnostic streams")}}
     checks = {
         "evidence_protocol": validate_collected_evidence(collected.get("evidence", {})),
         "candidate_provenance": validate_candidate_chain(collected.get("candidate_chain", {})),

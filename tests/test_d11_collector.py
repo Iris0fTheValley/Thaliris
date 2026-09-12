@@ -299,7 +299,7 @@ def test_trusted_infrastructure_identity_detects_post_freeze_mutation(tmp_path: 
     assert trusted_surface.mutation_probe(runtime) == "ALLOWED"
 
 
-def test_candidate_chain_is_bound_to_computed_manifest(tmp_path: Path) -> None:
+def test_test_only_candidate_chain_is_diagnostic_and_cannot_pass_formal_gate(tmp_path: Path) -> None:
     root = repo(tmp_path)
     source = root / "product.py"
     source.write_text("VALUE = 1\n", encoding="utf-8")
@@ -316,9 +316,23 @@ def test_candidate_chain_is_bound_to_computed_manifest(tmp_path: Path) -> None:
         {"event": "candidate_attestation", "stage": "seal", "candidate_root": str(root.resolve()), "candidate_identity": identity, "manifest_version": 2, "harness_identity": "h"},
     ]
     chain = d11_collector.collect_candidate_chain(root, trusted_events(tmp_path.parent / "candidate-events", events))
-    assert d11_protocol.validate_candidate_chain(chain)["status"] == "PASS"
+    assert d11_protocol.validate_candidate_chain(chain)["code"] == "CANDIDATE_CHAIN_NONFORMAL"
     source.write_text("VALUE = 2\n", encoding="utf-8")
-    assert d11_protocol.validate_candidate_chain(d11_collector.collect_candidate_chain(root, trusted_events(tmp_path.parent / "candidate-events-changed", events)))["code"] == "CANDIDATE_IDENTITY_MISMATCH"
+    assert d11_protocol.validate_candidate_chain(d11_collector.collect_candidate_chain(root, trusted_events(tmp_path.parent / "candidate-events-changed", events)))["code"] == "CANDIDATE_CHAIN_NONFORMAL"
+
+
+def test_manual_ready_candidate_dictionary_cannot_replace_collector_chain() -> None:
+    identity = "a" * 64
+    manual = {
+        "runtime_candidate": identity, "reviewed_candidate": identity,
+        "verified_candidate": identity, "evaluator_candidate": identity,
+        "sealed_candidate": identity, "computed_candidate": identity,
+        "review_verdict": "READY", "stage_counts": {
+            "runtime-final": 1, "review-start": 1, "review-end": 1,
+            "verification-start": 1, "evaluator-start": 1, "seal": 1,
+        }, "stage_order_valid": True,
+    }
+    assert d11_protocol.validate_candidate_chain(manual)["code"] == "CANDIDATE_CHAIN_NONFORMAL"
 
 
 def test_preflight_is_fail_closed_without_clean_fixture_and_calibration(tmp_path: Path) -> None:
@@ -381,8 +395,10 @@ def test_source_registry_rejects_duplicate_or_symlinked_streams(tmp_path: Path) 
         pytest.skip("symlinks unavailable")
     with pytest.raises(ValueError, match="may not be symlinks"):
         d11_sources.create_source_registry([{"kind": "harness_attestation", "path": alias}], run_id="run-link")
-    with pytest.raises(ValueError, match="producer is invalid"):
+    with pytest.raises(ValueError, match="host-derived"):
         d11_sources.create_source_registry([{"kind": "harness_attestation", "path": stream, "producer": "arbitrary-attacker"}], run_id="run-producer")
+    with pytest.raises(ValueError, match="host-derived"):
+        d11_sources.create_source_registry([{"kind": "codex_rollout", "path": stream, "producer": "codex"}], run_id="run-spoofed-codex")
 
 
 def test_formal_multisource_fixture_replay_has_no_test_only_bypass(tmp_path: Path) -> None:
@@ -392,8 +408,8 @@ def test_formal_multisource_fixture_replay_has_no_test_only_bypass(tmp_path: Pat
     harness = tmp_path / "harness-attestation.jsonl"
     harness.write_text("", encoding="utf-8")
     registry = d11_sources.create_source_registry([
-        {"kind": "codex_rollout", "path": rollout, "producer": "codex"},
-        {"kind": "harness_attestation", "path": harness, "producer": "harness", "stream_identity_policy": "append_only"},
+        {"kind": "codex_rollout", "path": rollout},
+        {"kind": "harness_attestation", "path": harness, "stream_identity_policy": "append_only"},
     ], run_id="formal-fixture")
     policy = candidate_manifest.build_manifest(root)["manifest"]["policy"]
     start = d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-start", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], attestation_id="review-start-attestation")
@@ -410,8 +426,12 @@ def test_setup_overlay_manifest_binds_exact_bytes_and_rejects_unknown_status(tmp
     root = repo(tmp_path / "overlay")
     (root / ".context").mkdir()
     (root / ".context" / "state.json").write_text("v1", encoding="utf-8")
+    (root / ".context" / "audit").mkdir()
+    (root / ".context" / "audit" / "ignored.jsonl").write_text("ignored-but-frozen", encoding="utf-8")
     overlay = d11_preflight._setup_overlay_manifest(root, " M .context/state.json\n?? unexpected.txt")
-    assert overlay["paths"][0]["path"] == ".context/state.json"
+    assert any(item["path"] == ".context/state.json" for item in overlay["paths"])
+    assert any(item["path"] == ".context/audit/ignored.jsonl" and item["sha256"] for item in overlay["paths"])
+    assert overlay["valid"] is False
     assert d11_preflight._unexpected_status(" M .context/state.json\n?? unexpected.txt") == "?? unexpected.txt"
     (root / ".context" / "state.json").write_text("v2", encoding="utf-8")
     changed = d11_preflight._setup_overlay_manifest(root, " M .context/state.json\n?? unexpected.txt")
@@ -563,7 +583,8 @@ def test_structured_evidence_source_ref_is_resolved_against_actual_bytes(tmp_pat
     started = core.task_start(root, "source-backed evidence", None, None)
     task_id = core.task_show(root)["state"]["task_id"]
     source_sha = __import__("hashlib").sha256(source.read_bytes()).hexdigest()
-    ref = {"kind": "repo", "path": "src/product.py", "content_sha256": source_sha}
+    observation_id = "source-observation-1"
+    ref = {"kind": "repo", "path": "src/product.py", "content_sha256": source_sha, "observation_id": observation_id}
     envelope = {
         "artifact_id": "evidence-1", "task_id": task_id, "producer_base_revision": started["revision"],
         "producer_session": "investigator-1", "producer_identity": "session-attestation-1",
@@ -576,11 +597,29 @@ def test_structured_evidence_source_ref_is_resolved_against_actual_bytes(tmp_pat
     artifact_path.write_text(json.dumps(envelope, separators=(",", ":")), encoding="utf-8")
     registered = core.task_artifact(root, started["revision"], "evidence-1", "evidence.json", "bounded fact", producer_role="investigator")
     sha = __import__("hashlib").sha256(artifact_path.read_bytes()).hexdigest()
-    facts = d11_collector.collect_evidence(root, trusted_events(tmp_path / "events", [
-        {"event": "artifact_produced", "artifact_id": "evidence-1"},
-        {"event": "artifact_registered", "artifact_id": "evidence-1", "content_sha256": sha},
-        {"event": "role_dispatch", "role": "reasoning-specialist", "artifact_ids": ["evidence-1"], "content_sha256": sha, "evidence_item_ids": ["confirmed_facts:0"]},
-    ]))
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+    rollout = events_dir / "rollout.jsonl"
+    audit = events_dir / "audit.jsonl"
+    rollout.write_text("\n".join(json.dumps(item) for item in [
+        {"event": "SubagentStart", "event_id": "session-attestation-1", "role": "investigator", "session_id": "investigator-1"},
+        {"event": "SubagentStop", "event_id": "investigator-stop", "role": "investigator", "session_id": "investigator-1", "caused_by": "artifact-produced-1"},
+    ]) + "\n", encoding="utf-8")
+    audit.write_text("\n".join(json.dumps(item) for item in [
+        {"event": "source_snapshot_attestation", "observation_id": observation_id, "run_id": "formal-source", "path": "src/product.py", "content_sha256": source_sha, "session_id": "investigator-1", "producer_identity": "session-attestation-1", "candidate_root": str(root.resolve())},
+        {"event": "artifact_produced", "event_id": "artifact-produced-1", "artifact_id": "evidence-1", "producer_session": "investigator-1", "caused_by": "session-attestation-1"},
+        {"event": "artifact_registered", "artifact_id": "evidence-1", "content_sha256": sha, "caused_by": "artifact-produced-1"},
+        {"event": "role_dispatch", "role": "reasoning-specialist", "artifact_ids": ["evidence-1"], "content_sha256": sha, "evidence_item_ids": ["confirmed_facts:0"], "caused_by": "artifact-produced-1"},
+    ]) + "\n", encoding="utf-8")
+    registry = d11_sources.create_source_registry([
+        {"kind": "codex_rollout", "path": rollout}, {"kind": "thaliris_audit", "path": audit},
+    ], run_id="formal-source")
+    facts = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry))
     assert facts["artifacts"][0]["source_refs_valid"] is True
     assert d11_protocol.validate_collected_evidence(facts)["status"] == "PASS"
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+    stale = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry))
+    assert stale["artifacts"][0]["source_refs_valid"] is False
+    assert stale["artifacts"][0]["historical_validity"] == "PASS"
+    assert d11_protocol.validate_collected_evidence(stale)["code"] == "EVIDENCE_ARTIFACT_UNUSED"
     assert registered["revision"] > started["revision"]

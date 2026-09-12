@@ -184,12 +184,24 @@ def test_memory_audience_is_search_metadata_not_access_control(tmp_path: Path) -
 
 def test_production_package_has_no_benchmark_authority_module() -> None:
     assert importlib.util.find_spec("thaliris.host_authority") is None
+    assert importlib.util.find_spec("thaliris.protocol") is None
     production = "\n".join(
         path.read_text(encoding="utf-8")
         for path in Path(core.__file__).parent.glob("*.py")
     )
     for benchmark_only in ("D11", "formal authority registry", "receipt issuer"):
         assert benchmark_only not in production
+
+
+def test_only_current_task_state_schema_is_accepted(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "current schema", None, None)
+    path = root / ".context" / "state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["schema_version"] -= 1
+    path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid task state schema"):
+        core.task_show(root)
 
 
 def test_revision_cas_rejects_stale_writer_without_mutating_state(tmp_path: Path) -> None:

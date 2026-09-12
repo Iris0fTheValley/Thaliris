@@ -10,18 +10,6 @@ import subprocess
 
 REQUIRED = ("Evidence", "Revision", "Status", "Applicability", "Confidence")
 OPTIONAL_LISTS = ("Audience", "Topics", "Symbols")
-# Metadata written by older Codex-integrated releases is accepted on read and
-# normalized to the stable Core role vocabulary.
-LEGACY_AUDIENCE = {
-    "luna": "investigator",
-    "luna-investigator": "investigator",
-    "luna-curator": "curator",
-    "sol-high": "reasoning-specialist",
-    "terra-implementer": "implementer",
-    "terra-reviewer": "reviewer",
-}
-
-
 @dataclass(frozen=True)
 class Entry:
     path: Path

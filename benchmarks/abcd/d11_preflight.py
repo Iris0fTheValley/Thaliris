@@ -16,7 +16,7 @@ from typing import Any, Iterable
 from candidate_manifest import build_manifest
 from d11_sources import AuthorityRegistry, verify_source_registry
 from trusted_surface import identity as trusted_identity, mutation_probe, verify as verify_trusted
-from thaliris.protocol import ROUTING_PROTOCOL_MARKER, ROUTING_PROTOCOL_VERSION
+from d11_protocol import ROUTING_PROTOCOL_MARKER, ROUTING_PROTOCOL_VERSION
 
 
 def _sha(path: Path) -> str:
@@ -204,21 +204,21 @@ def discover_hooks_app_server(codex_executable: Path, project_root: Path, *, tim
         data = response.get("data")
         entry = next((item for item in data if isinstance(item, dict) and Path(item.get("cwd", "")).resolve() == project_root), None) if isinstance(data, list) else None
         hooks = entry.get("hooks", []) if isinstance(entry, dict) else []
-        # Match the complete managed hook set by semantic event, matcher,
-        # command suffix, and SubagentStart's explicit context limit. Extra
+        # Match the complete managed hook set by semantic event, matcher, and
+        # command suffix. Extra
         # user hooks are allowed, but cannot substitute for a missing managed
         # hook.  The app-server response is the runtime fact; the project file
         # is not treated as proof that the hook was loaded.
-        from thaliris.intent_audit import POST_TOOL_MATCHER, PRE_TOOL_MATCHER, _hook_command_prefix
+        from thaliris.lifecycle import POST_TOOL_MATCHER, PRE_TOOL_MATCHER, _hook_command_prefix
         expected_command_prefix = _hook_command_prefix()
         expected_events = {
-            "sessionStart": ("SessionStart", None, None),
-            "userPromptSubmit": ("UserPromptSubmit", None, None),
-            "preToolUse": ("PreToolUse", PRE_TOOL_MATCHER, None),
-            "postToolUse": ("PostToolUse", POST_TOOL_MATCHER, None),
-            "subagentStart": ("SubagentStart", None, 0),
-            "subagentStop": ("SubagentStop", None, None),
-            "stop": ("Stop", None, None),
+            "sessionStart": ("SessionStart", None),
+            "userPromptSubmit": ("UserPromptSubmit", None),
+            "preToolUse": ("PreToolUse", PRE_TOOL_MATCHER),
+            "postToolUse": ("PostToolUse", POST_TOOL_MATCHER),
+            "subagentStart": ("SubagentStart", None),
+            "subagentStop": ("SubagentStop", None),
+            "stop": ("Stop", None),
         }
         expected: dict[str, dict[str, Any]] = {}
         for item in hooks:
@@ -228,7 +228,7 @@ def discover_hooks_app_server(codex_executable: Path, project_root: Path, *, tim
             expected[event_name] = item
         exact = True
         missing: list[str] = []
-        for event_name, (command_event, _matcher, context_limit) in expected_events.items():
+        for event_name, (command_event, _matcher) in expected_events.items():
             item = expected.get(event_name)
             if not isinstance(item, dict):
                 missing.append(event_name)
@@ -245,10 +245,7 @@ def discover_hooks_app_server(codex_executable: Path, project_root: Path, *, tim
                     exact = False
             elif actual_matcher != expected_matcher:
                 exact = False
-            if context_limit is None:
-                if item.get("additionalContextLimit") not in {None, 0}:
-                    exact = False
-            elif item.get("additionalContextLimit") != context_limit:
+            if "additionalContextLimit" in item:
                 exact = False
             if item.get("enabled") is not True or item.get("trustStatus") not in {"trusted", "managed"}:
                 exact = False

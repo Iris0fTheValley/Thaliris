@@ -20,10 +20,6 @@ from .models import ContextConfig
 
 IGNORE_START = "# thaliris:begin"
 IGNORE_END = "# thaliris:end"
-# Accepted only so repositories initialized before the rename can be upgraded
-# or uninstalled without losing content outside the managed block.
-LEGACY_IGNORE_START = "# codex-context:begin"
-LEGACY_IGNORE_END = "# codex-context:end"
 IGNORE_RULES = (".context/backups/", ".context/state.json", ".context/context.lock")
 
 def _safe(root: Path, relative: str) -> Path:
@@ -168,16 +164,16 @@ def _entry(title: str, body: str, *, status: str = "DRAFT", evidence: str = "NON
     return rendered.encode()
 
 
-def _template_files(*, include_routing: bool = True, include_kind: bool = True, decision_link: bool = True) -> dict[str, bytes]:
+def _template_files() -> dict[str, bytes]:
     def template(title: str, body: str, **kwargs: object) -> bytes:
         kind = kwargs.pop("kind")
-        return _entry(title, body, include_routing=include_routing, kind=kind if include_kind else None, **kwargs)
+        return _entry(title, body, kind=kind, **kwargs)
     return {
         ".agent-memory/INDEX.md": template("Memory index", "- [Operator](operator.md)\n- [Prompt policy](prompt-policy.md)\n- [Project conventions](project-conventions.md)\n- [Decisions](decisions/INDEX.md)\n- [Lessons](lessons/INDEX.md)", audience=["all"], kind="MEMORY"),
         ".agent-memory/operator.md": template("Operator notes", "Unknown. Record only confirmed operating constraints.", kind="HARD_CONSTRAINT"),
         ".agent-memory/prompt-policy.md": template("Prompt policy", "Use explicit recall only. Retained memory is never automatically added to a Child handoff. Automatic compression is disabled.", audience=["controller"], kind="HARD_CONSTRAINT"),
         ".agent-memory/project-conventions.md": template("Project conventions", "Unknown. Add conventions only with evidence.", kind="HARD_CONSTRAINT"),
-        ".agent-memory/decisions/INDEX.md": template("Decision index", "- [PD-001 decision template](PD-001.md)" if decision_link else "Link each project decision entry here.", kind="MEMORY"),
+        ".agent-memory/decisions/INDEX.md": template("Decision index", "- [PD-001 decision template](PD-001.md)", kind="MEMORY"),
         ".agent-memory/decisions/PD-001.md": template("PD-001: decision template", "This is an unadopted template, not a project fact.\n\n## Decision\n\nUnknown.\n\n## Rationale\n\nUnknown.", kind="MEMORY"),
         ".agent-memory/lessons/INDEX.md": template("Lessons index", "- [L-001 lesson template](L-001.md)", kind="MEMORY"),
         ".agent-memory/lessons/L-001.md": template("L-001: lesson template", "This is an unadopted template, not a historical claim.\n\n## Failure mode\n\nUnknown.\n\n## Prevention\n\nUnknown.", kind="MEMORY"),
@@ -190,25 +186,22 @@ def _template_files(*, include_routing: bool = True, include_kind: bool = True, 
     }
 
 
-def _managed_span(current: str, start_marker: str, end_marker: str, legacy_start: str, legacy_end: str, label: str) -> tuple[int, int] | None:
-    counts = tuple(current.count(marker) for marker in (start_marker, end_marker, legacy_start, legacy_end))
-    if counts == (0, 0, 0, 0):
+def _managed_span(current: str, start_marker: str, end_marker: str, label: str) -> tuple[int, int] | None:
+    counts = current.count(start_marker), current.count(end_marker)
+    if counts == (0, 0):
         return None
-    if counts == (1, 1, 0, 0):
+    if counts == (1, 1):
         start, end_start = current.index(start_marker), current.index(end_marker)
         end = end_start + len(end_marker)
-    elif counts == (0, 0, 1, 1):
-        start, end_start = current.index(legacy_start), current.index(legacy_end)
-        end = end_start + len(legacy_end)
     else:
-        raise ValueError(f"{label} has duplicate, mixed, or damaged managed markers")
+        raise ValueError(f"{label} has duplicate or damaged managed markers")
     if start >= end_start:
-        raise ValueError(f"{label} has duplicate, mixed, or damaged managed markers")
+        raise ValueError(f"{label} has duplicate or damaged managed markers")
     return start, end
 
 
 def _managed_gitignore(current: str) -> str:
-    span = _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
+    span = _managed_span(current, IGNORE_START, IGNORE_END, ".gitignore")
     if span is None and set(IGNORE_RULES) <= set(current.splitlines()): return current
     newline = "\r\n" if "\r\n" in current else "\n"
     block = newline.join((IGNORE_START, *IGNORE_RULES, IGNORE_END)) + newline
@@ -242,62 +235,8 @@ def init(root: Path) -> dict[str, object]:
     _init_plan(root)
     with _lock(root):
         files, manual = _init_plan(root)
-        if not files: return {"ok": True, "changed": False, "backup": None, "manual_migration_required": manual}
-        return {"ok": True, "changed": True, "backup": _apply_with_backup(root, files, [], "init"), "files": sorted(files), "manual_migration_required": manual}
-
-
-def _migrate_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str]]:
-    """Migrate only byte-for-byte known generated memory templates.
-
-    Normal routing never scans as a fallback.  This bounded scan is deliberately
-    migration-only so a user-edited legacy file is reported rather than replaced.
-    """
-    root = _repo_root(root)
-    files, manual = _init_plan(root)
-    current = _template_files()
-    historical = (
-        _template_files(include_routing=False, include_kind=False, decision_link=False),
-        _template_files(include_routing=True, include_kind=False, decision_link=False),
-        _template_files(include_routing=True, include_kind=True, decision_link=False),
-    )
-    writes: dict[str, bytes] = {}
-    migrated: list[str] = []
-    base = root / ".agent-memory"
-    if base.is_dir():
-        for path in sorted(base.rglob("*.md")):
-            rel = str(path.relative_to(root)).replace("\\", "/")
-            data = path.read_bytes()
-            normalized = data.replace(b"\r\n", b"\n")
-            if rel in current and any(normalized == version.get(rel) for version in historical):
-                if data != current[rel]: writes[rel] = current[rel]
-            elif b"Audience:" not in data or b"Kind:" not in data:
-                manual.append(rel)
-    # State v1 is readable without mutation, but migrate offers an explicit,
-    # deterministic persistence path for anonymous semantic records.
-    state_path = _state_path(root)
-    if state_path.is_file():
-        try:
-            state_bytes = state_path.read_bytes()
-            raw_state = json.loads(state_bytes.decode("utf-8"))
-            upgraded = _validate_state(root, raw_state)
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            raise ValueError(f"task state migration failed: {exc}") from exc
-        upgraded_bytes = _state_payload(root, upgraded, enforce_fresh=False)
-        if state_bytes != upgraded_bytes:
-            files[_STATE_NAME] = upgraded_bytes
-            migrated.append(_STATE_NAME)
-    files.update(writes)
-    migrated.extend(writes)
-    return files, manual, sorted(set(migrated))
-
-
-def migrate(root: Path) -> dict[str, object]:
-    root = _repo_root(root)
-    with _lock(root):
-        files, manual, migrated = _migrate_plan(root)
-        if not files: return {"ok": True, "changed": False, "backup": None, "migration": "v3", "migrated": migrated, "manual_migration_required": manual}
-        backup = _apply_with_backup(root, files, [], "migrate")
-    return {"ok": True, "changed": True, "backup": backup, "files": sorted(files), "migration": "v3", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup}
+        if not files: return {"ok": True, "changed": False, "backup": None, "manual_action_required": manual}
+        return {"ok": True, "changed": True, "backup": _apply_with_backup(root, files, [], "init"), "files": sorted(files), "manual_action_required": manual}
 
 
 def rollback(root: Path, backup_id: str) -> dict[str, object]:
@@ -332,7 +271,7 @@ def _uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str],
     pre_ignore = _safe(root, ".gitignore")
     if pre_ignore.is_file():
         current = pre_ignore.read_bytes().decode("utf-8")
-        _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
+        _managed_span(current, IGNORE_START, IGNORE_END, ".gitignore")
     private_state_present = any(
         (_safe(root, relative).is_file() or _safe(root, relative).is_dir())
         for relative in (".context/backups", ".context/state.json", ".context/context.lock")
@@ -341,7 +280,7 @@ def _uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str],
     ignore = _safe(root, ".gitignore")
     if ignore.is_file() and not private_state_present:
         current = ignore.read_bytes().decode("utf-8")
-        span = _managed_span(current, IGNORE_START, IGNORE_END, LEGACY_IGNORE_START, LEGACY_IGNORE_END, ".gitignore")
+        span = _managed_span(current, IGNORE_START, IGNORE_END, ".gitignore")
         if span is not None:
             start, end = span
             suffix = current[end:]
@@ -363,8 +302,8 @@ def uninstall(root: Path) -> dict[str, object]:
     root = _repo_root(root)
     with _lock(root):
         writes, deletes, kept, manual = _uninstall_plan(root)
-        if not writes and not deletes: return {"ok": True, "changed": False, "kept": sorted(set(kept)), "backup": None, "manual_migration_required": manual}
-        return {"ok": True, "changed": True, "kept": sorted(set(kept)), "backup": _apply_with_backup(root, writes, deletes, "uninstall"), "deleted": sorted(deletes), "manual_migration_required": manual}
+        if not writes and not deletes: return {"ok": True, "changed": False, "kept": sorted(set(kept)), "backup": None, "manual_action_required": manual}
+        return {"ok": True, "changed": True, "kept": sorted(set(kept)), "backup": _apply_with_backup(root, writes, deletes, "uninstall"), "deleted": sorted(deletes), "manual_action_required": manual}
 
 
 def entries(root: Path) -> list[Entry]:
@@ -611,89 +550,10 @@ def _verification_result(value: object) -> dict[str, object]:
     return value
 
 
-def _legacy_records(state: dict[str, object]) -> list[dict[str, object]]:
-    records: list[dict[str, object]] = []
-    used: set[str] = set()
-    pending_supersedes: dict[str, list[str]] = {}
-
-    def append(identifier: str, kind: str, text: str, refs: list[str], status: str, producer: str) -> None:
-        base = re.sub(r"[^A-Za-z0-9_.:-]+", "-", identifier).strip("-") or "legacy-record"
-        if not base[0].isalpha():
-            base = "legacy-" + base
-        candidate = base[:64]
-        suffix = 2
-        while candidate in used:
-            tail = f"-{suffix}"
-            candidate = base[:64 - len(tail)] + tail
-            suffix += 1
-        used.add(candidate)
-        records.append({
-            "id": candidate,
-            "kind": kind,
-            "text": text[:16_384],
-            "producer": producer,
-            "revision": 1,
-            "source_refs": [ref for ref in refs if isinstance(ref, str)],
-            "status": status,
-            "supersedes": [],
-        })
-
-    for field in ("constraints", "unknowns", "contradictions", "decisions"):
-        for index, item in enumerate(state.get(field, []), 1):
-            if not isinstance(item, dict) or not isinstance(item.get("text"), str):
-                continue
-            identifier = str(item.get("id") or f"legacy-{field}-{index}")
-            append(identifier, field.rstrip("s"), item["text"], list(item.get("evidence_refs", [])), str(item.get("status") or "RECORDED"), "controller")
-            replacement = item.get("superseded_by")
-            if isinstance(replacement, str):
-                pending_supersedes.setdefault(replacement, []).append(records[-1]["id"])
-    for field, kind in (("confirmed_facts", "fact"), ("supported_evidence", "evidence")):
-        for index, item in enumerate(state.get(field, []), 1):
-            if isinstance(item, dict) and isinstance(item.get("text"), str):
-                append(f"legacy-{field}-{index}", kind, item["text"], list(item.get("evidence_refs", [])), "RECORDED", "controller")
-    for index, item in enumerate(state.get("investigation_findings", []), 1):
-        if isinstance(item, dict) and isinstance(item.get("text"), str):
-            append(f"legacy-investigation-{index}", "investigation", item["text"], list(item.get("evidence_refs", [])), str(item.get("kind") or "RECORDED"), "investigator")
-    for index, item in enumerate(state.get("review_findings", []), 1):
-        if isinstance(item, dict):
-            text = " — ".join(str(item.get(key)) for key in ("issue", "impact") if item.get(key))
-            if text:
-                append(f"legacy-review-{index}", "review", text, list(item.get("evidence_refs", [])), "RECORDED", "reviewer")
-    by_id = {str(item["id"]): item for item in records}
-    for replacement, prior_ids in pending_supersedes.items():
-        if replacement in by_id:
-            by_id[replacement]["supersedes"] = prior_ids
-    return records
-
-
-def _upgrade_state(state: dict[str, object]) -> dict[str, object]:
-    if state.get("schema_version") == _STATE_SCHEMA_VERSION:
-        return state
-    if state.get("schema_version") not in {1, 2, 3, 4, 5}:
-        raise ValueError("unsupported task state schema")
-    return {
-        "schema_version": _STATE_SCHEMA_VERSION,
-        "revision": state.get("revision"),
-        "task_id": state.get("task_id"),
-        "status": state.get("status"),
-        "goal": state.get("goal"),
-        "current_milestone": state.get("current_milestone"),
-        "records": _legacy_records(state),
-        "active_work": state.get("active_work", []),
-        "pending_results": state.get("pending_results", []),
-        "artifact_refs": state.get("artifact_refs", []),
-        "evidence_refs": state.get("evidence_refs", []),
-        "verification_results": [],
-        "task_surface_baseline": state.get("task_surface_baseline") if isinstance(state.get("task_surface_baseline"), list) else [],
-        "task_base_head": state.get("task_base_head"),
-    }
-
-
 def _validate_state(root: Path, state: object) -> dict[str, object]:
     _check_json(state)
     if not isinstance(state, dict):
         raise ValueError("invalid task state schema")
-    state = _upgrade_state(state)
     if set(state) != _STATE_FIELDS or state.get("schema_version") != _STATE_SCHEMA_VERSION:
         raise ValueError("invalid task state schema")
     if type(state.get("revision")) is not int or state["revision"] < 1:

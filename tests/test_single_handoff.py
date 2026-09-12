@@ -7,6 +7,7 @@ import subprocess
 
 from thaliris import codex_adapter, core
 from thaliris.lifecycle import handle_hook, hook_spec
+import thaliris.lifecycle as lifecycle_module
 
 
 def repo(tmp_path: Path) -> Path:
@@ -295,3 +296,30 @@ def test_subagent_start_identity_collision_preserves_reservation(tmp_path: Path)
     assert state["pending_authorized_spawn"] is not None
     assert len([child for child in state["children"] if child.get("managed") is True]) == 1
     assert state["identity_collisions"][-1]["pending_handoff_id"] == state["pending_authorized_spawn"]["handoff_id"]
+
+
+def test_only_current_lifecycle_schema_is_accepted(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "current lifecycle", None, None)
+    path = root / ".context" / "audit" / "lifecycle" / f"{lifecycle_module._task_key(started['task_id'])}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "version": lifecycle_module.LIFECYCLE_STATE_VERSION - 1,
+        "task_id_hash": lifecycle_module._task_key(started["task_id"]),
+        "children": [],
+        "pending_authorized_spawn": None,
+        "sequence": 0,
+    }), encoding="utf-8")
+    try:
+        lifecycle_module._load_lifecycle(path, started["task_id"])
+    except ValueError as exc:
+        assert "invalid lifecycle runtime state" in str(exc)
+    else:
+        raise AssertionError("old lifecycle schema was accepted")
+
+
+def test_no_historical_profile_hash_registry_remains() -> None:
+    source = Path(codex_adapter.__file__).read_text(encoding="utf-8")
+    assert "KNOWN_GENERATED" not in source
+    assert "LEGACY_MANAGED" not in source
+    assert not hasattr(codex_adapter, "migrate")

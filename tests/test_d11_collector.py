@@ -7,7 +7,7 @@ import pytest
 
 from thaliris import core
 from benchmarks.abcd import host_authority
-from thaliris.protocol import ROUTING_PROTOCOL_MARKER
+from benchmarks.abcd.d11_protocol import ROUTING_PROTOCOL_MARKER, ROUTING_PROTOCOL_VERSION
 from tests.support import d11_authority
 
 
@@ -19,6 +19,11 @@ for name in ("candidate_manifest", "d11_sources", "d11_collector", "d11_protocol
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     globals()[name] = module
+
+
+def test_routing_protocol_marker_matches_current_document() -> None:
+    assert ROUTING_PROTOCOL_VERSION == "thaliris-routing-v2"
+    assert ROUTING_PROTOCOL_MARKER in (ROOT / "docs" / "thaliris-routing-protocol.md").read_text(encoding="utf-8")
 
 
 def repo(path: Path) -> Path:

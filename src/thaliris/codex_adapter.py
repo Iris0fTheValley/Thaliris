@@ -11,7 +11,6 @@ import subprocess
 import tomllib
 
 from . import core, lifecycle
-from .protocol import ROUTING_PROTOCOL_VERSION
 from .lifecycle import MANAGED_HOOKS_DESCRIPTION, handle_hook, merge_hooks, remove_hooks
 
 CODEX_ROLE_MAP = {
@@ -39,52 +38,8 @@ _AGENT_PROFILES = {
 _NATIVE_PROFILE_NAMES = frozenset(name.removesuffix(".toml") for name in _AGENT_PROFILES)
 _KNOWN_HOST_WAIT_CAPABILITIES = {
     # These are release-pinned observations, not a cross-version assumption.
-    "0.153.4": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "project_config_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
+    "0.153.4": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
 }
-_WAIT_CONFIG_MARKER = "# thaliris:managed-blocking-wait"
-_KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
-    "0720619c1d0b85b80a2981597fcd60086a1bddc7f03f48f88cc8f75c1128d872",
-    "8026959290edeb86d66ee86f9b5db286e7fb31c28c95ec2c42ec8be7f2cda515",
-    "7e596a38e95606b684b17f25cc0eecb3163aef7d65d36110f6496b3ab7d53692",
-    "a91e41c67930071db4d6eb45342526cbbf67af6d4fda13d1c847d18f28816a35",
-    "ae56701985a1d27a2daea326819fa0e93b4350eb6e65d1a299daf198126a7a9a",
-    # Exact profile bytes emitted before the dedicated Sol Decision Context
-    # instruction was added.
-    "960190bb4b67b02e7616bcf6dbd71192bcc79327fb0ed72e6f23b3815819afd0",
-    # Exact profile bytes emitted by the first dedicated Decision Context
-    # profile before the current boundary instruction was added.
-    "d2191d59621e2765ae7642ca1648d96b4dbfb1a82293a8a02bf8642328fb58a7",
-    # Exact profile bytes emitted before bounded-decision/evidence-request
-    # instructions were added.
-    "60a87a06e97602f10f7f3842061c6eba551e78f76a8fa99b17ba377f48d22117",
-    # Exact profile bytes emitted before the explicit contradictory-evidence
-    # outcome was added.
-    "13b3283ad629bb6d32fe3613462694be14fba3a24c547aa791e1e651c0b3106d",
-    # Exact investigator profile bytes before artifact-first handoff guidance.
-    "199d7b9cb1fb8d1a3536df07395a420b9476ee66d13a4a9ca6d6442215d9e7b8",
-    # Exact reviewer profile bytes before the explicit read-only boundary.
-    "c43274a3f9cb3f93cd662b6477f1dfd07c170c24324c1364df5f59205851b17b",
-    # Exact profile bytes emitted by adapter 0896fe3 before native reviewer
-    # sandbox_mode was added.
-    "d0f488e226888c6a8f6e39ab1deeb1125d3c0e9474dba47af47ec3eab2da45c2",
-    # Historical generated profile bytes retained for conservative migration.
-    "ae51394874f0b35dc2b39577d471bf2f07533962363cdb7ad56e6e08a3860887",
-    "a1c7a46981512c7e8067dd5e40e193a0b54e34384aefc2b28950d5c6ccb5af9a",
-    # Exact profile bytes emitted before direct-write guidance was removed
-    # from the runtime-neutral role contract.
-    "44781edb6a654db482adafdc20b16f75cdebded2e62e8d86376aefc577a3ae55",
-    "f6827c30074554b809b50414bde31146354ec6898fe8bd13a43402134c8b6476",
-    "17616dddc351c20f5c98a30a0506253322d0cc5f6480d89690c7a08a70592557",
-    "d24ee0de8a22409bd5a3c9f1359079c4d6c7ccfbb14f65842e84f21ab0a5aa96",
-    "322534fb6f2b2abc312bd04a76e477e3e128cf6a194da5817ecaabd0678aa397",
-    # Exact Reviewer/Implementer profile bytes emitted before the review
-    # transaction-integrity wording was added.
-    "b038486edb2c381631e458adac2bff12fbcdc09233b5b1b8f59aeee9dc0e9774",
-    "360d49c46afe280f85d6857575a12a9eeeff93d1f9aedb4b00ef2a2aa7c8b078",
-    # Exact reviewer profile emitted before the bounded Review Packet fields
-    # were added. Retained for conservative profile migration.
-    "720ef66c9f6023d961ddc1a3329ec4ae3fdf7fe2f6b1252034a7117f5990a125",
-})
 
 
 def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
@@ -135,9 +90,7 @@ def _agent_profile_state(value: bytes, name: str) -> str:
     if profile is None:
         return "user"
     expected = _agent_profile(name.removesuffix(".toml"), profile[2], profile[0], profile[1])
-    if value == expected:
-        return "current"
-    return "legacy" if hashlib.sha256(value).hexdigest() in _KNOWN_GENERATED_AGENT_PROFILE_HASHES else "user"
+    return "current" if value == expected else "user"
 
 
 def _profile_definition_present(root: Path) -> str:
@@ -190,51 +143,6 @@ def host_wait_mode(executable: str | None = None) -> dict[str, object]:
     return dict(_host_wait_mode_cached(executable or os.environ.get("THALIRIS_CODEX_EXECUTABLE") or "codex"))
 
 
-def blocking_wait_configured(root: Path, executable: str | None = None) -> dict[str, object]:
-    """Validate only the project-file part of blocking-wait readiness.
-
-    A TOML file is not evidence that the running Codex process loaded it. In
-    particular, a desktop session may predate the write or the project may not
-    be trusted. Keep this deliberately separate from ``blocking_wait_active``.
-    """
-    capability = host_wait_mode(executable)
-    if capability.get("status") != "PASS" or capability.get("project_config_supported") is not True:
-        return {"status": "UNSUPPORTED", "reason": capability.get("reason", "project configuration is unsupported"), "host": capability}
-    path = core._safe(core._repo_root(root), ".codex/config.toml")
-    try:
-        parsed = tomllib.loads(_read_text(path))
-        configured = parsed["features"]["multi_agent_v2"]["default_wait_timeout_ms"]
-    except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError):
-        return {"status": "FAIL", "reason": "managed project blocking-wait default is absent", "host": capability}
-    if not isinstance(configured, int) or not capability["min"] <= configured <= capability["max"]:
-        return {"status": "FAIL", "reason": "project default is outside the host-supported wait range", "host": capability}
-    if configured != capability["max"]:
-        return {"status": "FAIL", "reason": "project default is not the Thaliris host-bounded long wait", "host": capability}
-    return {"status": "PASS", "default_wait_timeout_ms": configured, "host": capability}
-
-
-def blocking_wait_active(root: Path, executable: str | None = None) -> dict[str, object]:
-    """Return runtime evidence for the effective project default, never a guess.
-
-    Codex 0.153.4 exposes no effective-config value to a project hook. Until a
-    trusted fresh-process probe records such an observation, configuration is
-    merely configured, not active.
-    """
-    configured = blocking_wait_configured(root, executable)
-    if configured.get("status") != "PASS":
-        return {"status": configured.get("status"), "reason": configured.get("reason"), "configured": configured}
-    return {
-        "status": "UNKNOWN",
-        "reason": "no trusted fresh Codex session has exposed the effective project wait default",
-        "configured": configured,
-    }
-
-
-def blocking_wait_mode(root: Path, executable: str | None = None) -> dict[str, object]:
-    """Compatibility alias for callers that need the *active* readiness only."""
-    return blocking_wait_active(root, executable)
-
-
 def host_explicit_blocking_wait(executable: str | None = None) -> dict[str, object]:
     """Return version-pinned support for an explicit, bounded native wait.
 
@@ -279,8 +187,6 @@ def _read_text(path: Path) -> str:
 
 MANAGED_START = "<!-- thaliris:begin -->"
 MANAGED_END = "<!-- thaliris:end -->"
-LEGACY_MANAGED_START = "<!-- codex-context:begin -->"
-LEGACY_MANAGED_END = "<!-- codex-context:end -->"
 AUDIT_IGNORE_START = "# thaliris-codex:begin"
 AUDIT_IGNORE_END = "# thaliris-codex:end"
 AUDIT_IGNORE_RULE = ".context/audit/"
@@ -374,40 +280,6 @@ and a distilled verdict. Finding classifications are model-authored labels; the
 Controller decides what workflow, if any, follows.
 """
 
-KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
-    "242d1c6420139434425a2d6883011c2c44e34f1f3280267cb09243bdc0155f09",
-    "75f6c6804db80995c32cf4902247ae0d78762a15f37b35b677219813c8d17e6a",
-    "4ff409d7aa3d5f2ad2eb0c82b317d9af54426dde7765d8101939dcc578a460c0",
-    "6e49df8985c52309a6966c5ddd8b6b3b6a2b6bce326c55f327cb999bb6b46e4c",
-    # Exact role-pack bytes emitted before the current escalation/handoff text.
-    "8822c992b91d6cf0cc03a4f7c56b2c4ee48050d76d4e3b07654fa0acef36bbce",
-    # Exact generated bytes from intermediate published adapter releases.
-    "28498b36a46a631d0421a445d391ddffa61244bb56ebba4f6cac20a144a37ad3",
-    "28a56dd1dce4d41ab6d310510348c78d386b42954015006419a76e0c8f4c1213",
-    "52383be5756d7593a1c41c8b48e89e0efcec54fd94f8ba4908b3380708a15baa",
-    "0d679ca45a0de42d31197970bd976fddba104fbd6c66b1e153062fa6a94769ed",
-    "ca2570778106e2a0a72683a8ceef79c1828a5e0b43b370ae9a8e95e09a59eb01",
-    "655a67a933d96273c594a4276c6126ada61832b9031c06e4e235e9686c350742",
-    "a0abab298e8eda6312511761f891c0286cc3ffd6732aef09d9eab3f04dcd6d03",
-    # Exact role-pack bytes published with the current Sol handoff revisions.
-    "2c19646856d4ad930059e8e9a3fc026a08951e622c12c025a5b1bdcc20b0250c",
-    "8822e1aaa5a56f78cd9f044e329aa73c324bfd63df841fefd8f02b0008edfa0e",
-    # Exact role-pack bytes before artifact-first handoff guidance.
-    "865944fad8b854952422d741787fbbcfa292948fbfb11e31c6f9a0e9452b6df7",
-    # Exact bytes immediately before event-driven Controller suspension.
-    "432f122986f11e28568674e06d509ac22636f0eed4e86fbdffd46d4ab79d8fa6",
-    # Exact role-pack bytes emitted by the supervisor-era 645a40e release.
-    "30213f6b50822047e691673b3e1f27718e795ce450989bf74c53c08f8f98921d",
-    # Exact role-pack bytes before the review-convergence protocol reference.
-    "7fd54f2f8c7e97ab54aefa31bb3f53f7864f2d00e4d2e9b1d27309f115945d3d",
-    # Exact role-pack bytes emitted before the product-protocol split.
-    "fb9aa6827d9aba1ff0a03295f007b46c7e03c72894c20a78438eb35fdfd5cc5b",
-    # Exact role-pack bytes before benchmark terminology was removed from the
-    # product router.
-    "a9d8d947339c5d57c8fb9ca06ca07df4a1c5f1b37a42100482b2f913cd8ab6a6",
-})
-
-
 def _codex_config() -> dict[str, object]:
     base = Path(os.environ["CODEX_HOME"]) if os.environ.get("CODEX_HOME") else Path.home() / ".codex"
     path = base / "config.toml"
@@ -450,11 +322,6 @@ def _effective_root_instruction_path(root: Path, codex_config: dict[str, object]
     return core._safe(root, "AGENTS.md")
 
 
-def _effective_agents_path(root: Path) -> Path:
-    """Compatibility alias for root-instruction callers."""
-    return _effective_root_instruction_path(root)
-
-
 def _strip_managed_agents(current: str) -> str:
     span = _managed_span(current, "AGENTS.md")
     if span is None:
@@ -465,29 +332,20 @@ def _strip_managed_agents(current: str) -> str:
         suffix = suffix[2:]
     elif suffix.startswith("\n"):
         suffix = suffix[1:]
-    # Earlier prefix rendering inserted a second separator after MANAGED's
-    # own trailing newline. Collapse that known generated separator on move.
-    if suffix.startswith("\r\n"):
-        suffix = suffix[2:]
-    elif suffix.startswith("\n"):
-        suffix = suffix[1:]
     return current[:start] + suffix
 
 
 def _managed_span(current: str, label: str) -> tuple[int, int] | None:
-    counts = tuple(current.count(marker) for marker in (MANAGED_START, MANAGED_END, LEGACY_MANAGED_START, LEGACY_MANAGED_END))
-    if counts == (0, 0, 0, 0):
+    counts = current.count(MANAGED_START), current.count(MANAGED_END)
+    if counts == (0, 0):
         return None
-    if counts == (1, 1, 0, 0):
+    if counts == (1, 1):
         start, end_start = current.index(MANAGED_START), current.index(MANAGED_END)
         end = end_start + len(MANAGED_END)
-    elif counts == (0, 0, 1, 1):
-        start, end_start = current.index(LEGACY_MANAGED_START), current.index(LEGACY_MANAGED_END)
-        end = end_start + len(LEGACY_MANAGED_END)
     else:
-        raise ValueError(f"{label} has duplicate, mixed, or damaged managed markers")
+        raise ValueError(f"{label} has duplicate or damaged managed markers")
     if start >= end_start:
-        raise ValueError(f"{label} has duplicate, mixed, or damaged managed markers")
+        raise ValueError(f"{label} has duplicate or damaged managed markers")
     return start, end
 
 
@@ -500,11 +358,7 @@ def _managed_agents(current: str) -> str:
 
 
 def _role_pack_state(value: bytes) -> str:
-    if value == ROLE_PACKS.encode("utf-8"):
-        return "current"
-    if hashlib.sha256(value).hexdigest() in KNOWN_GENERATED_ROLE_PACK_HASHES:
-        return "legacy"
-    return "user"
+    return "current" if value == ROLE_PACKS.encode("utf-8") else "user"
 
 
 def _audit_ignore(current: str, *, remove: bool = False) -> str:
@@ -529,18 +383,6 @@ def _audit_ignore(current: str, *, remove: bool = False) -> str:
     elif suffix.startswith("\n"):
         suffix = suffix[1:]
     return current[:start] + suffix
-
-
-def _install(root: Path) -> dict[str, object]:
-    root = core._repo_root(root)
-    writes, manual = _install_plan(root)
-    with core._lock(root):
-        if not writes:
-            return {"ok": True, "changed": False, "backup": None, "files": [], "manual_migration_required": manual, "instruction_definition_changed": False, "hook_definition_changed": False, "agent_profile_changed": False, "session_restart_required": False, "hook_trust_required": False, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
-        hook_changed = ".codex/hooks.json" in writes
-        instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in writes)
-        profile_changed = any(path.startswith(".codex/agents/") for path in writes)
-        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, [], "codex-init"), "files": sorted(writes), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed or ".codex/config.toml" in writes, "hook_trust_required": hook_changed, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
 
 
 def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
@@ -572,15 +414,13 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
     role_packs = core._safe(root, "docs/thaliris-role-packs.md")
     if not role_packs.exists():
         writes["docs/thaliris-role-packs.md"] = ROLE_PACKS.encode("utf-8")
-    elif _role_pack_state(role_packs.read_bytes()) == "legacy":
-        writes["docs/thaliris-role-packs.md"] = ROLE_PACKS.encode("utf-8")
     elif _role_pack_state(role_packs.read_bytes()) == "user":
         manual.append("docs/thaliris-role-packs.md")
     for name, (model, effort, role) in _AGENT_PROFILES.items():
         relative = f".codex/agents/{name}"
         profile = core._safe(root, relative)
         rendered = _agent_profile(name.removesuffix(".toml"), role, model, effort)
-        if not profile.exists() or _agent_profile_state(profile.read_bytes(), name) == "legacy":
+        if not profile.exists():
             writes[relative] = rendered
         elif _agent_profile_state(profile.read_bytes(), name) == "user":
             manual.append(relative)
@@ -629,96 +469,7 @@ def init(root: Path) -> dict[str, object]:
     hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed or ".codex/config.toml" in files, "hook_trust_required": hook_changed, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
-
-
-def migrate(root: Path) -> dict[str, object]:
-    root = core._repo_root(root)
-    generic_files, generic_manual, migrated = core._migrate_plan(root)
-    adapter_files, adapter_manual = _install_plan(root)
-    if ".gitignore" in generic_files:
-        adapter_files[".gitignore"] = _audit_ignore(generic_files[".gitignore"].decode("utf-8")).encode("utf-8")
-    files = generic_files | adapter_files
-    manual = sorted(set(generic_manual) | set(adapter_manual))
-    with core._lock(root):
-        backup = core._apply_with_backup(root, files, [], "migrate") if files else None
-    hook_changed = ".codex/hooks.json" in files
-    instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
-    profile_changed = any(path.startswith(".codex/agents/") for path in files)
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed or ".codex/config.toml" in files, "hook_trust_required": hook_changed, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
-
-
-def _uninstall(root: Path) -> dict[str, object]:
-    root = core._repo_root(root)
-    agents = core._safe(root, "AGENTS.md")
-    if agents.is_file():
-        _managed_span(_read_text(agents), "AGENTS.md")
-    ignore = core._safe(root, ".gitignore")
-    if ignore.is_file():
-        current_ignore = _read_text(ignore)
-        _audit_ignore(current_ignore)
-        core._managed_gitignore(current_ignore)
-    audit_present = (root / ".context" / "audit").exists()
-    with core._lock(root):
-        writes: dict[str, bytes] = {}
-        deletes: list[str] = []
-        kept: list[str] = []
-        manual: list[str] = []
-        if agents.is_file():
-            current = _read_text(agents)
-            span = _managed_span(current, "AGENTS.md")
-            if span is not None:
-                start, end = span
-                suffix = current[end:]
-                if suffix.startswith("\r\n"):
-                    suffix = suffix[2:]
-                elif suffix.startswith("\n"):
-                    suffix = suffix[1:]
-                stripped = current[:start] + suffix
-                if stripped:
-                    writes["AGENTS.md"] = stripped.encode("utf-8")
-                else:
-                    deletes.append("AGENTS.md")
-        if ignore.is_file() and not audit_present:
-            current = _read_text(ignore)
-            counts = (current.count(AUDIT_IGNORE_START), current.count(AUDIT_IGNORE_END))
-            if counts == (0, 0) and current.count(core.LEGACY_IGNORE_START) == current.count(core.LEGACY_IGNORE_END) == 1:
-                start = current.index(core.LEGACY_IGNORE_START)
-                end = current.index(core.LEGACY_IGNORE_END) + len(core.LEGACY_IGNORE_END)
-                suffix = current[end:]
-                if suffix.startswith("\r\n"):
-                    suffix = suffix[2:]
-                elif suffix.startswith("\n"):
-                    suffix = suffix[1:]
-                rendered = current[:start] + suffix
-            else:
-                rendered = _audit_ignore(current, remove=True)
-            if rendered != current:
-                writes[".gitignore"] = rendered.encode("utf-8")
-        packs = core._safe(root, "docs/thaliris-role-packs.md")
-        if packs.is_file():
-            if packs.read_bytes() == ROLE_PACKS.encode("utf-8"):
-                deletes.append("docs/thaliris-role-packs.md")
-            else:
-                kept.append("docs/thaliris-role-packs.md")
-        hooks = core._safe(root, ".codex/hooks.json")
-        if hooks.is_file():
-            try:
-                value = json.loads(_read_text(hooks))
-                if not isinstance(value, dict):
-                    raise ValueError("hooks root must be an object")
-                cleaned, changed = remove_hooks(value)
-                if changed:
-                    owned_empty = value.get("description") == MANAGED_HOOKS_DESCRIPTION and set(cleaned) <= {"description", "hooks"} and cleaned.get("description") == MANAGED_HOOKS_DESCRIPTION and cleaned.get("hooks", {}) == {}
-                    if owned_empty:
-                        deletes.append(".codex/hooks.json")
-                    else:
-                        writes[".codex/hooks.json"] = (json.dumps(cleaned, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-            except (OSError, ValueError, json.JSONDecodeError):
-                manual.append(".codex/hooks.json")
-        if not writes and not deletes:
-            return {"ok": True, "changed": False, "backup": None, "kept": kept, "manual_migration_required": manual}
-        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, deletes, "codex-uninstall"), "kept": kept, "manual_migration_required": manual}
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
 
 
 def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str], list[str]]:
@@ -753,7 +504,7 @@ def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], li
             writes[".gitignore"] = rendered.encode("utf-8")
     packs = core._safe(root, "docs/thaliris-role-packs.md")
     if packs.is_file():
-        if _role_pack_state(packs.read_bytes()) in {"current", "legacy"}:
+        if _role_pack_state(packs.read_bytes()) == "current":
             deletes.append("docs/thaliris-role-packs.md")
         else:
             kept.append("docs/thaliris-role-packs.md")
@@ -763,7 +514,7 @@ def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], li
         if not profile.is_file():
             continue
         state = _agent_profile_state(profile.read_bytes(), name)
-        if state in {"current", "legacy"}:
+        if state == "current":
             deletes.append(relative)
         else:
             kept.append(relative)
@@ -782,30 +533,6 @@ def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], li
                     writes[".codex/hooks.json"] = (json.dumps(cleaned, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         except (OSError, ValueError, json.JSONDecodeError):
             manual.append(".codex/hooks.json")
-    config = core._safe(root, ".codex/config.toml")
-    if config.is_file():
-        current = _read_text(config)
-        capability = host_wait_mode()
-        expected = capability.get("max") if capability.get("status") == "PASS" else None
-        # Own only the exact marker and immediately following generated value.
-        # Anything else may be user TOML and is deliberately left untouched.
-        owned = re.compile(
-            rf"(?m)^[ \t]*{re.escape(_WAIT_CONFIG_MARKER)}[ \t]*\r?\n"
-            rf"^[ \t]*default_wait_timeout_ms[ \t]*=[ \t]*{re.escape(str(expected))}[ \t]*(?:#.*)?\r?\n?"
-        ) if isinstance(expected, int) else None
-        marker_present = _WAIT_CONFIG_MARKER in current
-        if owned is not None and owned.search(current):
-            rendered = owned.sub("", current, count=1)
-            # Remove an otherwise empty table we can prove was created solely
-            # for this marker. Do not delete comments or neighbouring tables.
-            empty_table = re.compile(r"(?m)^\[features\.multi_agent_v2\][ \t]*\r?\n(?=(?:\s*\r?\n)*(?:\Z|\[))")
-            rendered = empty_table.sub("", rendered, count=1)
-            if rendered.strip():
-                writes[".codex/config.toml"] = rendered.encode("utf-8")
-            else:
-                deletes.append(".codex/config.toml")
-        elif marker_present:
-            manual.append(".codex/config.toml")
     return writes, deletes, kept, manual
 
 
@@ -817,20 +544,16 @@ def uninstall(root: Path) -> dict[str, object]:
     deletes = sorted(set(generic_deletes) | set(adapter[1]))
     with core._lock(root):
         backup = core._apply_with_backup(root, writes, deletes, "uninstall") if writes or deletes else None
-    return {"ok": True, "changed": bool(writes or deletes), "backup": backup, "kept": sorted(set(generic_kept) | set(adapter[2])), "manual_migration_required": sorted(set(generic_manual) | set(adapter[3]))}
+    return {"ok": True, "changed": bool(writes or deletes), "backup": backup, "kept": sorted(set(generic_kept) | set(adapter[2])), "manual_action_required": sorted(set(generic_manual) | set(adapter[3]))}
 
 
 def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None) -> dict[str, object]:
     root = core._repo_root(root)
-    configured = blocking_wait_configured(root)
-    active = blocking_wait_active(root)
     mode = selected_continuation_mode(root)
     readiness = {
         "status": "PASS" if mode in {"EVENT_DRIVEN", "BLOCKING_WAIT"} else "MANAGED_CONTINUATION_UNAVAILABLE",
         "NATIVE_CHILD_COMPLETION_REENTERS_ROOT": native_child_completion_reenters_root(),
         "HOST_EXPLICIT_BLOCKING_WAIT": host_explicit_blocking_wait().get("status"),
-        "BLOCKING_WAIT_CONFIGURED": configured.get("status"),
-        "BLOCKING_WAIT_ACTIVE": active.get("status"),
         "selected_continuation_mode": mode,
     }
     if mode == "UNAVAILABLE":
@@ -969,8 +692,6 @@ def doctor(root: Path) -> dict[str, object]:
         "NATIVE_CHILD_COMPLETION_REENTERS_ROOT": native_child_completion_reenters_root(),
         "HOST_EXPLICIT_BLOCKING_WAIT": host_explicit_blocking_wait().get("status"),
         "BLOCKING_WAIT_MODE": "PASS" if selected_continuation_mode(root) == "BLOCKING_WAIT" else "FAIL",
-        "BLOCKING_WAIT_CONFIGURED": blocking_wait_configured(root).get("status"),
-        "BLOCKING_WAIT_ACTIVE": blocking_wait_active(root).get("status"),
         "selected_continuation_mode": selected_continuation_mode(root),
         **_activation_fields(
             root,

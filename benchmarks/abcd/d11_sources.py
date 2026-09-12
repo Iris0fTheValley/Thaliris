@@ -38,7 +38,7 @@ def validate_event_shape(source_kind: str, event_type: str, value: dict[str, Any
     required = {
         "candidate_attestation": {"stage", "candidate_root", "candidate_identity", "manifest_version", "harness_identity"},
         "reviewer_native_observation": {"session_id", "native_session_id", "sandbox_mode"},
-        "source_snapshot_attestation": {"observation_id", "path", "content_sha256", "session_id"},
+        "source_snapshot_attestation": {"observation_id", "path", "content_sha256", "session_id", "run_id", "candidate_root", "producer_identity"},
         "evaluator_result": {"evaluator_sha256", "candidate_identity", "exit_code"},
         "evaluator_calibration_attestation": {"attestation_id", "evaluator_sha256", "gold", "base"},
     }.get(event_type, set())
@@ -55,6 +55,12 @@ def validate_event_shape(source_kind: str, event_type: str, value: dict[str, Any
         if not isinstance(value.get("content_sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", value["content_sha256"]):
             return False
         if not isinstance(value.get("session_id"), str) or not value["session_id"]:
+            return False
+        if not isinstance(value.get("run_id"), str) or not value["run_id"]:
+            return False
+        if not isinstance(value.get("candidate_root"), str) or not value["candidate_root"]:
+            return False
+        if not isinstance(value.get("producer_identity"), str) or not value["producer_identity"]:
             return False
     if event_type == "candidate_attestation":
         # Candidate stage identity is the only authority this source owns.
@@ -100,25 +106,39 @@ def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, te
     if not isinstance(run_id, str) or not run_id:
         raise ValueError("source registry requires a run_id")
     entries: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
     for source in sources:
         if not isinstance(source, dict):
             raise ValueError("source registry entry is not an object")
         kind = source.get("source_kind", source.get("kind"))
-        path = Path(source.get("canonical_path", source.get("path", ""))).resolve()
+        raw_path = Path(source.get("canonical_path", source.get("path", "")))
+        # Resolve once for stable identity, but reject links at the trust
+        # boundary: a symlink can be retargeted after registry creation while
+        # retaining the same apparent source path.
+        if raw_path.is_symlink():
+            raise ValueError("source registry paths may not be symlinks")
+        path = raw_path.resolve()
         if kind not in SOURCE_KINDS or not path.is_file():
             raise ValueError("source registry entry is invalid")
+        canonical = str(path)
+        if canonical in seen_paths:
+            raise ValueError("source registry contains duplicate source paths")
+        seen_paths.add(canonical)
         allowed = source.get("allowed_event_types", sorted(SOURCE_EVENTS[kind]))
         allowed_base = set().union(*SOURCE_EVENTS.values()) if test_only else SOURCE_EVENTS[kind]
-        if not isinstance(allowed, list) or not allowed or not set(allowed) <= allowed_base:
+        if not isinstance(allowed, list) or not allowed or any(not isinstance(item, str) for item in allowed) or not set(allowed) <= allowed_base:
             raise ValueError("source registry allowlist is invalid")
         source_id = source.get("source_id") or f"{kind}:{_sha(path)}"
         if not isinstance(source_id, str) or not source_id:
             raise ValueError("source registry source_id is invalid")
+        producer = source.get("producer", kind)
+        if not isinstance(producer, str) or not producer or (not test_only and producer == "TEST_ONLY"):
+            raise ValueError("source registry producer is invalid")
         entries.append({
             "source_id": source_id,
             "source_kind": kind,
             "canonical_path": str(path),
-            "producer": source.get("producer", kind),
+            "producer": producer,
             "allowed_event_types": sorted(set(allowed)),
             "content_sha256": _sha(path),
             "stream_identity_policy": source.get("stream_identity_policy", "exact_bytes"),
@@ -143,7 +163,10 @@ def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = Non
         allowed_base = set().union(*SOURCE_EVENTS.values()) if payload.get("test_only") else None
         for item in sources:
             path = Path(item["canonical_path"])
-            if item["source_id"] in seen or item["source_kind"] not in SOURCE_KINDS or not path.is_file():
+            canonical = str(path.resolve())
+            if item["source_id"] in seen or canonical in {str(Path(other["canonical_path"]).resolve()) for other in sources if other is not item} or item["source_kind"] not in SOURCE_KINDS or path.is_symlink() or not path.is_file():
+                return False
+            if not isinstance(item.get("producer"), str) or not item.get("producer") or (not payload.get("test_only") and item.get("producer") == "TEST_ONLY"):
                 return False
             policy = item.get("stream_identity_policy", "exact_bytes")
             if policy not in {"exact_bytes", "append_only"} or policy == "exact_bytes" and _sha(path) != item["content_sha256"] or policy == "append_only" and (path.stat().st_size < int(item.get("initial_size", 0)) or _sha_prefix(path, int(item.get("initial_size", 0))) != item["content_sha256"]):

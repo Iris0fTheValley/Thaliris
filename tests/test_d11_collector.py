@@ -366,6 +366,23 @@ def test_source_registry_rejects_arbitrary_paths_and_wrong_source_events(tmp_pat
         d11_collector.load_trusted_events(registry)
 
 
+def test_source_registry_rejects_duplicate_or_symlinked_streams(tmp_path: Path) -> None:
+    stream = tmp_path / "events.jsonl"
+    stream.write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate source paths"):
+        d11_sources.create_source_registry([
+            {"kind": "harness_attestation", "path": stream},
+            {"kind": "codex_rollout", "path": stream},
+        ], run_id="run-duplicate")
+    alias = tmp_path / "alias.jsonl"
+    try:
+        alias.symlink_to(stream)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    with pytest.raises(ValueError, match="may not be symlinks"):
+        d11_sources.create_source_registry([{"kind": "harness_attestation", "path": alias}], run_id="run-link")
+
+
 def test_source_registry_append_only_stream_keeps_identity_and_tracks_provenance(tmp_path: Path) -> None:
     stream = tmp_path / "attest.jsonl"
     root = repo(tmp_path / "candidate")

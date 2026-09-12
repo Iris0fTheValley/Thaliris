@@ -36,6 +36,12 @@ def _hash_files(paths: Iterable[Path]) -> str:
     return hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _fact_identity(value: dict[str, Any]) -> str:
+    """Content identity used by host-observed fact envelopes."""
+    payload = {key: item for key, item in value.items() if key != "identity"}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def _unexpected_status(status: str | None) -> str:
     """Keep only real mutations, ignoring the known context overlay."""
     if not status:
@@ -53,6 +59,35 @@ def _unexpected_status(status: str | None) -> str:
         if not any(normalized == item or normalized.startswith(item) for item in allowed):
             kept.append(line)
     return "\n".join(kept)
+
+
+def _setup_overlay_manifest(root: Path, status: str | None) -> dict[str, Any]:
+    """Freeze the bounded files setup is allowed to materialize.
+
+    A clean-checkout result alone loses which overlay was present and permits
+    a later run to silently replace it.  Record status, current bytes, and a
+    deterministic identity so the frozen run can bind setup to this exact
+    checkout state.
+    """
+    root = root.resolve()
+    allowed = {".codex/", ".agent-memory/", ".milestones/", ".context/", "AGENTS.md", ".gitignore", "docs/thaliris-role-packs.md"}
+    entries: list[dict[str, Any]] = []
+    for line in (status or "").splitlines():
+        path = line[2:].lstrip() if len(line) >= 3 else line
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[-1]
+        normalized = path.replace("\\", "/")
+        if not any(normalized == item or normalized.startswith(item) for item in allowed):
+            continue
+        target = root.joinpath(*normalized.split("/"))
+        entries.append({
+            "path": normalized,
+            "status": line[:2],
+            "sha256": _sha(target) if target.is_file() else None,
+        })
+    entries.sort(key=lambda item: item["path"])
+    identity = hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return {"root": str(root), "paths": entries, "identity": identity}
 
 
 def _adapter_generated_hashes(adapter_root: Path) -> dict[str, Any] | None:
@@ -114,7 +149,8 @@ def discover_hooks_app_server(codex_executable: Path, project_root: Path, *, tim
         # user hooks are allowed, but cannot substitute for a missing managed
         # hook.  The app-server response is the runtime fact; the project file
         # is not treated as proof that the hook was loaded.
-        from thaliris.intent_audit import POST_TOOL_MATCHER, PRE_TOOL_MATCHER
+        from thaliris.intent_audit import POST_TOOL_MATCHER, PRE_TOOL_MATCHER, _hook_command_prefix
+        expected_command_prefix = _hook_command_prefix()
         expected_events = {
             "sessionStart": ("SessionStart", None, None),
             "userPromptSubmit": ("UserPromptSubmit", None, None),
@@ -139,7 +175,8 @@ def discover_hooks_app_server(codex_executable: Path, project_root: Path, *, tim
                 exact = False
                 continue
             command = str(item.get("command") or "")
-            if not command.lower().endswith(f" audit-hook {command_event}".lower()) or item.get("handlerType") != "command" or not isinstance(item.get("currentHash"), str) or not item.get("currentHash"):
+            expected_command = f"{expected_command_prefix} {command_event}".lower()
+            if command.strip().lower() != expected_command or item.get("handlerType") != "command" or not isinstance(item.get("currentHash"), str) or not item.get("currentHash"):
                 exact = False
             expected_matcher = _matcher
             actual_matcher = item.get("matcher")
@@ -258,6 +295,11 @@ def run_preflight(
         "unexpected_candidate_status": unexpected_candidate,
         "pass": unexpected_adapter in {"", None} and unexpected_candidate in {"", None},
     }
+    checks["setup_overlay"] = {
+        "adapter": _setup_overlay_manifest(adapter_root, adapter_status),
+        "candidate": _setup_overlay_manifest(candidate_root, candidate_status),
+        "pass": unexpected_adapter in {"", None} and unexpected_candidate in {"", None},
+    }
     checks["python_runtime"] = {"version": sys.version, "encoding": sys.getdefaultencoding(), "stdout_encoding": getattr(sys.stdout, "encoding", None), "pass": bool(sys.getdefaultencoding() and getattr(sys.stdout, "encoding", None))}
     try:
         from thaliris import intent_audit
@@ -310,7 +352,7 @@ def run_preflight(
     checks["candidate_root"] = str(candidate_root)
     result = {"status": "PASS" if passed else "PREFLIGHT_FAIL", "checks": checks}
     result["fact_source"] = {"kind": "host_preflight", "adapter_root": str(adapter_root), "candidate_root": str(candidate_root)}
-    result["identity"] = hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    result["identity"] = _fact_identity(result)
     return result
 
 
@@ -612,6 +654,7 @@ def probe_controller_enforcement(
     if pretool and denied and side_effect:
         result["status"] = "FAIL"
         result["code"] = "HOST_CONTROLLER_ENFORCEMENT_UNSUPPORTED"
+    result["identity"] = _fact_identity(result)
     return result
 
 
@@ -624,14 +667,18 @@ def probe_reviewer_native_readonly(events: Iterable[dict[str, Any]], *, candidat
     mutation_denied = any(str(item.get("operation") or item.get("action") or "").lower() in {"write", "modify", "create", "append"} and str(item.get("outcome") or item.get("status") or "").upper() in {"DENY", "DENIED", "FAILED", "BLOCKED"} for item in records)
     unchanged = candidate_identity_before is not None and candidate_identity_before == candidate_identity_after
     status = "PASS" if starts and observations and read_ok and mutation_denied and unchanged else "NOT_OBSERVED"
-    return {"status": status, "fresh_session_observed": bool(starts), "native_read_only_observed": bool(observations), "read_allowed": read_ok, "mutation_denied": mutation_denied, "side_effect_absent": unchanged, "fact_source": "native_codex_rollout"}
+    result = {"status": status, "fresh_session_observed": bool(starts), "native_read_only_observed": bool(observations), "read_allowed": read_ok, "mutation_denied": mutation_denied, "side_effect_absent": unchanged, "fact_source": {"kind": "native_codex_rollout"}}
+    result["identity"] = _fact_identity(result)
+    return result
 
 
 def probe_trusted_runtime_isolation(*, attack_principal_result: str, before_identity: dict[str, Any] | None, paths: Iterable[Path]) -> dict[str, Any]:
     """Separate managed-principal isolation from host-side integrity checks."""
     integrity = verify_trusted(before_identity, list(paths)) if isinstance(before_identity, dict) else False
     status = "PASS" if attack_principal_result == "DENIED" and integrity else "NOT_OBSERVED"
-    return {"status": status, "attack_principal_result": attack_principal_result, "integrity_after_probe": integrity, "fact_source": "host_runtime_probe"}
+    result = {"status": status, "attack_principal_result": attack_principal_result, "integrity_after_probe": integrity, "fact_source": {"kind": "host_runtime_probe"}}
+    result["identity"] = _fact_identity(result)
+    return result
 
 
 PRICING_MODELS = {
@@ -783,6 +830,7 @@ def freeze_run_manifest(
         "adapter_sha": checks["adapter_sha"]["actual"],
         "product_protocol": checks["product_protocol"],
         "benchmark_harness": checks["benchmark_harness"],
+        "setup_overlay": checks.get("setup_overlay"),
         "evaluator": checks["evaluator"],
         "trusted_surface": checks["trusted_surface"]["identity"],
         "source_registry": source_registry,
@@ -807,12 +855,25 @@ def verify_frozen_manifest(frozen: dict[str, Any], *, preflight: dict[str, Any],
             return False
         if manifest.get("task_spec") != _file_attestation(task_spec_path) or manifest.get("pricing_snapshot") != pricing_snapshot or not validate_pricing_snapshot(pricing_snapshot):
             return False
+        checks = preflight.get("checks", {})
+        if not isinstance(checks, dict):
+            return False
+        if manifest.get("setup_overlay") is not None:
+            frozen_overlay = manifest.get("setup_overlay")
+            adapter_overlay_root = Path(frozen_overlay.get("adapter", {}).get("root", checks.get("adapter_root", ""))) if isinstance(frozen_overlay, dict) else Path(checks.get("adapter_root", ""))
+            candidate_overlay_root = Path(frozen_overlay.get("candidate", {}).get("root", str(base_candidate_root))) if isinstance(frozen_overlay, dict) else base_candidate_root
+            current_overlay = {
+                "adapter": _setup_overlay_manifest(adapter_overlay_root, _git(adapter_overlay_root, "status", "--porcelain", "--untracked-files=all")),
+                "candidate": _setup_overlay_manifest(candidate_overlay_root, _git(candidate_overlay_root, "status", "--porcelain", "--untracked-files=all")),
+                "pass": True,
+            }
+            if manifest.get("setup_overlay") != current_overlay:
+                return False
         registry = source_registry if source_registry is not None else manifest.get("source_registry")
         if not isinstance(registry, dict) or not verify_source_registry(registry):
             return False
         if manifest.get("source_registry", {}).get("identity") != registry.get("identity"):
             return False
-        checks = preflight.get("checks", {})
         adapter_path = adapter_root or Path(checks.get("adapter_root", ""))
         if not adapter_path.is_dir() or _git(adapter_path, "rev-parse", "HEAD") != manifest.get("adapter_sha"):
             return False

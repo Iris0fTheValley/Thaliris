@@ -68,6 +68,8 @@ def load_trusted_events(registry: dict[str, Any]) -> list[dict[str, Any]]:
                     continue
                 if not test_stream and not validate_event_shape(kind, normalized_kind, raw):
                     raise ValueError(f"{normalized_kind} has an invalid {kind} schema")
+                if not test_stream and normalized_kind == "source_snapshot_attestation" and raw.get("run_id") != source["run_id"]:
+                    raise ValueError("source snapshot attestation run identity is invalid")
                 if kind == "harness_attestation" and not test_stream:
                     if not all(key in raw for key in ("run_id", "sequence", "previous_hash", "payload_hash", "record_hash", "source_registry_identity", "harness_identity")):
                         raise ValueError("formal harness attestation is missing hash-chain fields")
@@ -143,7 +145,15 @@ def _provenance(event: dict[str, Any] | None) -> dict[str, Any] | None:
 
 def _before(left: dict[str, Any], right: dict[str, Any]) -> bool:
     """Compare only one source stream or an explicit causal edge."""
-    if left.get("_source_file") == right.get("_source_file"):
+    # A canonical path alone is not a stream identity.  A registry may (or a
+    # malicious caller could) describe the same bytes under two producer
+    # entries; treating those entries as one timeline lets unrelated events be
+    # joined into a review/evidence transaction.  Same-stream ordering is
+    # valid only when both the source id and canonical file agree.
+    if (
+        left.get("_source_id") == right.get("_source_id")
+        and left.get("_source_file") == right.get("_source_file")
+    ):
         return _order(left, -1) < _order(right, -1)
     caused_by = right.get("caused_by")
     causes = right.get("causes", [])
@@ -265,7 +275,12 @@ def _resolve_source_refs(envelope: dict[str, Any], root: Path, events: list[dict
             observed = snapshots.get(observation_id)
             if not isinstance(observation_id, str) or observed is None:
                 return False, "repository source reference lacks a trusted observation"
-            if observed.get("path") != path or observed.get("content_sha256") != ref.get("content_sha256"):
+            if (
+                observed.get("path") != path
+                or observed.get("content_sha256") != ref.get("content_sha256")
+                or observed.get("candidate_root") != str(root.resolve())
+                or observed.get("run_id") not in {event.get("_source_run_id") for event in events if event.get("_source_run_id")}
+            ):
                 return False, "repository source reference does not match its trusted observation"
             if not target.is_file():
                 return False, "repository source reference target is unavailable"
@@ -288,7 +303,10 @@ def _producer_lifecycle(envelope: dict[str, Any] | None, artifact_id: str, produ
     identity = envelope.get("producer_identity")
     if not isinstance(session_id, str) or not isinstance(identity, str):
         return False, "producer identity is malformed"
-    starts = [event for event in events if _kind(event) in {"SubagentStart", "native_session_started"} and event.get("session_id") == session_id]
+    # Native producer lifecycle is owned by the Codex rollout stream.  Audit
+    # and harness streams can describe that lifecycle, but cannot create it;
+    # accepting their similarly named events would let a producer self-attest.
+    starts = [event for event in events if event.get("_trusted_source") == "codex_rollout" and _kind(event) in {"SubagentStart", "native_session_started"} and event.get("session_id") == session_id]
     if not starts:
         return False, "producer native session start is not observed"
     start = starts[-1]
@@ -300,7 +318,7 @@ def _producer_lifecycle(envelope: dict[str, Any] | None, artifact_id: str, produ
         return False, "producer identity is not bound to native session"
     if produced is None or produced.get("producer_session") != session_id:
         return False, "artifact production is not bound to producer session"
-    stops = [event for event in events if _kind(event) in {"SubagentStop", "native_session_stopped"} and event.get("session_id") == session_id]
+    stops = [event for event in events if event.get("_trusted_source") == "codex_rollout" and _kind(event) in {"SubagentStop", "native_session_stopped"} and event.get("session_id") == session_id]
     if not stops or not _before(start, produced) or not any(_before(produced, stop) for stop in stops):
         return False, "artifact production is outside observed producer lifecycle"
     return True, None
@@ -504,8 +522,13 @@ def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]], *, pol
     values: dict[str, Any] = {}
     attestations = [event for event in ordered if _kind(event) == "candidate_attestation" and event.get("_trusted_source") == "harness_attestation" and (event.get("source_registry_identity") == event.get("_registry_identity") or event.get("_source_run_id") == "TEST_ONLY")]
     expected_policy_identity = hashlib.sha256(json.dumps(build_manifest(root, policy)["manifest"]["policy"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    stage_counts: dict[str, int] = {}
+    stage_orders: list[int] = []
     for stage, field in stages.items():
         matches = [event for event in attestations if event.get("stage") == stage and event.get("candidate_root") == str(root.resolve()) and event.get("manifest_version") == MANIFEST_VERSION and event.get("manifest_policy_identity", expected_policy_identity) == expected_policy_identity and isinstance(event.get("harness_identity"), str) and event.get("harness_identity")]
+        stage_counts[stage] = len(matches)
+        if matches:
+            stage_orders.append(_order(matches[-1], -1)[0])
         values[field] = matches[-1].get("candidate_identity") if matches else None
         values[f"{field}_provenance"] = _provenance(matches[-1]) if matches else None
     ready_orders = [event for event in ordered if _kind(event) == "review_verdict" and event.get("verdict") == "READY" and isinstance(event.get("session_id"), str) and any(att.get("stage") == "review-start" and att.get("session_id") == event.get("session_id") and att.get("candidate_identity") == actual and _before(att, event) for att in attestations)]
@@ -513,6 +536,8 @@ def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]], *, pol
     ready_order = ready_orders[-1] if ready_orders else None
     values["source_mutations_after_ready"] = bool(ready_order and any(_before(ready_order, event) and _kind(event) == "source_mutation" for event in ordered))
     values["computed_candidate"] = actual
+    values["stage_counts"] = stage_counts
+    values["stage_order_valid"] = len(stage_orders) == len(stages) and stage_orders == sorted(stage_orders)
     return values
 
 
@@ -527,10 +552,11 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     sessions: set[str] = set()
     stops: dict[str, list[dict[str, Any]]] = {}
     graph: list[dict[str, Any]] = []
+    test_stream = any(event.get("_source_run_id") == "TEST_ONLY" for event in ordered)
     for event in ordered:
-        if _kind(event) in {"native_session_started", "SubagentStart"} and event.get("role") == "reviewer" and isinstance(event.get("session_id"), str):
+        if (test_stream or event.get("_trusted_source") == "codex_rollout") and _kind(event) in {"native_session_started", "SubagentStart"} and event.get("role") == "reviewer" and isinstance(event.get("session_id"), str):
             sessions.add(event["session_id"])
-        if _kind(event) in {"native_session_stopped", "SubagentStop"} and isinstance(event.get("session_id"), str):
+        if (test_stream or event.get("_trusted_source") == "codex_rollout") and _kind(event) in {"native_session_stopped", "SubagentStop"} and isinstance(event.get("session_id"), str):
             stops.setdefault(event["session_id"], []).append(event)
     for event in ordered:
         if _kind(event) != "review_verdict":
@@ -545,18 +571,30 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         mutations = [mutation for mutation in ordered if _kind(mutation) == "source_mutation" and mutation.get("session_id") == session]
         stop = stops.get(session, [])
         end = ends[-1] if ends else None
+        verdict_after_start = bool(starts and _before(starts[-1], event))
+        completion_after_start = bool(starts and stop and any(_before(starts[-1], item) for item in stop))
         completion_before_end = bool(stop and end and any(_before(item, end) for item in stop))
         verdict_before_end = bool(_before(event, end)) if end else False
         integrity = bool(
             session in sessions
             and stop
             and end
+            and verdict_after_start
+            and completion_after_start
             and completion_before_end
             and verdict_before_end
             and candidate
             and end.get("candidate_identity") == candidate
             and not mutations
         )
+        # Every formal review transaction must stay within one frozen run and
+        # registry.  Cross-stream ordering is otherwise admitted only through
+        # explicit causal edges in ``_before``.
+        if not test_stream:
+            transaction_events = [starts[-1], event, end, *(stop or [])]
+            identities = {(item.get("_source_run_id"), item.get("_registry_identity")) for item in transaction_events if item is not None}
+            if len(identities) != 1:
+                integrity = False
         graph.append({
             "reviewer_session": session,
             "input_candidate_identity": candidate,
@@ -568,6 +606,7 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             "native_completion": bool(stop),
             "review_end_observed": bool(end),
             "completion_before_review_end": completion_before_end,
+            "verdict_after_review_start": verdict_after_start,
             "verdict_before_review_end": verdict_before_end,
             "start_candidate_identity": candidate,
             "end_candidate_identity": end.get("candidate_identity") if end else None,

@@ -195,6 +195,13 @@ def validate_candidate_chain(chain: dict[str, Any]) -> dict[str, Any]:
         return _fail("CANDIDATE_IDENTITY_MISMATCH", "a recorded stage differs from the manifest computed from the candidate surface")
     if len(set(values)) != 1:
         return _fail("CANDIDATE_IDENTITY_MISMATCH", "runtime, review, verification, evaluator, and seal identities differ")
+    counts = chain.get("stage_counts")
+    if isinstance(counts, dict):
+        expected_stages = {"runtime-final", "review-start", "review-end", "verification-start", "evaluator-start", "seal"}
+        if set(counts) != expected_stages or any(counts.get(stage) != 1 for stage in expected_stages):
+            return _fail("CANDIDATE_STAGE_DUPLICATE", "candidate provenance stages must each have one host attestation")
+    if chain.get("stage_order_valid") is False:
+        return _fail("CANDIDATE_STAGE_ORDER", "candidate provenance stages are not causally ordered")
     if chain.get("review_verdict") != "READY":
         return _fail("FINAL_REVIEW_NOT_READY", "the exact sealed candidate lacks final Reviewer READY")
     if chain.get("source_mutations_after_ready"):
@@ -308,9 +315,29 @@ def _observed_status(value: Any, *, name: str) -> dict[str, Any]:
             isinstance(value.get(key), dict) and bool(value[key])
             for key in ("fact_source", "collector", "provenance", "checks", "manifest")
         )
-        identity = isinstance(value.get("identity"), str) and bool(value["identity"])
-        if not structured and not identity:
+        # A nested object or arbitrary identity string is still model-owned
+        # input.  Accept only known host/collector producer kinds, and when an
+        # identity is supplied require it to be the content hash of the fact
+        # payload (the host producers in d11_preflight use this convention).
+        fact_source = value.get("fact_source")
+        allowed_kinds = {
+            "host_preflight", "host_smoke_probe", "trusted_thaliris_audit",
+            "native_codex_rollout", "host_runtime_probe", "native_capability_diagnostic",
+            "collector",
+        }
+        source_kind = fact_source.get("kind") if isinstance(fact_source, dict) else None
+        source_ok = isinstance(source_kind, str) and source_kind in allowed_kinds
+        identity_value = value.get("identity")
+        identity = isinstance(identity_value, str) and bool(identity_value)
+        if identity:
+            payload = {key: item for key, item in value.items() if key != "identity"}
+            expected = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            if identity_value != expected:
+                return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_IDENTITY_INVALID"}
+        if not structured or not source_ok or (identity_value is not None and not identity):
             return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_PROVENANCE_NOT_OBSERVED"}
+        if source_kind != "native_capability_diagnostic" and not identity:
+            return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_IDENTITY_NOT_OBSERVED"}
         return value
     if isinstance(value, bool):
         return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_DECLARATION_REJECTED"}

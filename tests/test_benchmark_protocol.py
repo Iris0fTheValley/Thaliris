@@ -99,3 +99,11 @@ def test_target_gate_rejects_fake_or_empty_provenance_statuses():
     assert observed({"status": "PASS", "provenance": {}}, name="x")["status"] == "NOT_OBSERVED"
     assert observed({"status": "PASS", "checks": {}}, name="x")["status"] == "NOT_OBSERVED"
     assert observed({"status": "PASS", "manifest": {}}, name="x")["status"] == "NOT_OBSERVED"
+
+
+def test_target_fact_identity_is_content_bound():
+    observed = _MODULE._observed_status
+    value = {"status": "PASS", "fact_source": {"kind": "host_preflight"}, "checks": {"ok": True}}
+    assert observed(value, name="x")["status"] == "NOT_OBSERVED"
+    value["identity"] = "f" * 64
+    assert observed(value, name="x")["code"] == "X_IDENTITY_INVALID"

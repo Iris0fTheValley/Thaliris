@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 
 from thaliris import codex_adapter, core
-from thaliris.lifecycle import handle_hook
+from thaliris.lifecycle import handle_hook, hook_spec
 
 
 def repo(tmp_path: Path) -> Path:
@@ -22,6 +22,25 @@ def hook_payload(**values: object) -> dict[str, object]:
 def lifecycle(root: Path) -> dict[str, object]:
     path = next((root / ".context" / "audit" / "lifecycle").glob("*.json"))
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def spawn_start(root: Path, agent_id: str, agent_type: str = "worker") -> None:
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        tool_name="spawn_agent",
+        tool_input={"fork_turns": "none", "agent_type": agent_type, "message": f"task for {agent_id}"},
+    )) == ""
+    assert handle_hook(root, "SubagentStart", hook_payload(agent_id=agent_id, agent_type=agent_type)) == ""
+
+
+def stop(root: Path, agent_id: str, agent_type: str = "worker") -> None:
+    assert handle_hook(root, "SubagentStop", hook_payload(agent_id=agent_id, agent_type=agent_type)) == ""
+
+
+def reconcile(root: Path, agent_id: str, status: object) -> None:
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents",
+        tool_response={"agents": [{"agent_name": agent_id, "agent_status": status}]},
+    )) == ""
 
 
 def test_subagent_start_binds_explicit_handoff_without_injecting_projection(tmp_path: Path) -> None:
@@ -67,6 +86,8 @@ def test_subagent_start_binds_explicit_handoff_without_injecting_projection(tmp_
     serialized = json.dumps(record)
     for unselected in ("OLD_UNKNOWN", "OLD_DECISION", "ARTIFACT_PRIVATE_SENTINEL"):
         assert unselected not in serialized
+    start_handlers = hook_spec()["hooks"]["SubagentStart"][0]["hooks"]
+    assert all("additionalContextLimit" not in handler for handler in start_handlers)
 
 
 def test_blocking_wait_is_normalized_only_with_a_managed_dependency(tmp_path: Path, monkeypatch) -> None:
@@ -225,3 +246,52 @@ def test_selected_handoff_sentinel_exists_once_across_native_and_adapter_payload
     assert handle_hook(root, "PreToolUse", spawn) == ""
     adapter_payload = handle_hook(root, "SubagentStart", hook_payload(agent_id="child", agent_type="worker"))
     assert (handoff + adapter_payload).count("HANDOFF_SENTINEL") == 1
+
+
+def test_latest_managed_child_alone_controls_close(tmp_path: Path) -> None:
+    terminal_cases = (
+        ({"completed": "result"}, False),
+        ("interrupted", False),
+        ({"errored": "boom"}, False),
+        ("shutdown", False),
+        ("STOP_ATTESTED", True),
+    )
+    for index, (latest_status, should_close) in enumerate(terminal_cases):
+        root = tmp_path / str(index)
+        root.mkdir()
+        root = repo(root)
+        core.task_start(root, "latest child", None, None)
+        spawn_start(root, "child-a")
+        stop(root, "child-a")
+        spawn_start(root, "child-b")
+        if latest_status == "STOP_ATTESTED":
+            stop(root, "child-b")
+        else:
+            reconcile(root, "child-b", latest_status)
+        state = core.task_show(root)["state"]
+        if should_close:
+            assert codex_adapter.task_close(root, state["revision"])["status"] == "DONE"
+        else:
+            try:
+                codex_adapter.task_close(root, state["revision"])
+            except ValueError as exc:
+                assert "matching native SubagentStart/Stop" in str(exc)
+            else:
+                raise AssertionError(f"latest child status {latest_status!r} was hidden by historical success")
+
+
+def test_subagent_start_identity_collision_preserves_reservation(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "collision", None, None)
+    spawn_start(root, "reused-id")
+    stop(root, "reused-id")
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        tool_name="spawn_agent",
+        tool_input={"fork_turns": "none", "agent_type": "worker", "message": "second handoff"},
+    )) == ""
+
+    assert handle_hook(root, "SubagentStart", hook_payload(agent_id="reused-id", agent_type="worker")) == ""
+    state = lifecycle(root)
+    assert state["pending_authorized_spawn"] is not None
+    assert len([child for child in state["children"] if child.get("managed") is True]) == 1
+    assert state["identity_collisions"][-1]["pending_handoff_id"] == state["pending_authorized_spawn"]["handoff_id"]

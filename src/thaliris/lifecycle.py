@@ -74,10 +74,6 @@ def hook_spec() -> dict[str, Any]:
     prefix = _hook_command_prefix()
     for event in HOOK_EVENTS:
         handler: dict[str, Any] = {"type": "command", "command": f"{prefix} {event}", "timeout": 60}
-        if event == "SubagentStart":
-            # SubagentStart emits no context. Keep the limit at zero so an
-            # older host cannot retain or truncate a legacy projection.
-            handler["additionalContextLimit"] = 0
         entry: dict[str, Any] = {"hooks": [handler]}
         if event == "PostToolUse":
             # Codex treats a matcher made only of word characters and `|` as
@@ -109,10 +105,7 @@ def managed_hook_spec_hash() -> str:
 
 
 def _managed_handler(event: str) -> dict[str, Any]:
-    handler = {"type": "command", "command": f"{_hook_command_prefix()} {event}", "timeout": 60}
-    if event == "SubagentStart":
-        handler["additionalContextLimit"] = 0
-    return handler
+    return {"type": "command", "command": f"{_hook_command_prefix()} {event}", "timeout": 60}
 
 
 def _hook_command_prefix() -> str:
@@ -187,16 +180,7 @@ def _context_arguments(command: str) -> str | None:
 
 
 def is_managed_handler(value: object, event: str) -> bool:
-    if value == _managed_handler(event):
-        return True
-    # Permit only exact historical generated forms.  A suffix match is unsafe:
-    # ``evil audit-hook PreToolUse`` is user-owned, not Thaliris-owned.
-    if not isinstance(value, dict) or value.get("type") != "command" or value.get("timeout") != 60:
-        return False
-    if event == "SubagentStart" and value.get("additionalContextLimit") not in {None, 0}:
-        return False
-    historical = {f"context audit-hook {event}", f"context.exe audit-hook {event}", f"context.cmd audit-hook {event}"}
-    return value.get("command") in historical
+    return value == _managed_handler(event)
 
 
 def merge_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -606,43 +590,8 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     if not path.is_file():
         return {"version": LIFECYCLE_STATE_VERSION, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, LIFECYCLE_STATE_VERSION} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
+    if not isinstance(value, dict) or value.get("version") != LIFECYCLE_STATE_VERSION or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
         raise ValueError("invalid lifecycle runtime state")
-    prior_version = value.get("version")
-    if prior_version in {1, 2, 3, 4, 5}:
-        # Earlier records have no exact native agent provenance. Never infer it
-        # across an upgrade; discard pending reservations and managed status.
-        value["version"] = LIFECYCLE_STATE_VERSION
-        value.pop("pending_authorized_spawns", None)
-        value["pending_authorized_spawn"] = None
-        for child in value["children"]:
-            if isinstance(child, dict):
-                child["managed"] = False
-    if prior_version in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
-        # Older records may contain activation/deadline state from the removed
-        # adapter supervisor. Preserve child observations but never reactivate
-        # or infer that state during migration.
-        value["version"] = LIFECYCLE_STATE_VERSION
-        value.pop("activation", None)
-        # Version 9 makes execution state explicit.  A legacy ``stopped``
-        # remains direct Stop evidence; an older in-flight record remains
-        # running until a current native observation proves otherwise.
-        for child in value["children"]:
-            if isinstance(child, dict):
-                child.setdefault(
-                    "terminal_state",
-                    "STOP_ATTESTED" if isinstance(child.get("stopped"), int) else "RUNNING",
-                )
-                child.setdefault("native_terminal_status", None)
-                child.setdefault("task_name_hash", None)
-                # A legacy projection event cannot prove delivery of a
-                # Controller-authored handoff after the projection path is
-                # removed. Keep the observation, but do not reactivate it.
-                child["managed"] = False
-                child.pop("projection_ready", None)
-                child.setdefault("handoff_bound", False)
-        value.setdefault("stall", None)
-        value["pending_authorized_spawn"] = None
     pending = value.get("pending_authorized_spawn")
     if pending is not None and (
         not isinstance(pending, dict)
@@ -714,7 +663,7 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
             active = any(
                 isinstance(child, dict)
                 and child.get("managed") is True
-                and child.get("stopped") is None
+                and child.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"}
                 for child in state["children"]
             )
             if active or state["pending_authorized_spawn"] is not None:
@@ -799,9 +748,8 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
             and pending.get("expected_agent_type") == native_agent_type
             and pending.get("session_id_hash") == session_id_hash
         )
-        if authorized:
-            state["pending_authorized_spawn"] = None
         prior = next((item for item in children if item.get("agent_id_hash") == child_hash), None)
+        bound = authorized and prior is None
         if prior is None:
             children.append({
                 "agent_id_hash": child_hash,
@@ -809,19 +757,30 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
                 "session_id_hash": session_id_hash,
                 "turn_id_hash": turn_id_hash,
                 "role": role,
-                "managed": authorized,
-                "handoff_bound": authorized,
-                "handoff_id": pending.get("handoff_id") if authorized else None,
-                "task_revision": pending.get("task_revision") if authorized else None,
-                "producer": pending.get("producer") if authorized else None,
-                "payload_hash": pending.get("payload_hash") if authorized else None,
-                "handoff_created_at_ns": pending.get("created_at_ns") if authorized else None,
+                "managed": bound,
+                "handoff_bound": bound,
+                "handoff_id": pending.get("handoff_id") if bound else None,
+                "task_revision": pending.get("task_revision") if bound else None,
+                "producer": pending.get("producer") if bound else None,
+                "payload_hash": pending.get("payload_hash") if bound else None,
+                "handoff_created_at_ns": pending.get("created_at_ns") if bound else None,
                 "started": state["sequence"],
                 "stopped": None,
                 "terminal_state": "RUNNING",
                 "native_terminal_status": None,
-                "task_name_hash": pending.get("task_name_hash") if authorized else None,
+                "task_name_hash": pending.get("task_name_hash") if bound else None,
             })
+            if bound:
+                state["pending_authorized_spawn"] = None
+        else:
+            collisions = state.setdefault("identity_collisions", [])
+            if isinstance(collisions, list) and len(collisions) < 16:
+                collisions.append({
+                    "agent_id_hash": child_hash,
+                    "agent_type": native_agent_type,
+                    "pending_handoff_id": pending.get("handoff_id") if authorized else None,
+                    "observed_at_ns": time.time_ns(),
+                })
         state["stall"] = None
         _runtime_metadata(state, payload)
         _write_capture(path, state)
@@ -835,7 +794,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
         _bounded_append(runtime, "subagent_start_agent_types", agent_type[:80] if isinstance(agent_type, str) else None)
         runtime.setdefault("events_observed", {})["SubagentStart"] = True
         _write_capture(runtime_path, runtime)
-    return authorized
+    return bound
 
 
 def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> bool:
@@ -1056,7 +1015,7 @@ def _bash_command(payload: dict[str, Any]) -> str | None:
 
 
 def qualifying_child_completed(root: Path) -> bool:
-    """Require an authorized handoff binding, matching stop, and no in-flight work."""
+    """Require completion proof from the latest authorized managed handoff."""
     task_id = _active_task_id(root)
     if task_id is None:
         return False
@@ -1065,6 +1024,11 @@ def qualifying_child_completed(root: Path) -> bool:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return False
+    managed = [
+        child for child in value.get("children", [])
+        if isinstance(child, dict) and child.get("managed") is True
+    ] if isinstance(value, dict) else []
+    latest = max(managed, key=lambda child: int(child.get("started", -1)), default=None)
     return (
         isinstance(value, dict)
         and value.get("version") == LIFECYCLE_STATE_VERSION
@@ -1073,7 +1037,14 @@ def qualifying_child_completed(root: Path) -> bool:
         and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
         and value.get("pending_authorized_spawn") is None
         and not _managed_child_active(root)
-        and any(isinstance(child, dict) and child.get("managed") is True and child.get("handoff_bound") is True and isinstance(child.get("handoff_id"), str) and isinstance(child.get("payload_hash"), str) and child.get("terminal_state") == "STOP_ATTESTED" and child.get("native_terminal_status") not in {"interrupted", "errored", "shutdown"} and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
+        and isinstance(latest, dict)
+        and latest.get("handoff_bound") is True
+        and isinstance(latest.get("handoff_id"), str)
+        and isinstance(latest.get("payload_hash"), str)
+        and latest.get("terminal_state") == "STOP_ATTESTED"
+        and latest.get("native_terminal_status") not in {"interrupted", "errored", "shutdown"}
+        and isinstance(latest.get("started"), int)
+        and isinstance(latest.get("stopped"), int)
     )
 
 
@@ -1209,9 +1180,8 @@ def _load_runtime(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {"version": 4}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4}:
+    if not isinstance(value, dict) or value.get("version") != 4:
         raise ValueError("unsupported audit runtime state")
-    value["version"] = 4
     return value
 
 

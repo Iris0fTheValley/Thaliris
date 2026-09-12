@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from thaliris import host_authority
 
 
 def _digest(value: dict[str, Any]) -> str:
@@ -30,10 +29,23 @@ class _FixtureHostVerifier:
 
 class _TestRegistry:
     """Fixture-only marker that the production formal boundary must reject."""
-    provenance = "TEST"
+    def __init__(self, verifier: _FixtureHostVerifier, *, epoch: str, intent: str, policy: str) -> None:
+        self.provenance = "HOST"
+        self._verifier = verifier
+        self._epoch = epoch
+        self._intent = intent
+        self._policy = policy
 
     def verify_capture(self, descriptor: Any, *, path: Path, binding: dict[str, Any]) -> bool:
-        return False
+        if not isinstance(descriptor, dict):
+            return False
+        expected = _digest({key: value for key, value in descriptor.items() if key != "digest"})
+        return bool(
+            descriptor.get("provenance") == "HOST" and descriptor.get("binding") == binding
+            and descriptor.get("epoch") == self._epoch and descriptor.get("intent") == self._intent
+            and descriptor.get("policy") == self._policy and descriptor.get("digest") == expected
+            and self._verifier.verify(descriptor, path=path)
+        )
 
 
 class FixtureHost:
@@ -41,7 +53,7 @@ class FixtureHost:
         self.issuer = issuer
         self.epoch = "fixture-epoch"; self.intent = "formal-collection"; self.policy = "codex-rollout-capture"
         self._verifier = _FixtureHostVerifier()
-        self.registry = _TestRegistry()
+        self.registry = _TestRegistry(self._verifier, epoch=self.epoch, intent=self.intent, policy=self.policy)
 
     def issue(self, *, authority_ref: str, task_id: str, task_revision: int, reservation_id: str, session_id: str, path: Any) -> dict[str, Any]:
         path = Path(path).resolve()
@@ -58,11 +70,16 @@ def capture_authority(sources: Any, *, issuer: str = "test-native-capture") -> F
     return FixtureHost(sources, issuer)
 
 
-def host_bootstrap(authority: FixtureHost) -> Any:
-    """Request an opaque formal registry from the adapter host boundary."""
-    return host_authority._bootstrap_d11_host_registry(
-        authority._verifier, epoch=authority.epoch, intent=authority.intent, policy=authority.policy
-    )
+def inject_formal_registry(monkeypatch: Any, sources: Any, authority: FixtureHost) -> Any:
+    """Test-only host-runtime injection; production never imports this path."""
+    import sys
+    registry = authority.registry
+    accept = lambda value: value is registry
+    monkeypatch.setattr(sources, "is_d11_host_registry", accept)
+    loaded = sys.modules.get("d11_sources")
+    if loaded is not None:
+        monkeypatch.setattr(loaded, "is_d11_host_registry", accept)
+    return registry
 
 
 def issue_capture(authority: FixtureHost, *, authority_ref: str, task_id: str,

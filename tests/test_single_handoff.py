@@ -114,3 +114,30 @@ def test_production_hooks_record_hashes_without_model_audit_or_correction(tmp_pa
     source = Path(__import__("thaliris.intent_audit", fromlist=["x"]).__file__).read_text(encoding="utf-8")
     for removed in ("_invoke_fresh_auditor", "task_close_audit", "AUDITOR_INSTRUCTION"):
         assert removed not in source
+
+
+def test_controller_guard_keeps_only_deterministic_mutation_boundaries(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "mechanical guard", None, None)
+
+    read_only = hook_payload(tool_name="Bash", tool_input={"command": "rg -n architecture src"})
+    assert handle_hook(root, "PreToolUse", read_only) == ""
+    assert handle_hook(root, "PreToolUse", hook_payload(tool_name="mcp__example__read", tool_input={})) == ""
+
+    mutation = hook_payload(tool_name="Bash", tool_input={"command": "Set-Content src/file.py changed"})
+    denied = json.loads(handle_hook(root, "PreToolUse", mutation))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    direct = json.loads(handle_hook(root, "PreToolUse", hook_payload(tool_name="apply_patch", tool_input={})))
+    assert direct["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_path: Path) -> None:
+    del tmp_path
+    for name, (model, effort, role) in codex_adapter._AGENT_PROFILES.items():
+        profile = codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort).decode()
+        assert "sole task-specific input" in profile
+        assert "distilled result" in profile
+        for removed in ("context prepare --role", "REVALIDATION_REQUIRED", "MECHANICAL or LOCAL_SEMANTIC"):
+            assert removed not in profile
+    assert "sole task-specific semantic router" in codex_adapter.MANAGED
+    assert "never calls Core" in codex_adapter.MANAGED

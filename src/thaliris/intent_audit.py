@@ -396,8 +396,6 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
                     _best_effort_record(_record_delegation_telemetry, root, payload)
             if isinstance(tool, str) and _tool_basename(tool) in _OBSERVED_EXECUTION_TOOL_NAMES:
                 _best_effort_record(_record_execution_observation, root, payload)
-                if _tool_basename(tool) in _TRUSTED_CODEX_SHELL_TOOL_NAMES:
-                    _best_effort_record(_acceptance_execution_observed, root, payload)
             return ""
         # Stop has no production policy role. It neither invokes a model nor
         # blocks or corrects the Controller.
@@ -1219,109 +1217,19 @@ def _codex_bash_outcome(response: object) -> str:
     return "UNKNOWN"
 
 
-def _acceptance_execution_observed(root: Path, payload: dict[str, Any]) -> None:
-    """Bridge a completed, authorized Codex acceptance invocation into Core."""
-    tool = payload.get("tool_name") or payload.get("tool")
-    if not isinstance(tool, str) or _tool_basename(tool) not in _TRUSTED_CODEX_SHELL_TOOL_NAMES:
-        return
-    command = _bash_command(payload)
-    target = _active_verification_target(root)
-    if command is None or target is None or _normalized_command(command) != _normalized_command(target) or not qualifying_child_completed(root):
-        return
-    outcome = _codex_bash_outcome(_post_tool_response(payload))
-    if outcome == "UNKNOWN":
-        # Codex 0.153.4 exposes no version-pinned Bash terminal-result fact.
-        # Retain only the bounded diagnostic observation; do not churn Core
-        # state with an execution result that cannot prove anything.
-        return
-    try:
-        requirements = core.task_verification_requirements(root)
-        material = json.dumps({"task": requirements["task_id"], "revision": requirements["revision"], "command": command, "outcome": outcome}, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        result_id = f"codex-observation-{hashlib.sha256(material).hexdigest()[:32]}"
-        core.task_record_verification(
-            root,
-            requirements["revision"],
-            result_id,
-            "test",
-            outcome,
-            "Codex PostToolUse execution observation",
-            observed_by="codex-post-tool-use",
-            source_paths=requirements["paths"],
-        )
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        # Missing/ambiguous payload or unrepresentable source identity must not
-        # manufacture a result. The Core close gate remains fail-closed.
-        return
-
-
-def _controller_roles(command: str) -> list[str]:
-    """Extract only argparse's real long ``--role`` spelling from a fixed CLI."""
-    return re.findall(r"(?:^|\s)--role(?:=|\s+)([a-z][a-z0-9-]*)\b", command.lower())
-
-
-def _active_verification_target(root: Path) -> str | None:
-    try:
-        value = json.loads((root / ".context" / "state.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError):
-        return None
-    target = value.get("verification_target") if value.get("status") == "ACTIVE" else None
-    return target if isinstance(target, str) and target.strip() else None
-
-
-def _normalized_command(value: str) -> str:
-    return " ".join(value.split())
-
-
 def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | None:
-    """Allow only fixed control-plane and acceptance commands for an ACTIVE root."""
+    """Deny only explicit source-mutating shell forms at an ACTIVE root.
+
+    Shell text is not a semantic classifier. Ambiguous or read-only commands
+    remain under the Controller model's instruction rather than a regex-built
+    allowlist.
+    """
     if _active_task_id(root) is None:
         return None
     command = _bash_command(payload)
     if command is None:
-        return "ROOT_COMMAND_NOT_ALLOWED"
-    for segment in _COMMAND_SEPARATOR.split(command):
-        value = segment.strip()
-        if not value:
-            continue
-        context_args = _context_arguments(value)
-        lowered = value.lower()
-        # Complex shell syntax is outside the fixed command vocabulary.  Do
-        # not try to interpret it: reject it before accepting a prefix.
-        if re.search(r"[`$()<>]", value):
-            return "ROOT_COMMAND_NOT_ALLOWED"
-        if context_args.lower() == "task-status" if context_args is not None else False:
-            continue
-        if context_args is not None and re.fullmatch(r"prepare\s+--role(?:=|\s+)controller", context_args, re.IGNORECASE):
-            continue
-        if context_args is not None and re.match(r"^task-update\b", context_args, re.IGNORECASE):
-            if _controller_roles(value) == ["controller"]:
-                continue
-            return "ROOT_COMMAND_NOT_ALLOWED"
-        if context_args is not None and re.match(r"^task-artifact\b", context_args, re.IGNORECASE):
-            continue
-        if context_args is not None and re.match(r"^task-promote\b", context_args, re.IGNORECASE):
-            if _controller_roles(value) == ["controller"]:
-                continue
-            return "ROOT_COMMAND_NOT_ALLOWED"
-        if context_args is not None and re.match(r"^task-close\b", context_args, re.IGNORECASE):
-            if not qualifying_child_completed(root):
-                return "TASK_CLOSE_NO_CHILD"
-            continue
-        if _ACCEPTANCE_COMMAND.fullmatch(value):
-            if not qualifying_child_completed(root):
-                return "ACCEPTANCE_BEFORE_CHILD"
-            target = _active_verification_target(root)
-            if target is not None and _normalized_command(value) == _normalized_command(target):
-                continue
-            return "ACCEPTANCE_TARGET_REQUIRED"
-        if re.fullmatch(r"git\s+status\s+--short", lowered):
-            continue
-        if re.fullmatch(r"git\s+diff\s+--(?:check|stat|name-only)", lowered):
-            continue
-        if re.fullmatch(r"git\s+rev-parse(?:\s+[a-z0-9_./:@=\-]+)+", lowered):
-            continue
-        return "ROOT_COMMAND_NOT_ALLOWED"
-    return None
+        return None
+    return "SOURCE_MUTATION" if _SOURCE_MUTATION.search(command) else None
 
 
 def _load_runtime(path: Path) -> dict[str, Any]:
@@ -1443,12 +1351,6 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
         return ""
-    if tool.startswith("mcp__"):
-        root = _hook_repository_root(root or Path.cwd(), payload)
-        if _active_task_id(root) is None:
-            return ""
-        _best_effort_record(_record_controller_guard_event, root, payload, "MCP_ROOT_NOT_ALLOWED", "blocked")
-        return _permission_deny(_CONTROLLER_BOUNDARY_REASON)
     if _tool_basename(tool) in _CONTROLLER_MUTATION_TOOL_NAMES:
         root = _hook_repository_root(root or Path.cwd(), payload)
         if _active_task_id(root) is None:

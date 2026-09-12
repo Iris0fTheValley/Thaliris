@@ -1,8 +1,8 @@
 """Frozen, source-specific input boundary for formal benchmark collection."""
 from __future__ import annotations
 
+import builtins
 import hashlib
-import inspect
 import json
 from pathlib import Path
 import re
@@ -10,6 +10,10 @@ from typing import Any, Iterable, Protocol
 
 SOURCE_KINDS = frozenset({"thaliris_audit", "codex_rollout", "harness_attestation", "evaluator_result"})
 SOURCE_REGISTRY_VERSION = 2
+_REGISTRY_SEAL_NAME = "_thaliris_d11_authority_registry_seal"
+if not hasattr(builtins, _REGISTRY_SEAL_NAME):
+    setattr(builtins, _REGISTRY_SEAL_NAME, object())
+_REGISTRY_SEAL = getattr(builtins, _REGISTRY_SEAL_NAME)
 
 
 class CaptureAuthority(Protocol):
@@ -18,62 +22,56 @@ class CaptureAuthority(Protocol):
     def verify(self, descriptor: Any, *, path: Path) -> bool: ...
 
 
-class _TestCaptureAuthorityWriter:
-    """Host-owned authority store for a captured native Codex stream.
+class AuthorityRegistry(Protocol):
+    """Opaque, host-composed verifier for frozen rollout receipts."""
+    provenance: str
+    def verify_capture(self, descriptor: Any, *, path: Path, binding: dict[str, Any]) -> bool: ...
 
-    The store is deliberately an injected capability.  A descriptor copied
-    from JSON is only a claim until this store resolves its authority_ref.
-    Production code receives only :class:`CaptureAuthority`, whose sole
-    operation is lookup.  This writer is intentionally private and is exposed
-    to fixtures through ``tests.support`` dependency injection.
-    """
-    def __init__(self, issuer: str = "test-native-capture") -> None:
-        self.issuer = issuer
-        self._records: dict[str, dict[str, Any]] = {}
 
-    def issue(self, *, authority_ref: str, task_id: str, task_revision: int,
-              reservation_id: str, session_id: str, path: Path,
-              boundary: str = "codex-rollout-capture") -> dict[str, Any]:
-        path = path.resolve()
-        if not authority_ref or not task_id or not isinstance(task_revision, int) or task_revision < 0 or not reservation_id or not session_id or not path.is_file() or path.is_symlink():
-            raise ValueError("invalid native capture authority subject")
-        record = {
-            "authority_ref": authority_ref, "issuer": self.issuer,
-            "boundary": boundary, "task_id": task_id,
-            "task_revision": task_revision, "reservation_id": reservation_id,
-            "session_id": session_id, "canonical_path": str(path),
-            "content_sha256": _sha(path),
-        }
-        record["digest"] = _identity(record)
-        self._records[authority_ref] = record
-        return dict(record)
+class _SealedAuthorityRegistry:
+    """Verifier-only registry. Receipt issuance remains outside production."""
+    def __init__(self, verifier: CaptureAuthority, *, provenance: str, epoch: str,
+                 intent: str, policy: str) -> None:
+        self._verifier = verifier
+        self._seal = _REGISTRY_SEAL
+        self.provenance = provenance
+        self._epoch = epoch
+        self._intent = intent
+        self._policy = policy
 
-    def verify(self, descriptor: Any, *, path: Path) -> bool:
-        if not isinstance(descriptor, dict):
+    def verify_capture(self, descriptor: Any, *, path: Path, binding: dict[str, Any]) -> bool:
+        if self.provenance != "HOST" or not isinstance(descriptor, dict):
             return False
-        ref = descriptor.get("authority_ref")
-        record = self._records.get(ref) if isinstance(ref, str) else None
-        return bool(record and descriptor == record and record["issuer"] == self.issuer
-                    and record["boundary"] == "codex-rollout-capture"
-                    and record["canonical_path"] == str(path.resolve())
-                    and record["content_sha256"] == _sha(path)
-                    and record["digest"] == _identity({k: v for k, v in record.items() if k != "digest"}))
+        expected = _identity({k: v for k, v in descriptor.items() if k != "digest"})
+        try:
+            return (descriptor.get("provenance") == "HOST" and descriptor.get("binding") == binding
+                    and descriptor.get("epoch") == self._epoch and descriptor.get("intent") == self._intent
+                    and descriptor.get("policy") == self._policy and descriptor.get("digest") == expected
+                    and bool(self._verifier.verify(descriptor, path=path)))
+        except (OSError, TypeError, ValueError):
+            return False
 
 
-def verify_capture_authority(authority: CaptureAuthority | None, descriptor: Any, *, path: Path) -> bool:
-    """Verify a formal rollout against the injected trusted issuer/store."""
-    verifier = getattr(authority, "verify", None)
+def compose_host_authority_registry(verifier: CaptureAuthority, *, epoch: str,
+                                    intent: str = "formal-collection",
+                                    policy: str = "codex-rollout-capture") -> AuthorityRegistry:
+    """Host composition entry point; callers receive no receipt writer."""
+    if not all(isinstance(value, str) and value for value in (epoch, intent, policy)) or not callable(getattr(verifier, "verify", None)):
+        raise ValueError("host authority composition is invalid")
+    return _SealedAuthorityRegistry(verifier, provenance="HOST", epoch=epoch, intent=intent, policy=policy)
+
+
+def verify_capture_authority(registry: AuthorityRegistry | None, descriptor: Any, *, path: Path,
+                             binding: dict[str, Any]) -> bool:
+    """Fail closed unless a host-composed registry verifies the exact receipt."""
     try:
-        writer_type = type(authority)
-        writer_source = inspect.getsourcefile(writer_type)
-        return (
-            callable(verifier)
-            and writer_type.__name__ == "_TestCaptureAuthorityWriter"
-            and writer_source is not None
-            and Path(writer_source).resolve() == Path(__file__).resolve()
-            and bool(verifier(descriptor, path=path))
+        return bool(
+            registry
+            and getattr(registry, "_seal", None) is _REGISTRY_SEAL
+            and registry.provenance == "HOST"
+            and registry.verify_capture(descriptor, path=path, binding=binding)
         )
-    except (OSError, TypeError, ValueError):
+    except (AttributeError, OSError, TypeError, ValueError):
         return False
 
 # Producer labels are part of the trust boundary.  A registry entry may use
@@ -187,7 +185,7 @@ def _identity(value: Any) -> str:
 
 
 def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, test_only: bool = False,
-                           capture_authority: CaptureAuthority | None = None) -> dict[str, Any]:
+                           authority_registry: AuthorityRegistry | None = None) -> dict[str, Any]:
     """Create a registry from actual source files and their current bytes."""
     if not isinstance(run_id, str) or not run_id:
         raise ValueError("source registry requires a run_id")
@@ -214,7 +212,8 @@ def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, te
             raise ValueError("source registry producer is host-derived")
         descriptor = source.get("capture_authority")
         if kind == "codex_rollout" and not test_only:
-            if not verify_capture_authority(capture_authority, descriptor, path=path):
+            binding = {key: source.get(key) for key in ("task_id", "task_revision", "reservation_id", "session_id")}
+            if not verify_capture_authority(authority_registry, descriptor, path=path, binding=binding):
                 raise ValueError("codex rollout capture authority is not verified")
             # The caller may not bind an authorized stream to a different
             # task/controller reservation/session by copying its descriptor.
@@ -255,7 +254,7 @@ def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, te
 
 
 def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = None,
-                           capture_authority: CaptureAuthority | None = None) -> bool:
+                           authority_registry: AuthorityRegistry | None = None) -> bool:
     try:
         payload = registry["registry"]
         if payload["version"] != SOURCE_REGISTRY_VERSION or (run_id is not None and payload["run_id"] != run_id):
@@ -279,7 +278,8 @@ def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = Non
                 return False
             if item["source_kind"] == "codex_rollout" and not payload.get("test_only"):
                 descriptor = item.get("capture_authority")
-                if not verify_capture_authority(capture_authority, descriptor, path=path):
+                binding = {key: item.get(key) for key in ("task_id", "task_revision", "reservation_id", "session_id")}
+                if not verify_capture_authority(authority_registry, descriptor, path=path, binding=binding):
                     return False
                 if any(item.get(key) != descriptor.get(key) for key in ("task_id", "task_revision", "reservation_id", "session_id")):
                     return False
@@ -294,8 +294,8 @@ def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = Non
         return False
 
 
-def registry_sources(registry: dict[str, Any], *, capture_authority: CaptureAuthority | None = None) -> list[dict[str, Any]]:
-    if not verify_source_registry(registry, capture_authority=capture_authority):
+def registry_sources(registry: dict[str, Any], *, authority_registry: AuthorityRegistry | None = None) -> list[dict[str, Any]]:
+    if not verify_source_registry(registry, authority_registry=authority_registry):
         raise ValueError("source registry is not a current, byte-verified registry")
     return list(registry["registry"]["sources"])
 

@@ -14,7 +14,7 @@ import threading
 from typing import Any, Iterable
 
 from candidate_manifest import build_manifest
-from d11_sources import CaptureAuthority, verify_source_registry
+from d11_sources import AuthorityRegistry, verify_source_registry
 from trusted_surface import identity as trusted_identity, mutation_probe, verify as verify_trusted
 from thaliris.protocol import ROUTING_PROTOCOL_MARKER, ROUTING_PROTOCOL_VERSION
 
@@ -309,7 +309,7 @@ def run_preflight(
     trusted_runtime_attack_result: str | None = None,
     calibration_attestation: dict[str, Any] | None = None,
     hook_discovery: dict[str, Any] | None = None,
-    authority: CaptureAuthority,
+    authority: AuthorityRegistry,
 ) -> dict[str, Any]:
     """Return a fact ledger suitable for freezing, never a model report."""
     adapter_root = adapter_root.resolve()
@@ -343,7 +343,7 @@ def run_preflight(
         # isolation is proved only by the managed execution principal.
         "pass": probe_bound and trusted_runtime_attack_result == "DENIED" and frozen_trusted is not None and verify_trusted(frozen_trusted, trusted),
     }
-    checks["source_registry"] = {"identity": source_registry.get("identity") if isinstance(source_registry, dict) else None, "pass": isinstance(source_registry, dict) and verify_source_registry(source_registry, capture_authority=authority)}
+    checks["source_registry"] = {"identity": source_registry.get("identity") if isinstance(source_registry, dict) else None, "pass": isinstance(source_registry, dict) and verify_source_registry(source_registry, authority_registry=authority)}
     checks["hook_discovery"] = {"result": hook_discovery, "pass": isinstance(hook_discovery, dict) and hook_discovery.get("status") == "PASS"}
     adapter_status = _git(adapter_root, "status", "--porcelain", "--untracked-files=all")
     candidate_status = _git(candidate_root, "status", "--porcelain", "--untracked-files=all")
@@ -860,7 +860,7 @@ def freeze_run_manifest(
     candidate_policy: dict[str, Any] | None = None,
     source_registry: dict[str, Any] | None = None,
     calibration_attestation: dict[str, Any] | None = None,
-    authority: CaptureAuthority,
+    authority: AuthorityRegistry,
 ) -> dict[str, Any]:
     """Create the immutable identity record that gates a formal invocation."""
     if preflight.get("status") != "PASS":
@@ -873,7 +873,7 @@ def freeze_run_manifest(
     calibration = calibration_attestation if calibration_attestation is not None else calibration
     if not isinstance(calibration, dict) or not calibration.get("attestation_id") or calibration.get("gold_status") != "PASS" or calibration.get("base_status") != "FAIL":
         raise ValueError("calibration is not a host-owned attestation")
-    if not isinstance(source_registry, dict) or not verify_source_registry(source_registry, capture_authority=authority):
+    if not isinstance(source_registry, dict) or not verify_source_registry(source_registry, authority_registry=authority):
         raise ValueError("source registry is not frozen and verified")
     base = _verified_candidate(base_candidate_root, base_candidate, candidate_policy)
     gold = _verified_candidate(gold_candidate_root, gold_candidate, candidate_policy)
@@ -910,7 +910,7 @@ def freeze_run_manifest(
     return {"manifest": payload, "identity": hashlib.sha256(encoded).hexdigest()}
 
 
-def verify_frozen_manifest(frozen: dict[str, Any], *, preflight: dict[str, Any], task_spec_path: Path, base_candidate_root: Path, gold_candidate_root: Path, pricing_snapshot: dict[str, Any], authority: CaptureAuthority, candidate_policy: dict[str, Any] | None = None, adapter_root: Path | None = None, evaluator_path: Path | None = None, harness_paths: Iterable[Path] | None = None, trusted_paths: Iterable[Path] | None = None, source_registry: dict[str, Any] | None = None) -> bool:
+def verify_frozen_manifest(frozen: dict[str, Any], *, preflight: dict[str, Any], task_spec_path: Path, base_candidate_root: Path, gold_candidate_root: Path, pricing_snapshot: dict[str, Any], authority: AuthorityRegistry, candidate_policy: dict[str, Any] | None = None, adapter_root: Path | None = None, evaluator_path: Path | None = None, harness_paths: Iterable[Path] | None = None, trusted_paths: Iterable[Path] | None = None, source_registry: dict[str, Any] | None = None) -> bool:
     try:
         manifest = frozen["manifest"]
         if frozen.get("identity") != hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest():
@@ -934,7 +934,7 @@ def verify_frozen_manifest(frozen: dict[str, Any], *, preflight: dict[str, Any],
             if manifest.get("setup_overlay") != current_overlay:
                 return False
         registry = source_registry if source_registry is not None else manifest.get("source_registry")
-        if not isinstance(registry, dict) or not verify_source_registry(registry, capture_authority=authority):
+        if not isinstance(registry, dict) or not verify_source_registry(registry, authority_registry=authority):
             return False
         if manifest.get("source_registry", {}).get("identity") != registry.get("identity"):
             return False

@@ -14,13 +14,13 @@ import time
 import uuid
 
 from candidate_manifest import MANIFEST_VERSION, build_manifest
-from d11_sources import CaptureAuthority, SOURCE_EVENTS, SOURCE_KINDS, _sha_prefix, chain_payload, create_source_registry, hash_chain_record, registry_sources, validate_event_shape
+from d11_sources import AuthorityRegistry, SOURCE_EVENTS, SOURCE_KINDS, _sha_prefix, chain_payload, create_source_registry, hash_chain_record, registry_sources, validate_event_shape
 
 
 TRUSTED_SOURCE_KINDS = SOURCE_KINDS
 
 
-def load_trusted_events(registry: dict[str, Any], *, capture_authority: CaptureAuthority | None = None) -> list[dict[str, Any]]:
+def load_trusted_events(registry: dict[str, Any], *, authority_registry: AuthorityRegistry | None = None) -> list[dict[str, Any]]:
     """Normalize only explicitly classified host/harness streams.
 
     A random JSON path or an unclassified dict is not an event source.  The
@@ -28,7 +28,7 @@ def load_trusted_events(registry: dict[str, Any], *, capture_authority: CaptureA
     for later audit; raw sequence fields are never used as global time.
     """
     records: list[dict[str, Any]] = []
-    source_payload = registry_sources(registry, capture_authority=capture_authority)
+    source_payload = registry_sources(registry, authority_registry=authority_registry)
     registry_identity = registry.get("identity")
     for source in source_payload:
         kind = source["source_kind"]
@@ -562,12 +562,12 @@ def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]], *, pol
     attestations = [event for event in ordered if _kind(event) == "candidate_attestation" and event.get("_trusted_source") == "harness_attestation" and event.get("source_registry_identity") == event.get("_registry_identity")]
     expected_policy_identity = hashlib.sha256(json.dumps(build_manifest(root, policy)["manifest"]["policy"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     stage_counts: dict[str, int] = {}
-    stage_orders: list[int] = []
+    stage_events: list[dict[str, Any]] = []
     for stage, field in stages.items():
         matches = [event for event in attestations if event.get("stage") == stage and event.get("candidate_root") == str(root.resolve()) and event.get("manifest_version") == MANIFEST_VERSION and event.get("manifest_policy_identity", expected_policy_identity) == expected_policy_identity and isinstance(event.get("harness_identity"), str) and event.get("harness_identity")]
         stage_counts[stage] = len(matches)
         if matches:
-            stage_orders.append(_order(matches[-1], -1)[0])
+            stage_events.append(matches[-1])
         values[field] = matches[-1].get("candidate_identity") if matches else None
         values[f"{field}_provenance"] = _provenance(matches[-1]) if matches else None
     ready_orders = [event for event in ordered if _kind(event) == "review_verdict" and event.get("verdict") == "READY" and isinstance(event.get("session_id"), str) and any(att.get("stage") == "review-start" and att.get("session_id") == event.get("session_id") and att.get("candidate_identity") == actual and _before(att, event) for att in attestations)]
@@ -576,7 +576,11 @@ def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]], *, pol
     values["source_mutations_after_ready"] = bool(ready_order and any(_before(ready_order, event) and _kind(event) == "source_mutation" for event in ordered))
     values["computed_candidate"] = actual
     values["stage_counts"] = stage_counts
-    values["stage_order_valid"] = len(stage_orders) == len(stages) and stage_orders == sorted(stage_orders)
+    # Stream indexes are local only. Each stage transition must be same-source
+    # ordered or have the exact typed caused_by identity of its predecessor.
+    values["stage_order_valid"] = len(stage_events) == len(stages) and all(
+        _before(left, right) for left, right in zip(stage_events, stage_events[1:])
+    )
     values["formal_collection"] = formal
     values["stage_provenance_complete"] = all(values.get(f"{field}_provenance") for field in stages.values())
     values["review_verdict_provenance"] = _provenance(ready_order)
@@ -616,27 +620,18 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         mutations = [mutation for mutation in ordered if _kind(mutation) == "source_mutation" and mutation.get("session_id") == session]
         stop = stops.get(session, [])
         end = ends[-1] if ends else None
-        verdict_after_start = bool(starts and _before(starts[-1], event))
-        completion_after_start = bool(
-            starts and stop and any(
-                _before(starts[-1], item)
-                or (_before(starts[-1], event) and _before(event, item))
-                for item in stop
-            )
-        )
+        native_starts = [item for item in ordered if (test_stream or item.get("_trusted_source") == "codex_rollout") and _kind(item) in {"native_session_started", "SubagentStart"} and item.get("role") == "reviewer" and item.get("session_id") == session]
+        native_start = native_starts[-1] if native_starts else None
+        verdict_after_start = bool(native_start and _before(native_start, event))
+        completion_after_start = bool(native_start and stop and any(_before(native_start, item) for item in stop))
         completion_before_end = bool(stop and end and any(_before(item, end) for item in stop))
-        # A verdict may precede the end attestation through the native stop;
-        # each cross-stream hop still uses the strict direct edge above.
-        verdict_before_end = bool(
-            end and (
-                _before(event, end)
-                or any(_before(event, item) and _before(item, end) for item in stop)
-            )
-        )
+        verdict_before_end = bool(stop and end and any(_before(event, item) and _before(item, end) for item in stop))
+        review_start_before_native = bool(native_start and _before(review_start, native_start))
         integrity = bool(
             session in sessions
             and stop
             and end
+            and review_start_before_native
             and verdict_after_start
             and completion_after_start
             and completion_before_end
@@ -645,7 +640,7 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             and end.get("candidate_identity") == candidate
             and not mutations
         )
-        start_order_valid = True
+        start_order_valid = review_start_before_native
         if not test_stream:
             # The review-start attestation authorizes one, and only one,
             # *subsequent* native Reviewer start.  A lifecycle record before

@@ -191,16 +191,16 @@ def test_superseded_same_path_uses_registration_attestation_and_is_not_reused(tm
 
 def test_review_graph_binds_each_round_to_its_own_candidate_and_native_session(tmp_path: Path) -> None:
     facts = d11_collector.collect_review_graph(trusted_events(tmp_path, [
-        {"event": "SubagentStart", "sequence": 1, "role": "reviewer", "session_id": "review-a"},
         {"event": "candidate_attestation", "stage": "review-start", "session_id": "review-a", "candidate_root": "unused", "candidate_identity": "candidate-a", "manifest_version": 2, "harness_identity": "h", "sandbox_mode": "read-only"},
+        {"event": "SubagentStart", "sequence": 1, "role": "reviewer", "session_id": "review-a"},
         {"event": "review_verdict", "sequence": 2, "session_id": "review-a", "candidate_identity": "ignored", "verdict": "REQUEST_CHANGES", "finding_id": "F-1", "classification": "LOCAL_SEMANTIC"},
         {"event": "SubagentStop", "sequence": 2.5, "role": "reviewer", "session_id": "review-a"},
         {"event": "candidate_attestation", "stage": "review-end", "session_id": "review-a", "candidate_root": "unused", "candidate_identity": "candidate-a", "manifest_version": 2, "harness_identity": "h"},
         {"event": "implementer_dispatch", "sequence": 3, "session_id": "implementer-a", "candidate_from": "candidate-a", "finding_id": "F-1"},
         {"event": "source_mutation", "sequence": 4, "session_id": "implementer-a", "candidate_identity": "candidate-b"},
         {"event": "deterministic_verification", "sequence": 5, "candidate_identity": "candidate-b", "outcome": "PASSED"},
-        {"event": "SubagentStart", "sequence": 6, "role": "reviewer", "session_id": "review-b"},
         {"event": "candidate_attestation", "stage": "review-start", "session_id": "review-b", "candidate_root": "unused", "candidate_identity": "candidate-b", "manifest_version": 2, "harness_identity": "h", "sandbox_mode": "read-only"},
+        {"event": "SubagentStart", "sequence": 6, "role": "reviewer", "session_id": "review-b"},
         {"event": "review_verdict", "sequence": 7, "session_id": "review-b", "candidate_identity": "ignored", "verdict": "READY"},
         {"event": "SubagentStop", "sequence": 8, "role": "reviewer", "session_id": "review-b"},
         {"event": "candidate_attestation", "stage": "review-end", "session_id": "review-b", "candidate_root": "unused", "candidate_identity": "candidate-b", "manifest_version": 2, "harness_identity": "h"},
@@ -229,8 +229,8 @@ def test_review_graph_rejects_unchanged_cognitive_cycle(tmp_path: Path) -> None:
 
 def _review_transaction_events(*, end_candidate: str = "candidate-a", mutation: bool = False, stop: bool = True) -> list[dict]:
     events = [
-        {"event": "SubagentStart", "role": "reviewer", "session_id": "review"},
         {"event": "candidate_attestation", "stage": "review-start", "session_id": "review", "candidate_root": "unused", "candidate_identity": "candidate-a", "manifest_version": 2, "harness_identity": "h"},
+        {"event": "SubagentStart", "role": "reviewer", "session_id": "review"},
         {"event": "review_verdict", "session_id": "review", "verdict": "READY"},
     ]
     if stop:
@@ -248,6 +248,16 @@ def test_review_end_must_follow_verdict_and_native_stop(tmp_path: Path) -> None:
     facts = d11_collector.collect_review_graph(trusted_events(tmp_path / "review-order", events))
     assert facts["review_rounds"][0]["review_transaction_integrity"] is False
     assert facts["review_rounds"][0]["verdict_before_review_end"] is False
+
+
+def test_review_verdict_must_follow_its_native_start(tmp_path: Path) -> None:
+    events = _review_transaction_events()
+    native_start = events.pop(1)
+    events.insert(2, native_start)
+    facts = d11_collector.collect_review_graph(trusted_events(tmp_path / "verdict-before-native", events))
+    review = facts["review_rounds"][0]
+    assert review["verdict_after_review_start"] is False
+    assert review["review_transaction_integrity"] is False
 
 
 def test_review_transaction_requires_matching_host_end_attestation_and_stop(tmp_path: Path) -> None:
@@ -320,6 +330,33 @@ def test_test_only_candidate_chain_is_diagnostic_and_cannot_pass_formal_gate(tmp
     assert d11_protocol.validate_candidate_chain(chain)["code"] == "CANDIDATE_CHAIN_NONFORMAL"
     source.write_text("VALUE = 2\n", encoding="utf-8")
     assert d11_protocol.validate_candidate_chain(d11_collector.collect_candidate_chain(root, trusted_events(tmp_path.parent / "candidate-events-changed", events)))["code"] == "CANDIDATE_CHAIN_NONFORMAL"
+
+
+def test_formal_candidate_stages_need_causal_edges_across_streams(tmp_path: Path) -> None:
+    root = repo(tmp_path / "candidate-causal")
+    (root / "product.py").write_text("VALUE = 1\n", encoding="utf-8")
+    identity = candidate_manifest.candidate_identity(root)
+    stages = ("runtime-final", "review-start", "review-end", "verification-start", "evaluator-start", "seal")
+    events = []
+    previous = None
+    for index, stage in enumerate(stages):
+        attestation_id = f"stage-{index}"
+        event = {
+            "_trusted_source": "harness_attestation", "_source_id": f"stream-{index % 2}",
+            "_source_file": f"stream-{index % 2}.jsonl", "_source_run_id": "formal-run",
+            "_registry_identity": "registry", "_ingestion_index": index,
+            "_normalized_kind": "candidate_attestation", "attestation_id": attestation_id,
+            "stage": stage, "candidate_root": str(root.resolve()), "candidate_identity": identity,
+            "manifest_version": 2, "harness_identity": "host",
+            "source_registry_identity": "registry",
+        }
+        if previous is not None:
+            event["caused_by"] = f"attestation:{previous}"
+        events.append(event)
+        previous = attestation_id
+    assert d11_collector.collect_candidate_chain(root, events)["stage_order_valid"] is True
+    events[1].pop("caused_by")
+    assert d11_collector.collect_candidate_chain(root, events)["stage_order_valid"] is False
 
 
 def test_manual_ready_candidate_dictionary_cannot_replace_collector_chain() -> None:
@@ -414,17 +451,23 @@ def test_rollout_authority_rejects_static_or_tampered_descriptors_and_accepts_te
         def verify(self, descriptor, *, path):
             return True
     with pytest.raises(ValueError, match="authority"):
-        d11_sources.create_source_registry([source], run_id="task", capture_authority=ForgedAuthority())
+        d11_sources.create_source_registry([source], run_id="task", authority_registry=ForgedAuthority())
+    class ForgedRegistry:
+        provenance = "HOST"
+        def verify_capture(self, descriptor, *, path, binding):
+            return True
+    with pytest.raises(ValueError, match="authority"):
+        d11_sources.create_source_registry([source], run_id="task", authority_registry=ForgedRegistry())
     issuer = d11_authority.capture_authority(d11_sources)
     descriptor = d11_authority.issue_capture(issuer, authority_ref="capture-1", task_id="task", task_revision=2, reservation_id="reservation", session_id="r", path=stream)
-    registry = d11_sources.create_source_registry([{**source, "capture_authority": descriptor}], run_id="task", capture_authority=issuer)
-    assert d11_sources.verify_source_registry(registry, capture_authority=issuer)
+    registry = d11_sources.create_source_registry([{**source, "capture_authority": descriptor}], run_id="task", authority_registry=issuer.registry)
+    assert d11_sources.verify_source_registry(registry, authority_registry=issuer.registry)
     copied = dict(descriptor); copied["reservation_id"] = "other"
     with pytest.raises(ValueError, match="authority"):
-        d11_sources.create_source_registry([{**source, "capture_authority": copied}], run_id="task", capture_authority=issuer)
+        d11_sources.create_source_registry([{**source, "capture_authority": copied}], run_id="task", authority_registry=issuer.registry)
     stream.write_text(stream.read_text(encoding="utf-8") + "{}\n", encoding="utf-8")
-    assert d11_sources.verify_source_registry(registry, capture_authority=issuer) is False
-    assert not hasattr(d11_sources, "NativeCaptureAuthority")
+    assert d11_sources.verify_source_registry(registry, authority_registry=issuer.registry) is False
+    assert not hasattr(d11_sources, "_TestCaptureAuthorityWriter")
 
 
 def test_formal_multisource_fixture_replay_has_no_test_only_bypass(tmp_path: Path) -> None:
@@ -441,11 +484,11 @@ def test_formal_multisource_fixture_replay_has_no_test_only_bypass(tmp_path: Pat
          "task_id": "formal-fixture", "task_revision": 1,
          "reservation_id": "fixture-reservation", "session_id": "review-fixture"},
         {"kind": "harness_attestation", "path": harness, "stream_identity_policy": "append_only"},
-    ], run_id="formal-fixture", capture_authority=authority)
+    ], run_id="formal-fixture", authority_registry=authority.registry)
     policy = candidate_manifest.build_manifest(root)["manifest"]["policy"]
     start = d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-start", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], attestation_id="review-start-attestation", reviewer_binding={"task_id": "formal-fixture", "task_revision": 1, "controller_session_id": "fixture-controller", "reservation_id": "fixture-reservation", "projection_id": "fixture-projection", "parent_session_id": "fixture-controller", "native_sequence": 1})
     d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-end", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], caused_by="event:rollout-review-stop")
-    events = d11_collector.load_trusted_events(registry, capture_authority=authority)
+    events = d11_collector.load_trusted_events(registry, authority_registry=authority.registry)
     assert events and all(event["_source_run_id"] == "formal-fixture" for event in events)
     assert not any(event["_source_run_id"] == "TEST_ONLY" for event in events)
     graph = d11_collector.collect_review_graph(events)
@@ -695,12 +738,12 @@ def test_structured_evidence_source_ref_is_resolved_against_actual_bytes(tmp_pat
         {"kind": "codex_rollout", "path": rollout, "capture_authority": descriptor,
          "task_id": "formal-source", "task_revision": 1, "reservation_id": "source-reservation", "session_id": "investigator-1"},
         {"kind": "thaliris_audit", "path": audit},
-    ], run_id="formal-source", capture_authority=authority)
-    facts = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry, capture_authority=authority))
+    ], run_id="formal-source", authority_registry=authority.registry)
+    facts = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry, authority_registry=authority.registry))
     assert facts["artifacts"][0]["source_refs_valid"] is True
     assert d11_protocol.validate_collected_evidence(facts)["status"] == "PASS"
     source.write_text("VALUE = 2\n", encoding="utf-8")
-    stale = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry, capture_authority=authority))
+    stale = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry, authority_registry=authority.registry))
     assert stale["artifacts"][0]["source_refs_valid"] is False
     assert stale["artifacts"][0]["historical_validity"] == "PASS"
     assert d11_protocol.validate_collected_evidence(stale)["code"] == "EVIDENCE_ARTIFACT_UNUSED"

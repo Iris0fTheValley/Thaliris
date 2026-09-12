@@ -10,6 +10,16 @@ from typing import Any, Iterable
 SOURCE_KINDS = frozenset({"thaliris_audit", "codex_rollout", "harness_attestation", "evaluator_result"})
 SOURCE_REGISTRY_VERSION = 1
 
+# Producer labels are part of the trust boundary.  A registry entry may use
+# one of these stable aliases for its source kind, but arbitrary user labels
+# cannot confer producer authority.
+SOURCE_PRODUCERS = {
+    "thaliris_audit": frozenset({"thaliris_audit", "thaliris", "context"}),
+    "codex_rollout": frozenset({"codex_rollout", "codex", "codex-app-server"}),
+    "harness_attestation": frozenset({"harness_attestation", "harness"}),
+    "evaluator_result": frozenset({"evaluator_result", "evaluator"}),
+}
+
 # These are intentionally event names, not arbitrary JSON keys.  A source
 # cannot acquire another producer's authority by adding a ``trusted`` flag.
 SOURCE_EVENTS = {
@@ -132,7 +142,7 @@ def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, te
         if not isinstance(source_id, str) or not source_id:
             raise ValueError("source registry source_id is invalid")
         producer = source.get("producer", kind)
-        if not isinstance(producer, str) or not producer or (not test_only and producer == "TEST_ONLY"):
+        if not isinstance(producer, str) or not producer or (not test_only and producer not in SOURCE_PRODUCERS[kind]):
             raise ValueError("source registry producer is invalid")
         entries.append({
             "source_id": source_id,
@@ -166,7 +176,7 @@ def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = Non
             canonical = str(path.resolve())
             if item["source_id"] in seen or canonical in {str(Path(other["canonical_path"]).resolve()) for other in sources if other is not item} or item["source_kind"] not in SOURCE_KINDS or path.is_symlink() or not path.is_file():
                 return False
-            if not isinstance(item.get("producer"), str) or not item.get("producer") or (not payload.get("test_only") and item.get("producer") == "TEST_ONLY"):
+            if not isinstance(item.get("producer"), str) or not item.get("producer") or (not payload.get("test_only") and item.get("producer") not in SOURCE_PRODUCERS[item["source_kind"]]):
                 return False
             policy = item.get("stream_identity_policy", "exact_bytes")
             if policy not in {"exact_bytes", "append_only"} or policy == "exact_bytes" and _sha(path) != item["content_sha256"] or policy == "append_only" and (path.stat().st_size < int(item.get("initial_size", 0)) or _sha_prefix(path, int(item.get("initial_size", 0))) != item["content_sha256"]):

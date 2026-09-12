@@ -157,9 +157,10 @@ def _before(left: dict[str, Any], right: dict[str, Any]) -> bool:
         return _order(left, -1) < _order(right, -1)
     caused_by = right.get("caused_by")
     causes = right.get("causes", [])
-    if left.get("_native_event_id") == caused_by:
+    left_ids = {left.get("_native_event_id"), left.get("attestation_id"), left.get("event_id"), left.get("observation_id")}
+    if caused_by in left_ids:
         return True
-    return isinstance(causes, list) and left.get("_native_event_id") in causes
+    return isinstance(causes, list) and any(isinstance(item, str) and item in left_ids for item in causes)
 
 
 def _state(root: Path) -> dict[str, Any]:
@@ -422,7 +423,7 @@ def collect_candidate(root: Path, *, policy: dict[str, Any] | None = None) -> di
     return build_manifest(root, policy)
 
 
-def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_root: Path, policy: dict[str, Any], harness_identity: str, session_id: str | None = None, source_registry_identity: str | None = None, caused_by: str | None = None) -> dict[str, Any]:
+def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_root: Path, policy: dict[str, Any], harness_identity: str, session_id: str | None = None, source_registry_identity: str | None = None, caused_by: str | None = None, causes: list[str] | None = None, attestation_id: str | None = None) -> dict[str, Any]:
     """Host-owned stage attestation; identity is computed at the stage boundary."""
     if not isinstance(run_id, str) or not run_id or stage not in {"runtime-final", "review-start", "review-end", "verification-start", "evaluator-start", "seal"}:
         raise ValueError("invalid candidate attestation boundary")
@@ -433,7 +434,7 @@ def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_ro
     policy_identity = hashlib.sha256(json.dumps(manifest["manifest"]["policy"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     event = {
         "event": "candidate_attestation",
-        "attestation_id": str(uuid.uuid4()),
+        "attestation_id": attestation_id or str(uuid.uuid4()),
         "run_id": run_id,
         "stage": stage,
         "candidate_root": str(candidate_root),
@@ -448,6 +449,10 @@ def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_ro
         if not isinstance(caused_by, str) or not caused_by:
             raise ValueError("candidate attestation causal identity is invalid")
         event["caused_by"] = caused_by
+    if causes is not None:
+        if not isinstance(causes, list) or not causes or any(not isinstance(item, str) or not item for item in causes):
+            raise ValueError("candidate attestation causal identities are invalid")
+        event["causes"] = list(causes)
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if source_registry_identity is not None:

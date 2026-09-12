@@ -107,3 +107,14 @@ def test_target_fact_identity_is_content_bound():
     assert observed(value, name="x")["status"] == "NOT_OBSERVED"
     value["identity"] = "f" * 64
     assert observed(value, name="x")["code"] == "X_IDENTITY_INVALID"
+
+
+def test_candidate_chain_rejects_duplicate_or_reordered_host_stages():
+    chain = {key: "c1" for key in ("runtime_candidate", "reviewed_candidate", "verified_candidate", "evaluator_candidate", "sealed_candidate")}
+    chain.update({"review_verdict": "READY", "source_mutations_after_ready": False})
+    stages = {stage: 1 for stage in ("runtime-final", "review-start", "review-end", "verification-start", "evaluator-start", "seal")}
+    chain["stage_counts"] = {**stages, "seal": 2}
+    assert _MODULE.validate_candidate_chain(chain)["code"] == "CANDIDATE_STAGE_DUPLICATE"
+    chain["stage_counts"] = stages
+    chain["stage_order_valid"] = False
+    assert _MODULE.validate_candidate_chain(chain)["code"] == "CANDIDATE_STAGE_ORDER"

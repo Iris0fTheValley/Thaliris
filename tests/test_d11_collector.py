@@ -381,6 +381,41 @@ def test_source_registry_rejects_duplicate_or_symlinked_streams(tmp_path: Path) 
         pytest.skip("symlinks unavailable")
     with pytest.raises(ValueError, match="may not be symlinks"):
         d11_sources.create_source_registry([{"kind": "harness_attestation", "path": alias}], run_id="run-link")
+    with pytest.raises(ValueError, match="producer is invalid"):
+        d11_sources.create_source_registry([{"kind": "harness_attestation", "path": stream, "producer": "arbitrary-attacker"}], run_id="run-producer")
+
+
+def test_formal_multisource_fixture_replay_has_no_test_only_bypass(tmp_path: Path) -> None:
+    root = repo(tmp_path / "candidate")
+    rollout = tmp_path / "codex-rollout.jsonl"
+    rollout.write_bytes((ROOT / "benchmarks" / "abcd" / "fixtures" / "real_codex_rollout.jsonl").read_bytes())
+    harness = tmp_path / "harness-attestation.jsonl"
+    harness.write_text("", encoding="utf-8")
+    registry = d11_sources.create_source_registry([
+        {"kind": "codex_rollout", "path": rollout, "producer": "codex"},
+        {"kind": "harness_attestation", "path": harness, "producer": "harness", "stream_identity_policy": "append_only"},
+    ], run_id="formal-fixture")
+    policy = candidate_manifest.build_manifest(root)["manifest"]["policy"]
+    start = d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-start", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], attestation_id="review-start-attestation")
+    d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-end", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], causes=["rollout-review-verdict", "rollout-review-stop"])
+    events = d11_collector.load_trusted_events(registry)
+    assert events and all(event["_source_run_id"] == "formal-fixture" for event in events)
+    assert not any(event["_source_run_id"] == "TEST_ONLY" for event in events)
+    graph = d11_collector.collect_review_graph(events)
+    result = d11_protocol.validate_review_graph(graph, final_candidate=start["candidate_identity"])
+    assert result["status"] == "PASS"
+
+
+def test_setup_overlay_manifest_binds_exact_bytes_and_rejects_unknown_status(tmp_path: Path) -> None:
+    root = repo(tmp_path / "overlay")
+    (root / ".context").mkdir()
+    (root / ".context" / "state.json").write_text("v1", encoding="utf-8")
+    overlay = d11_preflight._setup_overlay_manifest(root, " M .context/state.json\n?? unexpected.txt")
+    assert overlay["paths"][0]["path"] == ".context/state.json"
+    assert d11_preflight._unexpected_status(" M .context/state.json\n?? unexpected.txt") == "?? unexpected.txt"
+    (root / ".context" / "state.json").write_text("v2", encoding="utf-8")
+    changed = d11_preflight._setup_overlay_manifest(root, " M .context/state.json\n?? unexpected.txt")
+    assert changed["identity"] != overlay["identity"]
 
 
 def test_source_registry_append_only_stream_keeps_identity_and_tracks_provenance(tmp_path: Path) -> None:

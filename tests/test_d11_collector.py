@@ -458,6 +458,7 @@ def test_rollout_authority_rejects_static_or_tampered_descriptors_and_accepts_te
             return True
     with pytest.raises(ValueError, match="authority"):
         d11_sources.create_source_registry([source], run_id="task", authority_registry=ForgedRegistry())
+    assert not hasattr(d11_sources, "compose_host_authority_registry")
     issuer = d11_authority.capture_authority(d11_sources)
     descriptor = d11_authority.issue_capture(issuer, authority_ref="capture-1", task_id="task", task_revision=2, reservation_id="reservation", session_id="r", path=stream)
     registry = d11_sources.create_source_registry([{**source, "capture_authority": descriptor}], run_id="task", authority_registry=issuer.registry)
@@ -556,6 +557,87 @@ def test_formal_preflight_boundary_requires_injected_authority() -> None:
             base_candidate_root=Path("base"), gold_candidate_root=Path("gold"),
             base_candidate={}, gold_candidate={}, calibration={}, pricing_snapshot={},
         )
+
+
+def test_frozen_formal_manifest_accepts_only_injected_host_registry(tmp_path: Path) -> None:
+    base = repo(tmp_path / "base")
+    gold = repo(tmp_path / "gold")
+    for root in (base, gold):
+        (root / "product.py").write_text("VALUE = 1\n", encoding="utf-8")
+    stream = tmp_path / "host-attestations.jsonl"
+    stream.write_text("", encoding="utf-8")
+    rollout = tmp_path / "host-rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    host = d11_authority.capture_authority(d11_sources)
+    receipt = d11_authority.issue_capture(
+        host, authority_ref="freeze-rollout", task_id="formal-freeze", task_revision=1,
+        reservation_id="freeze-reservation", session_id="freeze-session", path=rollout,
+    )
+    registry = d11_sources.create_source_registry(
+        [
+            {"kind": "codex_rollout", "path": rollout, "capture_authority": receipt,
+             "task_id": "formal-freeze", "task_revision": 1,
+             "reservation_id": "freeze-reservation", "session_id": "freeze-session"},
+            {"kind": "harness_attestation", "path": stream},
+        ], run_id="formal-freeze", authority_registry=host.registry,
+    )
+    authority = host.registry
+    task_spec = tmp_path / "task.md"
+    task_spec.write_text("task", encoding="utf-8")
+    harness = ROOT / "tests" / "test_d11_collector.py"
+    evaluator = ROOT / "benchmarks" / "abcd" / "d11_protocol.py"
+    trusted = ROOT / "benchmarks" / "abcd" / "d11_sources.py"
+    adapter_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+    base_candidate = candidate_manifest.build_manifest(base)
+    gold_candidate = candidate_manifest.build_manifest(gold)
+    pricing = {"version": "fixture", "models": {
+        model: {field: 0.0 for field in fields}
+        for model, fields in d11_preflight.PRICING_MODELS.items()
+    }}
+    gold_result, base_result = {"status": "PASS"}, {"status": "FAIL"}
+    calibration = {
+        "attestation_id": "fixture-calibration", "status": "PASS",
+        "gold_status": "PASS", "base_status": "FAIL",
+        "evaluator_sha256": d11_preflight._sha(evaluator),
+        "no_edit_identity": base_candidate["identity"],
+        "gold": {"candidate_identity": gold_candidate["identity"], "result": gold_result, "status": "PASS"},
+        "base": {"candidate_identity": base_candidate["identity"], "result": base_result, "status": "FAIL"},
+    }
+    adapter_overlay = d11_preflight._setup_overlay_manifest(ROOT, d11_preflight._git(ROOT, "status", "--porcelain", "--untracked-files=all"))
+    candidate_overlay = d11_preflight._setup_overlay_manifest(base, d11_preflight._git(base, "status", "--porcelain", "--untracked-files=all"))
+    preflight = {"status": "PASS", "checks": {
+        "adapter_sha": {"actual": adapter_sha},
+        "product_protocol": {"sha256": d11_preflight._sha(ROOT / "docs" / "thaliris-routing-protocol.md")},
+        "benchmark_harness": {"paths": [str(harness.resolve())], "sha256": d11_preflight._hash_files([harness])},
+        "setup_overlay": {"adapter": adapter_overlay, "candidate": candidate_overlay, "pass": True},
+        "evaluator": {"path": str(evaluator.resolve()), "sha256": d11_preflight._sha(evaluator)},
+        "trusted_surface": {"identity": trusted_surface.identity([trusted])},
+        "gold": {"result": gold_result}, "untouched_base": {"result": base_result},
+        "no_edit_identity": {"actual": base_candidate["identity"], "base": base_candidate["identity"]},
+        "adapter_root": str(ROOT.resolve()), "candidate_root": str(base.resolve()),
+    }}
+    frozen = d11_preflight.freeze_run_manifest(
+        preflight, task_spec_path=task_spec, base_candidate_root=base,
+        gold_candidate_root=gold, base_candidate=base_candidate, gold_candidate=gold_candidate,
+        calibration=calibration, pricing_snapshot=pricing, source_registry=registry,
+        authority=authority,
+    )
+    assert d11_preflight.verify_frozen_manifest(
+        frozen, preflight=preflight, task_spec_path=task_spec, base_candidate_root=base,
+        gold_candidate_root=gold, pricing_snapshot=pricing, authority=authority,
+        adapter_root=ROOT, evaluator_path=evaluator, harness_paths=[harness],
+        trusted_paths=[trusted], source_registry=registry,
+    )
+    class AlwaysTrue:
+        provenance = "HOST"
+        def verify_capture(self, descriptor, *, path, binding):
+            return True
+    assert d11_preflight.verify_frozen_manifest(
+        frozen, preflight=preflight, task_spec_path=task_spec, base_candidate_root=base,
+        gold_candidate_root=gold, pricing_snapshot=pricing, authority=AlwaysTrue(),
+        adapter_root=ROOT, evaluator_path=evaluator, harness_paths=[harness],
+        trusted_paths=[trusted], source_registry=registry,
+    ) is False
 
 
 def test_source_registry_append_only_stream_keeps_identity_and_tracks_provenance(tmp_path: Path) -> None:

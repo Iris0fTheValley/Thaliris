@@ -31,7 +31,7 @@ class FixtureHost:
         self.issuer = issuer
         self.epoch = "fixture-epoch"; self.intent = "formal-collection"; self.policy = "codex-rollout-capture"
         self._verifier = _FixtureHostVerifier()
-        self.registry = sources.compose_host_authority_registry(self._verifier, epoch=self.epoch, intent=self.intent, policy=self.policy)
+        self.registry = sources._provision_test_authority_registry(self._verifier, epoch=self.epoch, intent=self.intent, policy=self.policy)
 
     def issue(self, *, authority_ref: str, task_id: str, task_revision: int, reservation_id: str, session_id: str, path: Any) -> dict[str, Any]:
         path = Path(path).resolve()

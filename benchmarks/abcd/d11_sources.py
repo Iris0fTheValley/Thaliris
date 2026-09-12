@@ -52,10 +52,10 @@ class _SealedAuthorityRegistry:
             return False
 
 
-def compose_host_authority_registry(verifier: CaptureAuthority, *, epoch: str,
-                                    intent: str = "formal-collection",
-                                    policy: str = "codex-rollout-capture") -> AuthorityRegistry:
-    """Host composition entry point; callers receive no receipt writer."""
+def _provision_test_authority_registry(verifier: CaptureAuthority, *, epoch: str,
+                                       intent: str = "formal-collection",
+                                       policy: str = "codex-rollout-capture") -> AuthorityRegistry:
+    """Fixture-only provisioning; production receives an opaque registry."""
     if not all(isinstance(value, str) and value for value in (epoch, intent, policy)) or not callable(getattr(verifier, "verify", None)):
         raise ValueError("host authority composition is invalid")
     return _SealedAuthorityRegistry(verifier, provenance="HOST", epoch=epoch, intent=intent, policy=policy)

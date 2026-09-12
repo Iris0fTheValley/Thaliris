@@ -28,8 +28,10 @@ def test_subagent_start_binds_explicit_handoff_without_injecting_projection(tmp_
     root = repo(tmp_path)
     start_input = root.parent / "task-input.json"
     start_input.write_text(json.dumps({
-        "unknowns": [{"text": "OLD_UNKNOWN", "evidence_refs": []}],
-        "decisions": [{"text": "OLD_DECISION", "evidence_refs": []}],
+        "records": [
+            {"id": "old-unknown", "kind": "unknown", "text": "OLD_UNKNOWN"},
+            {"id": "old-decision", "kind": "decision", "text": "OLD_DECISION"},
+        ],
     }), encoding="utf-8")
     started = core.task_start(root, "single handoff", None, str(start_input))
     artifact = root / "private.md"

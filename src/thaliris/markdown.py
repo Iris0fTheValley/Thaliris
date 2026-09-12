@@ -10,7 +10,6 @@ import subprocess
 
 REQUIRED = ("Evidence", "Revision", "Status", "Applicability", "Confidence")
 OPTIONAL_LISTS = ("Audience", "Topics", "Symbols")
-KINDS = {"MEMORY", "HARD_CONSTRAINT"}
 # Metadata written by older Codex-integrated releases is accepted on read and
 # normalized to the stable Core role vocabulary.
 LEGACY_AUDIENCE = {
@@ -21,10 +20,6 @@ LEGACY_AUDIENCE = {
     "terra-implementer": "implementer",
     "terra-reviewer": "reviewer",
 }
-SEMANTIC_AUDIENCE = {"all", "controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}
-# STALE is an effective runtime state, never a captured historical value.
-CONFIDENCE = {"CONFIRMED", "SUPPORTED", "UNVERIFIED"}
-STATUS = {"DRAFT", "ACTIVE", "SUPERSEDED", "DONE"}
 
 
 @dataclass(frozen=True)
@@ -54,21 +49,18 @@ def parse(path: Path) -> Entry:
         except json.JSONDecodeError as exc:
             raise ValueError(f"{path}: invalid list field {key}") from exc
     missing = set(REQUIRED) - set(meta)
-    if missing or meta["Confidence"] not in CONFIDENCE or meta["Status"] not in STATUS:
+    if missing:
         raise ValueError(f"{path}: required metadata invalid")
     if not isinstance(meta["Revision"], str) or not re.fullmatch(r"[1-9][0-9]*", meta["Revision"]):
         raise ValueError(f"{path}: Revision must be a positive integer")
     for key in OPTIONAL_LISTS:
         if key in meta and (not isinstance(meta[key], list) or not all(isinstance(item, str) and item for item in meta[key])):
             raise ValueError(f"{path}: {key} must be a JSON string list")
-    if "Audience" in meta:
-        audience = meta["Audience"]
-        normalized = [LEGACY_AUDIENCE.get(item, item) for item in audience]
-        if not set(normalized) <= SEMANTIC_AUDIENCE:
-            raise ValueError(f"{path}: Audience contains an unknown role")
-        meta["Audience"] = list(dict.fromkeys(normalized))
-    if "Kind" in meta and meta["Kind"] not in KINDS:
-        raise ValueError(f"{path}: Kind must be MEMORY or HARD_CONSTRAINT")
+    # Status, confidence, applicability, kind, and audience are model-authored
+    # display/search metadata. Parsing them never grants routing authority.
+    for key in ("Status", "Confidence", "Applicability", "Kind"):
+        if key in meta and (not isinstance(meta[key], str) or not meta[key] or len(meta[key]) > 128):
+            raise ValueError(f"{path}: {key} must be bounded text")
     return Entry(path, meta, text[end + 5:])
 
 
@@ -80,24 +72,28 @@ def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
     """Evaluate file/content evidence without changing the recorded fact."""
     evidence = entry.meta["Evidence"]
     specs = evidence if isinstance(evidence, list) else ([] if evidence == "NONE" else [evidence])
-    stale: list[str] = []
+    if not specs:
+        return "UNKNOWN", []
+    missing: list[str] = []
+    changed: list[str] = []
+    invalid: list[str] = []
     for spec in specs:
         if not isinstance(spec, str):
-            stale.append("invalid evidence")
+            invalid.append("invalid evidence")
             continue
         # file:relative/path#content-sha256 and git:relative/path#blob-sha1
         match = re.fullmatch(r"(?:file|git):([^#]+)#([0-9a-fA-F]{40,64})", spec)
         if not match:
-            stale.append(spec)
+            invalid.append(spec)
             continue
         candidate = (root / match.group(1)).resolve()
         try:
             candidate.relative_to(root.resolve())
         except ValueError:
-            stale.append(match.group(1))
+            invalid.append(match.group(1))
             continue
         if not candidate.is_file():
-            stale.append(match.group(1))
+            missing.append(match.group(1))
             continue
         kind = spec.split(":", 1)[0]
         if kind == "git":
@@ -109,5 +105,11 @@ def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
         else:
             actual = sha256(candidate)
         if actual.lower() != match.group(2).lower():
-            stale.append(match.group(1))
-    return ("STALE" if stale else "FRESH", stale)
+            changed.append(match.group(1))
+    if missing:
+        return "MISSING", missing
+    if changed:
+        return "CHANGED", changed
+    if invalid:
+        return "UNKNOWN", invalid
+    return "FRESH", []

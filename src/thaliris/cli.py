@@ -8,7 +8,7 @@ import sys
 
 from . import __version__
 from . import codex_adapter
-from .core import milestone_check, prepare, recall, rollback, stale, task_artifact, task_promote, task_show, task_status, task_update
+from .core import memory_get, milestone_check, prepare, recall, rollback, stale, task_artifact, task_promote, task_show, task_status, task_update
 
 
 class _Parser(argparse.ArgumentParser):
@@ -30,6 +30,8 @@ def _parser() -> argparse.ArgumentParser:
     q = sub.add_parser("recall", help="explicitly search retained durable memory")
     q.add_argument("query")
     q.add_argument("--role", required=True, choices=codex_adapter.ROLE_CHOICES)
+    q = sub.add_parser("memory-get", help="explicitly retrieve one memory document")
+    q.add_argument("path")
     q = sub.add_parser("task-start")
     q.add_argument("goal")
     q.add_argument("--milestone")
@@ -52,9 +54,9 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--base-revision", required=True, type=int)
     q = sub.add_parser(
         "task-promote",
-        help="Controller-only bounded durable promotion",
-        description="Promote explicit semantic records using the ACTIVE task evidence only.",
-        epilog='Order: task-start -> task updates/review -> Controller decision -> task-promote -> task-close. Minimal JSON: {"records":[{"type":"decision","id":"D-001","title":"Use X","text":"Adopt X.","evidence_refs":["e1"],"confidence":"SUPPORTED"}]}',
+        help="persist Controller-selected durable records",
+        description="Store exactly the records selected by the Controller; metadata is descriptive only.",
+        epilog='Minimal JSON: {"records":[{"kind":"decision","id":"D-001","title":"Use X","text":"Adopt X.","source_refs":[]}]}',
     )
     q.add_argument("--role", required=True, choices=codex_adapter.ROLE_CHOICES)
     q.add_argument("--base-revision", required=True, type=int)
@@ -91,10 +93,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "doctor": out = codex_adapter.doctor(root)
         elif args.command == "stale": out = stale(root)
         elif args.command == "memory-status":
-            data = stale(root); out = {"ok": data["ok"], "entries": len(data["entries"]), "stale": data["stale"]}
+            data = stale(root); out = {"ok": data["ok"], "entries": len(data["entries"]), "not_fresh": data["not_fresh"]}
         elif args.command == "milestone-check": out = milestone_check(root)
         elif args.command == "prepare": out = prepare(root, args.task, codex_adapter.semantic_role(args.role))
         elif args.command == "recall": out = recall(root, args.query, codex_adapter.semantic_role(args.role))
+        elif args.command == "memory-get": out = memory_get(root, args.path)
         elif args.command == "task-start": out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.intent_capture_id)
         elif args.command == "task-update": out = task_update(root, codex_adapter.semantic_role(args.role), args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)

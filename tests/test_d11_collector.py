@@ -7,6 +7,7 @@ import pytest
 
 from thaliris import core
 from thaliris.protocol import ROUTING_PROTOCOL_MARKER
+from tests.support import d11_authority
 
 
 ROOT = Path(__file__).parents[1]
@@ -345,6 +346,7 @@ def test_preflight_is_fail_closed_without_clean_fixture_and_calibration(tmp_path
         expected_adapter_sha="0" * 40,
         harness_paths=[root / "missing-harness.py"],
         evaluator_path=root / "missing-evaluator.py",
+        authority=d11_authority.capture_authority(d11_sources),
     )
     assert result["status"] == "PREFLIGHT_FAIL"
     assert result["checks"]["adapter_sha"]["pass"] is False
@@ -363,6 +365,7 @@ def test_run_manifest_cannot_be_frozen_from_failed_preflight() -> None:
             gold_candidate={},
             calibration={},
             pricing_snapshot={},
+            authority=d11_authority.capture_authority(d11_sources),
         )
     except ValueError as exc:
         assert "failed preflight" in str(exc)
@@ -407,8 +410,13 @@ def test_rollout_authority_rejects_static_or_tampered_descriptors_and_accepts_te
     source = {"kind": "codex_rollout", "path": stream, "task_id": "task", "task_revision": 2, "reservation_id": "reservation", "session_id": "r"}
     with pytest.raises(ValueError, match="authority"):
         d11_sources.create_source_registry([source], run_id="task")
-    issuer = d11_sources.NativeCaptureAuthority.test_issuer()
-    descriptor = issuer.issue(authority_ref="capture-1", task_id="task", task_revision=2, reservation_id="reservation", session_id="r", path=stream)
+    class ForgedAuthority:
+        def verify(self, descriptor, *, path):
+            return True
+    with pytest.raises(ValueError, match="authority"):
+        d11_sources.create_source_registry([source], run_id="task", capture_authority=ForgedAuthority())
+    issuer = d11_authority.capture_authority(d11_sources)
+    descriptor = d11_authority.issue_capture(issuer, authority_ref="capture-1", task_id="task", task_revision=2, reservation_id="reservation", session_id="r", path=stream)
     registry = d11_sources.create_source_registry([{**source, "capture_authority": descriptor}], run_id="task", capture_authority=issuer)
     assert d11_sources.verify_source_registry(registry, capture_authority=issuer)
     copied = dict(descriptor); copied["reservation_id"] = "other"
@@ -416,6 +424,7 @@ def test_rollout_authority_rejects_static_or_tampered_descriptors_and_accepts_te
         d11_sources.create_source_registry([{**source, "capture_authority": copied}], run_id="task", capture_authority=issuer)
     stream.write_text(stream.read_text(encoding="utf-8") + "{}\n", encoding="utf-8")
     assert d11_sources.verify_source_registry(registry, capture_authority=issuer) is False
+    assert not hasattr(d11_sources, "NativeCaptureAuthority")
 
 
 def test_formal_multisource_fixture_replay_has_no_test_only_bypass(tmp_path: Path) -> None:
@@ -424,9 +433,9 @@ def test_formal_multisource_fixture_replay_has_no_test_only_bypass(tmp_path: Pat
     rollout.write_bytes((ROOT / "benchmarks" / "abcd" / "fixtures" / "real_codex_rollout.jsonl").read_bytes())
     harness = tmp_path / "harness-attestation.jsonl"
     harness.write_text("", encoding="utf-8")
-    authority = d11_sources.NativeCaptureAuthority.test_issuer()
-    descriptor = authority.issue(authority_ref="fixture-rollout", task_id="formal-fixture", task_revision=1,
-                                 reservation_id="fixture-reservation", session_id="review-fixture", path=rollout)
+    authority = d11_authority.capture_authority(d11_sources)
+    descriptor = d11_authority.issue_capture(authority, authority_ref="fixture-rollout", task_id="formal-fixture", task_revision=1,
+                                              reservation_id="fixture-reservation", session_id="review-fixture", path=rollout)
     registry = d11_sources.create_source_registry([
         {"kind": "codex_rollout", "path": rollout, "capture_authority": descriptor,
          "task_id": "formal-fixture", "task_revision": 1,
@@ -435,7 +444,7 @@ def test_formal_multisource_fixture_replay_has_no_test_only_bypass(tmp_path: Pat
     ], run_id="formal-fixture", capture_authority=authority)
     policy = candidate_manifest.build_manifest(root)["manifest"]["policy"]
     start = d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-start", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], attestation_id="review-start-attestation", reviewer_binding={"task_id": "formal-fixture", "task_revision": 1, "controller_session_id": "fixture-controller", "reservation_id": "fixture-reservation", "projection_id": "fixture-projection", "parent_session_id": "fixture-controller", "native_sequence": 1})
-    d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-end", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], causes=["rollout-review-verdict", "rollout-review-stop"])
+    d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-end", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], caused_by="event:rollout-review-stop")
     events = d11_collector.load_trusted_events(registry, capture_authority=authority)
     assert events and all(event["_source_run_id"] == "formal-fixture" for event in events)
     assert not any(event["_source_run_id"] == "TEST_ONLY" for event in events)
@@ -458,6 +467,52 @@ def test_setup_overlay_manifest_binds_exact_bytes_and_rejects_unknown_status(tmp
     (root / ".context" / "state.json").write_text("v2", encoding="utf-8")
     changed = d11_preflight._setup_overlay_manifest(root, " M .context/state.json\n?? unexpected.txt")
     assert changed["identity"] != overlay["identity"]
+
+
+def test_setup_overlay_rejects_symlink_retarget(tmp_path: Path) -> None:
+    root = repo(tmp_path / "overlay-link")
+    state = root / ".context" / "state.json"
+    state.parent.mkdir()
+    state.write_text("bound bytes", encoding="utf-8")
+    frozen = d11_preflight._setup_overlay_manifest(root, " M .context/state.json")
+    assert frozen["valid"] is True
+    replacement = root / "replacement.json"
+    replacement.write_text("retarget", encoding="utf-8")
+    try:
+        state.unlink()
+        state.symlink_to(replacement)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    retargeted = d11_preflight._setup_overlay_manifest(root, " M .context/state.json")
+    assert retargeted["valid"] is False
+    assert ".context/state.json" in retargeted["invalid_paths"]
+    assert retargeted["identity"] != frozen["identity"]
+
+
+def test_cross_source_order_requires_typed_nonempty_caused_by() -> None:
+    left = {"_source_id": "source-a", "_source_file": "a.jsonl", "event_id": "one", "_native_event_id": "one"}
+    right = {"_source_id": "source-b", "_source_file": "b.jsonl", "event_id": "two", "_native_event_id": "two"}
+    assert d11_collector._before(left, right) is False
+    right["caused_by"] = "one"
+    assert d11_collector._before(left, right) is False
+    right["caused_by"] = "event:other"
+    assert d11_collector._before(left, right) is False
+    right["caused_by"] = "event:one"
+    assert d11_collector._before(left, right) is True
+
+
+def test_formal_preflight_boundary_requires_injected_authority() -> None:
+    with pytest.raises(TypeError):
+        d11_preflight.run_preflight(
+            Path("adapter"), Path("candidate"), expected_adapter_sha="0" * 40,
+            harness_paths=[], evaluator_path=Path("evaluator"),
+        )
+    with pytest.raises(TypeError):
+        d11_preflight.freeze_run_manifest(
+            {"status": "PREFLIGHT_FAIL"}, task_spec_path=Path("task"),
+            base_candidate_root=Path("base"), gold_candidate_root=Path("gold"),
+            base_candidate={}, gold_candidate={}, calibration={}, pricing_snapshot={},
+        )
 
 
 def test_source_registry_append_only_stream_keeps_identity_and_tracks_provenance(tmp_path: Path) -> None:
@@ -625,17 +680,17 @@ def test_structured_evidence_source_ref_is_resolved_against_actual_bytes(tmp_pat
     audit = events_dir / "audit.jsonl"
     rollout.write_text("\n".join(json.dumps(item) for item in [
         {"event": "SubagentStart", "event_id": "session-attestation-1", "role": "investigator", "session_id": "investigator-1"},
-        {"event": "SubagentStop", "event_id": "investigator-stop", "role": "investigator", "session_id": "investigator-1", "caused_by": "artifact-produced-1"},
+        {"event": "SubagentStop", "event_id": "investigator-stop", "role": "investigator", "session_id": "investigator-1", "caused_by": "event:artifact-produced-1"},
     ]) + "\n", encoding="utf-8")
     audit.write_text("\n".join(json.dumps(item) for item in [
         {"event": "source_snapshot_attestation", "observation_id": observation_id, "run_id": "formal-source", "path": "src/product.py", "content_sha256": source_sha, "session_id": "investigator-1", "producer_identity": "session-attestation-1", "candidate_root": str(root.resolve())},
-        {"event": "artifact_produced", "event_id": "artifact-produced-1", "artifact_id": "evidence-1", "producer_session": "investigator-1", "caused_by": "session-attestation-1"},
-        {"event": "artifact_registered", "artifact_id": "evidence-1", "content_sha256": sha, "caused_by": "artifact-produced-1"},
-        {"event": "role_dispatch", "role": "reasoning-specialist", "artifact_ids": ["evidence-1"], "content_sha256": sha, "evidence_item_ids": ["confirmed_facts:0"], "caused_by": "artifact-produced-1"},
+        {"event": "artifact_produced", "event_id": "artifact-produced-1", "artifact_id": "evidence-1", "producer_session": "investigator-1", "caused_by": "event:session-attestation-1"},
+        {"event": "artifact_registered", "artifact_id": "evidence-1", "content_sha256": sha, "caused_by": "event:artifact-produced-1"},
+        {"event": "role_dispatch", "role": "reasoning-specialist", "artifact_ids": ["evidence-1"], "content_sha256": sha, "evidence_item_ids": ["confirmed_facts:0"], "caused_by": "event:artifact-produced-1"},
     ]) + "\n", encoding="utf-8")
-    authority = d11_sources.NativeCaptureAuthority.test_issuer()
-    descriptor = authority.issue(authority_ref="source-rollout", task_id="formal-source", task_revision=1,
-                                 reservation_id="source-reservation", session_id="investigator-1", path=rollout)
+    authority = d11_authority.capture_authority(d11_sources)
+    descriptor = d11_authority.issue_capture(authority, authority_ref="source-rollout", task_id="formal-source", task_revision=1,
+                                              reservation_id="source-reservation", session_id="investigator-1", path=rollout)
     registry = d11_sources.create_source_registry([
         {"kind": "codex_rollout", "path": rollout, "capture_authority": descriptor,
          "task_id": "formal-source", "task_revision": 1, "reservation_id": "source-reservation", "session_id": "investigator-1"},

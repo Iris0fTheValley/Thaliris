@@ -330,8 +330,8 @@ class VerifiedObservation:
         self._seal = seal
 
 
-class TrustedObservationStore:
-    """Deterministic collector/test-fixture abstraction for host observations."""
+class _TestObservationWriter:
+    """Private fixture writer; formal validation has no observation issuer."""
     def __init__(self, issuer: str = "host-collector") -> None:
         self.issuer = issuer
 

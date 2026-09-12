@@ -115,8 +115,13 @@ def test_target_gate_requires_independent_verified_observation():
     value = {"status": "PASS", "fact_source": {"kind": "host_preflight"}, "checks": {"ok": True}}
     value["identity"] = __import__("hashlib").sha256(__import__("json").dumps({key: item for key, item in value.items() if key != "identity"}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     assert _MODULE._observed_status(value, name="x")["code"] == "X_OBSERVATION_NOT_OBSERVED"
-    value["observation"] = _MODULE.TrustedObservationStore().observe(value, source_bytes=b"host collector output")
+    from tests.support import d11_authority
+    value["observation"] = d11_authority.observe(_MODULE, value, source_bytes=b"host collector output")
     assert _MODULE._observed_status(value, name="x")["status"] == "PASS"
+
+
+def test_formal_protocol_exposes_no_observation_writer():
+    assert not hasattr(_MODULE, "TrustedObservationStore")
 
 
 def test_candidate_chain_rejects_duplicate_or_reordered_host_stages():

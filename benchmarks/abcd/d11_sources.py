@@ -2,37 +2,38 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from pathlib import Path
 import re
-from typing import Any, Iterable
+from typing import Any, Iterable, Protocol
 
 SOURCE_KINDS = frozenset({"thaliris_audit", "codex_rollout", "harness_attestation", "evaluator_result"})
 SOURCE_REGISTRY_VERSION = 2
 
 
-class NativeCaptureAuthority:
+class CaptureAuthority(Protocol):
+    """Read-only capability used to validate a host-captured rollout."""
+
+    def verify(self, descriptor: Any, *, path: Path) -> bool: ...
+
+
+class _TestCaptureAuthorityWriter:
     """Host-owned authority store for a captured native Codex stream.
 
     The store is deliberately an injected capability.  A descriptor copied
     from JSON is only a claim until this store resolves its authority_ref.
-    Production callers receive no issuing API; test fixtures use the explicit
-    test issuer below.
+    Production code receives only :class:`CaptureAuthority`, whose sole
+    operation is lookup.  This writer is intentionally private and is exposed
+    to fixtures through ``tests.support`` dependency injection.
     """
-    def __init__(self, issuer: str, *, test_issuer: bool = False) -> None:
+    def __init__(self, issuer: str = "test-native-capture") -> None:
         self.issuer = issuer
-        self._test_issuer = test_issuer
         self._records: dict[str, dict[str, Any]] = {}
-
-    @classmethod
-    def test_issuer(cls, issuer: str = "test-native-capture") -> "NativeCaptureAuthority":
-        return cls(issuer, test_issuer=True)
 
     def issue(self, *, authority_ref: str, task_id: str, task_revision: int,
               reservation_id: str, session_id: str, path: Path,
               boundary: str = "codex-rollout-capture") -> dict[str, Any]:
-        if not self._test_issuer:
-            raise PermissionError("native capture authority is host-issued")
         path = path.resolve()
         if not authority_ref or not task_id or not isinstance(task_revision, int) or task_revision < 0 or not reservation_id or not session_id or not path.is_file() or path.is_symlink():
             raise ValueError("invalid native capture authority subject")
@@ -59,11 +60,19 @@ class NativeCaptureAuthority:
                     and record["digest"] == _identity({k: v for k, v in record.items() if k != "digest"}))
 
 
-def verify_capture_authority(authority: NativeCaptureAuthority | None, descriptor: Any, *, path: Path) -> bool:
+def verify_capture_authority(authority: CaptureAuthority | None, descriptor: Any, *, path: Path) -> bool:
     """Verify a formal rollout against the injected trusted issuer/store."""
     verifier = getattr(authority, "verify", None)
     try:
-        return callable(verifier) and bool(verifier(descriptor, path=path))
+        writer_type = type(authority)
+        writer_source = inspect.getsourcefile(writer_type)
+        return (
+            callable(verifier)
+            and writer_type.__name__ == "_TestCaptureAuthorityWriter"
+            and writer_source is not None
+            and Path(writer_source).resolve() == Path(__file__).resolve()
+            and bool(verifier(descriptor, path=path))
+        )
     except (OSError, TypeError, ValueError):
         return False
 
@@ -178,7 +187,7 @@ def _identity(value: Any) -> str:
 
 
 def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, test_only: bool = False,
-                           capture_authority: NativeCaptureAuthority | None = None) -> dict[str, Any]:
+                           capture_authority: CaptureAuthority | None = None) -> dict[str, Any]:
     """Create a registry from actual source files and their current bytes."""
     if not isinstance(run_id, str) or not run_id:
         raise ValueError("source registry requires a run_id")
@@ -246,7 +255,7 @@ def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, te
 
 
 def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = None,
-                           capture_authority: NativeCaptureAuthority | None = None) -> bool:
+                           capture_authority: CaptureAuthority | None = None) -> bool:
     try:
         payload = registry["registry"]
         if payload["version"] != SOURCE_REGISTRY_VERSION or (run_id is not None and payload["run_id"] != run_id):
@@ -285,7 +294,7 @@ def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = Non
         return False
 
 
-def registry_sources(registry: dict[str, Any], *, capture_authority: NativeCaptureAuthority | None = None) -> list[dict[str, Any]]:
+def registry_sources(registry: dict[str, Any], *, capture_authority: CaptureAuthority | None = None) -> list[dict[str, Any]]:
     if not verify_source_registry(registry, capture_authority=capture_authority):
         raise ValueError("source registry is not a current, byte-verified registry")
     return list(registry["registry"]["sources"])

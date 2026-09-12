@@ -14,13 +14,13 @@ import time
 import uuid
 
 from candidate_manifest import MANIFEST_VERSION, build_manifest
-from d11_sources import NativeCaptureAuthority, SOURCE_EVENTS, SOURCE_KINDS, _sha_prefix, chain_payload, create_source_registry, hash_chain_record, registry_sources, validate_event_shape
+from d11_sources import CaptureAuthority, SOURCE_EVENTS, SOURCE_KINDS, _sha_prefix, chain_payload, create_source_registry, hash_chain_record, registry_sources, validate_event_shape
 
 
 TRUSTED_SOURCE_KINDS = SOURCE_KINDS
 
 
-def load_trusted_events(registry: dict[str, Any], *, capture_authority: NativeCaptureAuthority | None = None) -> list[dict[str, Any]]:
+def load_trusted_events(registry: dict[str, Any], *, capture_authority: CaptureAuthority | None = None) -> list[dict[str, Any]]:
     """Normalize only explicitly classified host/harness streams.
 
     A random JSON path or an unclassified dict is not an event source.  The
@@ -155,12 +155,30 @@ def _before(left: dict[str, Any], right: dict[str, Any]) -> bool:
         and left.get("_source_file") == right.get("_source_file")
     ):
         return _order(left, -1) < _order(right, -1)
+    # Cross-source order has no shared clock.  It is admitted only by the
+    # single, typed canonical identity of the earlier normalized event.
+    # Optional plural ``causes`` are descriptive; they do not authorize a
+    # transaction edge and therefore cannot be used as an ordering bypass.
     caused_by = right.get("caused_by")
-    causes = right.get("causes", [])
-    left_ids = {left.get("_native_event_id"), left.get("attestation_id"), left.get("event_id"), left.get("observation_id")}
-    if caused_by in left_ids:
-        return True
-    return isinstance(causes, list) and any(isinstance(item, str) and item in left_ids for item in causes)
+    return isinstance(caused_by, str) and caused_by == _canonical_event_identity(left)
+
+
+def _canonical_event_identity(event: dict[str, Any]) -> str | None:
+    """Return exactly one typed identity for a normalized trusted event."""
+    explicit = (
+        ("native", event.get("native_event_id")),
+        ("event", event.get("event_id")),
+        ("attestation", event.get("attestation_id")),
+        ("observation", event.get("observation_id")),
+    )
+    present = [(kind, value) for kind, value in explicit if isinstance(value, str) and value]
+    if len(present) == 1:
+        kind, value = present[0]
+        return f"{kind}:{value}"
+    if present:
+        return None
+    native = event.get("_native_event_id")
+    return f"native:{native}" if isinstance(native, str) and native else None
 
 
 def _state(root: Path) -> dict[str, Any]:
@@ -599,9 +617,22 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         stop = stops.get(session, [])
         end = ends[-1] if ends else None
         verdict_after_start = bool(starts and _before(starts[-1], event))
-        completion_after_start = bool(starts and stop and any(_before(starts[-1], item) for item in stop))
+        completion_after_start = bool(
+            starts and stop and any(
+                _before(starts[-1], item)
+                or (_before(starts[-1], event) and _before(event, item))
+                for item in stop
+            )
+        )
         completion_before_end = bool(stop and end and any(_before(item, end) for item in stop))
-        verdict_before_end = bool(_before(event, end)) if end else False
+        # A verdict may precede the end attestation through the native stop;
+        # each cross-stream hop still uses the strict direct edge above.
+        verdict_before_end = bool(
+            end and (
+                _before(event, end)
+                or any(_before(event, item) and _before(item, end) for item in stop)
+            )
+        )
         integrity = bool(
             session in sessions
             and stop

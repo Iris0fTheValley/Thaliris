@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import queue
@@ -13,7 +14,7 @@ import threading
 from typing import Any, Iterable
 
 from candidate_manifest import build_manifest
-from d11_sources import verify_source_registry
+from d11_sources import CaptureAuthority, verify_source_registry
 from trusted_surface import identity as trusted_identity, mutation_probe, verify as verify_trusted
 from thaliris.protocol import ROUTING_PROTOCOL_MARKER, ROUTING_PROTOCOL_VERSION
 
@@ -69,6 +70,10 @@ def _setup_overlay_manifest(root: Path, status: str | None) -> dict[str, Any]:
     deterministic identity so the frozen run can bind setup to this exact
     checkout state.
     """
+    # Keep the lexical root for the no-link check. Resolving first would hide
+    # a symlink supplied as the checkout root.
+    root = Path(root)
+    root_is_safe = root.is_dir() and not root.is_symlink()
     root = root.resolve()
     allowed = {".codex/", ".agent-memory/", ".milestones/", ".context/", "AGENTS.md", ".gitignore", "docs/thaliris-role-packs.md"}
     status_by_path: dict[str, str] = {}
@@ -86,26 +91,63 @@ def _setup_overlay_manifest(root: Path, status: str | None) -> dict[str, Any]:
     # allowed surface itself so .context/state/audit (and similar initial
     # artifacts) are frozen by exact bytes even when porcelain is empty.
     paths: set[str] = set(status_by_path)
+    invalid_paths: set[str] = set()
+    if not root_is_safe:
+        invalid_paths.add(".")
     for allowed_path in allowed:
         target = root.joinpath(*allowed_path.rstrip("/").split("/"))
-        if target.is_file():
+        if target.is_symlink():
+            invalid_paths.add(allowed_path.rstrip("/"))
+        elif target.is_file():
             paths.add(allowed_path)
-        elif target.is_dir() and not target.is_symlink():
+        elif target.is_dir():
             for child in target.rglob("*"):
-                if child.is_file() and not child.is_symlink():
+                relative = child.relative_to(root).as_posix()
+                if child.is_symlink():
+                    invalid_paths.add(relative)
+                elif child.is_file():
                     paths.add(child.relative_to(root).as_posix())
     entries = []
     for normalized in sorted(paths):
         target = root.joinpath(*normalized.split("/"))
-        if not target.is_file() or target.is_symlink():
-            # A deleted/status-only path is part of the frozen state too.
+        sha256 = _regular_file_sha256(target)
+        if sha256 is None:
+            invalid_paths.add(normalized)
             entries.append({"path": normalized, "status": status_by_path.get(normalized), "sha256": None})
             continue
-        entries.append({"path": normalized, "status": status_by_path.get(normalized, "  "), "sha256": _sha(target)})
+        entries.append({"path": normalized, "status": status_by_path.get(normalized, "  "), "sha256": sha256})
     entries.sort(key=lambda item: item["path"])
-    payload = {"root": str(root), "paths": entries, "unknown_status": sorted(unknown), "valid": not unknown}
+    payload = {"root": str(root), "paths": entries, "unknown_status": sorted(unknown), "invalid_paths": sorted(invalid_paths), "valid": not unknown and not invalid_paths and all(item["sha256"] for item in entries)}
     identity = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return {**payload, "identity": identity}
+
+
+def _regular_file_sha256(path: Path) -> str | None:
+    """Hash one regular file without following links, and recheck its inode."""
+    try:
+        before = os.lstat(path)
+        if not stat.S_ISREG(before.st_mode):
+            return None
+        # Windows does not expose O_NOFOLLOW. Its lstat/fstat/lstat inode
+        # checks below provide the equivalent fail-closed retarget check.
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        descriptor = os.open(path, flags)
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                return None
+            digest = hashlib.sha256()
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        finally:
+            os.close(descriptor)
+        after = os.lstat(path)
+        if not stat.S_ISREG(after.st_mode) or (after.st_dev, after.st_ino, after.st_size) != (before.st_dev, before.st_ino, before.st_size):
+            return None
+        return digest.hexdigest()
+    except OSError:
+        return None
 
 
 def _adapter_generated_hashes(adapter_root: Path) -> dict[str, Any] | None:
@@ -267,6 +309,7 @@ def run_preflight(
     trusted_runtime_attack_result: str | None = None,
     calibration_attestation: dict[str, Any] | None = None,
     hook_discovery: dict[str, Any] | None = None,
+    authority: CaptureAuthority,
 ) -> dict[str, Any]:
     """Return a fact ledger suitable for freezing, never a model report."""
     adapter_root = adapter_root.resolve()
@@ -300,7 +343,7 @@ def run_preflight(
         # isolation is proved only by the managed execution principal.
         "pass": probe_bound and trusted_runtime_attack_result == "DENIED" and frozen_trusted is not None and verify_trusted(frozen_trusted, trusted),
     }
-    checks["source_registry"] = {"identity": source_registry.get("identity") if isinstance(source_registry, dict) else None, "pass": isinstance(source_registry, dict) and verify_source_registry(source_registry)}
+    checks["source_registry"] = {"identity": source_registry.get("identity") if isinstance(source_registry, dict) else None, "pass": isinstance(source_registry, dict) and verify_source_registry(source_registry, capture_authority=authority)}
     checks["hook_discovery"] = {"result": hook_discovery, "pass": isinstance(hook_discovery, dict) and hook_discovery.get("status") == "PASS"}
     adapter_status = _git(adapter_root, "status", "--porcelain", "--untracked-files=all")
     candidate_status = _git(candidate_root, "status", "--porcelain", "--untracked-files=all")
@@ -313,10 +356,12 @@ def run_preflight(
         "unexpected_candidate_status": unexpected_candidate,
         "pass": unexpected_adapter in {"", None} and unexpected_candidate in {"", None},
     }
+    adapter_overlay = _setup_overlay_manifest(adapter_root, adapter_status)
+    candidate_overlay = _setup_overlay_manifest(candidate_root, candidate_status)
     checks["setup_overlay"] = {
-        "adapter": _setup_overlay_manifest(adapter_root, adapter_status),
-        "candidate": _setup_overlay_manifest(candidate_root, candidate_status),
-        "pass": unexpected_adapter in {"", None} and unexpected_candidate in {"", None},
+        "adapter": adapter_overlay,
+        "candidate": candidate_overlay,
+        "pass": unexpected_adapter in {"", None} and unexpected_candidate in {"", None} and adapter_overlay["valid"] and candidate_overlay["valid"],
     }
     checks["python_runtime"] = {"version": sys.version, "encoding": sys.getdefaultencoding(), "stdout_encoding": getattr(sys.stdout, "encoding", None), "pass": bool(sys.getdefaultencoding() and getattr(sys.stdout, "encoding", None))}
     try:
@@ -815,6 +860,7 @@ def freeze_run_manifest(
     candidate_policy: dict[str, Any] | None = None,
     source_registry: dict[str, Any] | None = None,
     calibration_attestation: dict[str, Any] | None = None,
+    authority: CaptureAuthority,
 ) -> dict[str, Any]:
     """Create the immutable identity record that gates a formal invocation."""
     if preflight.get("status") != "PASS":
@@ -827,7 +873,7 @@ def freeze_run_manifest(
     calibration = calibration_attestation if calibration_attestation is not None else calibration
     if not isinstance(calibration, dict) or not calibration.get("attestation_id") or calibration.get("gold_status") != "PASS" or calibration.get("base_status") != "FAIL":
         raise ValueError("calibration is not a host-owned attestation")
-    if not isinstance(source_registry, dict) or not verify_source_registry(source_registry):
+    if not isinstance(source_registry, dict) or not verify_source_registry(source_registry, capture_authority=authority):
         raise ValueError("source registry is not frozen and verified")
     base = _verified_candidate(base_candidate_root, base_candidate, candidate_policy)
     gold = _verified_candidate(gold_candidate_root, gold_candidate, candidate_policy)
@@ -864,7 +910,7 @@ def freeze_run_manifest(
     return {"manifest": payload, "identity": hashlib.sha256(encoded).hexdigest()}
 
 
-def verify_frozen_manifest(frozen: dict[str, Any], *, preflight: dict[str, Any], task_spec_path: Path, base_candidate_root: Path, gold_candidate_root: Path, pricing_snapshot: dict[str, Any], candidate_policy: dict[str, Any] | None = None, adapter_root: Path | None = None, evaluator_path: Path | None = None, harness_paths: Iterable[Path] | None = None, trusted_paths: Iterable[Path] | None = None, source_registry: dict[str, Any] | None = None) -> bool:
+def verify_frozen_manifest(frozen: dict[str, Any], *, preflight: dict[str, Any], task_spec_path: Path, base_candidate_root: Path, gold_candidate_root: Path, pricing_snapshot: dict[str, Any], authority: CaptureAuthority, candidate_policy: dict[str, Any] | None = None, adapter_root: Path | None = None, evaluator_path: Path | None = None, harness_paths: Iterable[Path] | None = None, trusted_paths: Iterable[Path] | None = None, source_registry: dict[str, Any] | None = None) -> bool:
     try:
         manifest = frozen["manifest"]
         if frozen.get("identity") != hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest():
@@ -888,7 +934,7 @@ def verify_frozen_manifest(frozen: dict[str, Any], *, preflight: dict[str, Any],
             if manifest.get("setup_overlay") != current_overlay:
                 return False
         registry = source_registry if source_registry is not None else manifest.get("source_registry")
-        if not isinstance(registry, dict) or not verify_source_registry(registry):
+        if not isinstance(registry, dict) or not verify_source_registry(registry, capture_authority=authority):
             return False
         if manifest.get("source_registry", {}).get("identity") != registry.get("identity"):
             return False

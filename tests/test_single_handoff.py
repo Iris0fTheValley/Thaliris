@@ -187,6 +187,41 @@ def test_authorized_spawn_requires_fresh_explicit_serial_handoff(tmp_path: Path)
     assert duplicate["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
+def test_explicit_spawn_failure_atomically_releases_matching_reservation(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "spawn failure", None, None)
+    failed_spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "failed handoff",
+    })
+    assert handle_hook(root, "PreToolUse", failed_spawn) == ""
+    assert lifecycle(root)["pending_authorized_spawn"] is not None
+
+    assert handle_hook(root, "PostToolUse", {
+        **failed_spawn,
+        "tool_response": {"status": "rejected", "error": "native spawn rejected"},
+    }) == ""
+    failed_state = lifecycle(root)
+    assert failed_state["pending_authorized_spawn"] is None
+    assert failed_state["spawn_failures"][-1]["dispatch_status"] == "REJECTED"
+
+    next_spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "next handoff",
+    })
+    assert handle_hook(root, "PreToolUse", next_spawn) == ""
+    assert lifecycle(root)["pending_authorized_spawn"] is not None
+
+
+def test_unknown_spawn_result_does_not_release_reservation(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "unknown spawn", None, None)
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "handoff",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    assert handle_hook(root, "PostToolUse", {**spawn, "tool_response": {"detail": "no outcome"}}) == ""
+    assert lifecycle(root)["pending_authorized_spawn"] is not None
+
+
 def test_lifecycle_binds_matching_identity_and_stop(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.task_start(root, "lifecycle", None, None)

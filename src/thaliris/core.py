@@ -323,6 +323,7 @@ def stale(root: Path) -> dict[str, object]:
 # them; Core validates only shape, identity, references, bounds, and CAS.
 _STATE_NAME = ".context/state.json"
 _STATE_SCHEMA_VERSION = 6
+ROUTING_STATE_MAX_BYTES = 8 * 1024
 _PACK_ROLES = {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}
 _EXECUTION_ROLES = _PACK_ROLES - {"controller"}
 _STATE_FIELDS = {
@@ -571,6 +572,16 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         values = state.get(field)
         if not isinstance(values, list) or len(values) > 64 or not all(isinstance(item, str) and item.strip() and len(item) <= 4096 for item in values):
             raise ValueError(f"invalid {field}")
+    routing_bytes = len(json.dumps(
+        {"active_work": state["active_work"], "pending_results": state["pending_results"]},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8"))
+    if routing_bytes > ROUTING_STATE_MAX_BYTES:
+        raise ValueError(
+            f"Active Work + Pending Results exceed {ROUTING_STATE_MAX_BYTES} UTF-8 bytes; "
+            "store long content as a Record or Artifact"
+        )
 
     sources = state.get("evidence_refs")
     if not isinstance(sources, list) or len(sources) > 512:
@@ -974,31 +985,50 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
             if not isinstance(refs, list) or len(refs) > 64 or len(set(refs)) != len(refs) or any(not isinstance(ref, str) or ref not in known_refs for ref in refs):
                 raise ValueError("promotion source reference is unknown")
             descriptors: list[dict[str, object]] = []
+            described: set[tuple[str, str]] = set()
+
+            def append_source_descriptor(source_id: str) -> None:
+                key = ("source", source_id)
+                if key in described:
+                    return
+                source = sources.get(source_id)
+                if source is None:
+                    raise ValueError("artifact provenance source reference is unknown")
+                descriptor = {
+                    "type": "source",
+                    "source_id": source["id"],
+                    "kind": source["kind"],
+                    "locator": source["locator"],
+                    "summary": source["summary"],
+                    "source_refs": source.get("source_refs", []),
+                }
+                if "confidence" in source:
+                    descriptor["confidence"] = source["confidence"]
+                descriptors.append(descriptor)
+                described.add(key)
+
             for ref in refs:
                 if ref in sources and ref in artifacts:
                     raise ValueError("promotion source reference is ambiguous")
                 if ref in artifacts:
                     artifact = artifacts[ref]
-                    descriptors.append({
-                        "type": "artifact",
-                        "artifact_id": artifact["id"],
-                        "path": artifact["path"],
-                        "content_sha256": artifact["content_sha256"],
-                        "producer": artifact["producer"],
-                        "task_id": artifact["task_id"],
-                        "revision": artifact["revision"],
-                    })
+                    key = ("artifact", ref)
+                    if key not in described:
+                        descriptors.append({
+                            "type": "artifact",
+                            "artifact_id": artifact["id"],
+                            "path": artifact["path"],
+                            "content_sha256": artifact["content_sha256"],
+                            "producer": artifact["producer"],
+                            "task_id": artifact["task_id"],
+                            "revision": artifact["revision"],
+                            "source_refs": artifact.get("source_refs", []),
+                        })
+                        described.add(key)
+                    for source_ref in artifact.get("source_refs", []):
+                        append_source_descriptor(str(source_ref))
                 else:
-                    source = sources[ref]
-                    descriptor = {
-                        "type": "source",
-                        "source_id": source["id"],
-                        "kind": source["kind"],
-                        "locator": source["locator"],
-                    }
-                    if "confidence" in source:
-                        descriptor["confidence"] = source["confidence"]
-                    descriptors.append(descriptor)
+                    append_source_descriptor(ref)
             relative = f".agent-memory/promoted/{identifier}.md"
             if _safe(root, relative).exists():
                 raise ValueError("promotion refuses to overwrite an existing durable target")

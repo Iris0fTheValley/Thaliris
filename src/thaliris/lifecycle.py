@@ -361,6 +361,8 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) in _COLLABORATION_TOOL_NAMES:
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
+                if _tool_basename(tool) == "spawn_agent":
+                    _best_effort_record(_clear_explicitly_failed_spawn, root, payload)
                 _best_effort_record(_reconcile_lifecycle_post_tool, root, payload, _tool_basename(tool))
                 if _tool_basename(tool) in _DELEGATION_TOOL_NAMES:
                     _best_effort_record(_record_delegation_telemetry, root, payload)
@@ -722,6 +724,46 @@ def _clear_pending_authorized_spawn(root: Path, payload: dict[str, Any]) -> None
             state["pending_authorized_spawn"] = None
             _runtime_metadata(state, payload)
             _write_capture(path, state)
+
+
+def _clear_explicitly_failed_spawn(root: Path, payload: dict[str, Any]) -> None:
+    """Release only the reservation proven to belong to a rejected spawn."""
+    if _dispatch_status(_post_tool_response(payload)) != "REJECTED":
+        return
+    task_id = _active_task_id(root)
+    session_id_hash = _session_id_hash(payload)
+    agent_type = _native_spawn_agent_type(payload)
+    handoff = _delegation_text(_delegation_input(payload))
+    if task_id is None or session_id_hash is None or agent_type is None or not isinstance(handoff, str):
+        return
+    payload_hash = hashlib.sha256(handoff.encode("utf-8")).hexdigest()
+    with core._lock(root):
+        path = _lifecycle_path(root, task_id)
+        if not path.is_file():
+            return
+        state = _load_lifecycle(path, task_id)
+        pending = state["pending_authorized_spawn"]
+        if not (
+            isinstance(pending, dict)
+            and pending.get("session_id_hash") == session_id_hash
+            and pending.get("expected_agent_type") == agent_type
+            and pending.get("payload_hash") == payload_hash
+        ):
+            return
+        failures = state.setdefault("spawn_failures", [])
+        if isinstance(failures, list) and len(failures) < 16:
+            failures.append({
+                "handoff_id": pending["handoff_id"],
+                "payload_hash": payload_hash,
+                "dispatch_status": "REJECTED",
+                "observed_at_ns": time.time_ns(),
+            })
+        state["pending_authorized_spawn"] = None
+        state["stall"] = None
+        metrics = state.setdefault("metrics", {})
+        metrics["spawn_failures"] = int(metrics.get("spawn_failures", 0)) + 1
+        _runtime_metadata(state, payload)
+        _write_capture(path, state)
 
 
 def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
@@ -1343,10 +1385,24 @@ def _controller_guard_output(payload: dict[str, Any], root: Path | None = None) 
 
 
 def _dispatch_status(response: object) -> str:
+    rejected = {"error", "failed", "failure", "rejected"}
+    accepted = {"ok", "success", "completed"}
+    if isinstance(response, str):
+        return "REJECTED" if response.strip().lower() in rejected else "UNKNOWN"
     if not isinstance(response, dict):
         return "UNKNOWN"
-    if response.get("isError") is True or response.get("failed") is True or response.get("error"):
+    status = response.get("status")
+    normalized = status.strip().lower() if isinstance(status, str) else None
+    explicit_failure = any(
+        response.get(key) is True or response.get(key) not in (None, False, "")
+        for key in ("isError", "failed", "error")
+    )
+    if explicit_failure or normalized in rejected:
         return "REJECTED"
-    if response.get("isError") is False or response.get("success") is True or response.get("status") in {"ok", "success", "completed"}:
+    nested = response.get("result")
+    nested_status = _dispatch_status(nested) if isinstance(nested, (dict, str)) else "UNKNOWN"
+    if nested_status != "UNKNOWN":
+        return nested_status
+    if response.get("isError") is False or response.get("success") is True or normalized in accepted:
         return "ACCEPTED"
     return "UNKNOWN"

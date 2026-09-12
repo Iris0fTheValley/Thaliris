@@ -64,6 +64,8 @@ def sha256(path: Path) -> str:
 def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
     """Evaluate file/content evidence without changing the recorded fact."""
     evidence = entry.meta["Evidence"]
+    if evidence == "DURABLE_SOURCE_DESCRIPTORS":
+        return _durable_descriptor_status(entry, root)
     specs = evidence if isinstance(evidence, list) else ([] if evidence == "NONE" else [evidence])
     if not specs:
         return "UNKNOWN", []
@@ -105,4 +107,66 @@ def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
         return "CHANGED", changed
     if invalid:
         return "UNKNOWN", invalid
+    return "FRESH", []
+
+
+def _durable_descriptor_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
+    """Check only durable descriptors that carry an objective path/hash pair."""
+    marker = "## Durable Source Descriptors\n\n```json\n"
+    start = entry.body.rfind(marker)
+    match = re.fullmatch(r"(\[.*\])\n```\s*", entry.body[start + len(marker):], re.DOTALL) if start >= 0 else None
+    if match is None:
+        return "UNKNOWN", ["invalid durable source descriptors"]
+    try:
+        descriptors = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return "UNKNOWN", ["invalid durable source descriptors"]
+    if not isinstance(descriptors, list) or not all(isinstance(item, dict) for item in descriptors):
+        return "UNKNOWN", ["invalid durable source descriptors"]
+
+    specs: list[str] = []
+    missing: list[str] = []
+    changed: list[str] = []
+    invalid: list[str] = []
+    checked = False
+    for descriptor in descriptors:
+        if descriptor.get("type") == "artifact":
+            path = descriptor.get("path")
+            identity = descriptor.get("content_sha256")
+            if not isinstance(path, str) or not isinstance(identity, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", identity):
+                invalid.append(str(descriptor.get("artifact_id", "invalid artifact descriptor")))
+                continue
+            checked = True
+            candidate = (root / path).resolve()
+            try:
+                candidate.relative_to(root.resolve())
+            except ValueError:
+                invalid.append(path)
+                continue
+            if not candidate.is_file():
+                missing.append(path)
+            elif sha256(candidate).lower() != identity.lower():
+                changed.append(path)
+        elif descriptor.get("type") == "source":
+            locator = descriptor.get("locator")
+            if isinstance(locator, str) and re.fullmatch(r"(?:file|git):[^#]+#[0-9a-fA-F]{40,64}", locator):
+                specs.append(locator)
+    if specs:
+        checked = True
+        mechanical = Entry(entry.path, {**entry.meta, "Evidence": specs}, entry.body)
+        status, detail = evidence_status(mechanical, root)
+        if status == "MISSING":
+            missing.extend(detail)
+        elif status == "CHANGED":
+            changed.extend(detail)
+        elif status == "UNKNOWN":
+            invalid.extend(detail)
+    if missing:
+        return "MISSING", missing
+    if changed:
+        return "CHANGED", changed
+    if invalid:
+        return "UNKNOWN", invalid
+    if not checked:
+        return "RECORDED", []
     return "FRESH", []

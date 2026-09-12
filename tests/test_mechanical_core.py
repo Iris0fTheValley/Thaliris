@@ -125,7 +125,7 @@ def test_promoted_provenance_survives_task_state_and_round_trips(tmp_path: Path)
         "kind": "decision",
         "title": "Durable decision",
         "text": "Keep this conclusion",
-        "source_refs": ["artifact-7", "source-1"],
+        "source_refs": ["artifact-7"],
         "status": "accepted",
         "confidence": "model-authored",
         "applicability": "project",
@@ -146,7 +146,10 @@ def test_promoted_provenance_survives_task_state_and_round_trips(tmp_path: Path)
     assert started["task_id"] in fetched["body"]
     assert "source-1" in fetched["body"]
     assert "src/module.py#symbol" in fetched["body"]
+    assert fetched["freshness"] == "FRESH"
     assert core.recall(root, "Durable decision", "controller")["candidates"][0]["path"] == durable_path
+    artifact_path.write_text("changed artifact details", encoding="utf-8")
+    assert core.memory_get(root, durable_path)["freshness"] == "CHANGED"
 
 
 @pytest.mark.parametrize("field,value", [
@@ -294,10 +297,35 @@ def test_task_start_does_not_echo_initial_ledger(tmp_path: Path) -> None:
     assert {"task_id", "revision", "status"} <= set(started)
 
 
+def test_routing_state_has_one_small_total_byte_budget(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    concise = write_json(root.parent / "concise.json", {
+        "active_work": ["implement bounded status"],
+        "pending_results": ["targeted tests"],
+    })
+    started = core.task_start(root, "routing budget", None, concise)
+    assert core.task_status(root)["Active Work"] == ["implement bounded status"]
+
+    oversized = write_json(root.parent / "oversized.json", {
+        "active_work": ["a" * 4096, "b" * 4096],
+        "pending_results": ["c"],
+    })
+    with pytest.raises(ValueError, match="store long content as a Record or Artifact"):
+        core.task_update(root, "controller", started["revision"], oversized)
+    assert core.task_show(root)["state"]["revision"] == started["revision"]
+
+    second_root = repo(tmp_path / "second")
+    with pytest.raises(ValueError, match="store long content as a Record or Artifact"):
+        core.task_start(second_root, "oversized start", None, oversized)
+    assert not (second_root / ".context" / "state.json").exists()
+
+
 def test_large_task_status_is_bounded_while_task_show_retains_full_ledger(tmp_path: Path) -> None:
     root = repo(tmp_path)
     body = "HISTORICAL_RECORD_BODY_" + "x" * 256
     started = core.task_start(root, "bounded status", None, write_json(root.parent / "large.json", {
+        "active_work": ["bounded current work"],
+        "pending_results": ["one concise pending result"],
         "records": [
             {"id": f"record-{index}", "kind": "note", "text": f"{body}{index}"}
             for index in range(500)

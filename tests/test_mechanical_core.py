@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 from pathlib import Path
 import subprocess
 
@@ -114,3 +115,12 @@ def test_memory_audience_is_search_metadata_not_access_control(tmp_path: Path) -
     assert "body" not in candidates[0]
     assert "EXPLICIT_MEMORY_SENTINEL" in core.memory_get(root, candidates[0]["path"])["body"]
 
+
+def test_production_package_has_no_benchmark_authority_module() -> None:
+    assert importlib.util.find_spec("thaliris.host_authority") is None
+    production = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in Path(core.__file__).parent.glob("*.py")
+    )
+    for benchmark_only in ("D11", "formal authority registry", "receipt issuer"):
+        assert benchmark_only not in production

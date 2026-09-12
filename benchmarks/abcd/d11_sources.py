@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 from typing import Any, Iterable, Protocol
 
-from thaliris.host_authority import is_d11_host_registry
+from benchmarks.abcd.host_authority import is_d11_host_registry
 
 SOURCE_KINDS = frozenset({"thaliris_audit", "codex_rollout", "harness_attestation", "evaluator_result"})
 SOURCE_REGISTRY_VERSION = 2

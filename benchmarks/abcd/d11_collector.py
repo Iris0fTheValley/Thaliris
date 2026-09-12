@@ -361,9 +361,9 @@ def collect_evidence(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, 
     roles = {str(event.get("role") or event.get("consumer_role")) for event in ordered if event.get("role") or event.get("consumer_role")}
     downstream_roles = {"controller", "reasoning-specialist", "implementer", "reviewer", "terra", "sol"}
     producer_roles = {
-        str(ref.get("producer_role"))
+        str(ref.get("producer_role") or ref.get("producer"))
         for ref in state.get("artifact_refs", [])
-        if isinstance(ref, dict) and ref.get("producer_role")
+        if isinstance(ref, dict) and (ref.get("producer_role") or ref.get("producer"))
     }
     # A Core-registered Investigator/Curator artifact is itself evidence that
     # the route crossed a reusable-evidence boundary.  This is derived from
@@ -400,14 +400,15 @@ def collect_evidence(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, 
                 valid_item_ids.update(f"{field}:{index}" for index, _ in enumerate(envelope[field]))
             valid_item_ids.update(f"verification:{index}" for index, _ in enumerate(envelope["verification"]))
         source_refs_valid, source_ref_error = _resolve_source_refs(envelope, root, ordered) if envelope else (False, None)
-        producer_lifecycle_valid, producer_lifecycle_error = _producer_lifecycle(envelope, str(artifact_id), ref.get("producer_role"), produced, ordered)
+        producer_role = ref.get("producer_role") or ref.get("producer")
+        producer_lifecycle_valid, producer_lifecycle_error = _producer_lifecycle(envelope, str(artifact_id), producer_role, produced, ordered)
         carried = [e for e in selections if (e.get("content_sha256") == ref.get("content_sha256") or any(isinstance(item, dict) and item.get("content_sha256") == ref.get("content_sha256") for item in e.get("artifacts", []))) and bool(e.get("evidence_item_ids")) and set(e.get("evidence_item_ids", [])) <= valid_item_ids and source_refs_valid]
         pointer_reads = [e for e in ordered if _kind(e) in {"artifact_read", "artifact_open"} and e.get("artifact_id") == artifact_id and e.get("content_sha256") == ref.get("content_sha256") and e.get("session_id")]
         artifact = {
             "id": artifact_id,
             "task_id": state.get("task_id"),
             "revision": ref.get("revision", state.get("revision")),
-            "producer_role": ref.get("producer_role"),
+            "producer_role": producer_role,
             "path": ref.get("path"),
             "registered_by": ref.get("registered_by"),
             "declared_sha256": ref.get("content_sha256"),

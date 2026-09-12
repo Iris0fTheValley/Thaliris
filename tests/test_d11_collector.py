@@ -6,7 +6,7 @@ import sys
 import pytest
 
 from thaliris import core
-from thaliris import host_authority
+from benchmarks.abcd import host_authority
 from thaliris.protocol import ROUTING_PROTOCOL_MARKER
 from tests.support import d11_authority
 

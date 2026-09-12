@@ -14,13 +14,13 @@ import time
 import uuid
 
 from candidate_manifest import MANIFEST_VERSION, build_manifest
-from d11_sources import SOURCE_EVENTS, SOURCE_KINDS, _sha_prefix, chain_payload, create_source_registry, hash_chain_record, registry_sources, validate_event_shape
+from d11_sources import NativeCaptureAuthority, SOURCE_EVENTS, SOURCE_KINDS, _sha_prefix, chain_payload, create_source_registry, hash_chain_record, registry_sources, validate_event_shape
 
 
 TRUSTED_SOURCE_KINDS = SOURCE_KINDS
 
 
-def load_trusted_events(registry: dict[str, Any]) -> list[dict[str, Any]]:
+def load_trusted_events(registry: dict[str, Any], *, capture_authority: NativeCaptureAuthority | None = None) -> list[dict[str, Any]]:
     """Normalize only explicitly classified host/harness streams.
 
     A random JSON path or an unclassified dict is not an event source.  The
@@ -28,7 +28,7 @@ def load_trusted_events(registry: dict[str, Any]) -> list[dict[str, Any]]:
     for later audit; raw sequence fields are never used as global time.
     """
     records: list[dict[str, Any]] = []
-    source_payload = registry_sources(registry)
+    source_payload = registry_sources(registry, capture_authority=capture_authority)
     registry_identity = registry.get("identity")
     for source in source_payload:
         kind = source["source_kind"]
@@ -434,7 +434,7 @@ def collect_candidate(root: Path, *, policy: dict[str, Any] | None = None) -> di
     return build_manifest(root, policy)
 
 
-def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_root: Path, policy: dict[str, Any], harness_identity: str, session_id: str | None = None, source_registry_identity: str | None = None, caused_by: str | None = None, causes: list[str] | None = None, attestation_id: str | None = None) -> dict[str, Any]:
+def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_root: Path, policy: dict[str, Any], harness_identity: str, session_id: str | None = None, source_registry_identity: str | None = None, caused_by: str | None = None, causes: list[str] | None = None, attestation_id: str | None = None, reviewer_binding: dict[str, Any] | None = None) -> dict[str, Any]:
     """Host-owned stage attestation; identity is computed at the stage boundary."""
     if not isinstance(run_id, str) or not run_id or stage not in {"runtime-final", "review-start", "review-end", "verification-start", "evaluator-start", "seal"}:
         raise ValueError("invalid candidate attestation boundary")
@@ -464,6 +464,10 @@ def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_ro
         if not isinstance(causes, list) or not causes or any(not isinstance(item, str) or not item for item in causes):
             raise ValueError("candidate attestation causal identities are invalid")
         event["causes"] = list(causes)
+    if reviewer_binding is not None:
+        if stage != "review-start" or not isinstance(reviewer_binding, dict):
+            raise ValueError("reviewer binding is only valid at review start")
+        event["reviewer_binding"] = dict(reviewer_binding)
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if source_registry_identity is not None:
@@ -587,6 +591,8 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         if not isinstance(session, str) or not starts:
             continue
         candidate = starts[-1].get("candidate_identity")
+        review_start = starts[-1]
+        binding = review_start.get("reviewer_binding")
         ends = [att for att in ordered if _kind(att) == "candidate_attestation" and att.get("stage") == "review-end" and att.get("session_id") == session and att.get("_trusted_source") == "harness_attestation"]
         observations = [obs for obs in ordered if _kind(obs) == "reviewer_native_observation" and obs.get("session_id") == session and obs.get("native_session_id")]
         mutations = [mutation for mutation in ordered if _kind(mutation) == "source_mutation" and mutation.get("session_id") == session]
@@ -608,6 +614,25 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             and end.get("candidate_identity") == candidate
             and not mutations
         )
+        start_order_valid = True
+        if not test_stream:
+            # The review-start attestation authorizes one, and only one,
+            # *subsequent* native Reviewer start.  A lifecycle record before
+            # it or a copied reservation/projection is not a review session.
+            expected = ("task_id", "task_revision", "controller_session_id", "reservation_id", "projection_id", "parent_session_id")
+            native_starts = [item for item in ordered if item.get("_trusted_source") == "codex_rollout" and _kind(item) in {"native_session_started", "SubagentStart"} and item.get("role") == "reviewer"]
+            after = [item for item in native_starts if _before(review_start, item)]
+            first = after[0] if after else None
+            start_order_valid = bool(
+                isinstance(binding, dict) and first is not None
+                and first.get("session_id") == session and first.get("role") == "reviewer"
+                and all(first.get(key) == binding.get(key) for key in expected)
+                and first.get("native_sequence") == binding.get("native_sequence")
+                and not any(item.get("session_id") == session and not _before(review_start, item) for item in native_starts)
+                and len([item for item in after if item.get("session_id") == session]) == 1
+            )
+            if not start_order_valid:
+                integrity = False
         # Every formal review transaction must stay within one frozen run and
         # registry.  Cross-stream ordering is otherwise admitted only through
         # explicit causal edges in ``_before``.
@@ -632,6 +657,7 @@ def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             "start_candidate_identity": candidate,
             "end_candidate_identity": end.get("candidate_identity") if end else None,
             "review_transaction_integrity": integrity,
+            "reviewer_start_order_valid": start_order_valid,
             "reviewer_mutation_observed": bool(mutations),
             "sandbox_mode": observations[-1].get("sandbox_mode") if observations else None,
             "native_observation_provenance": _provenance(observations[-1]) if observations else None,

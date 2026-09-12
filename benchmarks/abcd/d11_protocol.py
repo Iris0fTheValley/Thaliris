@@ -142,6 +142,8 @@ def validate_review_graph(ledger: dict[str, Any], *, final_candidate: str) -> di
         if item.get("native_session") is not True or item.get("native_completion") is not True:
             return _fail("REVIEW_NATIVE_LIFECYCLE", "native fresh Reviewer completion is absent")
         if item.get("review_transaction_integrity") is not True:
+            if item.get("reviewer_start_order_valid") is False:
+                return _fail("REVIEW_START_ORDER_VIOLATION", "review-start was not followed by its exact native Reviewer start")
             if item.get("reviewer_mutation_observed"):
                 return _fail("REVIEWER_MUTATION_OBSERVED", "Reviewer mutation invalidated the review transaction")
             return _fail("REVIEW_TRANSACTION_INCOMPLETE", "review-start/review-end candidate transaction is incomplete")
@@ -314,6 +316,45 @@ def validate_report(report: dict[str, Any], *, protocol_path: Path, generated_te
     return {"status": status, "checks": checks}
 
 
+_OBSERVATION_SEAL = object()
+
+
+class VerifiedObservation:
+    """An in-memory, host-issued observation bound to fact and source bytes."""
+    __slots__ = ("issuer", "source_digest", "subject_digest", "_seal")
+
+    def __init__(self, issuer: str, source_digest: str, subject_digest: str, seal: object) -> None:
+        self.issuer = issuer
+        self.source_digest = source_digest
+        self.subject_digest = subject_digest
+        self._seal = seal
+
+
+class TrustedObservationStore:
+    """Deterministic collector/test-fixture abstraction for host observations."""
+    def __init__(self, issuer: str = "host-collector") -> None:
+        self.issuer = issuer
+
+    def observe(self, value: dict[str, Any], *, source_bytes: bytes) -> VerifiedObservation:
+        payload = {key: item for key, item in value.items() if key not in {"identity", "observation"}}
+        return VerifiedObservation(
+            self.issuer,
+            hashlib.sha256(source_bytes).hexdigest(),
+            hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+            _OBSERVATION_SEAL,
+        )
+
+
+def _valid_observation(value: dict[str, Any]) -> bool:
+    observation = value.get("observation")
+    if not isinstance(observation, VerifiedObservation) or observation._seal is not _OBSERVATION_SEAL:
+        return False
+    if not observation.issuer or not observation.source_digest:
+        return False
+    payload = {key: item for key, item in value.items() if key not in {"identity", "observation"}}
+    return observation.subject_digest == hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def _observed_status(value: Any, *, name: str) -> dict[str, Any]:
     if isinstance(value, dict) and value.get("status") in {"PASS", "FAIL", "NOT_OBSERVED", "EXTERNALLY_INCOMPLETE"}:
         # A status string is not an attestation.  Only a non-empty structured
@@ -339,12 +380,18 @@ def _observed_status(value: Any, *, name: str) -> dict[str, Any]:
         identity_value = value.get("identity")
         identity = isinstance(identity_value, str) and bool(identity_value)
         if identity:
-            payload = {key: item for key, item in value.items() if key != "identity"}
+            payload = {key: item for key, item in value.items() if key not in {"identity", "observation"}}
             expected = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
             if identity_value != expected:
                 return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_IDENTITY_INVALID"}
         if not structured or not source_ok or (identity_value is not None and not identity):
             return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_PROVENANCE_NOT_OBSERVED"}
+        # A fact source allowlist and self-hash merely describe caller data.
+        # Passing requires an independent, host-owned observation bound to the
+        # bytes that yielded this status.  JSON/sidecar copies cannot recreate
+        # this in-memory capability.
+        if not _valid_observation(value):
+            return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_OBSERVATION_NOT_OBSERVED"}
         if source_kind != "native_capability_diagnostic" and not identity:
             return {"status": "NOT_OBSERVED", "code": f"{name.upper()}_IDENTITY_NOT_OBSERVED"}
         return value

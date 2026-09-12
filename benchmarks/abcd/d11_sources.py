@@ -10,6 +10,63 @@ from typing import Any, Iterable
 SOURCE_KINDS = frozenset({"thaliris_audit", "codex_rollout", "harness_attestation", "evaluator_result"})
 SOURCE_REGISTRY_VERSION = 2
 
+
+class NativeCaptureAuthority:
+    """Host-owned authority store for a captured native Codex stream.
+
+    The store is deliberately an injected capability.  A descriptor copied
+    from JSON is only a claim until this store resolves its authority_ref.
+    Production callers receive no issuing API; test fixtures use the explicit
+    test issuer below.
+    """
+    def __init__(self, issuer: str, *, test_issuer: bool = False) -> None:
+        self.issuer = issuer
+        self._test_issuer = test_issuer
+        self._records: dict[str, dict[str, Any]] = {}
+
+    @classmethod
+    def test_issuer(cls, issuer: str = "test-native-capture") -> "NativeCaptureAuthority":
+        return cls(issuer, test_issuer=True)
+
+    def issue(self, *, authority_ref: str, task_id: str, task_revision: int,
+              reservation_id: str, session_id: str, path: Path,
+              boundary: str = "codex-rollout-capture") -> dict[str, Any]:
+        if not self._test_issuer:
+            raise PermissionError("native capture authority is host-issued")
+        path = path.resolve()
+        if not authority_ref or not task_id or not isinstance(task_revision, int) or task_revision < 0 or not reservation_id or not session_id or not path.is_file() or path.is_symlink():
+            raise ValueError("invalid native capture authority subject")
+        record = {
+            "authority_ref": authority_ref, "issuer": self.issuer,
+            "boundary": boundary, "task_id": task_id,
+            "task_revision": task_revision, "reservation_id": reservation_id,
+            "session_id": session_id, "canonical_path": str(path),
+            "content_sha256": _sha(path),
+        }
+        record["digest"] = _identity(record)
+        self._records[authority_ref] = record
+        return dict(record)
+
+    def verify(self, descriptor: Any, *, path: Path) -> bool:
+        if not isinstance(descriptor, dict):
+            return False
+        ref = descriptor.get("authority_ref")
+        record = self._records.get(ref) if isinstance(ref, str) else None
+        return bool(record and descriptor == record and record["issuer"] == self.issuer
+                    and record["boundary"] == "codex-rollout-capture"
+                    and record["canonical_path"] == str(path.resolve())
+                    and record["content_sha256"] == _sha(path)
+                    and record["digest"] == _identity({k: v for k, v in record.items() if k != "digest"}))
+
+
+def verify_capture_authority(authority: NativeCaptureAuthority | None, descriptor: Any, *, path: Path) -> bool:
+    """Verify a formal rollout against the injected trusted issuer/store."""
+    verifier = getattr(authority, "verify", None)
+    try:
+        return callable(verifier) and bool(verifier(descriptor, path=path))
+    except (OSError, TypeError, ValueError):
+        return False
+
 # Producer labels are part of the trust boundary.  A registry entry may use
 # one of these stable aliases for its source kind, but arbitrary user labels
 # cannot confer producer authority.
@@ -120,7 +177,8 @@ def _identity(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, test_only: bool = False) -> dict[str, Any]:
+def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, test_only: bool = False,
+                           capture_authority: NativeCaptureAuthority | None = None) -> dict[str, Any]:
     """Create a registry from actual source files and their current bytes."""
     if not isinstance(run_id, str) or not run_id:
         raise ValueError("source registry requires a run_id")
@@ -143,6 +201,17 @@ def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, te
         if canonical in seen_paths:
             raise ValueError("source registry contains duplicate source paths")
         seen_paths.add(canonical)
+        if "producer" in source and not test_only:
+            raise ValueError("source registry producer is host-derived")
+        descriptor = source.get("capture_authority")
+        if kind == "codex_rollout" and not test_only:
+            if not verify_capture_authority(capture_authority, descriptor, path=path):
+                raise ValueError("codex rollout capture authority is not verified")
+            # The caller may not bind an authorized stream to a different
+            # task/controller reservation/session by copying its descriptor.
+            for key in ("task_id", "task_revision", "reservation_id", "session_id"):
+                if source.get(key) != descriptor.get(key):
+                    raise ValueError("codex rollout capture subject is not verified")
         allowed = source.get("allowed_event_types", sorted(SOURCE_EVENTS[kind]))
         allowed_base = set().union(*SOURCE_EVENTS.values()) if test_only else SOURCE_EVENTS[kind]
         if not isinstance(allowed, list) or not allowed or any(not isinstance(item, str) for item in allowed) or not set(allowed) <= allowed_base:
@@ -153,8 +222,6 @@ def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, te
         # ``producer`` was formerly caller-controlled.  It is deliberately
         # rejected even when it spells a known alias: an arbitrary JSONL file
         # must not obtain Codex authority by declaring ``producer=codex``.
-        if "producer" in source and not test_only:
-            raise ValueError("source registry producer is host-derived")
         producer = "TEST_ONLY" if test_only else kind
         boundary = "TEST_ONLY" if test_only else CAPTURE_BOUNDARIES[kind]
         entries.append({
@@ -168,12 +235,18 @@ def create_source_registry(sources: Iterable[dict[str, Any]], *, run_id: str, te
             "stream_identity_policy": source.get("stream_identity_policy", "exact_bytes"),
             "initial_size": path.stat().st_size,
             "run_id": run_id,
+            "capture_authority": descriptor if kind == "codex_rollout" else None,
+            "task_id": descriptor.get("task_id") if isinstance(descriptor, dict) else None,
+            "task_revision": descriptor.get("task_revision") if isinstance(descriptor, dict) else None,
+            "reservation_id": descriptor.get("reservation_id") if isinstance(descriptor, dict) else None,
+            "session_id": descriptor.get("session_id") if isinstance(descriptor, dict) else None,
         })
     payload = {"version": SOURCE_REGISTRY_VERSION, "run_id": run_id, "test_only": bool(test_only), "sources": sorted(entries, key=lambda x: x["source_id"])}
     return {"registry": payload, "identity": _identity(payload)}
 
 
-def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = None) -> bool:
+def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = None,
+                           capture_authority: NativeCaptureAuthority | None = None) -> bool:
     try:
         payload = registry["registry"]
         if payload["version"] != SOURCE_REGISTRY_VERSION or (run_id is not None and payload["run_id"] != run_id):
@@ -195,6 +268,12 @@ def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = Non
                     return False
             elif item.get("producer") != item["source_kind"] or item.get("capture_boundary") != CAPTURE_BOUNDARIES[item["source_kind"]]:
                 return False
+            if item["source_kind"] == "codex_rollout" and not payload.get("test_only"):
+                descriptor = item.get("capture_authority")
+                if not verify_capture_authority(capture_authority, descriptor, path=path):
+                    return False
+                if any(item.get(key) != descriptor.get(key) for key in ("task_id", "task_revision", "reservation_id", "session_id")):
+                    return False
             policy = item.get("stream_identity_policy", "exact_bytes")
             if policy not in {"exact_bytes", "append_only"} or policy == "exact_bytes" and _sha(path) != item["content_sha256"] or policy == "append_only" and (path.stat().st_size < int(item.get("initial_size", 0)) or _sha_prefix(path, int(item.get("initial_size", 0))) != item["content_sha256"]):
                 return False
@@ -206,8 +285,8 @@ def verify_source_registry(registry: dict[str, Any], *, run_id: str | None = Non
         return False
 
 
-def registry_sources(registry: dict[str, Any]) -> list[dict[str, Any]]:
-    if not verify_source_registry(registry):
+def registry_sources(registry: dict[str, Any], *, capture_authority: NativeCaptureAuthority | None = None) -> list[dict[str, Any]]:
+    if not verify_source_registry(registry, capture_authority=capture_authority):
         raise ValueError("source registry is not a current, byte-verified registry")
     return list(registry["registry"]["sources"])
 

@@ -401,20 +401,42 @@ def test_source_registry_rejects_duplicate_or_symlinked_streams(tmp_path: Path) 
         d11_sources.create_source_registry([{"kind": "codex_rollout", "path": stream, "producer": "codex"}], run_id="run-spoofed-codex")
 
 
+def test_rollout_authority_rejects_static_or_tampered_descriptors_and_accepts_test_issuer(tmp_path: Path) -> None:
+    stream = tmp_path / "rollout.jsonl"
+    stream.write_text(json.dumps({"event": "SubagentStart", "role": "reviewer", "session_id": "r"}) + "\n", encoding="utf-8")
+    source = {"kind": "codex_rollout", "path": stream, "task_id": "task", "task_revision": 2, "reservation_id": "reservation", "session_id": "r"}
+    with pytest.raises(ValueError, match="authority"):
+        d11_sources.create_source_registry([source], run_id="task")
+    issuer = d11_sources.NativeCaptureAuthority.test_issuer()
+    descriptor = issuer.issue(authority_ref="capture-1", task_id="task", task_revision=2, reservation_id="reservation", session_id="r", path=stream)
+    registry = d11_sources.create_source_registry([{**source, "capture_authority": descriptor}], run_id="task", capture_authority=issuer)
+    assert d11_sources.verify_source_registry(registry, capture_authority=issuer)
+    copied = dict(descriptor); copied["reservation_id"] = "other"
+    with pytest.raises(ValueError, match="authority"):
+        d11_sources.create_source_registry([{**source, "capture_authority": copied}], run_id="task", capture_authority=issuer)
+    stream.write_text(stream.read_text(encoding="utf-8") + "{}\n", encoding="utf-8")
+    assert d11_sources.verify_source_registry(registry, capture_authority=issuer) is False
+
+
 def test_formal_multisource_fixture_replay_has_no_test_only_bypass(tmp_path: Path) -> None:
     root = repo(tmp_path / "candidate")
     rollout = tmp_path / "codex-rollout.jsonl"
     rollout.write_bytes((ROOT / "benchmarks" / "abcd" / "fixtures" / "real_codex_rollout.jsonl").read_bytes())
     harness = tmp_path / "harness-attestation.jsonl"
     harness.write_text("", encoding="utf-8")
+    authority = d11_sources.NativeCaptureAuthority.test_issuer()
+    descriptor = authority.issue(authority_ref="fixture-rollout", task_id="formal-fixture", task_revision=1,
+                                 reservation_id="fixture-reservation", session_id="review-fixture", path=rollout)
     registry = d11_sources.create_source_registry([
-        {"kind": "codex_rollout", "path": rollout},
+        {"kind": "codex_rollout", "path": rollout, "capture_authority": descriptor,
+         "task_id": "formal-fixture", "task_revision": 1,
+         "reservation_id": "fixture-reservation", "session_id": "review-fixture"},
         {"kind": "harness_attestation", "path": harness, "stream_identity_policy": "append_only"},
-    ], run_id="formal-fixture")
+    ], run_id="formal-fixture", capture_authority=authority)
     policy = candidate_manifest.build_manifest(root)["manifest"]["policy"]
-    start = d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-start", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], attestation_id="review-start-attestation")
+    start = d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-start", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], attestation_id="review-start-attestation", reviewer_binding={"task_id": "formal-fixture", "task_revision": 1, "controller_session_id": "fixture-controller", "reservation_id": "fixture-reservation", "projection_id": "fixture-projection", "parent_session_id": "fixture-controller", "native_sequence": 1})
     d11_collector.attest_candidate(harness, run_id="formal-fixture", stage="review-end", candidate_root=root, policy=policy, harness_identity="fixture-harness", session_id="review-fixture", source_registry_identity=registry["identity"], causes=["rollout-review-verdict", "rollout-review-stop"])
-    events = d11_collector.load_trusted_events(registry)
+    events = d11_collector.load_trusted_events(registry, capture_authority=authority)
     assert events and all(event["_source_run_id"] == "formal-fixture" for event in events)
     assert not any(event["_source_run_id"] == "TEST_ONLY" for event in events)
     graph = d11_collector.collect_review_graph(events)
@@ -611,14 +633,19 @@ def test_structured_evidence_source_ref_is_resolved_against_actual_bytes(tmp_pat
         {"event": "artifact_registered", "artifact_id": "evidence-1", "content_sha256": sha, "caused_by": "artifact-produced-1"},
         {"event": "role_dispatch", "role": "reasoning-specialist", "artifact_ids": ["evidence-1"], "content_sha256": sha, "evidence_item_ids": ["confirmed_facts:0"], "caused_by": "artifact-produced-1"},
     ]) + "\n", encoding="utf-8")
+    authority = d11_sources.NativeCaptureAuthority.test_issuer()
+    descriptor = authority.issue(authority_ref="source-rollout", task_id="formal-source", task_revision=1,
+                                 reservation_id="source-reservation", session_id="investigator-1", path=rollout)
     registry = d11_sources.create_source_registry([
-        {"kind": "codex_rollout", "path": rollout}, {"kind": "thaliris_audit", "path": audit},
-    ], run_id="formal-source")
-    facts = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry))
+        {"kind": "codex_rollout", "path": rollout, "capture_authority": descriptor,
+         "task_id": "formal-source", "task_revision": 1, "reservation_id": "source-reservation", "session_id": "investigator-1"},
+        {"kind": "thaliris_audit", "path": audit},
+    ], run_id="formal-source", capture_authority=authority)
+    facts = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry, capture_authority=authority))
     assert facts["artifacts"][0]["source_refs_valid"] is True
     assert d11_protocol.validate_collected_evidence(facts)["status"] == "PASS"
     source.write_text("VALUE = 2\n", encoding="utf-8")
-    stale = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry))
+    stale = d11_collector.collect_evidence(root, d11_collector.load_trusted_events(registry, capture_authority=authority))
     assert stale["artifacts"][0]["source_refs_valid"] is False
     assert stale["artifacts"][0]["historical_validity"] == "PASS"
     assert d11_protocol.validate_collected_evidence(stale)["code"] == "EVIDENCE_ARTIFACT_UNUSED"

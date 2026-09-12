@@ -1,3 +1,3 @@
-{"event":"SubagentStart","event_id":"rollout-review-start","role":"reviewer","session_id":"review-fixture","native_session_id":"native-review-fixture"}
+{"event":"SubagentStart","event_id":"rollout-review-start","role":"reviewer","session_id":"review-fixture","native_session_id":"native-review-fixture","native_sequence":1,"task_id":"formal-fixture","task_revision":1,"controller_session_id":"fixture-controller","reservation_id":"fixture-reservation","projection_id":"fixture-projection","parent_session_id":"fixture-controller"}
 {"event":"review_verdict","event_id":"rollout-review-verdict","session_id":"review-fixture","verdict":"READY","caused_by":"review-start-attestation"}
 {"event":"SubagentStop","event_id":"rollout-review-stop","role":"reviewer","session_id":"review-fixture","caused_by":"review-start-attestation"}

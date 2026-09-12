@@ -69,6 +69,8 @@ def test_review_convergence_requires_host_attested_transaction_final_ready():
     }
     assert validate_review_convergence({"review_rounds": [modern]})["status"] == "PASS"
     assert validate_review_convergence({"review_rounds": [modern]}, expected_candidate="other")["code"] == "REVIEW_FINAL_CANDIDATE"
+    early = {**modern, "review_transaction_integrity": False, "reviewer_start_order_valid": False}
+    assert validate_review_convergence({"review_rounds": [early]})["code"] == "REVIEW_START_ORDER_VIOLATION"
 
 
 def test_candidate_chain_and_cost_are_fail_closed():
@@ -107,6 +109,14 @@ def test_target_fact_identity_is_content_bound():
     assert observed(value, name="x")["status"] == "NOT_OBSERVED"
     value["identity"] = "f" * 64
     assert observed(value, name="x")["code"] == "X_IDENTITY_INVALID"
+
+
+def test_target_gate_requires_independent_verified_observation():
+    value = {"status": "PASS", "fact_source": {"kind": "host_preflight"}, "checks": {"ok": True}}
+    value["identity"] = __import__("hashlib").sha256(__import__("json").dumps({key: item for key, item in value.items() if key != "identity"}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    assert _MODULE._observed_status(value, name="x")["code"] == "X_OBSERVATION_NOT_OBSERVED"
+    value["observation"] = _MODULE.TrustedObservationStore().observe(value, source_bytes=b"host collector output")
+    assert _MODULE._observed_status(value, name="x")["status"] == "PASS"
 
 
 def test_candidate_chain_rejects_duplicate_or_reordered_host_stages():

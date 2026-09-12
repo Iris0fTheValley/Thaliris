@@ -48,17 +48,19 @@ supported Thaliris profile creates one bounded pending authorization scoped to
 the active task, semantic role, native `agent_type`, and shared session hash.
 The managed lifecycle is
 `authorized reservation -> matching SubagentStart -> Core projection emitted
-successfully -> matching session/turn/type SubagentStop -> persisted completion
-event observed by the native Codex surface -> Controller continuation`.
+successfully -> matching session/turn/type SubagentStop -> persisted completion`.
 Unknown or
 mismatched starts remain observations and receive no projection. A pending
 reservation and every started managed child are in flight, so managed dispatch
-remains serial until the child stops. After dispatch the Controller activation
-ends; Codex native collaboration or thread-continuation facilities are
-responsible for any later continuation. Thaliris does not provide a supervisor,
-deadline, scheduler, or polling loop. Stop proves lifecycle completion, not
-work correctness. A projection-ready child is not a claim that the native child
-confirmed receipt.
+remains serial until the child reaches a terminal execution state. `SubagentStop`
+remains the preferred completion proof. `NATIVE_CHILD_COMPLETION_REENTERS_ROOT`
+is a Host capability, not an unconditional product claim: only `PASS` selects
+EVENT_DRIVEN mode; `UNSUPPORTED` and `UNKNOWN` select configured,
+host-bounded BLOCKING_WAIT mode when available. A timeout permits one status
+observation, then another long wait only while the child is still running.
+Thaliris provides no supervisor, deadline, scheduler, or polling loop. Stop
+proves lifecycle completion, not work correctness. A projection-ready child is
+not a claim that the native child confirmed receipt.
 
 The current trusted shell candidate is exactly Codex stable `Bash`. Codex CLI
 0.153.4 does not document a terminal exit/status field in its Bash PostToolUse
@@ -99,8 +101,17 @@ started, so no `SubagentStart`/`SubagentStop` or marker observation was
 recorded. The result remains `NOT_OBSERVED`; generated profile presence and
 synthetic hook tests are not native projection proof.
 
-Continuation depends on the native Codex surface keeping a dispatched child
-alive and exposing a matching completion or failure event. If the selected
-surface cannot provide that continuation, managed completion readiness remains
-`UNKNOWN`; Thaliris does not emulate it with a process, deadline, or resume
-loop.
+Codex CLI `0.153.4` has a release-pinned 10 s / 30 s / 1 h V2 wait
+minimum/default/maximum and supports trusted project `.codex/config.toml`.
+The adapter conservatively sets only a missing project
+`default_wait_timeout_ms` to that Host maximum; a conflicting user value is
+left untouched and makes BLOCKING_WAIT unavailable. The same release sends
+child-completion communication with `trigger_turn=false`, so
+`NATIVE_CHILD_COMPLETION_REENTERS_ROOT = UNSUPPORTED` unless a fresh Host probe
+records stronger evidence. A native terminal status observed through the
+identity-bound `interrupt_agent` or `list_agents` PostToolUse result can release
+the serial execution slot as `NATIVE_TERMINAL_RECONCILED`; it never counts as a
+successful child result. `not_found` is `ORPHANED`, not completion. Repeated
+blocked spawn attempts with no lifecycle change stop at `ORCHESTRATION_STALLED`.
+The local version-bound evidence and the deliberately limited native probe are
+recorded in [`docs/codex-host-capability-20260912.md`](../../docs/codex-host-capability-20260912.md).

@@ -69,6 +69,157 @@ def completed_child(root: Path, identifier: str = "managed-child") -> None:
     assert handle_hook(root, "SubagentStop", payload(agent_id=identifier, agent_type="worker")) == ""
 
 
+def started_named_child(root: Path, name: str = "/root/worker", identifier: str = "managed-child") -> Path:
+    assert handle_hook(
+        root,
+        "PreToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker", "task_name": name.rsplit("/", 1)[-1]}),
+    ) == ""
+    # This is the native V2 PostToolUse fixture: hiding spawn metadata still
+    # returns the canonical task name, which later list/interrupt operations use.
+    assert handle_hook(
+        root,
+        "PostToolUse",
+        payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"}, tool_response={"task_name": name}),
+    ) == ""
+    assert handle_hook(root, "SubagentStart", payload(agent_id=identifier, agent_type="worker"))
+    return next((root / ".context" / "audit" / "lifecycle").glob("*.json"))
+
+
+def test_missing_subagent_stop_reconciles_native_completed_and_releases_serial_slot(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "missing stop", None, None)
+    lifecycle_path = started_named_child(root)
+    assert handle_hook(
+        root, "PostToolUse",
+        payload(tool_name="list_agents", tool_input={}, tool_response={"agents": [{"agent_name": "/root/worker", "agent_status": {"completed": "done"}}]}),
+    ) == ""
+    child = json.loads(lifecycle_path.read_text(encoding="utf-8"))["children"][0]
+    assert child["terminal_state"] == "NATIVE_TERMINAL_RECONCILED"
+    assert child["native_terminal_status"] == "completed"
+    # A terminal reconciliation frees execution capacity but cannot counterfeit
+    # the exact SubagentStop completion required for acceptance.
+    assert audit_module.qualifying_child_completed(root) is False
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+
+
+def test_interrupt_previous_status_releases_slot_without_success(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "interrupted child", None, None)
+    lifecycle_path = started_named_child(root)
+    assert handle_hook(
+        root, "PostToolUse",
+        payload(tool_name="interrupt_agent", tool_input={"target": "/root/worker"}, tool_response={"previous_status": "interrupted"}),
+    ) == ""
+    child = json.loads(lifecycle_path.read_text(encoding="utf-8"))["children"][0]
+    assert child["terminal_state"] == "NATIVE_TERMINAL_RECONCILED"
+    assert child["native_terminal_status"] == "interrupted"
+    assert audit_module.qualifying_child_completed(root) is False
+    assert handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+
+
+def test_not_found_is_orphaned_and_repeated_blocked_spawn_stalls(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "orphan", None, None)
+    lifecycle_path = started_named_child(root)
+    assert handle_hook(
+        root, "PostToolUse",
+        payload(tool_name="interrupt_agent", tool_input={"target": "/root/worker"}, tool_response={"previous_status": "not_found"}),
+    ) == ""
+    child = json.loads(lifecycle_path.read_text(encoding="utf-8"))["children"][0]
+    assert child["terminal_state"] == "ORPHANED" and child["stopped"] is None
+    first = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})))
+    second = json.loads(handle_hook(root, "PreToolUse", payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})))
+    assert "THALIRIS_SERIAL_CHILD_REQUIRED" in first["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "ORCHESTRATION_STALLED" in second["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_terminal_reconciliation_survives_resume_without_subagent_stop(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "quota resume", None, None)
+    lifecycle_path = started_named_child(root)
+    assert handle_hook(
+        root, "PostToolUse",
+        payload(session="resumed-session", turn="resume-turn", tool_name="list_agents", tool_input={}, tool_response={"agents": [{"agent_name": "/root/worker", "agent_status": {"completed": None}}]}),
+    ) == ""
+    child = json.loads(lifecycle_path.read_text(encoding="utf-8"))["children"][0]
+    assert child["terminal_state"] == "NATIVE_TERMINAL_RECONCILED"
+    assert handle_hook(root, "PreToolUse", payload(session="resumed-session", tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker"})) == ""
+
+
+def test_late_exact_subagent_stop_upgrades_reconciled_completed_to_success_path(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "late stop", None, None)
+    lifecycle_path = started_named_child(root)
+    assert handle_hook(
+        root, "PostToolUse",
+        payload(tool_name="list_agents", tool_input={}, tool_response={"agents": [{"agent_name": "/root/worker", "agent_status": {"completed": None}}]}),
+    ) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id="managed-child", agent_type="worker")) == ""
+    child = json.loads(lifecycle_path.read_text(encoding="utf-8"))["children"][0]
+    assert child["terminal_state"] == "STOP_ATTESTED"
+    assert audit_module.qualifying_child_completed(root) is True
+
+
+def test_blocking_wait_project_config_is_conservative_and_host_bounded(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    monkeypatch.setattr(codex_adapter, "host_wait_mode", lambda *_args, **_kwargs: {"status": "PASS", "version": "0.test", "min": 10, "default": 30, "max": 600, "project_config_supported": True, "native_completion_reenters_root": "UNSUPPORTED"})
+    result = init(root)
+    config = tomllib.loads((root / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    assert config["features"]["multi_agent_v2"]["default_wait_timeout_ms"] == 600
+    assert codex_adapter.blocking_wait_mode(root)["status"] == "PASS"
+    assert codex_adapter.native_child_completion_reenters_root() == "UNSUPPORTED"
+    assert codex_adapter.selected_continuation_mode(root) == "BLOCKING_WAIT"
+    assert ".codex/config.toml" in result["files"]
+
+
+def test_existing_project_wait_config_is_not_overwritten(tmp_path, monkeypatch):
+    root = repo(tmp_path); (root / ".codex").mkdir()
+    (root / ".codex" / "config.toml").write_text('[features.multi_agent_v2]\ndefault_wait_timeout_ms = 30\ncustom = true\n', encoding="utf-8")
+    monkeypatch.setattr(codex_adapter, "host_wait_mode", lambda *_args, **_kwargs: {"status": "PASS", "version": "0.test", "min": 10, "default": 30, "max": 600, "project_config_supported": True, "native_completion_reenters_root": "UNSUPPORTED"})
+    result = init(root)
+    assert (root / ".codex" / "config.toml").read_text(encoding="utf-8").endswith("custom = true\n")
+    assert ".codex/config.toml" in result["manual_migration_required"]
+    assert codex_adapter.blocking_wait_mode(root)["status"] == "FAIL"
+
+
+def test_existing_project_config_is_merged_without_losing_other_sections(tmp_path, monkeypatch):
+    root = repo(tmp_path); (root / ".codex").mkdir()
+    original = '[features.multi_agent_v2]\nwait_agent_enabled = true\n\n[custom]\nvalue = "preserve"\n'
+    (root / ".codex" / "config.toml").write_text(original, encoding="utf-8")
+    monkeypatch.setattr(codex_adapter, "host_wait_mode", lambda *_args, **_kwargs: {"status": "PASS", "version": "0.test", "min": 10, "default": 30, "max": 600, "project_config_supported": True, "native_completion_reenters_root": "UNSUPPORTED"})
+    init(root)
+    rendered = (root / ".codex" / "config.toml").read_text(encoding="utf-8")
+    assert 'wait_agent_enabled = true' in rendered and '[custom]\nvalue = "preserve"\n' in rendered
+    assert tomllib.loads(rendered)["features"]["multi_agent_v2"]["default_wait_timeout_ms"] == 600
+
+
+def test_host_without_version_pinned_project_config_fails_clearly(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    monkeypatch.setattr(codex_adapter, "host_wait_mode", lambda *_args, **_kwargs: {"status": "UNSUPPORTED", "version": "0.future", "reason": "unknown host"})
+    result = init(root)
+    assert ".codex/config.toml" in result["manual_migration_required"]
+    assert codex_adapter.blocking_wait_mode(root)["status"] == "FAIL"
+
+
+def test_codex_01534_wait_capability_is_version_pinned_when_that_host_is_installed():
+    capability = codex_adapter.host_wait_mode()
+    if capability["status"] == "UNSUPPORTED":
+        pytest.skip(capability["reason"])
+    assert capability == {
+        "status": "PASS", "version": "0.153.4", "min": 10_000,
+        "default": 30_000, "max": 3_600_000,
+        "project_config_supported": True,
+        "native_completion_reenters_root": "UNSUPPORTED",
+    }
+
+
+def test_wait_cost_metrics_count_timeouts_without_inferring_model_activations(tmp_path):
+    root = repo(tmp_path); init(root)
+    assert handle_hook(root, "PostToolUse", payload(tool_name="wait_agent", tool_input={}, tool_response={"message": "timeout", "timed_out": True})) == ""
+    runtime = next((root / ".context" / "audit").glob("*/runtime.json"))
+    metrics = json.loads(runtime.read_text(encoding="utf-8"))["orchestration_metrics"]
+    assert metrics["wait_agent_calls"] == 1 and metrics["wait_timeouts"] == 1
+    report = codex_adapter.doctor(root)["cost_regression"]
+    assert report["wait_calls"] == 1 and report["wait_timeouts"] == 1
+    assert report["ROOT_ACTIVATIONS_WITHOUT_NEW_INFORMATION"] == "UNAVAILABLE"
+
+
 def test_root_prompt_and_child_prompt_are_not_mixed(tmp_path):
     root = repo(tmp_path)
     raw = "  用户原文\n保持空白  "

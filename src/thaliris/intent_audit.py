@@ -21,10 +21,10 @@ from . import core
 
 HOOK_COMMAND_PREFIX = "context audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
-CODEX_ADAPTER_PROTOCOL_VERSION = 4
+CODEX_ADAPTER_PROTOCOL_VERSION = 5
 # Private adapter lifecycle state. This is deliberately separate from Core
 # state/schema and records only bounded native child provenance.
-LIFECYCLE_STATE_VERSION = 8
+LIFECYCLE_STATE_VERSION = 9
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed intent-audit hooks"
 AUDIT_INTERVAL = 5
 MAX_AUDIT_RESULTS = 32
@@ -515,6 +515,7 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) in _COLLABORATION_TOOL_NAMES:
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
+                _best_effort_record(_reconcile_lifecycle_post_tool, root, payload, _tool_basename(tool))
             if isinstance(tool, str) and _tool_basename(tool) in _OBSERVED_EXECUTION_TOOL_NAMES:
                 _best_effort_record(_record_execution_observation, root, payload)
                 if _tool_basename(tool) in _TRUSTED_CODEX_SHELL_TOOL_NAMES:
@@ -656,6 +657,15 @@ def _record_runtime_event(root: Path, payload: dict[str, Any], event: str, tool:
             state["pre_dispatch_isolation"] = (
                 "EXPLICIT" if tool_input.get("fork_turns") == "none" else "NONCOMPLIANT"
             )
+        if event == "PostToolUse":
+            metrics = state.setdefault("orchestration_metrics", {})
+            key = _tool_basename(tool)
+            if key in {"wait_agent", "list_agents", "spawn_agent"}:
+                counter = f"{key}_calls"
+                metrics[counter] = int(metrics.get(counter, 0)) + 1
+            response = _post_tool_response(payload)
+            if key == "wait_agent" and isinstance(response, dict) and response.get("timed_out") is True:
+                metrics["wait_timeouts"] = int(metrics.get("wait_timeouts", 0)) + 1
         _write_capture(path, state)
 
 
@@ -750,7 +760,7 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     if not path.is_file():
         return {"version": LIFECYCLE_STATE_VERSION, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, 5, 6, 7, LIFECYCLE_STATE_VERSION} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
+    if not isinstance(value, dict) or value.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, LIFECYCLE_STATE_VERSION} or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
         raise ValueError("invalid lifecycle runtime state")
     prior_version = value.get("version")
     if prior_version in {1, 2, 3, 4, 5}:
@@ -763,16 +773,31 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
             if isinstance(child, dict):
                 child["managed"] = False
                 child["projection_ready"] = False
-    if prior_version in {1, 2, 3, 4, 5, 6, 7}:
+    if prior_version in {1, 2, 3, 4, 5, 6, 7, 8}:
         # Older records may contain activation/deadline state from the removed
         # adapter supervisor. Preserve child observations but never reactivate
         # or infer that state during migration.
         value["version"] = LIFECYCLE_STATE_VERSION
         value.pop("activation", None)
+        # Version 9 makes execution state explicit.  A legacy ``stopped``
+        # remains direct Stop evidence; an older in-flight record remains
+        # running until a current native observation proves otherwise.
+        for child in value["children"]:
+            if isinstance(child, dict):
+                child.setdefault(
+                    "terminal_state",
+                    "STOP_ATTESTED" if isinstance(child.get("stopped"), int) else "RUNNING",
+                )
+                child.setdefault("native_terminal_status", None)
+                child.setdefault("task_name_hash", None)
+        value.setdefault("stall", None)
+        pending_value = value.get("pending_authorized_spawn")
+        if isinstance(pending_value, dict):
+            pending_value.setdefault("task_name_hash", None)
     pending = value.get("pending_authorized_spawn")
     if pending is not None and (
         not isinstance(pending, dict)
-        or set(pending) != {"role", "expected_agent_type", "session_id_hash", "authorized_sequence"}
+        or set(pending) != {"role", "expected_agent_type", "session_id_hash", "authorized_sequence", "task_name_hash"}
         or pending.get("role") not in set(_NATIVE_AGENT_ROLES.values())
         or pending.get("expected_agent_type") not in _NATIVE_AGENT_ROLES
         or not isinstance(pending.get("session_id_hash"), str)
@@ -839,6 +864,16 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
                 for child in state["children"]
             )
             if active or state["pending_authorized_spawn"] is not None:
+                fingerprint = _lifecycle_block_fingerprint(state)
+                stall = state.get("stall")
+                repeated = isinstance(stall, dict) and stall.get("fingerprint") == fingerprint
+                state["stall"] = {"fingerprint": fingerprint, "blocked_spawn_calls": int(stall.get("blocked_spawn_calls", 0)) + 1 if repeated else 1}
+                metrics = state.setdefault("metrics", {})
+                metrics["blocked_spawn_calls"] = int(metrics.get("blocked_spawn_calls", 0)) + 1
+                _runtime_metadata(state, payload)
+                _write_capture(path, state)
+                if repeated:
+                    return _permission_deny("ORCHESTRATION_STALLED: the managed child lifecycle has no new terminal information; stop recovery attempts until a native lifecycle event arrives.")
                 return _permission_deny("THALIRIS_SERIAL_CHILD_REQUIRED: wait for the managed child reservation to complete before spawning another child.")
             state["sequence"] = int(state.get("sequence", 0)) + 1
             state["pending_authorized_spawn"] = {
@@ -846,7 +881,9 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
                 "expected_agent_type": expected_agent_type,
                 "session_id_hash": session_id_hash,
                 "authorized_sequence": state["sequence"],
+                "task_name_hash": None,
             }
+            state["stall"] = None
             _runtime_metadata(state, payload)
             _write_capture(path, state)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
@@ -909,7 +946,11 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> str | None:
                 "projection_ready": False,
                 "started": state["sequence"],
                 "stopped": None,
+                "terminal_state": "RUNNING",
+                "native_terminal_status": None,
+                "task_name_hash": pending.get("task_name_hash") if authorized else None,
             })
+        state["stall"] = None
         _runtime_metadata(state, payload)
         _write_capture(path, state)
     # Keep only the old bounded identity-corroboration sample for diagnostics;
@@ -944,14 +985,148 @@ def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> bool:
                 and child.get("session_id_hash") == session_id_hash
                 and child.get("turn_id_hash") == turn_id_hash
                 and child.get("managed") is True
-                and child.get("stopped") is None
+                and child.get("terminal_state", "RUNNING") != "STOP_ATTESTED"
             ):
                 state["sequence"] = int(state.get("sequence", 0)) + 1
                 child["stopped"] = state["sequence"]
+                child["terminal_state"] = "STOP_ATTESTED"
+                child["native_terminal_status"] = "completed"
+                state["stall"] = None
                 _runtime_metadata(state, payload)
                 _write_capture(path, state)
                 return True
     return False
+
+
+def _lifecycle_block_fingerprint(state: dict[str, Any]) -> str:
+    """Hash only the decision-relevant in-flight state for loop detection."""
+    active = [
+        {
+            "agent_id_hash": child.get("agent_id_hash"),
+            "terminal_state": child.get("terminal_state", "RUNNING"),
+            "task_name_hash": child.get("task_name_hash"),
+        }
+        for child in state.get("children", [])
+        if isinstance(child, dict)
+        and child.get("managed") is True
+        and child.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"}
+    ]
+    pending = state.get("pending_authorized_spawn")
+    return hashlib.sha256(json.dumps({"active": active, "pending": pending}, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _native_terminal_status(value: object) -> str | None:
+    """Parse only Codex V2's documented AgentStatus JSON representation."""
+    if isinstance(value, str) and value in {"pending_init", "running", "not_found", "interrupted", "shutdown"}:
+        return value
+    if isinstance(value, dict) and set(value) == {"completed"}:
+        return "completed"
+    if isinstance(value, dict) and set(value) == {"errored"} and isinstance(value.get("errored"), str):
+        return "errored"
+    return None
+
+
+def _child_for_native_name(children: list[object], name: str) -> dict[str, Any] | None:
+    name_hash = _identity_hash(name)
+    matches = [
+        child for child in children
+        if isinstance(child, dict)
+        and child.get("managed") is True
+        and (child.get("task_name_hash") == name_hash or child.get("agent_id_hash") == name_hash)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _record_native_terminal(state: dict[str, Any], child: dict[str, Any], status: str) -> bool:
+    """Release only a proved terminal execution slot; never accept a result."""
+    if status == "not_found":
+        child["terminal_state"] = "ORPHANED"
+        child["native_terminal_status"] = status
+        return True
+    if status not in {"completed", "interrupted", "errored", "shutdown"}:
+        return False
+    if child.get("terminal_state") == "STOP_ATTESTED":
+        return False
+    state["sequence"] = int(state.get("sequence", 0)) + 1
+    child["stopped"] = state["sequence"]
+    child["terminal_state"] = "NATIVE_TERMINAL_RECONCILED"
+    child["native_terminal_status"] = status
+    state["stall"] = None
+    return True
+
+
+def _reconcile_lifecycle_post_tool(root: Path, payload: dict[str, Any], tool: str) -> None:
+    """Use naturally returned, identity-bound native statuses to repair liveness.
+
+    This intentionally does not query or schedule anything.  It consumes only
+    the current PostToolUse result, requires a canonical native name already
+    causally bound to the serial spawn, and keeps successful completion gated
+    on SubagentStop.
+    """
+    task_id = _active_task_id(root)
+    response = _post_tool_response(payload)
+    if task_id is None or not isinstance(response, dict):
+        return
+    with core._lock(root):
+        path = _lifecycle_path(root, task_id)
+        if not path.is_file():
+            return
+        state = _load_lifecycle(path, task_id)
+        changed = observed = False
+        if tool == "spawn_agent":
+            task_name = response.get("task_name")
+            if isinstance(task_name, str) and task_name:
+                name_hash = _identity_hash(task_name)
+                pending = state.get("pending_authorized_spawn")
+                if isinstance(pending, dict) and pending.get("task_name_hash") is None:
+                    pending["task_name_hash"] = name_hash
+                    changed = True
+                else:
+                    candidates = [
+                        child for child in state["children"]
+                        if isinstance(child, dict)
+                        and child.get("managed") is True
+                        and child.get("task_name_hash") is None
+                        and child.get("terminal_state", "RUNNING") == "RUNNING"
+                    ]
+                    if len(candidates) == 1:
+                        candidates[0]["task_name_hash"] = name_hash
+                        changed = True
+        elif tool == "interrupt_agent":
+            tool_input = _delegation_input(payload)
+            target = tool_input.get("target")
+            status = _native_terminal_status(response.get("previous_status"))
+            if isinstance(target, str) and status is not None:
+                child = _child_for_native_name(state["children"], target)
+                if child is not None:
+                    observed = True
+                    metrics = state.setdefault("metrics", {})
+                    metrics["reconciliation_attempts"] = int(metrics.get("reconciliation_attempts", 0)) + 1
+                    changed = _record_native_terminal(state, child, status)
+                    if changed and child.get("terminal_state") == "NATIVE_TERMINAL_RECONCILED":
+                        metrics["reconciliation_successes"] = int(metrics.get("reconciliation_successes", 0)) + 1
+        elif tool == "list_agents":
+            entries = response.get("agents")
+            if isinstance(entries, list):
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    name, status = entry.get("agent_name"), _native_terminal_status(entry.get("agent_status"))
+                    if not isinstance(name, str) or status is None:
+                        continue
+                    child = _child_for_native_name(state["children"], name)
+                    if child is None:
+                        continue
+                    observed = True
+                    metrics = state.setdefault("metrics", {})
+                    metrics["reconciliation_attempts"] = int(metrics.get("reconciliation_attempts", 0)) + 1
+                    did_reconcile = _record_native_terminal(state, child, status)
+                    changed = changed or did_reconcile
+                    if did_reconcile and child.get("terminal_state") == "NATIVE_TERMINAL_RECONCILED":
+                        metrics["reconciliation_successes"] = int(metrics.get("reconciliation_successes", 0)) + 1
+        if changed or observed:
+            _runtime_metadata(state, payload)
+            _write_capture(path, state)
 
 
 def _mark_projection_ready(root: Path, payload: dict[str, Any]) -> bool:
@@ -1061,7 +1236,7 @@ def qualifying_child_completed(root: Path) -> bool:
         and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
         and value.get("pending_authorized_spawn") is None
         and not _managed_child_active(root)
-        and any(isinstance(child, dict) and child.get("managed") is True and child.get("projection_ready") is True and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
+        and any(isinstance(child, dict) and child.get("managed") is True and child.get("projection_ready") is True and child.get("terminal_state") == "STOP_ATTESTED" and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
     )
 
 
@@ -1073,7 +1248,7 @@ def _managed_child_active(root: Path) -> bool:
         value = json.loads(_lifecycle_path(root, task_id).read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return False
-    return isinstance(value, dict) and value.get("version") == LIFECYCLE_STATE_VERSION and value.get("managed_hook_spec_hash") == managed_hook_spec_hash() and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION and any(isinstance(child, dict) and child.get("managed") is True and child.get("stopped") is None for child in value.get("children", []))
+    return isinstance(value, dict) and value.get("version") == LIFECYCLE_STATE_VERSION and value.get("managed_hook_spec_hash") == managed_hook_spec_hash() and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION and any(isinstance(child, dict) and child.get("managed") is True and child.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"} for child in value.get("children", []))
 
 
 def _post_tool_response(payload: dict[str, Any]) -> object:

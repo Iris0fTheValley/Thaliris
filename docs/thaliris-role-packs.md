@@ -22,7 +22,7 @@ Use `docs/thaliris-routing-protocol.md` as the authoritative product evidence
 and review-convergence contract. The benchmark protocol is an observation and
 判定 layer only. Register reusable artifacts before the dependent
 decision, select only the facts needed by the next role, and record downstream
-consumption provenance. Classify each review finding as MECHANICAL,
+consumption provenance. Return the complete currently observable blocker set in one response. Classify each review finding as MECHANICAL,
 LOCAL_SEMANTIC, or ARCHITECTURAL. The first two receive a fresh bounded
 Implementer Correction Packet and fresh targeted Reviewer; distinct new
 findings may continue, while an unchanged finding/candidate/evidence state may
@@ -49,10 +49,10 @@ a completion signal.
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
 source directly. Larger work adds only the roles needed by risk and unknowns.
-After dispatch, use native surviving-child/thread continuation when the current
-Codex surface provides it. Otherwise use one sufficiently long native blocking
-wait per real external dependency; after timeout, check status once and wait
-again if still running. A wait count alone is not failure, but short model-driven
+After dispatch, use EVENT_DRIVEN mode only when the probe-bound native
+continuation capability is `PASS`; otherwise use configured host-bounded
+BLOCKING_WAIT mode. After timeout, check status once and wait again if still
+running. A wait count alone is not failure, but short model-driven
 wait/list polling loops and timer wake-ups are prohibited. Thaliris does not
 implement scheduling, deadlines, or agent lifecycle.
 
@@ -88,10 +88,10 @@ a fresh Reasoning Specialist. If selected evidence is materially contradictory
 and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
 conflicting references and stop. Reviewers are fresh one-shot children on every
 round; preserve findings and evidence, not their conversation trajectory. Use
-native surviving-child/thread continuation when the current Codex surface
-provides it. Otherwise use one sufficiently long native blocking wait per real
-external dependency; after timeout, check status once and wait again if still
-running. A wait count alone is not failure, but short model-driven wait/list
+EVENT_DRIVEN mode only when the probe-bound native continuation capability is
+`PASS`; otherwise use configured host-bounded BLOCKING_WAIT mode. After
+timeout, check status once and wait again if still running. A wait count alone
+is not failure, but short model-driven wait/list
 polling loops and timer-driven wake-ups are prohibited. Close completed one-shot
 Sol/Reviewer children with native controls. Thaliris does not implement
 scheduling, deadlines, or agent lifecycle.

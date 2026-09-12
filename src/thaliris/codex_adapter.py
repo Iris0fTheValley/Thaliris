@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import hashlib
+from functools import lru_cache
 import os
 from pathlib import Path
+import re
 import subprocess
 import tomllib
 
@@ -35,6 +37,11 @@ _AGENT_PROFILES = {
     "thaliris-reviewer.toml": ("gpt-5.6-terra", "high", "reviewer"),
 }
 _NATIVE_PROFILE_NAMES = frozenset(name.removesuffix(".toml") for name in _AGENT_PROFILES)
+_KNOWN_HOST_WAIT_CAPABILITIES = {
+    # These are release-pinned observations, not a cross-version assumption.
+    "0.153.4": {"min": 10_000, "default": 30_000, "max": 3_600_000, "project_config_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
+}
+_WAIT_CONFIG_MARKER = "# thaliris:managed-blocking-wait"
 _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     "0720619c1d0b85b80a2981597fcd60086a1bddc7f03f48f88cc8f75c1128d872",
     "8026959290edeb86d66ee86f9b5db286e7fb31c28c95ec2c42ec8be7f2cda515",
@@ -109,7 +116,7 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
             + (
                 " Review the current implementation as a read-only independent checker. "
                 "Do not modify repository files, tests, or task semantic state; return only "
-                "bounded findings with evidence references. Any correction belongs to a fresh "
+                "bounded findings with evidence references. Return the complete currently observable blocker set in one response. Any correction belongs to a fresh "
                 "Implementer, followed by a fresh Reviewer. Each finding must be returned as a "
                 "bounded Review Packet with finding_id, classification (MECHANICAL, LOCAL_SEMANTIC, "
                 "or ARCHITECTURAL), affected_surface, violated_invariant, and verification_requirement. "
@@ -177,6 +184,98 @@ def semantic_role(runtime_role: str) -> str:
         raise ValueError(f"unknown Codex role: {runtime_role}") from exc
 
 
+@lru_cache(maxsize=8)
+def _host_wait_mode_cached(runner: str) -> dict[str, object]:
+    """Return a conservative, version-bound wait capability for this host."""
+    try:
+        completed = subprocess.run([runner, "--version"], capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return {"status": "UNSUPPORTED", "version": "UNKNOWN", "reason": "Codex executable is unavailable"}
+    match = re.search(r"(?:codex(?:-cli)?\s+)?(\d+\.\d+\.\d+)", (completed.stdout or "") + (completed.stderr or ""))
+    if completed.returncode != 0 or match is None:
+        return {"status": "UNSUPPORTED", "version": "UNKNOWN", "reason": "Codex version could not be determined"}
+    version = match.group(1)
+    capability = _KNOWN_HOST_WAIT_CAPABILITIES.get(version)
+    if capability is None:
+        return {"status": "UNSUPPORTED", "version": version, "reason": "no version-pinned wait capability is recorded for this Codex host"}
+    return {"status": "PASS", "version": version, **capability}
+
+
+def host_wait_mode(executable: str | None = None) -> dict[str, object]:
+    return dict(_host_wait_mode_cached(executable or os.environ.get("THALIRIS_CODEX_EXECUTABLE") or "codex"))
+
+
+def _merge_blocking_wait_config(current: str, timeout_ms: int) -> tuple[str | None, str | None]:
+    """Add only the missing project-scoped default without rewriting user TOML."""
+    try:
+        parsed = tomllib.loads(current) if current.strip() else {}
+    except tomllib.TOMLDecodeError:
+        return None, "project config is not valid TOML"
+    features = parsed.get("features")
+    multi = features.get("multi_agent_v2") if isinstance(features, dict) else None
+    if isinstance(multi, dict) and "default_wait_timeout_ms" in multi:
+        return (current, None) if multi["default_wait_timeout_ms"] == timeout_ms else (None, "project config already sets a different default_wait_timeout_ms")
+    header = re.compile(r"(?m)^\s*\[\s*features\.multi_agent_v2\s*\]\s*(?:#.*)?$")
+    found = header.search(current)
+    line = f"{_WAIT_CONFIG_MARKER}\ndefault_wait_timeout_ms = {timeout_ms}\n"
+    if found is not None:
+        next_header = re.search(r"(?m)^\s*\[[^\[]", current[found.end():])
+        insert_at = found.end() + (next_header.start() if next_header else len(current[found.end():]))
+        prefix = current[:insert_at]
+        suffix = current[insert_at:]
+        if prefix and not prefix.endswith("\n"):
+            prefix += "\n"
+        return prefix + line + suffix, None
+    if isinstance(features, dict) and not isinstance(multi, dict):
+        return None, "project config expresses features.multi_agent_v2 in a non-table form"
+    separator = "" if not current or current.endswith("\n") else "\n"
+    return current + separator + "[features.multi_agent_v2]\n" + line, None
+
+
+def _blocking_wait_config_plan(root: Path) -> tuple[dict[str, bytes], list[str], dict[str, object]]:
+    capability = host_wait_mode()
+    if capability.get("status") != "PASS" or capability.get("project_config_supported") is not True:
+        return {}, [".codex/config.toml"], capability
+    path = core._safe(root, ".codex/config.toml")
+    current = _read_text(path) if path.is_file() else ""
+    rendered, reason = _merge_blocking_wait_config(current, int(capability["max"]))
+    if rendered is None:
+        return {}, [".codex/config.toml"], {**capability, "reason": reason}
+    writes = {} if rendered == current else {".codex/config.toml": rendered.encode("utf-8")}
+    return writes, [], capability
+
+
+def blocking_wait_mode(root: Path, executable: str | None = None) -> dict[str, object]:
+    capability = host_wait_mode(executable)
+    if capability.get("status") != "PASS" or capability.get("project_config_supported") is not True:
+        return {"status": "FAIL", "reason": capability.get("reason", "project configuration is unsupported"), "host": capability}
+    path = core._safe(core._repo_root(root), ".codex/config.toml")
+    try:
+        parsed = tomllib.loads(_read_text(path))
+        configured = parsed["features"]["multi_agent_v2"]["default_wait_timeout_ms"]
+    except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError):
+        return {"status": "FAIL", "reason": "managed project blocking-wait default is absent", "host": capability}
+    if configured != capability["max"]:
+        return {"status": "FAIL", "reason": "project default is not the host-supported maximum", "host": capability}
+    return {"status": "PASS", "default_wait_timeout_ms": configured, "host": capability}
+
+
+def native_child_completion_reenters_root(executable: str | None = None) -> str:
+    """Return only PASS, UNSUPPORTED, or UNKNOWN for native re-entry."""
+    capability = host_wait_mode(executable)
+    result = capability.get("native_completion_reenters_root")
+    return result if result in {"PASS", "UNSUPPORTED", "UNKNOWN"} else "UNKNOWN"
+
+
+def selected_continuation_mode(root: Path, executable: str | None = None) -> str:
+    continuation = native_child_completion_reenters_root(executable)
+    if continuation == "PASS":
+        return "EVENT_DRIVEN"
+    if blocking_wait_mode(root, executable).get("status") == "PASS":
+        return "BLOCKING_WAIT"
+    return "UNAVAILABLE"
+
+
 def _read_text(path: Path) -> str:
     return path.read_bytes().decode("utf-8")
 
@@ -195,7 +294,7 @@ Codex remains the runtime. Thaliris stores bounded task control and pointers; it
 
 Controller uses `context task-status` or `context prepare --role controller` for the default low-noise context base. `context task-show` is an explicit out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller path. `context task-artifact` passes pointers, not contents.
 
-During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn creates one authorization reservation; the next matching native `SubagentStart` receives its Thaliris role projection, and only a successfully emitted projection followed by the matching `SubagentStop` qualifies for acceptance or task-close. Large selected information remains valid when needed for correctness. Pending reservations and started managed children are serial in flight; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside that envelope. After dispatch, persist the pending native continuation and let Codex's native collaboration or thread-continuation surface re-enter the Controller when available. Waiting is capability-adaptive: when the current Codex surface provides surviving-child continuation, end the activation and let native continuation re-enter; otherwise use one sufficiently long native blocking wait per real external dependency, check status once only after a timeout, and wait again if it is still running. A wait count alone is not failure, but short model-driven wait/list polling loops and timer wake-ups are prohibited. Codex owns execution; Thaliris does not recreate an agent runtime.
+During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn creates one authorization reservation; the next matching native `SubagentStart` receives its Thaliris role projection, and only a successfully emitted projection followed by the matching `SubagentStop` qualifies for acceptance or task-close. Large selected information remains valid when needed for correctness. Pending reservations and started managed children are serial in flight; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside this enforcement envelope. `NATIVE_CHILD_COMPLETION_REENTERS_ROOT` is a probe-bound Host capability: only `PASS` permits EVENT_DRIVEN mode. For `UNSUPPORTED` or `UNKNOWN`, use configured BLOCKING_WAIT mode: one host-bounded native wait per dependency, then after a timeout one status observation and another long wait only if the child is still running. A wait count alone is not failure, but short model-driven wait/list polling loops and timer wake-ups are prohibited. Codex owns execution; Thaliris does not recreate an agent runtime.
 
 Read detailed role packs only when needed. Raw findings, evidence, transcripts,
 logs, and tool output do not enter Controller packets or durable memory
@@ -239,15 +338,15 @@ attempt: if evidence is insufficient, it returns an EvidenceRequest and stops;
 the Controller sends that request to a fresh Investigator, persists a bounded
 evidence artifact, then uses a fresh Reasoning Specialist. Reviewers are fresh
 one-shot children for each review round; retain findings, not reviewer
-conversation history. Use native surviving-child/thread continuation when the
- current Codex surface provides it. Otherwise use one sufficiently long native
- blocking wait per real external dependency; on timeout perform one status check
- and, if still running, use another long native wait. A wait count alone is not
+conversation history. Use EVENT_DRIVEN mode only when the probe-bound native
+continuation capability is `PASS`; otherwise use configured host-bounded
+BLOCKING_WAIT mode. On timeout perform one status check and, if still running,
+use another long wait. A wait count alone is not
  failure. Never use short model-driven wait/list polling loops or timer-driven
  wake-ups. Close completed one-shot Sol and Reviewer children with native Codex
 controls. Thaliris does not implement scheduling, deadlines, or agent lifecycle.
 
-Review convergence is packet-driven. A Reviewer classifies each finding as
+Review convergence is packet-driven. A Reviewer returns the complete currently observable blocker set in one response and classifies each finding as
 MECHANICAL, LOCAL_SEMANTIC, or ARCHITECTURAL and names the exact affected
 surface, invariant, and verification requirement. MECHANICAL and LOCAL_SEMANTIC
 findings receive one fresh Implementer with a bounded Correction Packet and one
@@ -297,7 +396,7 @@ Use `docs/thaliris-routing-protocol.md` as the authoritative product evidence
 and review-convergence contract. The benchmark protocol is an observation and
 判定 layer only. Register reusable artifacts before the dependent
 decision, select only the facts needed by the next role, and record downstream
-consumption provenance. Classify each review finding as MECHANICAL,
+consumption provenance. Return the complete currently observable blocker set in one response. Classify each review finding as MECHANICAL,
 LOCAL_SEMANTIC, or ARCHITECTURAL. The first two receive a fresh bounded
 Implementer Correction Packet and fresh targeted Reviewer; distinct new
 findings may continue, while an unchanged finding/candidate/evidence state may
@@ -324,10 +423,10 @@ a completion signal.
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
 source directly. Larger work adds only the roles needed by risk and unknowns.
-After dispatch, use native surviving-child/thread continuation when the current
-Codex surface provides it. Otherwise use one sufficiently long native blocking
-wait per real external dependency; after timeout, check status once and wait
-again if still running. A wait count alone is not failure, but short model-driven
+After dispatch, use EVENT_DRIVEN mode only when the probe-bound native
+continuation capability is `PASS`; otherwise use configured host-bounded
+BLOCKING_WAIT mode. After timeout, check status once and wait again if still
+running. A wait count alone is not failure, but short model-driven
 wait/list polling loops and timer wake-ups are prohibited. Thaliris does not
 implement scheduling, deadlines, or agent lifecycle.
 
@@ -363,10 +462,10 @@ a fresh Reasoning Specialist. If selected evidence is materially contradictory
 and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
 conflicting references and stop. Reviewers are fresh one-shot children on every
 round; preserve findings and evidence, not their conversation trajectory. Use
-native surviving-child/thread continuation when the current Codex surface
-provides it. Otherwise use one sufficiently long native blocking wait per real
-external dependency; after timeout, check status once and wait again if still
-running. A wait count alone is not failure, but short model-driven wait/list
+EVENT_DRIVEN mode only when the probe-bound native continuation capability is
+`PASS`; otherwise use configured host-bounded BLOCKING_WAIT mode. After
+timeout, check status once and wait again if still running. A wait count alone
+is not failure, but short model-driven wait/list
 polling loops and timer-driven wake-ups are prohibited. Close completed one-shot
 Sol/Reviewer children with native controls. Thaliris does not implement
 scheduling, deadlines, or agent lifecycle.
@@ -605,11 +704,11 @@ def _install(root: Path) -> dict[str, object]:
     writes, manual = _install_plan(root)
     with core._lock(root):
         if not writes:
-            return {"ok": True, "changed": False, "backup": None, "files": [], "manual_migration_required": manual, "instruction_definition_changed": False, "hook_definition_changed": False, "agent_profile_changed": False, "session_restart_required": False, "hook_trust_required": False, **_activation_fields(root)}
+            return {"ok": True, "changed": False, "backup": None, "files": [], "manual_migration_required": manual, "instruction_definition_changed": False, "hook_definition_changed": False, "agent_profile_changed": False, "session_restart_required": False, "hook_trust_required": False, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
         hook_changed = ".codex/hooks.json" in writes
         instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in writes)
         profile_changed = any(path.startswith(".codex/agents/") for path in writes)
-        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, [], "codex-init"), "files": sorted(writes), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed, **_activation_fields(root)}
+        return {"ok": True, "changed": True, "backup": core._apply_with_backup(root, writes, [], "codex-init"), "files": sorted(writes), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed or ".codex/config.toml" in writes, "hook_trust_required": hook_changed, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
 
 
 def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
@@ -671,6 +770,9 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
     else:
         merged, _ = merge_hooks({"description": MANAGED_HOOKS_DESCRIPTION})
         writes[".codex/hooks.json"] = (json.dumps(merged, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    wait_writes, wait_manual, _capability = _blocking_wait_config_plan(root)
+    writes.update(wait_writes)
+    manual.extend(wait_manual)
     return writes, manual
 
 
@@ -696,7 +798,7 @@ def init(root: Path) -> dict[str, object]:
     hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed, **_activation_fields(root)}
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_migration_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed or ".codex/config.toml" in files, "hook_trust_required": hook_changed, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
 
 
 def migrate(root: Path) -> dict[str, object]:
@@ -712,7 +814,7 @@ def migrate(root: Path) -> dict[str, object]:
     hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed, **_activation_fields(root)}
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "migration": "v2", "migrated": migrated, "manual_migration_required": manual, "migration_backup": backup, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed or ".codex/config.toml" in files, "hook_trust_required": hook_changed, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
 
 
 def _uninstall(root: Path) -> dict[str, object]:
@@ -930,6 +1032,7 @@ def doctor(root: Path) -> dict[str, object]:
     observations: list[tuple[int, int, dict[str, object]]] = []
     events: set[str] = set()
     compatible_profile_observed = False
+    orchestration = {"wait_calls": 0, "wait_timeouts": 0, "list_agents_calls": 0, "blocked_spawn_calls": 0, "reconciliation_attempts": 0, "reconciliation_successes": 0, "reviewer_rounds": 0, "implementer_rounds": 0}
     expected = intent_audit.managed_hook_spec_hash()
     for path in (root / ".context" / "audit").glob("*/runtime.json"):
         try:
@@ -947,10 +1050,16 @@ def doctor(root: Path) -> dict[str, object]:
             )
         if isinstance(samples, list):
             observations.extend((int(runtime.get("observed_at_ns", 0)), int(runtime.get("observation_sequence", 0)), item) for item in samples if isinstance(item, dict))
+        metrics = runtime.get("orchestration_metrics") if current else None
+        if isinstance(metrics, dict):
+            orchestration["wait_calls"] += int(metrics.get("wait_agent_calls", 0))
+            orchestration["wait_timeouts"] += int(metrics.get("wait_timeouts", 0))
+            orchestration["list_agents_calls"] += int(metrics.get("list_agents_calls", 0))
     latest = max(observations, default=None, key=lambda item: (item[0], item[1]))
     latest_item = latest[2] if latest is not None else None
     health = intent_audit.hooks_health(root)
-    lifecycle_start = lifecycle_stop = False
+    lifecycle_start = lifecycle_stop = lifecycle_reconciled = False
+    reconciliation_attempts = reconciliation_successes = 0
     for path in (root / ".context" / "audit" / "lifecycle").glob("*.json"):
         try:
             lifecycle = json.loads(path.read_text(encoding="utf-8"))
@@ -962,6 +1071,16 @@ def doctor(root: Path) -> dict[str, object]:
             if isinstance(child, dict) and isinstance(child.get("started"), int):
                 lifecycle_start = True
                 lifecycle_stop = lifecycle_stop or isinstance(child.get("stopped"), int)
+                lifecycle_reconciled = lifecycle_reconciled or child.get("terminal_state") == "NATIVE_TERMINAL_RECONCILED"
+                if child.get("role") == "reviewer":
+                    orchestration["reviewer_rounds"] += 1
+                elif child.get("role") == "implementer":
+                    orchestration["implementer_rounds"] += 1
+        metrics = lifecycle.get("metrics")
+        if isinstance(metrics, dict):
+            reconciliation_attempts += int(metrics.get("reconciliation_attempts", 0))
+            reconciliation_successes += int(metrics.get("reconciliation_successes", 0))
+            orchestration["blocked_spawn_calls"] += int(metrics.get("blocked_spawn_calls", 0))
     result["verification_attestation"] = {
         "hook_definition_present": health["hooks_configured"],
         "hook_definition_current": health["hooks_configured"],
@@ -989,6 +1108,9 @@ def doctor(root: Path) -> dict[str, object]:
         # can show that Codex delivered additionalContext to the child.
         "role_projection_injection_observed": "UNKNOWN",
         "controller_activation_bridge": "CODEX_NATIVE",
+        "NATIVE_CHILD_COMPLETION_REENTERS_ROOT": native_child_completion_reenters_root(),
+        "BLOCKING_WAIT_MODE": blocking_wait_mode(root).get("status"),
+        "selected_continuation_mode": selected_continuation_mode(root),
         **_activation_fields(
             root,
             profile_native_active="UNKNOWN",
@@ -1013,6 +1135,26 @@ def doctor(root: Path) -> dict[str, object]:
         "trusted_runtime_isolation_observed": "UNKNOWN",
     })
     result["host_capability"] = host
+    result["lifecycle_reconciliation"] = {
+        "subagent_stop_path": "PASS" if lifecycle_stop else "UNKNOWN",
+        "native_terminal_reconciliation": "PASS" if lifecycle_reconciled else "UNKNOWN",
+        "reconciliation_attempts": reconciliation_attempts,
+        "reconciliation_successes": reconciliation_successes,
+    }
+    orchestration["reconciliation_attempts"] = reconciliation_attempts
+    orchestration["reconciliation_successes"] = reconciliation_successes
+    result["cost_regression"] = {
+        # This Hook surface has no model-turn/token/context counter.  Leaving
+        # these unavailable is safer than deriving model cost from wait calls.
+        "root_model_activations": "UNAVAILABLE",
+        "child_model_activations": "UNAVAILABLE",
+        "root_input_tokens": "UNAVAILABLE",
+        "child_input_tokens": "UNAVAILABLE",
+        "root_context_size_per_activation": "UNAVAILABLE",
+        "ROOT_ACTIVATIONS_WITHOUT_NEW_INFORMATION": "UNAVAILABLE",
+        "ROOT_MODEL_ACTIVATIONS_PER_CHILD": "UNAVAILABLE",
+        **orchestration,
+    }
     task = result.get("context", {}).get("task_state", {}) if isinstance(result.get("context"), dict) else {}
     target = task.get("verification_target") if isinstance(task, dict) else None
     if isinstance(target, str) and intent_audit._ACCEPTANCE_COMMAND.fullmatch(target):

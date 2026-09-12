@@ -990,7 +990,11 @@ def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> bool:
                 state["sequence"] = int(state.get("sequence", 0)) + 1
                 child["stopped"] = state["sequence"]
                 child["terminal_state"] = "STOP_ATTESTED"
-                child["native_terminal_status"] = "completed"
+                # SubagentStop attests this hook path only. It carries no
+                # AgentStatus result, so it must never manufacture completed
+                # or overwrite a trusted failed native terminal status.
+                if child.get("native_terminal_status") not in {"interrupted", "errored", "shutdown"}:
+                    child["native_terminal_status"] = child.get("native_terminal_status") if child.get("native_terminal_status") == "completed" else None
                 state["stall"] = None
                 _runtime_metadata(state, payload)
                 _write_capture(path, state)
@@ -1046,7 +1050,13 @@ def _record_native_terminal(state: dict[str, Any], child: dict[str, Any], status
     if status not in {"completed", "interrupted", "errored", "shutdown"}:
         return False
     if child.get("terminal_state") == "STOP_ATTESTED":
-        return False
+        # Preserve the independent stop attestation, but retain the native
+        # result when it naturally arrives afterwards. A failure is sticky.
+        prior = child.get("native_terminal_status")
+        if prior in {"interrupted", "errored", "shutdown"} or prior == status:
+            return False
+        child["native_terminal_status"] = status
+        return True
     state["sequence"] = int(state.get("sequence", 0)) + 1
     child["stopped"] = state["sequence"]
     child["terminal_state"] = "NATIVE_TERMINAL_RECONCILED"
@@ -1236,7 +1246,7 @@ def qualifying_child_completed(root: Path) -> bool:
         and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
         and value.get("pending_authorized_spawn") is None
         and not _managed_child_active(root)
-        and any(isinstance(child, dict) and child.get("managed") is True and child.get("projection_ready") is True and child.get("terminal_state") == "STOP_ATTESTED" and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
+        and any(isinstance(child, dict) and child.get("managed") is True and child.get("projection_ready") is True and child.get("terminal_state") == "STOP_ATTESTED" and child.get("native_terminal_status") not in {"interrupted", "errored", "shutdown"} and isinstance(child.get("started"), int) and isinstance(child.get("stopped"), int) for child in value.get("children", []))
     )
 
 

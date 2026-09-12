@@ -71,5 +71,6 @@ mechanism.
 Thaliris controls information ingress and persistence only. The host runtime
 owns child creation, waiting, continuation, closing, and scheduling. When a
 host has no surviving-child continuation surface, one sufficiently long native
-blocking wait per real dependency is valid; short model-driven polling loops
+blocking wait per real dependency is valid only after live activation of the
+project default is proved; configuration presence alone is insufficient. Short model-driven polling loops
 are not.

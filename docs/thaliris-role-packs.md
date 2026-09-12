@@ -44,14 +44,17 @@ investigation or source mutation; dispatch does not change those permissions.
 `SubagentStart`, successfully emitted Core projection, and matching
 `SubagentStop` for the active task. Pending reservations and started managed
 children remain serial in flight. PostToolUse records dispatch only; it is not
-a completion signal.
+a completion signal. `SubagentStop` is stop attestation, not native
+`completed`; an identity-bound native terminal status may release a serial slot
+but never substitutes for successful completion.
 
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
 source directly. Larger work adds only the roles needed by risk and unknowns.
 After dispatch, use EVENT_DRIVEN mode only when the probe-bound native
-continuation capability is `PASS`; otherwise use configured host-bounded
-BLOCKING_WAIT mode. After timeout, check status once and wait again if still
+continuation capability is `PASS`; otherwise use host-bounded BLOCKING_WAIT
+only when both configured and live-active capability are `PASS`. A config file
+alone is not activation. After timeout, check status once and wait again if still
 running. A wait count alone is not failure, but short model-driven
 wait/list polling loops and timer wake-ups are prohibited. Thaliris does not
 implement scheduling, deadlines, or agent lifecycle.
@@ -89,7 +92,8 @@ and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
 conflicting references and stop. Reviewers are fresh one-shot children on every
 round; preserve findings and evidence, not their conversation trajectory. Use
 EVENT_DRIVEN mode only when the probe-bound native continuation capability is
-`PASS`; otherwise use configured host-bounded BLOCKING_WAIT mode. After
+`PASS`; otherwise use host-bounded BLOCKING_WAIT only when both configured and
+live-active capability are `PASS`. After
 timeout, check status once and wait again if still running. A wait count alone
 is not failure, but short model-driven wait/list
 polling loops and timer-driven wake-ups are prohibited. Close completed one-shot

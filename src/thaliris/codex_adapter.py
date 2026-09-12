@@ -245,19 +245,49 @@ def _blocking_wait_config_plan(root: Path) -> tuple[dict[str, bytes], list[str],
     return writes, [], capability
 
 
-def blocking_wait_mode(root: Path, executable: str | None = None) -> dict[str, object]:
+def blocking_wait_configured(root: Path, executable: str | None = None) -> dict[str, object]:
+    """Validate only the project-file part of blocking-wait readiness.
+
+    A TOML file is not evidence that the running Codex process loaded it. In
+    particular, a desktop session may predate the write or the project may not
+    be trusted. Keep this deliberately separate from ``blocking_wait_active``.
+    """
     capability = host_wait_mode(executable)
     if capability.get("status") != "PASS" or capability.get("project_config_supported") is not True:
-        return {"status": "FAIL", "reason": capability.get("reason", "project configuration is unsupported"), "host": capability}
+        return {"status": "UNSUPPORTED", "reason": capability.get("reason", "project configuration is unsupported"), "host": capability}
     path = core._safe(core._repo_root(root), ".codex/config.toml")
     try:
         parsed = tomllib.loads(_read_text(path))
         configured = parsed["features"]["multi_agent_v2"]["default_wait_timeout_ms"]
     except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError):
         return {"status": "FAIL", "reason": "managed project blocking-wait default is absent", "host": capability}
+    if not isinstance(configured, int) or not capability["min"] <= configured <= capability["max"]:
+        return {"status": "FAIL", "reason": "project default is outside the host-supported wait range", "host": capability}
     if configured != capability["max"]:
-        return {"status": "FAIL", "reason": "project default is not the host-supported maximum", "host": capability}
+        return {"status": "FAIL", "reason": "project default is not the Thaliris host-bounded long wait", "host": capability}
     return {"status": "PASS", "default_wait_timeout_ms": configured, "host": capability}
+
+
+def blocking_wait_active(root: Path, executable: str | None = None) -> dict[str, object]:
+    """Return runtime evidence for the effective project default, never a guess.
+
+    Codex 0.153.4 exposes no effective-config value to a project hook. Until a
+    trusted fresh-process probe records such an observation, configuration is
+    merely configured, not active.
+    """
+    configured = blocking_wait_configured(root, executable)
+    if configured.get("status") != "PASS":
+        return {"status": configured.get("status"), "reason": configured.get("reason"), "configured": configured}
+    return {
+        "status": "UNKNOWN",
+        "reason": "no trusted fresh Codex session has exposed the effective project wait default",
+        "configured": configured,
+    }
+
+
+def blocking_wait_mode(root: Path, executable: str | None = None) -> dict[str, object]:
+    """Compatibility alias for callers that need the *active* readiness only."""
+    return blocking_wait_active(root, executable)
 
 
 def native_child_completion_reenters_root(executable: str | None = None) -> str:
@@ -271,7 +301,7 @@ def selected_continuation_mode(root: Path, executable: str | None = None) -> str
     continuation = native_child_completion_reenters_root(executable)
     if continuation == "PASS":
         return "EVENT_DRIVEN"
-    if blocking_wait_mode(root, executable).get("status") == "PASS":
+    if blocking_wait_active(root, executable).get("status") == "PASS":
         return "BLOCKING_WAIT"
     return "UNAVAILABLE"
 
@@ -294,7 +324,7 @@ Codex remains the runtime. Thaliris stores bounded task control and pointers; it
 
 Controller uses `context task-status` or `context prepare --role controller` for the default low-noise context base. `context task-show` is an explicit out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller path. `context task-artifact` passes pointers, not contents.
 
-During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn creates one authorization reservation; the next matching native `SubagentStart` receives its Thaliris role projection, and only a successfully emitted projection followed by the matching `SubagentStop` qualifies for acceptance or task-close. Large selected information remains valid when needed for correctness. Pending reservations and started managed children are serial in flight; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside this enforcement envelope. `NATIVE_CHILD_COMPLETION_REENTERS_ROOT` is a probe-bound Host capability: only `PASS` permits EVENT_DRIVEN mode. For `UNSUPPORTED` or `UNKNOWN`, use configured BLOCKING_WAIT mode: one host-bounded native wait per dependency, then after a timeout one status observation and another long wait only if the child is still running. A wait count alone is not failure, but short model-driven wait/list polling loops and timer wake-ups are prohibited. Codex owns execution; Thaliris does not recreate an agent runtime.
+During an active task the persistent root Controller is control-plane-only. Every new root child is a spawned execution child and must be fresh with `fork_turns=\"none\"`; non-none values are denied and must be retried explicitly. This cuts implicit parent-task-history propagation; it does not mean an empty context. An allowed root spawn creates one authorization reservation; the next matching native `SubagentStart` receives its Thaliris role projection, and only a successfully emitted projection followed by the matching `SubagentStop` qualifies for acceptance or task-close. Large selected information remains valid when needed for correctness. Pending reservations and started managed children are serial in flight; PostToolUse records dispatch only. Known local PreToolUse surfaces used by managed mode are mechanically guarded; hosted, specialized, and unverified runtime surfaces remain outside this enforcement envelope. `NATIVE_CHILD_COMPLETION_REENTERS_ROOT` is a probe-bound Host capability: only `PASS` permits EVENT_DRIVEN mode. BLOCKING_WAIT requires both `BLOCKING_WAIT_CONFIGURED=PASS` and live `BLOCKING_WAIT_ACTIVE=PASS`; a config file alone is not activation. Otherwise managed start is unavailable. A matching `SubagentStop` is stop attestation, not native `completed`; only an identity-bound native terminal fact supplies that status, and terminal reconciliation never accepts a successful result. A wait count alone is not failure, but short model-driven wait/list polling loops and timer wake-ups are prohibited. Codex owns execution; Thaliris does not recreate an agent runtime.
 
 Read detailed role packs only when needed. Raw findings, evidence, transcripts,
 logs, and tool output do not enter Controller packets or durable memory
@@ -339,8 +369,8 @@ the Controller sends that request to a fresh Investigator, persists a bounded
 evidence artifact, then uses a fresh Reasoning Specialist. Reviewers are fresh
 one-shot children for each review round; retain findings, not reviewer
 conversation history. Use EVENT_DRIVEN mode only when the probe-bound native
-continuation capability is `PASS`; otherwise use configured host-bounded
-BLOCKING_WAIT mode. On timeout perform one status check and, if still running,
+continuation capability is `PASS`; otherwise use host-bounded BLOCKING_WAIT
+only when both configured and live-active capability are `PASS`. On timeout perform one status check and, if still running,
 use another long wait. A wait count alone is not
  failure. Never use short model-driven wait/list polling loops or timer-driven
  wake-ups. Close completed one-shot Sol and Reviewer children with native Codex
@@ -418,14 +448,17 @@ investigation or source mutation; dispatch does not change those permissions.
 `SubagentStart`, successfully emitted Core projection, and matching
 `SubagentStop` for the active task. Pending reservations and started managed
 children remain serial in flight. PostToolUse records dispatch only; it is not
-a completion signal.
+a completion signal. `SubagentStop` is stop attestation, not native
+`completed`; an identity-bound native terminal status may release a serial slot
+but never substitutes for successful completion.
 
 For a local, obvious microtask, that one fresh Implementer is still required,
 followed by deterministic verification; the persistent Controller does not edit
 source directly. Larger work adds only the roles needed by risk and unknowns.
 After dispatch, use EVENT_DRIVEN mode only when the probe-bound native
-continuation capability is `PASS`; otherwise use configured host-bounded
-BLOCKING_WAIT mode. After timeout, check status once and wait again if still
+continuation capability is `PASS`; otherwise use host-bounded BLOCKING_WAIT
+only when both configured and live-active capability are `PASS`. A config file
+alone is not activation. After timeout, check status once and wait again if still
 running. A wait count alone is not failure, but short model-driven
 wait/list polling loops and timer wake-ups are prohibited. Thaliris does not
 implement scheduling, deadlines, or agent lifecycle.
@@ -463,7 +496,8 @@ and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
 conflicting references and stop. Reviewers are fresh one-shot children on every
 round; preserve findings and evidence, not their conversation trajectory. Use
 EVENT_DRIVEN mode only when the probe-bound native continuation capability is
-`PASS`; otherwise use configured host-bounded BLOCKING_WAIT mode. After
+`PASS`; otherwise use host-bounded BLOCKING_WAIT only when both configured and
+live-active capability are `PASS`. After
 timeout, check status once and wait again if still running. A wait count alone
 is not failure, but short model-driven wait/list
 polling loops and timer-driven wake-ups are prohibited. Close completed one-shot
@@ -951,6 +985,30 @@ def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], li
                     writes[".codex/hooks.json"] = (json.dumps(cleaned, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         except (OSError, ValueError, json.JSONDecodeError):
             manual.append(".codex/hooks.json")
+    config = core._safe(root, ".codex/config.toml")
+    if config.is_file():
+        current = _read_text(config)
+        capability = host_wait_mode()
+        expected = capability.get("max") if capability.get("status") == "PASS" else None
+        # Own only the exact marker and immediately following generated value.
+        # Anything else may be user TOML and is deliberately left untouched.
+        owned = re.compile(
+            rf"(?m)^[ \t]*{re.escape(_WAIT_CONFIG_MARKER)}[ \t]*\r?\n"
+            rf"^[ \t]*default_wait_timeout_ms[ \t]*=[ \t]*{re.escape(str(expected))}[ \t]*(?:#.*)?\r?\n?"
+        ) if isinstance(expected, int) else None
+        marker_present = _WAIT_CONFIG_MARKER in current
+        if owned is not None and owned.search(current):
+            rendered = owned.sub("", current, count=1)
+            # Remove an otherwise empty table we can prove was created solely
+            # for this marker. Do not delete comments or neighbouring tables.
+            empty_table = re.compile(r"(?m)^\[features\.multi_agent_v2\][ \t]*\r?\n(?=(?:\s*\r?\n)*(?:\Z|\[))")
+            rendered = empty_table.sub("", rendered, count=1)
+            if rendered.strip():
+                writes[".codex/config.toml"] = rendered.encode("utf-8")
+            else:
+                deletes.append(".codex/config.toml")
+        elif marker_present:
+            manual.append(".codex/config.toml")
     return writes, deletes, kept, manual
 
 
@@ -966,18 +1024,27 @@ def uninstall(root: Path) -> dict[str, object]:
 
 
 def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None, intent_capture_id: str | None = None) -> dict[str, object]:
+    root = core._repo_root(root)
+    configured = blocking_wait_configured(root)
+    active = blocking_wait_active(root)
+    mode = selected_continuation_mode(root)
+    readiness = {
+        "status": "PASS" if mode in {"EVENT_DRIVEN", "BLOCKING_WAIT"} else "MANAGED_CONTINUATION_UNAVAILABLE",
+        "NATIVE_CHILD_COMPLETION_REENTERS_ROOT": native_child_completion_reenters_root(),
+        "BLOCKING_WAIT_CONFIGURED": configured.get("status"),
+        "BLOCKING_WAIT_ACTIVE": active.get("status"),
+        "selected_continuation_mode": mode,
+    }
+    if mode == "UNAVAILABLE":
+        return {"ok": False, "status": "MANAGED_CONTINUATION_UNAVAILABLE", "managed_readiness": readiness}
     result = core.task_start(root, goal, milestone, input_file)
     try:
-        bind_unbound_intent(core._repo_root(root), str(result["task_id"]), intent_capture_id)
+        bind_unbound_intent(root, str(result["task_id"]), intent_capture_id)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         pass
     # A task is a Core object.  Starting one cannot prove that this already
     # running Codex session reloaded project hooks, AGENTS, or agent profiles.
-    result["managed_readiness"] = {
-        "status": "UNKNOWN",
-        "reason": "current Codex session hook/profile activation has not been observed",
-        **_activation_fields(core._repo_root(root)),
-    }
+    result["managed_readiness"] = {**readiness, **_activation_fields(root)}
     return result
 
 
@@ -1109,7 +1176,8 @@ def doctor(root: Path) -> dict[str, object]:
         "role_projection_injection_observed": "UNKNOWN",
         "controller_activation_bridge": "CODEX_NATIVE",
         "NATIVE_CHILD_COMPLETION_REENTERS_ROOT": native_child_completion_reenters_root(),
-        "BLOCKING_WAIT_MODE": blocking_wait_mode(root).get("status"),
+        "BLOCKING_WAIT_CONFIGURED": blocking_wait_configured(root).get("status"),
+        "BLOCKING_WAIT_ACTIVE": blocking_wait_active(root).get("status"),
         "selected_continuation_mode": selected_continuation_mode(root),
         **_activation_fields(
             root,
@@ -1135,9 +1203,14 @@ def doctor(root: Path) -> dict[str, object]:
         "trusted_runtime_isolation_observed": "UNKNOWN",
     })
     result["host_capability"] = host
+    posttool_schema = "PASS" if host_wait_mode().get("status") == "PASS" else "UNKNOWN"
     result["lifecycle_reconciliation"] = {
         "subagent_stop_path": "PASS" if lifecycle_stop else "UNKNOWN",
-        "native_terminal_reconciliation": "PASS" if lifecycle_reconciled else "UNKNOWN",
+        # 0.153.4 supplies these shapes in its version-pinned schemas, but a
+        # project hook must observe a real payload before this is a live PASS.
+        "native_terminal_reconciliation": "PASS" if lifecycle_reconciled else ("LIVE_NOT_OBSERVED" if posttool_schema == "PASS" else "UNKNOWN"),
+        "PostToolUse_source_schema_support": posttool_schema,
+        "PostToolUse_live_project_hook": "PASS" if events else "LIVE_NOT_OBSERVED",
         "reconciliation_attempts": reconciliation_attempts,
         "reconciliation_successes": reconciliation_successes,
     }

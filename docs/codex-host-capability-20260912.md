@@ -11,8 +11,9 @@ the same behaviour.
 - V2 wait defaults in that release: minimum `10000`, default `30000`, maximum
   `3600000` milliseconds
 - trusted project `.codex/config.toml`: implemented by the release config
-  loader; live activation remains `UNKNOWN` until the Host loads the project
-  layer for the session
+  loader; a correct file is `BLOCKING_WAIT_CONFIGURED=PASS`, while effective
+  project-layer activation remains `UNKNOWN` until a trusted fresh
+  Host session proves the loaded default
 
 The release's child-completion path sends its inter-agent completion message
 with `trigger_turn = false`. Therefore this release records
@@ -34,6 +35,14 @@ without a timer/retry loop. The release source establishes that the wait occurs
 inside tool execution; no intermediate Root model activation was observed by
 the probe, but no model-activation counter is exposed by this Host.
 
+On 2026-09-13, a second disposable Git probe used a separate `CODEX_HOME` with
+an explicit trusted-project entry, project `hooks = true`, and a distinct
+60-second project wait default. That fresh process could not sample because
+the isolated home had no transferable authentication (`401` before any tool
+call). A normal authenticated process with hooks enabled started, but did not
+call the requested `list_agents` tool and wrote no capture. Neither attempt is
+live evidence of effective project configuration or PostToolUse payload shape.
+
 ## Reconciliation surface
 
 The release's V2 public tool schemas define structured PostToolUse results:
@@ -44,6 +53,10 @@ The release's V2 public tool schemas define structured PostToolUse results:
   `interrupted`, and `shutdown`; `not_found` remains non-terminal.
 
 The adapter treats these shapes as version-pinned fixtures only. Live hook
-payload fidelity is still `UNKNOWN` until a project hook receives one; the
+payload fidelity is still `LIVE_NOT_OBSERVED` until a project hook receives one; the
 adapter therefore consumes them only when the current PostToolUse payload
 actually contains the exact identity-bound structured fields.
+
+`SubagentStop` has no AgentStatus result field. It attests only a matching stop
+hook; it cannot create or overwrite a native `completed` status. Native terminal
+reconciliation releases execution capacity but never accepts a child result.

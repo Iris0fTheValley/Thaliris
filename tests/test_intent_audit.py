@@ -22,6 +22,20 @@ from thaliris.intent_audit import handle_hook, hooks_health
 from thaliris.protocol import ROUTING_PROTOCOL_MARKER
 
 
+@pytest.fixture(autouse=True)
+def _unit_runtime_wait_activation(monkeypatch):
+    """Lifecycle unit tests model an already-probed fresh Codex session.
+
+    This is intentionally test-only; it must not be mistaken for Host evidence.
+    Individual readiness tests replace it with UNKNOWN or FAIL as required.
+    """
+    monkeypatch.setattr(
+        codex_adapter,
+        "blocking_wait_active",
+        lambda *_args, **_kwargs: {"status": "PASS", "default_wait_timeout_ms": 3_600_000},
+    )
+
+
 def repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     return tmp_path
@@ -156,15 +170,58 @@ def test_late_exact_subagent_stop_upgrades_reconciled_completed_to_success_path(
     assert audit_module.qualifying_child_completed(root) is True
 
 
-def test_blocking_wait_project_config_is_conservative_and_host_bounded(tmp_path, monkeypatch):
+def test_subagent_stop_attests_stop_without_inventing_native_completed(tmp_path):
+    root = repo(tmp_path); init(root); task_start(root, "stop only", None, None)
+    lifecycle_path = started_named_child(root)
+    assert handle_hook(root, "SubagentStop", payload(agent_id="managed-child", agent_type="worker")) == ""
+    child = json.loads(lifecycle_path.read_text(encoding="utf-8"))["children"][0]
+    assert child["terminal_state"] == "STOP_ATTESTED"
+    assert child["native_terminal_status"] is None
+
+
+@pytest.mark.parametrize("native_status", ["interrupted", {"errored": "boom"}, "shutdown"])
+def test_failed_native_terminal_is_not_washed_to_completed_by_later_stop(tmp_path, native_status):
+    root = repo(tmp_path); init(root); task_start(root, "failed then stop", None, None)
+    lifecycle_path = started_named_child(root)
+    assert handle_hook(
+        root, "PostToolUse",
+        payload(tool_name="list_agents", tool_input={}, tool_response={"agents": [{"agent_name": "/root/worker", "agent_status": native_status}]}),
+    ) == ""
+    assert handle_hook(root, "SubagentStop", payload(agent_id="managed-child", agent_type="worker")) == ""
+    child = json.loads(lifecycle_path.read_text(encoding="utf-8"))["children"][0]
+    expected = "errored" if isinstance(native_status, dict) else native_status
+    assert child["terminal_state"] == "STOP_ATTESTED"
+    assert child["native_terminal_status"] == expected
+    assert audit_module.qualifying_child_completed(root) is False
+
+
+def test_managed_start_preflight_does_not_create_active_task_without_live_mode(tmp_path, monkeypatch):
+    root = repo(tmp_path); init(root)
+    monkeypatch.setattr(codex_adapter, "blocking_wait_active", lambda *_args, **_kwargs: {"status": "UNKNOWN"})
+    result = task_start(root, "must not activate", None, None)
+    assert result["ok"] is False and result["status"] == "MANAGED_CONTINUATION_UNAVAILABLE"
+    state = root / ".context" / "state.json"
+    assert not state.exists() or json.loads(state.read_text(encoding="utf-8")).get("status") != "ACTIVE"
+
+
+def test_managed_start_preflight_allows_probed_blocking_wait(tmp_path):
+    root = repo(tmp_path); init(root)
+    result = task_start(root, "probed mode", None, None)
+    assert result["ok"] is True
+    assert result["managed_readiness"]["selected_continuation_mode"] == "BLOCKING_WAIT"
+
+
+def test_blocking_wait_configured_is_not_runtime_active_without_live_observation(tmp_path, monkeypatch):
     root = repo(tmp_path)
     monkeypatch.setattr(codex_adapter, "host_wait_mode", lambda *_args, **_kwargs: {"status": "PASS", "version": "0.test", "min": 10, "default": 30, "max": 600, "project_config_supported": True, "native_completion_reenters_root": "UNSUPPORTED"})
     result = init(root)
     config = tomllib.loads((root / ".codex" / "config.toml").read_text(encoding="utf-8"))
     assert config["features"]["multi_agent_v2"]["default_wait_timeout_ms"] == 600
-    assert codex_adapter.blocking_wait_mode(root)["status"] == "PASS"
+    monkeypatch.setattr(codex_adapter, "blocking_wait_active", lambda *_args, **_kwargs: {"status": "UNKNOWN"})
+    assert codex_adapter.blocking_wait_configured(root)["status"] == "PASS"
+    assert codex_adapter.blocking_wait_mode(root)["status"] == "UNKNOWN"
     assert codex_adapter.native_child_completion_reenters_root() == "UNSUPPORTED"
-    assert codex_adapter.selected_continuation_mode(root) == "BLOCKING_WAIT"
+    assert codex_adapter.selected_continuation_mode(root) == "UNAVAILABLE"
     assert ".codex/config.toml" in result["files"]
 
 
@@ -175,7 +232,7 @@ def test_existing_project_wait_config_is_not_overwritten(tmp_path, monkeypatch):
     result = init(root)
     assert (root / ".codex" / "config.toml").read_text(encoding="utf-8").endswith("custom = true\n")
     assert ".codex/config.toml" in result["manual_migration_required"]
-    assert codex_adapter.blocking_wait_mode(root)["status"] == "FAIL"
+    assert codex_adapter.blocking_wait_configured(root)["status"] == "FAIL"
 
 
 def test_existing_project_config_is_merged_without_losing_other_sections(tmp_path, monkeypatch):
@@ -194,7 +251,7 @@ def test_host_without_version_pinned_project_config_fails_clearly(tmp_path, monk
     monkeypatch.setattr(codex_adapter, "host_wait_mode", lambda *_args, **_kwargs: {"status": "UNSUPPORTED", "version": "0.future", "reason": "unknown host"})
     result = init(root)
     assert ".codex/config.toml" in result["manual_migration_required"]
-    assert codex_adapter.blocking_wait_mode(root)["status"] == "FAIL"
+    assert codex_adapter.blocking_wait_configured(root)["status"] == "UNSUPPORTED"
 
 
 def test_codex_01534_wait_capability_is_version_pinned_when_that_host_is_installed():
@@ -272,9 +329,11 @@ def test_cli_hook_decodes_utf8_bytes_verbatim_and_ignores_child(tmp_path):
         capture_output=True,
         check=False,
     )
-    assert started.returncode == 0
-    task_hash = hashlib.sha256(json.loads(started.stdout)["task_id"].encode("utf-8")).hexdigest()
-    assert (root / ".context" / "audit" / f"task-{task_hash[:24]}" / "intent.json").is_file()
+    # This subprocess has no fresh-process live wait activation evidence, so
+    # task-start must leave Core inactive and must not bind the intent.
+    assert started.returncode == 3
+    assert json.loads(started.stdout)["status"] == "MANAGED_CONTINUATION_UNAVAILABLE"
+    assert not list((root / ".context" / "audit").glob("task-*/intent.json"))
 
     invalid = subprocess.run(command, input=b"\xff", cwd=root, capture_output=True, check=False)
     assert invalid.returncode == 0 and invalid.stdout == b"" and invalid.stderr == b""
@@ -781,6 +840,29 @@ def test_hooks_merge_idempotent_uninstall_preserves_users_and_malformed_is_fail_
     result = init(malformed)
     assert result["ok"] and result["manual_migration_required"] == [".codex/hooks.json"]
     assert bad.read_text(encoding="utf-8") == "{bad"
+
+
+def test_uninstall_removes_only_thaliris_generated_wait_default(tmp_path, monkeypatch):
+    capability = {"status": "PASS", "version": "0.test", "min": 10, "default": 30, "max": 600, "project_config_supported": True, "native_completion_reenters_root": "UNSUPPORTED"}
+    monkeypatch.setattr(codex_adapter, "host_wait_mode", lambda *_args, **_kwargs: capability)
+    generated = repo(tmp_path / "generated")
+    assert init(generated)["ok"]
+    assert uninstall(generated)["ok"]
+    assert not (generated / ".codex" / "config.toml").exists()
+
+    merged = repo(tmp_path / "merged")
+    (merged / ".codex").mkdir()
+    (merged / ".codex" / "config.toml").write_text("[custom]\nvalue = 'keep'\n", encoding="utf-8")
+    assert init(merged)["ok"] and uninstall(merged)["ok"]
+    assert (merged / ".codex" / "config.toml").read_text(encoding="utf-8") == "[custom]\nvalue = 'keep'\n"
+
+    modified = repo(tmp_path / "modified")
+    assert init(modified)["ok"]
+    config = modified / ".codex" / "config.toml"
+    config.write_text(config.read_text(encoding="utf-8").replace("default_wait_timeout_ms = 600", "default_wait_timeout_ms = 599"), encoding="utf-8")
+    result = uninstall(modified)
+    assert ".codex/config.toml" in result["manual_migration_required"]
+    assert "default_wait_timeout_ms = 599" in config.read_text(encoding="utf-8")
 
 
 def test_effective_agents_override_and_role_pack_migration_are_not_silent(tmp_path):

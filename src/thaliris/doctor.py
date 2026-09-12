@@ -12,7 +12,7 @@ import tomllib
 from .models import ContextConfig
 from .core import entries, milestone_check, _load_state
 from .codex_adapter import _effective_root_instruction_path, _managed_span
-from .intent_audit import CODEX_ADAPTER_PROTOCOL_VERSION, child_identity_corroboration, hooks_health, is_managed_handler, managed_hook_spec_hash
+from .lifecycle import CODEX_ADAPTER_PROTOCOL_VERSION, child_identity_corroboration, hooks_health, is_managed_handler, managed_hook_spec_hash
 
 UNKNOWN = "UNKNOWN"
 
@@ -286,6 +286,6 @@ def report(root: Path) -> dict[str, object]:
         "task_state_valid": task_state_valid,
         "role_routing_ready": routing_ready,
     }
-    audit = hooks_health(root)
+    lifecycle = hooks_health(root)
     isolation = _context_isolation(root)
-    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "intent_audit": audit, "context_isolation": isolation, "controller_boundary": {"observed": _controller_boundary_evidence(root)}, "host_capability": _host_capability(root, hooks=audit, lifecycle={"start": False, "stop": False}, events=set()), "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}
+    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "lifecycle_hooks": lifecycle, "context_isolation": isolation, "controller_boundary": {"observed": _controller_boundary_evidence(root)}, "host_capability": _host_capability(root, hooks=lifecycle, lifecycle={"start": False, "stop": False}, events=set()), "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}

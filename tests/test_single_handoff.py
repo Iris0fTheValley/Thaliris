@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 
 from thaliris import codex_adapter, core
-from thaliris.intent_audit import handle_hook
+from thaliris.lifecycle import handle_hook
 
 
 def repo(tmp_path: Path) -> Path:
@@ -111,7 +111,7 @@ def test_production_hooks_record_hashes_without_model_audit_or_correction(tmp_pa
     assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() in runtime["root_prompt_hashes"]
     assert runtime["delegation_telemetry"][0]["payload_hash"] == hashlib.sha256(handoff.encode("utf-8")).hexdigest()
 
-    source = Path(__import__("thaliris.intent_audit", fromlist=["x"]).__file__).read_text(encoding="utf-8")
+    source = Path(__import__("thaliris.lifecycle", fromlist=["x"]).__file__).read_text(encoding="utf-8")
     for removed in ("_invoke_fresh_auditor", "task_close_audit", "AUDITOR_INSTRUCTION"):
         assert removed not in source
 
@@ -141,3 +141,87 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
             assert removed not in profile
     assert "sole task-specific semantic router" in codex_adapter.MANAGED
     assert "never calls Core" in codex_adapter.MANAGED
+
+
+def test_authorized_spawn_requires_fresh_explicit_serial_handoff(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "spawn contract", None, None)
+
+    for tool_input in (
+        {"fork_turns": "all", "agent_type": "worker", "message": "task"},
+        {"fork_turns": "none", "agent_type": "worker", "message": ""},
+        {"fork_turns": "none", "agent_type": "unknown-role", "message": "task"},
+    ):
+        denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(tool_name="spawn_agent", tool_input=tool_input)))
+        assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    valid = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "first task",
+    })
+    assert handle_hook(root, "PreToolUse", valid) == ""
+    duplicate = json.loads(handle_hook(root, "PreToolUse", hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "second task",
+    })))
+    assert duplicate["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_lifecycle_binds_matching_identity_and_stop(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "lifecycle", None, None)
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "thaliris-reviewer", "message": "review this",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+
+    # Wrong native role cannot consume the reservation.
+    assert handle_hook(root, "SubagentStart", hook_payload(agent_id="wrong", agent_type="worker")) == ""
+    state = lifecycle(root)
+    assert state["children"][0]["managed"] is False
+    assert state["pending_authorized_spawn"] is not None
+
+    assert handle_hook(root, "SubagentStart", hook_payload(agent_id="reviewer-1", agent_type="thaliris-reviewer")) == ""
+    running = lifecycle(root)["children"][-1]
+    assert running["managed"] is True and running["terminal_state"] == "RUNNING"
+    assert handle_hook(root, "SubagentStop", hook_payload(agent_id="other", agent_type="thaliris-reviewer")) == ""
+    assert lifecycle(root)["children"][-1]["terminal_state"] == "RUNNING"
+    assert handle_hook(root, "SubagentStop", hook_payload(agent_id="reviewer-1", agent_type="thaliris-reviewer")) == ""
+    stopped = lifecycle(root)["children"][-1]
+    assert stopped["terminal_state"] == "STOP_ATTESTED"
+    assert isinstance(stopped["started"], int) and isinstance(stopped["stopped"], int)
+
+
+def test_missing_stop_native_terminal_reconciliation_is_not_success(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "reconcile", None, None)
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "implement",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    assert handle_hook(root, "SubagentStart", hook_payload(agent_id="worker-1", agent_type="worker")) == ""
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents",
+        tool_response={"agents": [{"agent_name": "worker-1", "agent_status": {"completed": "result"}}]},
+    )) == ""
+    child = lifecycle(root)["children"][-1]
+    assert child["terminal_state"] == "NATIVE_TERMINAL_RECONCILED"
+    assert child["native_terminal_status"] == "completed"
+
+    shown = core.task_show(root)["state"]
+    try:
+        codex_adapter.task_close(root, shown["revision"])
+    except ValueError as exc:
+        assert "matching native SubagentStart/Stop" in str(exc)
+    else:
+        raise AssertionError("native reconciliation incorrectly counted as successful result")
+
+
+def test_selected_handoff_sentinel_exists_once_across_native_and_adapter_payload(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "once", None, None)
+    handoff = "SELECTED_FACT HANDOFF_SENTINEL"
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": handoff,
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    adapter_payload = handle_hook(root, "SubagentStart", hook_payload(agent_id="child", agent_type="worker"))
+    assert (handoff + adapter_payload).count("HANDOFF_SENTINEL") == 1

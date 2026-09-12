@@ -154,7 +154,7 @@ def _template_files(*, include_routing: bool = True, include_kind: bool = True, 
     return {
         ".agent-memory/INDEX.md": template("Memory index", "- [Operator](operator.md)\n- [Prompt policy](prompt-policy.md)\n- [Project conventions](project-conventions.md)\n- [Decisions](decisions/INDEX.md)\n- [Lessons](lessons/INDEX.md)", audience=["all"], kind="MEMORY"),
         ".agent-memory/operator.md": template("Operator notes", "Unknown. Record only confirmed operating constraints.", kind="HARD_CONSTRAINT"),
-        ".agent-memory/prompt-policy.md": template("Prompt policy", "Use explicit recall only. Retained memory is never automatically merged into role projections. Automatic compression is disabled.", audience=["controller"], kind="HARD_CONSTRAINT"),
+        ".agent-memory/prompt-policy.md": template("Prompt policy", "Use explicit recall only. Retained memory is never automatically added to a Child handoff. Automatic compression is disabled.", audience=["controller"], kind="HARD_CONSTRAINT"),
         ".agent-memory/project-conventions.md": template("Project conventions", "Unknown. Add conventions only with evidence.", kind="HARD_CONSTRAINT"),
         ".agent-memory/decisions/INDEX.md": template("Decision index", "- [PD-001 decision template](PD-001.md)" if decision_link else "Link each project decision entry here.", kind="MEMORY"),
         ".agent-memory/decisions/PD-001.md": template("PD-001: decision template", "This is an unadopted template, not a project fact.\n\n## Decision\n\nUnknown.\n\n## Rationale\n\nUnknown.", kind="MEMORY"),
@@ -996,7 +996,7 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
     return _controller_ack(state, ["artifact_refs"])
 
 
-def task_verification_requirements(root: Path) -> dict[str, object]:
+def task_candidate_observation(root: Path) -> dict[str, object]:
     """Return candidate identity facts without deciding what testing is sufficient."""
     root = _repo_root(root)
     state = _load_state(root, active=True)
@@ -1033,14 +1033,14 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
         for path in paths:
             _valid_relative(root, path)
         observed_files = [_surface_identity(root, path, "OBSERVED") for path in sorted(set(paths))]
-        requirements = task_verification_requirements(root)
+        candidate = task_candidate_observation(root)
         material = {
             "id": result_id,
             "kind": kind,
             "outcome": outcome,
             "summary": summary,
             "observed_by": observed_by,
-            "candidate_identity": requirements["candidate_identity"],
+            "candidate_identity": candidate["candidate_identity"],
             "observed_files": observed_files,
         }
         observation = {

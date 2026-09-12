@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import hashlib
 from pathlib import Path
 import subprocess
 
@@ -124,3 +125,82 @@ def test_production_package_has_no_benchmark_authority_module() -> None:
     )
     for benchmark_only in ("D11", "formal authority registry", "receipt issuer"):
         assert benchmark_only not in production
+
+
+def test_revision_cas_rejects_stale_writer_without_mutating_state(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "cas", None, None)
+    update = write_json(root.parent / "update.json", {
+        "records": [{"id": "r1", "kind": "note", "text": "first"}],
+    })
+    first = core.task_update(root, "controller", started["revision"], update)
+    before = (root / ".context" / "state.json").read_bytes()
+
+    try:
+        core.task_update(root, "controller", started["revision"], update)
+    except ValueError as exc:
+        assert "revision conflict" in str(exc)
+    else:
+        raise AssertionError("stale CAS writer was accepted")
+
+    assert (root / ".context" / "state.json").read_bytes() == before
+    assert core.task_show(root)["state"]["revision"] == first["revision"]
+
+
+def test_atomic_backup_and_rollback_restore_exact_bytes(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    target = root / "tracked.txt"
+    target.write_bytes(b"before\n")
+    with core._lock(root):
+        backup = core._apply_with_backup(root, {"tracked.txt": b"after\n"}, [], "test")
+    assert target.read_bytes() == b"after\n"
+
+    rolled_back = core.rollback(root, backup)
+    assert rolled_back["ok"] is True
+    assert target.read_bytes() == b"before\n"
+
+
+def test_artifact_identity_provenance_supersession_and_history(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "artifacts", None, write_json(root.parent / "sources.json", {
+        "evidence_refs": [{
+            "id": "source-1", "kind": "repo", "locator": "src/example.py", "summary": "source",
+        }],
+    }))
+    first_path = root / "first.md"
+    first_path.write_text("first body", encoding="utf-8")
+    first = core.task_artifact(
+        root, started["revision"], "a1", "first.md", "first",
+        producer_role="investigator", evidence_refs=["source-1"],
+    )
+    second_path = root / "second.md"
+    second_path.write_text("second body", encoding="utf-8")
+    second = core.task_artifact(
+        root, first["revision"], "a2", "second.md", "replacement",
+        producer_role="curator", supersedes=["a1"],
+    )
+
+    artifacts = core.task_show(root)["state"]["artifact_refs"]
+    assert [item["id"] for item in artifacts] == ["a1", "a2"]
+    assert artifacts[0]["content_sha256"] == hashlib.sha256(b"first body").hexdigest()
+    assert artifacts[0]["producer"] == "investigator"
+    assert artifacts[0]["source_refs"] == ["source-1"]
+    assert artifacts[1]["supersedes"] == ["a1"]
+    assert second["revision"] == first["revision"] + 1
+
+
+def test_objective_freshness_reports_missing_without_semantic_mutation(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "missing", None, write_json(root.parent / "state.json", {
+        "records": [{"id": "d1", "kind": "decision", "text": "model keeps this", "status": "accepted"}],
+    }))
+    path = root / "disappears.md"
+    path.write_text("present", encoding="utf-8")
+    core.task_artifact(root, started["revision"], "gone", "disappears.md", "gone")
+    path.unlink()
+
+    status = core.task_status(root)
+    assert status["Artifact Refs"][0]["freshness"] == "MISSING"
+    assert status["Records"][0]["text"] == "model keeps this"
+    assert status["Records"][0]["status"] == "accepted"
+    assert status["Records"][0]["source_refs"] == []

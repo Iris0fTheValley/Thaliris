@@ -10,9 +10,9 @@ import re
 import subprocess
 import tomllib
 
-from . import core, intent_audit
+from . import core, lifecycle
 from .protocol import ROUTING_PROTOCOL_VERSION
-from .intent_audit import MANAGED_HOOKS_DESCRIPTION, handle_hook, merge_hooks, remove_hooks
+from .lifecycle import MANAGED_HOOKS_DESCRIPTION, handle_hook, merge_hooks, remove_hooks
 
 CODEX_ROLE_MAP = {
     "luna": "investigator", "luna-investigator": "investigator",
@@ -67,8 +67,7 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = frozenset({
     # Exact profile bytes emitted by adapter 0896fe3 before native reviewer
     # sandbox_mode was added.
     "d0f488e226888c6a8f6e39ab1deeb1125d3c0e9474dba47af47ec3eab2da45c2",
-    # Exact Reviewer/Implementer profile bytes emitted before the benchmark
-    # review-convergence and bounded Correction Packet guidance was added.
+    # Historical generated profile bytes retained for conservative migration.
     "ae51394874f0b35dc2b39577d471bf2f07533962363cdb7ad56e6e08a3860887",
     "a1c7a46981512c7e8067dd5e40e193a0b54e34384aefc2b28950d5c6ccb5af9a",
     # Exact profile bytes emitted before direct-write guidance was removed
@@ -821,7 +820,7 @@ def uninstall(root: Path) -> dict[str, object]:
     return {"ok": True, "changed": bool(writes or deletes), "backup": backup, "kept": sorted(set(generic_kept) | set(adapter[2])), "manual_migration_required": sorted(set(generic_manual) | set(adapter[3]))}
 
 
-def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None, intent_capture_id: str | None = None) -> dict[str, object]:
+def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None) -> dict[str, object]:
     root = core._repo_root(root)
     configured = blocking_wait_configured(root)
     active = blocking_wait_active(root)
@@ -837,9 +836,6 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
     if mode == "UNAVAILABLE":
         return {"ok": False, "status": "MANAGED_CONTINUATION_UNAVAILABLE", "managed_readiness": readiness}
     result = core.task_start(root, goal, milestone, input_file)
-    # Retained only as a no-op CLI compatibility argument. Production no
-    # longer binds root prompt text to a hidden model-audit control plane.
-    del intent_capture_id
     # A task is a Core object.  Starting one cannot prove that this already
     # running Codex session reloaded project hooks, AGENTS, or agent profiles.
     result["managed_readiness"] = {**readiness, **_activation_fields(root)}
@@ -849,7 +845,7 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
 def task_close(root: Path, base_revision: int) -> dict[str, object]:
     state = core.task_show(root)["state"]
     task_id = str(state["task_id"])
-    if not intent_audit.qualifying_child_completed(core._repo_root(root)):
+    if not lifecycle.qualifying_child_completed(core._repo_root(root)):
         raise ValueError("task-close requires an authorized explicit handoff, a matching native SubagentStart/Stop identity, and no pending or active managed work")
     return core.task_close(root, base_revision, expected_task_id=task_id)
 
@@ -862,12 +858,12 @@ def audit_hook(root: Path, event: str, payload: object) -> str:
         return ""
     root = core._repo_root(root)
     tool = payload.get("tool_name") or payload.get("tool")
-    if not isinstance(tool, str) or intent_audit._tool_basename(tool) != "wait_agent":
+    if not isinstance(tool, str) or lifecycle._tool_basename(tool) != "wait_agent":
         return ""
     if (
-        intent_audit._active_task_id(root) is None
+        lifecycle._active_task_id(root) is None
         or selected_continuation_mode(root) != "BLOCKING_WAIT"
-        or not intent_audit.managed_dependency_pending(root)
+        or not lifecycle.managed_dependency_pending(root)
     ):
         return ""
     capability = host_explicit_blocking_wait()
@@ -897,13 +893,13 @@ def doctor(root: Path) -> dict[str, object]:
     events: set[str] = set()
     compatible_profile_observed = False
     orchestration = {"wait_calls": 0, "wait_timeouts": 0, "list_agents_calls": 0, "blocked_spawn_calls": 0, "reconciliation_attempts": 0, "reconciliation_successes": 0, "reviewer_rounds": 0, "implementer_rounds": 0}
-    expected = intent_audit.managed_hook_spec_hash()
+    expected = lifecycle.managed_hook_spec_hash()
     for path in (root / ".context" / "audit").glob("*/runtime.json"):
         try:
             runtime = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError):
             continue
-        current = isinstance(runtime, dict) and runtime.get("managed_hook_spec_hash") == expected and runtime.get("adapter_protocol_version") == intent_audit.CODEX_ADAPTER_PROTOCOL_VERSION
+        current = isinstance(runtime, dict) and runtime.get("managed_hook_spec_hash") == expected and runtime.get("adapter_protocol_version") == lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION
         samples = runtime.get("execution_observations") if current else None
         if current and isinstance(runtime.get("events_observed"), dict):
             events.update(name for name, observed in runtime["events_observed"].items() if observed is True)
@@ -921,17 +917,17 @@ def doctor(root: Path) -> dict[str, object]:
             orchestration["list_agents_calls"] += int(metrics.get("list_agents_calls", 0))
     latest = max(observations, default=None, key=lambda item: (item[0], item[1]))
     latest_item = latest[2] if latest is not None else None
-    health = intent_audit.hooks_health(root)
+    health = lifecycle.hooks_health(root)
     lifecycle_start = lifecycle_stop = lifecycle_reconciled = False
     reconciliation_attempts = reconciliation_successes = 0
     for path in (root / ".context" / "audit" / "lifecycle").glob("*.json"):
         try:
-            lifecycle = json.loads(path.read_text(encoding="utf-8"))
+            lifecycle_state = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, json.JSONDecodeError):
             continue
-        if not isinstance(lifecycle, dict) or lifecycle.get("version") != intent_audit.LIFECYCLE_STATE_VERSION or lifecycle.get("managed_hook_spec_hash") != expected or lifecycle.get("adapter_protocol_version") != intent_audit.CODEX_ADAPTER_PROTOCOL_VERSION:
+        if not isinstance(lifecycle_state, dict) or lifecycle_state.get("version") != lifecycle.LIFECYCLE_STATE_VERSION or lifecycle_state.get("managed_hook_spec_hash") != expected or lifecycle_state.get("adapter_protocol_version") != lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION:
             continue
-        for child in lifecycle.get("children", []):
+        for child in lifecycle_state.get("children", []):
             if isinstance(child, dict) and isinstance(child.get("started"), int):
                 lifecycle_start = True
                 lifecycle_stop = lifecycle_stop or isinstance(child.get("stopped"), int)
@@ -940,7 +936,7 @@ def doctor(root: Path) -> dict[str, object]:
                     orchestration["reviewer_rounds"] += 1
                 elif child.get("role") == "implementer":
                     orchestration["implementer_rounds"] += 1
-        metrics = lifecycle.get("metrics")
+        metrics = lifecycle_state.get("metrics")
         if isinstance(metrics, dict):
             reconciliation_attempts += int(metrics.get("reconciliation_attempts", 0))
             reconciliation_successes += int(metrics.get("reconciliation_successes", 0))
@@ -1025,13 +1021,4 @@ def doctor(root: Path) -> dict[str, object]:
         "ROOT_MODEL_ACTIVATIONS_PER_CHILD": "UNAVAILABLE",
         **orchestration,
     }
-    task = result.get("context", {}).get("task_state", {}) if isinstance(result.get("context"), dict) else {}
-    target = task.get("verification_target") if isinstance(task, dict) else None
-    if isinstance(target, str) and intent_audit._ACCEPTANCE_COMMAND.fullmatch(target):
-        target_capability = "TARGET_EXECUTABLE_BY_CODEX"
-    elif target is not None:
-        target_capability = "TARGET_REQUIRES_EXTERNAL_ATTESTATION"
-    else:
-        target_capability = "UNKNOWN"
-    result["verification_capability"] = {"target": target_capability, "terminal_status": "TERMINAL_STATUS_UNAVAILABLE"}
     return result

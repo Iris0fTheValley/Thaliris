@@ -1,76 +1,52 @@
-# Thaliris Routing and Evidence Protocol
+# Thaliris Routing Protocol
 
-<!-- thaliris-routing-protocol: thaliris-routing-v1 -->
+<!-- thaliris-routing-protocol: thaliris-routing-v2 -->
 
-This document is the runtime-neutral product protocol for placing correct,
-current information into the next reasoning context. Benchmark documents may
-observe and score this protocol, but ordinary Thaliris tasks do not depend on
-benchmark names, fixtures, cost thresholds, or a particular host.
-
-## Task specification and evidence
-
-The Task Specification is the user- or benchmark-supplied set of required
-observable behavior, constraints, and compatibility requirements. Evidence is
-current repository or runtime fact used to choose among compliant
-implementations. If the specification requires behavior that is absent, the
-state is an `IMPLEMENTATION_GAP` and the Reasoning Specialist returns a
-bounded `DECISION`; it is not an `EvidenceRequest`.
-
-`NEED_EVIDENCE` is reserved for an unresolved repository or runtime fact that
-can change the choice between two or more compliant implementations. The
-request is bounded and names the decision question, missing fact, why it can
-change the choice, preferred evidence surface, and verification requirement.
-
-## Reusable evidence
-
-When evidence crosses a role boundary, the lifecycle is:
+## Single semantic path
 
 ```text
-need -> fresh Investigator -> bounded artifact -> Controller registration
-     -> selected facts -> named consumer -> decision / implementation / review
+Controller --explicit native handoff--> Child
+Child --distilled result + optional Artifact pointer--> Controller
+Controller --next explicit handoff--> next Child
 ```
 
-An Evidence Artifact contains only bounded reusable facts, verifiable source
-references, affected files or symbols, confirmed facts, inferences, unknowns,
-contradictions, and verification performed. Its bytes receive a SHA-256
-identity before the Controller registers the pointer. A pointer is selective
-access; it is not automatic full-text injection.
+The Controller is the sole task-specific semantic router. It chooses the Child,
+task, facts, constraints, decisions, unknowns, and pointers to send. A missing
+fact is a Controller/model error; Core must not infer or append it.
 
-Registration preserves an immutable historical pointer. If bytes change, that
-pointer is stale. A replacement may append `supersedes: [artifact_id, ...]`;
-the prior record is never rewritten. Supersession targets must exist, cannot
-self-reference or form a cycle, and stale or superseded artifacts are not
-current selected sources. A downstream handoff carries selected facts together
-with enough artifact identity for provenance; a child final message is not the
-evidence store.
+`SubagentStart` is lifecycle-only. It validates the authorized Child and binds
+identity, role, session, start time, provenance, handoff ID, and payload hash.
+It does not construct a role packet or inject task state.
 
-## Role boundaries
+## Private work and return
 
-The Controller selects bounded context and records accepted decisions and
-constraints. Investigator working sets remain private. Sol makes one bounded
-decision attempt and does not perform broad investigation. Implementers apply
-an accepted modification boundary. A mechanical or local-semantic review
-finding receives a fresh bounded correction Implementer and targeted fresh
-Reviewer. An architectural finding returns to the Controller for a new
-decision route; the Implementer never becomes a fallback Investigator.
+A Child may use a large private working set. Its default result is a concise
+conclusion, key findings, decision-changing unknowns, contradictions,
+verification performed, and optional Artifact references. The detailed working
+set does not automatically re-enter the Controller.
 
-Reviewers are fresh independent checkers for each candidate and are read-only
-where the host provides that native boundary. Preserve findings, constraints,
-candidate identities, and verification—not prior reasoning trajectories.
-Return the complete currently observable blocker set in one review response;
-only a genuinely new risk introduced by correction warrants another blocker set.
-Review is also a synchronization point for the candidate: no concurrent
-candidate-writing managed role may overlap an accepted review. A verdict is
-valid only when the host-computed candidate identity is unchanged from
-review-start through review completion. Native read-only isolation is used
-where the host provides it as defense in depth, not as the sole correctness
-mechanism.
+When detailed material should survive, the Child writes a free-form Markdown or
+JSON Artifact and returns its pointer. Registration records path and content
+identity; it does not read, summarize, interpret, or propagate the body.
 
-## Runtime boundary
+## Explicit retrieval
 
-Thaliris controls information ingress and persistence only. The host runtime
-owns child creation, waiting, continuation, closing, and scheduling. When a
-host has no surviving-child continuation surface, one sufficiently long native
-blocking wait per real dependency is valid when the Host supports an explicit,
-bounded native timeout. Project default configuration is convenience only. Short model-driven polling loops
-are not.
+Artifact bodies and memory documents are available only through explicit
+retrieval. Search results are candidates, never automatic context. A Controller
+may copy selected retrieved content into a later native handoff.
+
+## Mechanical observations
+
+Freshness reports recorded versus current file identities. Verification reports
+an observed invocation and result identity. Task surface reports baseline,
+current state, and delta. The Controller decides what any observation means.
+
+## Native boundary
+
+The Host owns creation, execution, waiting, continuation, and result delivery.
+The adapter owns fresh isolation, authorized serial lifecycle, identity binding,
+and wait normalization for real pending dependencies. Core owns durable records,
+CAS, atomicity, hashes, provenance, addressing, and explicit retrieval.
+
+No hidden auditor, role projection, semantic dependency graph, correction state
+machine, or benchmark authority participates in this production path.

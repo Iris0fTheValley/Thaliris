@@ -64,23 +64,10 @@ POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_C
 PRE_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN}|{_CONTROLLER_MUTATION_TOOL_PATTERN}|mcp__.*)$"
 _DELEGATION_TOOL_NAMES = frozenset({"spawn_agent", "Agent", "followup_task", "send_input", "send_message"})
 _CONTROLLER_BOUNDARY_REASON = "THALIRIS_CONTROLLER_BOUNDARY: delegate investigation and edits to a fresh child; root may run only bounded control-plane or acceptance checks."
-_CONTROLLER_CLOSE_REASON = "THALIRIS_CONTROLLER_BOUNDARY: dispatch a fresh child before task-close."
-_CONTROLLER_ACCEPTANCE_REASON = "THALIRIS_CONTROLLER_BOUNDARY: dispatch a fresh child before deterministic acceptance."
-_BROAD_INVESTIGATION = re.compile(
-    r"(?i)(?<![\w-])(?:rg|ripgrep|grep|findstr|select-string|gci|get-childitem|dir|ls|tree|cat|type|gc|get-content|git\s+(?:log|show|blame|grep)|task-show)(?![\w-])"
-)
 _SOURCE_MUTATION = re.compile(
     r"(?i)(?:apply_patch|git\s+(?:apply|commit|reset|checkout|restore|rebase)|(?:set|add|clear|out|remove|move|copy|rename|new)-content|(?:set|add|remove|move|copy|rename|new)-item|\b(?:ni|mkdir)\b|(?<![<>])>{1,2}(?![&]))"
 )
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
-_ACCEPTANCE_COMMAND = re.compile(
-    r"^(?:"
-    r"pytest|python\s+-m\s+pytest|uv\s+run\s+(?:python\s+-m\s+)?pytest|"
-    r"npm\s+(?:test|run\s+test)|pnpm\s+(?:test|run\s+test)|yarn\s+test|"
-    r"cargo\s+test|go\s+test|dotnet\s+test"
-    r")(?:\s+[A-Za-z0-9_./:@=+\-]+)*$",
-    re.IGNORECASE,
-)
 def hook_spec() -> dict[str, Any]:
     """Return the exact managed hooks fragment; callers merge it conservatively."""
     hooks: dict[str, list[dict[str, Any]]] = {}
@@ -325,7 +312,6 @@ def hooks_health(root: Path) -> dict[str, str]:
         "status": status,
         "hooks_configured": configured,
         "runtime_observed": observed["runtime_observed"],
-        "model_auditor": "DISABLED",
         "current_hook_hash_observed": observed["current_hook_hash_observed"],
         "pretool_child_identity_corroborated": child_identity_corroboration(root),
         "hook_trust_runtime_status": "UNKNOWN",
@@ -591,7 +577,7 @@ def _record_controller_guard_event(root: Path, payload: dict[str, Any], action: 
 
 
 def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str) -> None:
-    """Persist only bounded child execution categories, never tool payloads."""
+    """Persist bounded child/tool identities, never payloads or semantic classes."""
     if event != "PreToolUse":
         return
     agent_id = payload.get("agent_id")
@@ -600,28 +586,15 @@ def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str)
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
         return
-    normalized = _tool_basename(tool)
-    action = None
-    if normalized in _CONTROLLER_MUTATION_TOOL_NAMES:
-        action = "SOURCE_MUTATION"
-    elif normalized in _CONTROLLER_EXECUTION_TOOL_NAMES:
-        command = _bash_command(payload)
-        if command and (_BROAD_INVESTIGATION.search(command) or re.search(r"(?i)^git\s+diff\b", command)):
-            action = "BROAD_INVESTIGATION"
     with core._lock(root):
         path = _session_dir(root, payload) / "runtime.json"
         state = _load_runtime(path)
         _runtime_metadata(state, payload)
         _bounded_append(state, "pretool_child_agent_id_hashes", _identity_hash(agent_id))
-        if action is None:
-            _write_capture(path, state)
-            return
         tools = state.setdefault("child_tools_observed", [])
+        normalized = _tool_basename(tool)
         if normalized not in tools and len(tools) < 16:
             tools.append(normalized)
-        actions = state.setdefault("child_actions_observed", [])
-        if action not in actions and len(actions) < 16:
-            actions.append(action)
         _write_capture(path, state)
 
 
@@ -902,7 +875,7 @@ def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> bool:
 
 
 def _lifecycle_block_fingerprint(state: dict[str, Any]) -> str:
-    """Hash only the decision-relevant in-flight state for loop detection."""
+    """Hash only mechanical in-flight state for repeated-block detection."""
     active = [
         {
             "agent_id_hash": child.get("agent_id_hash"),
@@ -1387,12 +1360,7 @@ def _controller_guard_output(payload: dict[str, Any], root: Path | None = None) 
     action = _controller_command_action(root, payload)
     if action is not None:
         _best_effort_record(_record_controller_guard_event, root, payload, action, "blocked")
-        if action == "TASK_CLOSE_NO_CHILD":
-            reason = _CONTROLLER_CLOSE_REASON
-        elif action == "ACCEPTANCE_BEFORE_CHILD":
-            reason = _CONTROLLER_ACCEPTANCE_REASON
-        else:
-            reason = _CONTROLLER_BOUNDARY_REASON
+        reason = _CONTROLLER_BOUNDARY_REASON
         return json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",

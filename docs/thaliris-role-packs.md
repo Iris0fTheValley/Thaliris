@@ -1,170 +1,54 @@
-<!-- thaliris-role-packs:v3 -->
-# Thaliris Role Packs
+<!-- thaliris-role-packs:v4 -->
+# Thaliris Role Profiles
 
-Load this document when the compact managed router is insufficient.
+Role profiles are native prompt guidance. They do not authorize Core to select,
+filter, complete, or propagate semantic information.
+
+## Shared child contract
+
+- The native Controller spawn message is the sole task-specific input.
+- Keep repository reads, searches, logs, tool output, tests, and intermediate
+  reasoning in the private working set.
+- Return a distilled result: Conclusion, Key findings, Decision-changing
+  unknowns, Contradictions if any, Verification performed, and Artifact refs.
+- Save reusable detail as an optional Artifact and return only its pointer.
+- Do not expect task state, Artifact bodies, memory, milestones, or earlier
+  reviews to appear unless the Controller explicitly included them.
+- Do not create child-to-child workflow.
 
 ## Controller
 
-The Controller routes work and accepts completion. It starts from the default
-low-noise `context task-status` packet and explicitly selects the facts,
-constraints, decisions, unknowns, contradictions, and artifact pointers needed
-for the current step. Raw findings, review bodies, evidence records, Git status,
-parent history, child transcripts, tool output, and broad memory/milestone
-bodies do not propagate automatically. Durable memory is retained but never
-automatically injected into role projections. If historical context may matter,
-explicitly run `context recall "query" --role ROLE`; recall returns routed
-candidates only and does not accept or propagate them. `context task-show` is an explicit
-out-of-band diagnostic surface, not part of the normal ACTIVE managed Controller
-path. If context is insufficient, request a targeted fresh follow-up or
-explicitly pass a selected artifact/payload; do not rebuild the full working set.
+Selects the next Child and all information in its explicit handoff. Interprets
+results and mechanical observations, decides what to store or retrieve, and
+decides whether more work is needed or the task is complete.
 
-Use `docs/thaliris-routing-protocol.md` as the authoritative product evidence
-and review-convergence contract. The benchmark protocol is an observation and
-判定 layer only. Register reusable artifacts before the dependent
-decision, select only the facts needed by the next role, and record downstream
-consumption provenance. Return the complete currently observable blocker set in one response. Classify each review finding as MECHANICAL,
-LOCAL_SEMANTIC, or ARCHITECTURAL. The first two receive a fresh bounded
-Implementer Correction Packet and fresh targeted Reviewer; distinct new
-findings may continue, while an unchanged finding/candidate/evidence state may
-not repeat the same cognitive cycle. Only the last may reopen broad
-investigation.
+## Investigator
 
-Every active task uses serial fresh execution children with `fork_turns="none"`.
-This cuts implicit parent-task-history propagation, not all context: applicable
-system/developer instructions, AGENTS, custom-agent instructions, environment,
-native tool context, and delegation content may still be present. A non-none
-fork is denied and must be retried explicitly. The child loads its own Thaliris
-role projection directly, performs the assigned role, does not create
-child-to-child workflow, and explicitly selects the information to return to
-the persistent Controller. The Controller must not consume child-only working
-material automatically; a large selected payload is allowed when necessary.
-During an ACTIVE task the persistent Controller does not perform repository
-investigation or source mutation; dispatch does not change those permissions.
-`task-close` and acceptance require an authorized reservation, matching child
-`SubagentStart`, successfully emitted Core projection, and matching
-`SubagentStop` for the active task. Pending reservations and started managed
-children remain serial in flight. PostToolUse records dispatch only; it is not
-a completion signal. `SubagentStop` is stop attestation, not native
-`completed`; an identity-bound native terminal status may release a serial slot
-but never substitutes for successful completion.
+Investigates the assigned question in a private working set. Returns bounded
+findings and unknowns. Saves detailed reusable evidence as an Artifact only when
+useful; Core does not require a special evidence schema.
 
-For a local, obvious microtask, that one fresh Implementer is still required,
-followed by deterministic verification; the persistent Controller does not edit
-source directly. Larger work adds only the roles needed by risk and unknowns.
-After dispatch, use EVENT_DRIVEN mode only when the probe-bound native
-continuation capability is `PASS`; otherwise use BLOCKING_WAIT when the Host
-supports explicit bounded waits. PreToolUse normalizes the current root wait to
-the Host maximum without a retry. After timeout, check status once and wait again if still
-running. A wait count alone is not failure, but short model-driven
-wait/list polling loops and timer wake-ups are prohibited. Thaliris does not
-implement scheduling, deadlines, or agent lifecycle.
+## Reasoning Specialist
 
-After targeted investigation, escalate to
-`agent_type="thaliris-reasoning-specialist"` with `fork_turns="none"` only
-when a material implementation choice remains unresolved by available
-evidence: two or more materially different fixes remain plausible, an OPEN
-unknown or contradiction could change the choice, a cross-module
-state/lifecycle/ownership/concurrency/compatibility choice remains undecided,
-the facts are known but a substantive trade-off remains, or a Reviewer finds a
-design question rather than a mechanical correction. Do not escalate based
-only on task size, file count, or token count. Pass an explicit Decision
-Context containing the decision question, confirmed relevant facts, competing
-options, must-preserve invariants and compatibility contracts,
-decision-changing unknowns or contradictions, and relevant evidence or
-artifact pointers. Do not pass the full Investigator working set or an empty
-"help me decide" request.
+Reasons over the exact decision packet supplied by the Controller. Returns a
+decision or identifies decision-changing information still needed. It does not
+write Core semantic state.
 
-Before spawning an Implementer, explicitly accept every Sol conclusion that
-will affect implementation by recording it as a task Decision, Constraint, or
-Modification Boundary, or by placing it in the selected Implementer handoff.
-Never rely on an implicit Sol-to-child history transfer. The Reasoning
-Specialist has no direct Core semantic-state write permission.
+## Implementer
 
-Reasoning Specialists make one bounded decision attempt. They must not rebuild
-an Investigator working set or perform open-ended repository searches. When a
-decision-changing fact is missing, return `NEED_EVIDENCE` with an
-`EvidenceRequest` (decision question, missing fact, why it can change the
-decision, preferred evidence surface, and verification requirement), finish,
-and let the Controller route a fresh Investigator. The Investigator persists a
-bounded evidence artifact; the Controller selects its relevant facts and starts
-a fresh Reasoning Specialist. If selected evidence is materially contradictory
-and cannot be safely resolved, return `INSUFFICIENT_OR_CONTRADICTORY` with the
-conflicting references and stop. Reviewers are fresh one-shot children on every
-round; preserve findings and evidence, not their conversation trajectory. Use
-EVENT_DRIVEN mode only when the probe-bound native continuation capability is
-`PASS`; otherwise use BLOCKING_WAIT when the Host supports explicit bounded
-waits. After
-timeout, check status once and wait again if still running. A wait count alone
-is not failure, but short model-driven wait/list
-polling loops and timer-driven wake-ups are prohibited. Close completed one-shot
-Sol/Reviewer children with native controls. Thaliris does not implement
-scheduling, deadlines, or agent lifecycle.
+Changes only the assigned implementation surface, performs proportionate
+verification, and returns a distilled change/result summary. Source mutation is
+serial with review.
 
-After a qualifying completed child, the Controller may run only the exact
-Verification Target when it is a known test command family: pytest, npm/pnpm/
-yarn test, cargo test, go test, or dotnet test. A target never authorizes an
-arbitrary shell command.
+## Reviewer
 
-Known local PreToolUse surfaces used by managed mode are mechanically guarded.
-This is automatic projection isolation, not filesystem confidentiality or
-universal tool enforcement: hosted, specialized, and unverified runtime
-surfaces remain outside the claimed envelope. Hook configuration is separate
-from current-session observation; current hook-definition evidence is required
-before claiming a live observation.
+Uses a fresh isolated context and native read-only mode where supported.
+Independently reports findings, affected surface, and requested verification.
+Any classification is model output for the Controller to interpret; Core does
+not route corrections from it.
 
-## Evidence Roles
+## Curator
 
-Investigators may keep a large private working set, but when another role will
-reuse the result they persist a bounded repo-relative Evidence Artifact first.
-The artifact preserves reusable facts, evidence refs, affected files/symbols,
-verification performed, unknowns, and contradictions; it does not preserve the
-exploration transcript or repeated tool output. Investigator completion messages
-should contain only the artifact path, finding/evidence IDs, short outcome, and
-remaining decision-changing unknowns. The Controller registers the pointer with
-`context task-artifact --base-revision N --id ID --path repo/relative --summary
-TEXT --producer-role investigator` and selects relevant content; artifact
-creation must produce stable bytes and verify their identity before registration.
-The concrete write mechanism is a Codex operational concern, not an Evidence
-semantic invariant. Artifact
-existence does not authorize automatic full-text projection. Registration
-computes and stores the artifact content identity. Downstream roles do not
-receive it automatically: select the facts, constraints, contradictions,
-compatibility or lifecycle invariants, evidence summaries, unknowns, artifact
-pointers, and any other information that could materially change the next
-decision. Do not dump the investigation process merely for convenience, but do
-explicitly provide as much selected detail as correctness requires. Curators
-receive only the material explicitly selected for the current snapshot and may
-replace that snapshot. Reasoning Specialists receive a Decision Context selected
-for the current unresolved decision, not raw history; it may include relevant
-facts, competing hypotheses, contradictions, evidence summaries, compatibility
-invariants, pointers, unknowns, or other selected detail. If it is insufficient,
-state what evidence is needed so the Controller can request a targeted fresh
-follow-up. Implementers receive the explicit Modification Boundary and required
-verification. Reviewers receive selected intent, changed surface, constraints,
-decisions, and evidence, then independently decide what needs deeper inspection.
-Role defaults guide work; they are not semantic firewalls or semantic
-allowlists.
-
-Use focused checks while changing code and one complete relevant validation at the
-end. Requested runtime or visible-behavior verification remains required.
-
-## State And Retention
-
-`active_work` and `pending_results` are short controller-visible labels. Use
-`context task-artifact --base-revision N --id ID --path repo/relative --summary TEXT
---producer-role investigator` to append a path-safe pointer to external work.
-Only the Controller registers the pointer; change the producer role when the
-producer is not an Investigator. Registration computes and stores the artifact
-content identity. Artifact
-contents remain outside the status packet and are never automatically injected
-into another role. A pointer is selective access, not a compression mandate:
-pass it when the next role needs to decide whether to read it. Raw task state
-remains diagnostic-only in `.context/state.json`.
-
-Artifact registration does not hide a path from review: Reviewer `Changed Surface`
-continues to show Git-reported changes, without automatically exposing file contents.
-
-At task end, promote only reusable decisions, constraints, invariants, failure
-modes, and material milestone progress or completed verification through
-`context task-promote`. Route memory and milestones through their INDEX files;
-do not treat this layer as a scheduler, transcript store, or automatic summary.
+Curator is an optional ordinary Child for compressing selected findings or
+Artifacts. Its output may itself be an Artifact. There is no Curator-specific
+coverage, snapshot, or supersession state machine in Core.

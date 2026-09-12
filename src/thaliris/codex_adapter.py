@@ -12,7 +12,7 @@ import tomllib
 
 from . import core, intent_audit
 from .protocol import ROUTING_PROTOCOL_VERSION
-from .intent_audit import MANAGED_HOOKS_DESCRIPTION, bind_unbound_intent, cleanup_task_audit, handle_hook, merge_hooks, remove_hooks, task_close_audit
+from .intent_audit import MANAGED_HOOKS_DESCRIPTION, handle_hook, merge_hooks, remove_hooks
 
 CODEX_ROLE_MAP = {
     "luna": "investigator", "luna-investigator": "investigator",
@@ -1025,10 +1025,9 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
     if mode == "UNAVAILABLE":
         return {"ok": False, "status": "MANAGED_CONTINUATION_UNAVAILABLE", "managed_readiness": readiness}
     result = core.task_start(root, goal, milestone, input_file)
-    try:
-        bind_unbound_intent(root, str(result["task_id"]), intent_capture_id)
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        pass
+    # Retained only as a no-op CLI compatibility argument. Production no
+    # longer binds root prompt text to a hidden model-audit control plane.
+    del intent_capture_id
     # A task is a Core object.  Starting one cannot prove that this already
     # running Codex session reloaded project hooks, AGENTS, or agent profiles.
     result["managed_readiness"] = {**readiness, **_activation_fields(root)}
@@ -1040,18 +1039,7 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
     task_id = str(state["task_id"])
     if not intent_audit.qualifying_child_completed(core._repo_root(root)):
         raise ValueError("task-close requires an authorized explicit handoff, a matching native SubagentStart/Stop identity, and no pending or active managed work")
-    try:
-        audit = task_close_audit(core._repo_root(root), task_id, cleanup=False)
-    except (OSError, ValueError, TypeError, subprocess.SubprocessError, json.JSONDecodeError):
-        audit = {"status": "UNKNOWN"}
-    if audit.get("status") == "DRIFT":
-        return {"ok": False, "task_id": task_id, "revision": state["revision"], "status": state["status"], "changed": [], "intent_audit": {"status": "DRIFT", "finding": "Correct delegation scope before closing this task."}}
-    result = core.task_close(root, base_revision, expected_task_id=task_id)
-    try:
-        cleanup_task_audit(core._repo_root(root), task_id, audit.get("status"))
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        pass
-    return result
+    return core.task_close(root, base_revision, expected_task_id=task_id)
 
 
 def audit_hook(root: Path, event: str, payload: object) -> str:

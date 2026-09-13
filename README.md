@@ -85,6 +85,9 @@ Audience、Topics、Symbols、Applicability、Kind、Status 与 Confidence 仅�
 
 Milestone 是普通长期文档。Curator 是普通可选 Child。`task-promote` 保存
 Controller 明确选择的记录；Core 不裁决其 epistemic legitimacy。
+当一次 promotion 会改变 durable navigation 时，Controller 应在同一次
+`task-promote` 中提供自己写好的 optional `index_update`。Core 不生成 INDEX
+内容，只验证 CAS、引用和原子提交。
 
 ## Verification 与 task surface
 

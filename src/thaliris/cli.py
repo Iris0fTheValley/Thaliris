@@ -67,7 +67,11 @@ def _parser() -> argparse.ArgumentParser:
         "task-promote",
         help="persist Controller-selected durable records",
         description="Store exactly the records selected by the Controller; metadata is descriptive only.",
-        epilog='Minimal JSON: {"records":[{"kind":"decision","id":"D-001","path":".agent-memory/chosen/use-x.md","title":"Use X","text":"Adopt X.","source_refs":[]}]}',
+        epilog=(
+            'Example: {"records":[{"id":"D1","path":".agent-memory/architecture/d1.md",'
+            '"title":"Decision","text":"..."}],"index_update":{"path":".agent-memory/INDEX.md",'
+            '"base_sha256":"<current-index-sha256>","content":"<complete model-authored INDEX.md>"}}'
+        ),
     )
     q.add_argument("--role", required=True, choices=codex_adapter.ROLE_CHOICES)
     q.add_argument("--base-revision", required=True, type=int)

@@ -402,6 +402,54 @@ def test_investigator_obvious_shell_durable_read_is_telemetry_only(tmp_path: Pat
     assert "Protocol deviation" not in core.task_status(root)
 
 
+def test_reviewer_non_bash_durable_path_read_is_aggregated(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "reviewer durable read", None, None)
+    spawn_start(root, "reviewer-reader", "thaliris-reviewer")
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        agent_id="reviewer-reader",
+        agent_type="thaliris-reviewer",
+        tool_name="mcp__files__read",
+        tool_input={"path": ".agent-memory/x.md"},
+    )) == ""
+    state = lifecycle(root)
+    assert state["protocol_deviations"][-1]["target"] == ".agent-memory/x.md"
+    assert state["protocol_deviations"][-1]["notice_delivered"] is False
+    notice = core.task_status(root)["Protocol deviation"]
+    assert "reviewer=1" in notice
+    assert ".agent-memory/x.md" in notice
+
+
+def test_investigator_non_bash_durable_path_read_is_telemetry_only(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "investigator durable read", None, None)
+    spawn_start(root, "investigator-reader", "thaliris-investigator")
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        agent_id="investigator-reader",
+        agent_type="thaliris-investigator",
+        tool_name="mcp__files__read",
+        tool_input={"path": ".milestones/x.md"},
+    )) == ""
+    state = lifecycle(root)
+    assert state["protocol_deviations"][-1]["target"] == ".milestones/x.md"
+    assert state["protocol_deviations"][-1]["notice_delivered"] is True
+    assert "Protocol deviation" not in core.task_status(root)
+
+
+def test_one_generic_read_call_deduplicates_durable_targets(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "deduplicate durable read", None, None)
+    spawn_start(root, "reviewer-reader", "thaliris-reviewer")
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        agent_id="reviewer-reader",
+        agent_type="thaliris-reviewer",
+        tool_name="mcp__files__read",
+        tool_input={"paths": [".agent-memory/x.md", ".agent-memory/x.md"]},
+    )) == ""
+    targets = [item["target"] for item in lifecycle(root)["protocol_deviations"]]
+    assert targets == [".agent-memory/x.md"]
+
+
 def test_protocol_deviation_ring_keeps_late_events_in_one_aggregate(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.task_start(root, "deviation overflow", None, None)

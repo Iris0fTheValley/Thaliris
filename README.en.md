@@ -70,6 +70,9 @@ model-authored search/display metadata, not propagation permissions.
 Milestones are ordinary documents. Curator is an optional ordinary Child.
 `task-promote` stores what the Controller explicitly selected without an
 epistemic qualification gate.
+When a promotion changes durable navigation, the Controller should provide its
+own optional `index_update` in the same `task-promote` call. Core does not
+generate INDEX content; it validates CAS, references, and the atomic commit.
 
 Freshness reports only `FRESH`, `CHANGED`, `MISSING`, or `UNKNOWN` file facts.
 Verification stores command/tool, outcome, candidate identity, observed files,

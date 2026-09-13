@@ -1388,6 +1388,10 @@ def durable_index_check(root: Path, roots: list[str] | None = None) -> dict[str,
                 continue
             if candidate.name == "INDEX.md" and candidate.is_file() and not candidate.is_symlink():
                 pending.append(child)
+            elif candidate.is_dir():
+                directory_index = candidate / "INDEX.md"
+                if directory_index.is_file() and not directory_index.is_symlink():
+                    pending.append(directory_index.relative_to(root.resolve(strict=True)).as_posix())
     return {"ok": not errors, "checked": checked, "errors": errors}
 
 

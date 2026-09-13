@@ -563,6 +563,26 @@ def test_explicit_integrity_check_follows_deep_index_links_with_cycle_protection
     assert any("deleted.md" in error for error in checked["errors"])
 
 
+def test_explicit_integrity_check_follows_directory_links_to_nested_indexes(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    memory = root / ".agent-memory"
+    (memory / "area" / "deep").mkdir(parents=True)
+    (memory / "INDEX.md").write_bytes(core._entry("Root", "[Area](area/)", evidence="NONE"))
+    (memory / "area" / "INDEX.md").write_bytes(core._entry("Area", "[Deep](deep/INDEX.md)", evidence="NONE"))
+    (memory / "area" / "deep" / "INDEX.md").write_bytes(core._entry("Deep", "[Missing](missing.md)", evidence="NONE"))
+
+    assert core.catalog(root)["indexes"][0]["state"] == "VALID"
+    checked = core.durable_index_check(root, [".agent-memory/INDEX.md"])
+    assert checked["ok"] is False
+    assert checked["checked"] == [
+        ".agent-memory/INDEX.md",
+        ".agent-memory/area/INDEX.md",
+        ".agent-memory/area/deep/INDEX.md",
+    ]
+    assert any("missing.md" in error for error in checked["errors"])
+    assert core.catalog(root)["indexes"][0]["state"] == "VALID"
+
+
 def test_git_status_failure_is_reported_as_unavailable(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
 

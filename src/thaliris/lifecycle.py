@@ -1362,17 +1362,25 @@ def _context_operation(payload: dict[str, Any]) -> str | None:
 
 
 def _visible_durable_paths(payload: dict[str, Any]) -> list[str]:
-    """Best-effort observation of obvious durable paths, not a shell parser."""
-    command = _bash_command(payload)
-    if not isinstance(command, str) or _obvious_write_attempt(payload):
+    """Best-effort observation of obvious durable paths, not a security boundary."""
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict) or _obvious_write_attempt(payload):
         return []
+    materials: list[str] = []
+    command = _bash_command(payload)
+    if isinstance(command, str):
+        materials.append(command)
+    serialized = json.dumps(tool_input, ensure_ascii=False, sort_keys=True)
+    if serialized not in materials:
+        materials.append(serialized)
     targets: list[str] = []
-    for match in _DURABLE_PATH_TARGET.finditer(command):
-        target = match.group(1).replace("\\", "/").rstrip(".,:)]}")[:256]
-        if target not in targets:
-            targets.append(target)
-        if len(targets) == 8:
-            break
+    for material in materials:
+        for match in _DURABLE_PATH_TARGET.finditer(material):
+            target = match.group(1).replace("\\", "/").rstrip(".,:)]}")[:256]
+            if target not in targets:
+                targets.append(target)
+            if len(targets) == 8:
+                return targets
     return targets
 
 

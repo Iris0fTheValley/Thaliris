@@ -33,6 +33,9 @@ maps, never document bodies. The Controller explicitly uses `catalog`,
 `recall`, or `document-get` to retrieve selected durable material. A single
 bounded `document-get` may name up to eight explicit paths; it never searches,
 ranks, or supplements the selection.
+When a promotion changes durable navigation, the Controller should include its
+own optional `index_update` in the same `task-promote` call. Core does not
+generate INDEX content; it validates the CAS, references, and atomic commit.
 
 With NO_TASK, Thaliris leaves ordinary Codex tool use and spawn behavior
 transparent. During an ACTIVE managed task the persistent Controller uses only

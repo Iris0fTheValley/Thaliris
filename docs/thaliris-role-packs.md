@@ -42,8 +42,10 @@ serial with review.
 
 ## Reviewer
 
-Uses a fresh isolated context and native read-only mode where supported.
-Independently reports findings, affected surface, and requested verification.
+Uses a fresh isolated context. On the current stable Host, independence relies
+on developer instructions plus the obvious-write PreToolUse guard, not a
+role-level native read-only sandbox. Independently reports findings, affected
+surface, and requested verification.
 Any classification is model output for the Controller to interpret; Core does
 not route corrections from it.
 

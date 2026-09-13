@@ -24,14 +24,35 @@ supersession only; it does not interpret the body.
 Memory and milestones are ordinary explicit storage. Search results and
 Audience, Topics, Symbols, Applicability, Kind, Status, and Confidence metadata
 are hints for models and displays, never routing permissions or correctness
-gates. Freshness reports only FRESH, CHANGED, MISSING, or UNKNOWN facts.
+gates. Freshness reports only FRESH, PARTIAL, RECORDED, CHANGED, MISSING, or
+UNKNOWN mechanical facts. Root SessionStart receives only a small durable
+catalog showing what documents exist. The Controller explicitly uses
+`catalog`, `recall`, or `document-get` to retrieve selected durable material;
+the catalog never includes document bodies or chooses relevance.
+
+With NO_TASK, Thaliris leaves ordinary Codex tool use and spawn behavior
+transparent. During an ACTIVE managed task the persistent Controller uses only
+native spawn/wait/list/interrupt operations and trusted direct `context`
+control commands. `task-status` is bounded; `task-get`, `artifact-get`,
+`catalog`, `recall`, and `document-get` retrieve explicitly selected objects.
+`task-show` is offline/human diagnostics and is blocked for ACTIVE Root.
+Repository investigation, execution, mutation, and testing belong to fresh
+Children. Existing Child threads are never resumed with follow-up/send tools.
+A Child's obvious direct control-context retrieval is allowed but recorded for
+one short Controller notice. Obvious attempts to mutate Controller-owned task
+or lifecycle state are denied and recorded. Reviewer independence is a
+developer-instruction plus obvious-write hook guard, not a claimed native
+read-only sandbox. Starting managed mode requires a current-session,
+current-hook, one-shot PreToolUse attestation.
 
 Managed children are serial. Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
-mechanical. A short native wait is normalized to the host maximum only while an
-authorized reservation or managed child is actually pending. The Controller
-interprets Child results, verification observations, review findings, and task
-surface deltas and decides the next handoff and when work is complete.
+mechanical. SubagentStop alone is not success; only an explicitly observed
+native Completed status can satisfy lifecycle completion. A short native wait
+is normalized to the host maximum only while an authorized reservation or
+managed child is actually pending. The Controller interprets Child results,
+verification observations, review findings, and task surface deltas and decides
+the next handoff and when work is complete.
 <!-- thaliris:end -->
 
 ## Thaliris Core

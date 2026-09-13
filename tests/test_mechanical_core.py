@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import pytest
 
-from thaliris import cli, codex_adapter, core
+from thaliris import cli, codex_adapter, core, lifecycle as lifecycle_module
 
 
 def repo(tmp_path: Path) -> Path:
@@ -260,7 +260,7 @@ def test_record_artifact_and_promotion_ids_are_unique(tmp_path: Path) -> None:
     started = core.task_start(root, "other ids", None, None)
     (root / "a.md").write_text("a", encoding="utf-8")
     first = core.task_artifact(root, started["revision"], "same-artifact", "a.md", "a")
-    with pytest.raises(ValueError, match="artifact reference id already exists"):
+    with pytest.raises(ValueError, match="task object id already exists"):
         core.task_artifact(root, first["revision"], "same-artifact", "a.md", "again")
 
     duplicate_promotions = write_json(tmp_path / "duplicate-promotions.json", {"records": [
@@ -270,6 +270,101 @@ def test_record_artifact_and_promotion_ids_are_unique(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="duplicate promotion id"):
         core.task_promote(root, "controller", first["revision"], duplicate_promotions)
     assert not (root / ".agent-memory" / "promoted" / "same-promotion.md").exists()
+
+
+def test_task_object_ids_are_unique_across_object_kinds(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "cross-kind ids", None, write_json(tmp_path / "initial.json", {
+        "evidence_refs": [{"id": "S1", "kind": "repo", "locator": "src/a.py", "summary": "a"}],
+        "records": [{"id": "R1", "kind": "note", "text": "record"}],
+    }))
+    (root / "artifact.md").write_text("body", encoding="utf-8")
+    for collision in ("R1", "S1"):
+        with pytest.raises(ValueError, match="task object id already exists"):
+            core.task_artifact(root, started["revision"], collision, "artifact.md", "artifact")
+
+    promotion = write_json(tmp_path / "collision-promotion.json", {"records": [{
+        "id": "R1", "kind": "decision", "title": "Collision", "text": "body",
+    }]})
+    with pytest.raises(ValueError, match="promotion id conflicts with task object"):
+        core.task_promote(root, "controller", started["revision"], promotion)
+
+
+def test_artifact_provenance_is_validated_while_loading_state(tmp_path: Path) -> None:
+    root = repo(tmp_path / "unknown")
+    started = core.task_start(root, "bad artifact provenance", None, None)
+    (root / "artifact.md").write_text("body", encoding="utf-8")
+    core.task_artifact(root, started["revision"], "A1", "artifact.md", "artifact")
+    path = root / ".context" / "state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["artifact_refs"][0]["source_refs"] = ["missing"]
+    path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(ValueError, match="artifact source reference is unknown"):
+        core.task_show(root)
+    assert lifecycle_module.managed_task_state(root)[0] == "INVALID_STATE"
+
+    legacy_root = repo(tmp_path / "legacy")
+    started = core.task_start(legacy_root, "legacy provenance", None, None)
+    (legacy_root / "artifact.md").write_text("body", encoding="utf-8")
+    core.task_artifact(legacy_root, started["revision"], "A1", "artifact.md", "artifact")
+    path = legacy_root / ".context" / "state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["artifact_refs"][0]["evidence_refs"] = state["artifact_refs"][0].pop("source_refs")
+    path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid artifact reference"):
+        core.task_show(legacy_root)
+
+
+def test_git_rename_uses_destination_as_current_surface_path(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    (root / "old.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base"], cwd=root, check=True)
+    subprocess.run(["git", "mv", "old.py", "new.py"], cwd=root, check=True)
+    surface = core._surface_snapshot(root)
+    assert isinstance(surface, list)
+    assert [item["path"] for item in surface] == ["new.py"]
+
+
+def test_task_get_and_artifact_get_return_only_the_selected_object(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "bounded retrieval", None, write_json(tmp_path / "objects.json", {
+        "records": [
+            {"id": "R1", "kind": "note", "text": "selected body"},
+            {"id": "R2", "kind": "note", "text": "unselected sentinel"},
+        ],
+    }))
+    selected = core.task_get(root, "R1")
+    assert selected["object"]["text"] == "selected body"
+    assert "unselected sentinel" not in json.dumps(selected)
+
+    (root / "artifact.md").write_text("artifact body", encoding="utf-8")
+    core.task_artifact(root, started["revision"], "A1", "artifact.md", "artifact")
+    fetched = core.artifact_get(root, "A1")
+    assert fetched["body"] == "artifact body"
+    assert fetched["object_type"] == "artifact"
+
+
+def test_durable_catalog_is_bounded_and_document_get_is_single_document(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    durable = root / ".agent-memory" / "promoted"
+    durable.mkdir(parents=True, exist_ok=True)
+    for index in range(200):
+        (durable / f"doc-{index}.md").write_bytes(core._entry(
+            f"Document {index}", f"BODY_{index}", evidence="NONE",
+        ))
+    discovered = core.catalog(root, ".agent-memory/promoted")
+    encoded = json.dumps(discovered, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    assert len(encoded) <= core.DURABLE_CATALOG_MAX_BYTES
+    assert discovered["total_documents"] == 200
+    assert discovered["truncated"] is True
+    assert "BODY_199" not in encoded.decode("utf-8")
+
+    fetched = core.document_get(root, ".agent-memory/promoted/doc-7.md")
+    assert "BODY_7" in fetched["body"]
+    assert "BODY_8" not in fetched["body"]
+    with pytest.raises(ValueError, match="durable path"):
+        core.document_get(root, "README.md")
 
 
 def test_git_status_failure_is_reported_as_unavailable(tmp_path: Path, monkeypatch) -> None:

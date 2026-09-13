@@ -44,7 +44,7 @@ Core 只提供：
 - revision 与 compare-and-swap
 - lock、atomic write、backup 与 rollback
 - hash、provenance、supersedes/history
-- 文件的 `FRESH` / `CHANGED` / `MISSING` / `UNKNOWN` 客观事实
+- 文件的 `FRESH` / `PARTIAL` / `RECORDED` / `CHANGED` / `MISSING` / `UNKNOWN` 客观事实
 - verification 与 task surface 的机械 observation
 - 显式 store / list / search / get
 
@@ -54,7 +54,8 @@ completion，也不根据 stale evidence 自动改写 decision、constraint 或 
 Codex adapter 只负责 fresh spawn、`fork_turns="none"`、授权的串行 Child、
 handoff hash、SubagentStart/Stop identity、missing-stop reconciliation 和 native
 wait。只有确实存在 pending reservation 或 managed Child 时，短 wait 才会被规范化
-为 Host 支持的长 blocking wait。
+为 Host 支持的长 blocking wait。`SubagentStop` 本身不是成功；只有明确观测到
+native `Completed` 才满足 lifecycle completion。
 
 ## Task ledger
 
@@ -71,7 +72,10 @@ Artifact 正文位于显式路径中；账本只保存 ID、producer、path、co
 created revision、source refs 与 optional supersedes。Artifact 不会被自动读取或
 传播。Controller 显式取回正文，并自行选择是否交给下一个 Child。
 
-Memory 默认不注入。`recall` 只返回搜索候选，`memory-get` 才取回一篇选定正文。
+Memory 默认不注入。Root SessionStart 只收到约 2–4 KiB 的 durable `catalog`，用于
+发现有哪些长期文档，而不包含正文或相关性判断。`recall` 只返回搜索候选，
+`document-get` / `memory-get` 才取回一篇选定正文。ACTIVE Controller 使用 bounded
+`task-status` 和单对象 `task-get`；完整 `task-show` 仅用于 offline/人工诊断。
 Audience、Topics、Symbols、Applicability、Kind、Status 与 Confidence 仅是模型写入
 的搜索或展示 metadata，不是传播权限。
 

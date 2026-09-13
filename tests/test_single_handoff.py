@@ -93,6 +93,35 @@ def test_subagent_start_binds_explicit_handoff_without_injecting_projection(tmp_
     assert all("additionalContextLimit" not in handler for handler in start_handlers)
 
 
+def test_session_start_catalog_is_root_only_and_bounded(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    (root / ".agent-memory" / "promoted").mkdir(parents=True, exist_ok=True)
+    for index in range(100):
+        (root / ".agent-memory" / "promoted" / f"doc-{index}.md").write_bytes(
+            core._entry(f"Doc {index}", f"PRIVATE_BODY_{index}", evidence="NONE")
+        )
+    output = json.loads(handle_hook(root, "SessionStart", hook_payload(source="resume")))
+    context = output["hookSpecificOutput"]["additionalContext"]
+    assert len(context.encode("utf-8")) < 4 * 1024
+    assert "discovery only" in context
+    assert ".agent-memory" in context
+    assert "PRIVATE_BODY" not in context
+
+    child_output = handle_hook(root, "SubagentStart", hook_payload(
+        source="resume", agent_id="unmanaged-child", agent_type="worker",
+    ))
+    assert child_output == ""
+
+
+def test_checked_in_managed_instructions_equal_generated_source() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    text = (repository / "AGENTS.md").read_text(encoding="utf-8")
+    start = text.index(codex_adapter.MANAGED_START)
+    end = text.index(codex_adapter.MANAGED_END, start) + len(codex_adapter.MANAGED_END)
+    checked_in = text[start:end] + "\n"
+    assert checked_in == codex_adapter.MANAGED
+
+
 def test_blocking_wait_is_normalized_only_with_a_managed_dependency(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     core.task_start(root, "wait mechanics", None, None)
@@ -112,6 +141,27 @@ def test_blocking_wait_is_normalized_only_with_a_managed_dependency(tmp_path: Pa
     assert handle_hook(root, "PreToolUse", spawn) == ""
     rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", wait))
     assert rewritten["hookSpecificOutput"]["updatedInput"]["timeout_ms"] == 3_600_000
+
+
+def test_codex_0154_wait_capability_is_version_pinned(monkeypatch) -> None:
+    class Version:
+        returncode = 0
+        stdout = "codex-cli 0.154.0\n"
+        stderr = ""
+
+    codex_adapter._host_wait_mode_cached.cache_clear()
+    monkeypatch.setattr(codex_adapter.subprocess, "run", lambda *args, **kwargs: Version())
+    capability = codex_adapter.host_explicit_blocking_wait("codex-0.154-test")
+    assert capability == {
+        "status": "PASS",
+        "version": "0.154.0",
+        "min_wait_timeout_ms": 10_000,
+        "default_wait_timeout_ms": 30_000,
+        "max_wait_timeout_ms": 3_600_000,
+        "explicit_timeout_supported": True,
+    }
+    assert codex_adapter.native_child_completion_reenters_root("codex-0.154-test") == "UNSUPPORTED"
+    codex_adapter._host_wait_mode_cached.cache_clear()
 
 
 def test_production_hooks_record_hashes_without_model_audit_or_correction(tmp_path: Path) -> None:
@@ -140,9 +190,22 @@ def test_production_hooks_record_hashes_without_model_audit_or_correction(tmp_pa
         assert removed not in source
 
 
+def test_user_prompt_does_not_clear_pending_spawn_reservation(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "causal reservation", None, None)
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "handoff",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    pending = lifecycle(root)["pending_authorized_spawn"]
+    assert handle_hook(root, "UserPromptSubmit", hook_payload(prompt="new user input")) == ""
+    assert lifecycle(root)["pending_authorized_spawn"] == pending
+
+
 def test_active_controller_uses_only_the_mechanical_tool_allowlist(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.task_start(root, "mechanical guard", None, None)
+    assert hook_spec()["hooks"]["PreToolUse"][0]["matcher"] == "*"
 
     for payload in (
         hook_payload(tool_name="Bash", tool_input={"command": "rg -n architecture src"}),
@@ -156,6 +219,17 @@ def test_active_controller_uses_only_the_mechanical_tool_allowlist(tmp_path: Pat
     assert handle_hook(root, "PreToolUse", hook_payload(
         tool_name="Bash", tool_input={"command": "context task-status"},
     )) == ""
+    denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(
+        tool_name="Bash", tool_input={"command": "context task-show"},
+    )))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        tool_name="Bash", tool_input={"command": "context task-get R1"},
+    )) == ""
+    denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(
+        tool_name="Bash", tool_input={"command": r"C:\untrusted\context.exe task-status"},
+    )))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
     for name in ("wait_agent", "list_agents", "interrupt_agent"):
         assert handle_hook(root, "PreToolUse", hook_payload(tool_name=name, tool_input={})) == ""
     for name in ("followup_task", "send_message", "send_input"):
@@ -166,6 +240,15 @@ def test_active_controller_uses_only_the_mechanical_tool_allowlist(tmp_path: Pat
         tool_name="spawn_agent",
         tool_input={"fork_turns": "none", "agent_type": "worker", "message": "fresh handoff"},
     )) == ""
+
+
+def test_no_task_is_transparent_to_ordinary_spawn(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        tool_name="spawn_agent",
+        tool_input={"agent_type": "worker", "message": "ordinary Codex child"},
+    )) == ""
+    assert not (root / ".context" / "audit" / "lifecycle").exists()
 
 
 def test_child_control_context_reads_are_allowed_recorded_and_notified_once(tmp_path: Path) -> None:
@@ -196,6 +279,26 @@ def test_child_control_context_reads_are_allowed_recorded_and_notified_once(tmp_
     assert rewrite["hookSpecificOutput"]["updatedInput"]["command"].endswith("--suppress-protocol-notice")
     assert "Protocol deviation" not in core.task_status(root, include_protocol_notice=False)
     assert "context task-status" in core.task_status(root)["Protocol deviation"]
+
+
+def test_protocol_deviation_ring_keeps_late_events_and_reports_overflow(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "deviation overflow", None, None)
+    spawn_start(root, "reader", "thaliris-investigator")
+    for index in range(40):
+        assert handle_hook(root, "PreToolUse", hook_payload(
+            agent_id="reader",
+            agent_type="thaliris-investigator",
+            tool_name="Bash",
+            tool_input={"command": f"context task-show --marker {index}"},
+        )) == ""
+    state = lifecycle(root)
+    assert len(state["protocol_deviations"]) == 32
+    assert state["protocol_deviation_overflow_count"] == 8
+    assert state["protocol_deviation_counts"]["allowed_read"] == 40
+    notices = [core.task_status(root).get("Protocol deviation") for _ in range(33)]
+    assert any(notice and "directly retrieved" in notice for notice in notices)
+    assert any(notice and "8 older events were coalesced" in notice for notice in notices)
 
 
 def test_child_control_state_mutation_is_blocked_and_recorded(tmp_path: Path) -> None:
@@ -375,7 +478,21 @@ def test_lifecycle_binds_matching_identity_and_stop(tmp_path: Path) -> None:
     assert handle_hook(root, "SubagentStop", hook_payload(agent_id="reviewer-1", agent_type="thaliris-reviewer")) == ""
     stopped = lifecycle(root)["children"][-1]
     assert stopped["terminal_state"] == "STOP_ATTESTED"
+    assert stopped["native_terminal_status"] is None
     assert isinstance(stopped["started"], int) and isinstance(stopped["stopped"], int)
+
+
+def test_stop_requires_explicit_native_completed_for_close(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "native completion", None, None)
+    spawn_start(root, "worker-1")
+    stop(root, "worker-1")
+    state = core.task_show(root)["state"]
+    with pytest.raises(ValueError, match="matching native SubagentStart/Stop"):
+        codex_adapter.task_close(root, state["revision"])
+
+    reconcile(root, "worker-1", {"completed": "result"})
+    assert codex_adapter.task_close(root, state["revision"])["status"] == "DONE"
 
 
 def test_missing_stop_native_terminal_reconciliation_is_not_success(tmp_path: Path) -> None:
@@ -417,24 +534,24 @@ def test_selected_handoff_sentinel_exists_once_across_native_and_adapter_payload
 
 def test_latest_managed_child_alone_controls_close(tmp_path: Path) -> None:
     terminal_cases = (
-        ({"completed": "result"}, False),
-        ("interrupted", False),
-        ({"errored": "boom"}, False),
-        ("shutdown", False),
-        ("STOP_ATTESTED", True),
+        ({"completed": "result"}, False, False),
+        ("interrupted", True, False),
+        ({"errored": "boom"}, True, False),
+        ("shutdown", True, False),
+        ({"completed": "result"}, True, True),
     )
-    for index, (latest_status, should_close) in enumerate(terminal_cases):
+    for index, (latest_status, attest_stop, should_close) in enumerate(terminal_cases):
         root = tmp_path / str(index)
         root.mkdir()
         root = repo(root)
         core.task_start(root, "latest child", None, None)
         spawn_start(root, "child-a")
         stop(root, "child-a")
+        reconcile(root, "child-a", {"completed": "result"})
         spawn_start(root, "child-b")
-        if latest_status == "STOP_ATTESTED":
+        if attest_stop:
             stop(root, "child-b")
-        else:
-            reconcile(root, "child-b", latest_status)
+        reconcile(root, "child-b", latest_status)
         state = core.task_show(root)["state"]
         if should_close:
             assert codex_adapter.task_close(root, state["revision"])["status"] == "DONE"

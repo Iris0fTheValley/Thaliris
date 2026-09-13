@@ -8,7 +8,7 @@ import sys
 
 from . import __version__
 from . import codex_adapter
-from .core import memory_get, milestone_check, prepare, recall, rollback, stale, task_artifact, task_promote, task_show, task_status, task_update
+from .core import artifact_get, catalog, document_get, memory_get, milestone_check, prepare, recall, rollback, stale, task_artifact, task_get, task_promote, task_show, task_status, task_update
 
 
 class _Parser(argparse.ArgumentParser):
@@ -33,6 +33,10 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--role", required=True, choices=codex_adapter.ROLE_CHOICES)
     q = sub.add_parser("memory-get", help="explicitly retrieve one memory document")
     q.add_argument("path")
+    q = sub.add_parser("catalog", help="discover bounded durable document metadata")
+    q.add_argument("path", nargs="?")
+    q = sub.add_parser("document-get", help="retrieve one durable document")
+    q.add_argument("path")
     q = sub.add_parser("task-start")
     q.add_argument("goal")
     q.add_argument("--milestone")
@@ -45,6 +49,10 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("task-show")
     q = sub.add_parser("task-status", help="bounded Controller routing packet")
     q.add_argument("--suppress-protocol-notice", action="store_true", help=argparse.SUPPRESS)
+    q = sub.add_parser("task-get", help="retrieve one current-task object by ID")
+    q.add_argument("id")
+    q = sub.add_parser("artifact-get", help="retrieve one bounded task Artifact body by ID")
+    q.add_argument("id")
     q = sub.add_parser("task-artifact", help="register a bounded external task artifact pointer")
     q.add_argument("--base-revision", required=True, type=int)
     q.add_argument("--id", required=True)
@@ -100,10 +108,14 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "prepare": out = prepare(root, args.task, codex_adapter.semantic_role(args.role), include_protocol_notice=not args.suppress_protocol_notice)
         elif args.command == "recall": out = recall(root, args.query, codex_adapter.semantic_role(args.role))
         elif args.command == "memory-get": out = memory_get(root, args.path)
+        elif args.command == "catalog": out = catalog(root, args.path)
+        elif args.command == "document-get": out = document_get(root, args.path)
         elif args.command == "task-start": out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.hook_attestation)
         elif args.command == "task-update": out = task_update(root, codex_adapter.semantic_role(args.role), args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
         elif args.command == "task-status": out = task_status(root, include_protocol_notice=not args.suppress_protocol_notice)
+        elif args.command == "task-get": out = task_get(root, args.id)
+        elif args.command == "artifact-get": out = artifact_get(root, args.id)
         elif args.command == "task-artifact": out = task_artifact(root, args.base_revision, args.id, args.path, args.summary, producer_role=(codex_adapter.semantic_role(args.producer_role) if getattr(args, "producer_role", None) else None), evidence_refs=args.source_ref or None, supersedes=args.supersedes or None)
         elif args.command == "task-close": out = codex_adapter.task_close(root, args.base_revision)
         elif args.command == "task-promote": out = task_promote(root, codex_adapter.semantic_role(args.role), args.base_revision, args.input)

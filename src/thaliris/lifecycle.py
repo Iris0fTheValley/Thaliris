@@ -59,11 +59,10 @@ _CONTROLLER_MUTATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in
 # `collaboration<tool>` names to hooks. Keep execution surfaces explicit too:
 # a PostToolUse callback is the only possible completion observation.
 POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN})$"
-# Pre-dispatch isolation sees native spawn calls, the other flattened V2
-# collaboration names (for compatibility/observation), and root shell
-# execution.  The latter is intentionally explicit: a broad matcher would
-# also intercept unrelated tools whose payload cannot be classified safely.
-PRE_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN}|{_CONTROLLER_MUTATION_TOOL_PATTERN}|mcp__.*)$"
+# Codex 0.154 routes local function tools through this hook surface. Managed
+# policy therefore starts from a transparent NO_TASK state and an explicit
+# ACTIVE allow-set instead of attempting to enumerate dangerous tool names.
+PRE_TOOL_MATCHER = "*"
 _DELEGATION_TOOL_NAMES = frozenset({"spawn_agent", "Agent", "followup_task", "send_input", "send_message"})
 _FRESH_CHILD_REUSE_TOOL_NAMES = frozenset({"followup_task", "send_input", "send_message"})
 _ROOT_MANAGED_TOOL_NAMES = frozenset({"spawn_agent", "wait_agent", "list_agents", "interrupt_agent"})
@@ -75,8 +74,10 @@ _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
 _CONTEXT_OPERATIONS = frozenset({
     "init", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
     "prepare", "recall", "memory-get", "task-start", "task-update", "task-show",
-    "task-status", "task-artifact", "task-close", "task-promote", "rollback", "version",
+    "task-status", "task-get", "artifact-get", "catalog", "document-get",
+    "task-artifact", "task-close", "task-promote", "rollback", "version",
 })
+_ACTIVE_ROOT_CONTEXT_OPERATIONS = _CONTEXT_OPERATIONS - {"task-show"}
 _CHILD_CONTEXT_READS = frozenset({
     "task-show", "task-status", "recall", "memory-get", "prepare", "stale",
     "memory-status", "milestone-check",
@@ -371,9 +372,8 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             return _pre_tool_output(payload, root)
         if event == "SessionStart":
             _record_session_start(root, payload)
-            return ""
+            return _session_start_output(root, payload)
         if event == "UserPromptSubmit":
-            _best_effort_record(_clear_pending_authorized_spawn, root, payload)
             _best_effort_record(_record_prompt_telemetry, root, payload)
             return ""
         if event == "PostToolUse":
@@ -448,6 +448,21 @@ def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
         _runtime_metadata(state, payload)
         state.update({"version": 4, "session_start_observed": True, "root_classification": "UNKNOWN"})
         _write_capture(path, state)
+
+
+def _session_start_output(root: Path, payload: dict[str, Any]) -> str:
+    """Expose only a tiny Root discovery catalog on supported start causes."""
+    if payload.get("source") not in {"startup", "resume", "clear", "compact"}:
+        return ""
+    discovered = core.catalog(root)
+    context = (
+        "Thaliris durable catalog (discovery only; retrieve documents explicitly):\n"
+        + json.dumps(discovered, ensure_ascii=False, separators=(",", ":"))
+    )
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": context,
+    }}, ensure_ascii=False, separators=(",", ":"))
 
 
 def _record_prompt_telemetry(root: Path, payload: dict[str, Any]) -> None:
@@ -638,10 +653,14 @@ def _record_protocol_deviation(
         deviations = state.setdefault("protocol_deviations", [])
         if not isinstance(deviations, list):
             return
-        if any(isinstance(existing, dict) and existing.get("fingerprint") == fingerprint for existing in deviations):
-            return
         if len(deviations) >= 32:
-            return
+            deviations.pop(0)
+            state["protocol_deviation_overflow_count"] = int(state.get("protocol_deviation_overflow_count", 0)) + 1
+            state["protocol_deviation_overflow_notice_delivered"] = False
+        counters = state.setdefault("protocol_deviation_counts", {})
+        if isinstance(counters, dict):
+            category = "blocked" if blocked else "allowed_read"
+            counters[category] = int(counters.get(category, 0)) + 1
         deviations.append(item)
         _runtime_metadata(state, payload)
         _write_capture(path, state)
@@ -662,6 +681,11 @@ def consume_protocol_deviation_notice(root: Path, task_id: str) -> str | None:
             if isinstance(value, dict) and value.get("notice_delivered") is False
         ), None)
         if item is None:
+            overflow = int(state.get("protocol_deviation_overflow_count", 0))
+            if overflow > 0 and state.get("protocol_deviation_overflow_notice_delivered") is not True:
+                state["protocol_deviation_overflow_notice_delivered"] = True
+                _write_capture(path, state)
+                return f"Protocol deviations: {overflow} older events were coalesced; recent events remain available."
             return None
         item["notice_delivered"] = True
         _write_capture(path, state)
@@ -795,23 +819,6 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return _permission_deny("THALIRIS_MANAGED_SPAWN_UNAVAILABLE: managed authorization could not be reserved.")
     return ""
-
-
-def _clear_pending_authorized_spawn(root: Path, payload: dict[str, Any]) -> None:
-    task_id = _active_task_id(root)
-    session_id_hash = _session_id_hash(payload)
-    if task_id is None or session_id_hash is None:
-        return
-    with core._lock(root):
-        path = _lifecycle_path(root, task_id)
-        if not path.is_file():
-            return
-        state = _load_lifecycle(path, task_id)
-        pending = state["pending_authorized_spawn"]
-        if isinstance(pending, dict) and pending.get("session_id_hash") == session_id_hash:
-            state["pending_authorized_spawn"] = None
-            _runtime_metadata(state, payload)
-            _write_capture(path, state)
 
 
 def _clear_explicitly_failed_spawn(root: Path, payload: dict[str, Any]) -> None:
@@ -954,7 +961,7 @@ def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> bool:
                 # SubagentStop attests this hook path only. It carries no
                 # AgentStatus result, so it must never manufacture completed
                 # or overwrite a trusted failed native terminal status.
-                if child.get("native_terminal_status") not in {"interrupted", "errored", "shutdown"}:
+                if child.get("native_terminal_status") not in {"not_found", "interrupted", "errored", "shutdown"}:
                     child["native_terminal_status"] = child.get("native_terminal_status") if child.get("native_terminal_status") == "completed" else None
                 state["stall"] = None
                 _runtime_metadata(state, payload)
@@ -1172,7 +1179,7 @@ def qualifying_child_completed(root: Path) -> bool:
         and isinstance(latest.get("handoff_id"), str)
         and isinstance(latest.get("payload_hash"), str)
         and latest.get("terminal_state") == "STOP_ATTESTED"
-        and latest.get("native_terminal_status") not in {"interrupted", "errored", "shutdown"}
+        and latest.get("native_terminal_status") == "completed"
         and isinstance(latest.get("started"), int)
         and isinstance(latest.get("stopped"), int)
     )
@@ -1296,16 +1303,14 @@ def _context_operation(payload: dict[str, Any]) -> str | None:
     command = _bash_command(payload)
     if command is None or _COMMAND_SEPARATOR.search(command):
         return None
+    arguments = _context_arguments(command)
+    if arguments is None:
+        return None
     try:
-        tokens = shlex.split(command, posix=False)
+        tokens = shlex.split(arguments, posix=False)
     except ValueError:
         return None
-    if not tokens:
-        return None
-    executable = tokens[0].strip("\"'").replace("\\", "/").rsplit("/", 1)[-1].lower()
-    if executable not in {"context", "context.exe"}:
-        return None
-    index = 1
+    index = 0
     while index < len(tokens):
         token = tokens[index].strip("\"'")
         if token == "--pretty":
@@ -1615,21 +1620,18 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
         if normalized in _ROOT_MANAGED_TOOL_NAMES:
             _best_effort_record(_record_controller_guard_event, root, payload, normalized, "allowed")
             return ""
-        if operation is not None:
+        if operation in _ACTIVE_ROOT_CONTEXT_OPERATIONS:
             _best_effort_record(_record_controller_guard_event, root, payload, f"CONTEXT_{operation}", "allowed")
             return ""
+        if operation == "task-show":
+            _best_effort_record(_record_controller_guard_event, root, payload, "CONTEXT_task-show", "blocked")
+            return _permission_deny("THALIRIS_BOUNDED_RETRIEVAL_REQUIRED: use task-status or task-get for ACTIVE Controller retrieval.")
         _best_effort_record(_record_controller_guard_event, root, payload, "NON_CONTROL_TOOL", "blocked")
         return _permission_deny(_CONTROLLER_BOUNDARY_REASON)
 
-    if normalized != "spawn_agent":
-        return ""
-    tool_input = _delegation_input(payload)
-    if not isinstance(tool_input, dict):
-        return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
-    fork = tool_input.get("fork_turns")
-    if fork == "none":
-        return _reserve_managed_spawn(root, payload)
-    return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
+    # NO_TASK is transparent: ordinary Codex workflows are not managed and
+    # therefore do not inherit Thaliris spawn isolation requirements.
+    return ""
 
 
 def _permission_deny(reason: str) -> str:

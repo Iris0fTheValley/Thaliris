@@ -78,8 +78,9 @@ promotion.
 
 The adapter handles fresh native spawn isolation, authorized serial Child
 lifecycle, handoff identity/hash binding, SubagentStart/Stop identity,
-missing-stop reconciliation, native read-only Reviewer profiles when supported,
-and explicit blocking wait normalization.
+missing-stop reconciliation, Reviewer developer instructions plus an
+obvious-write guard, and explicit blocking wait normalization. The current
+stable Host does not provide an independent role-level read-only sandbox.
 
 `SubagentStart` is lifecycle-only. It never calls `core.prepare()` and never
 returns task-specific `additionalContext`.
@@ -103,8 +104,9 @@ Core never reads an Artifact body for automatic propagation and never changes
 workflow from its contents. The Controller explicitly retrieves any body and
 selects any content placed in a later handoff.
 
-Freshness is an objective observation: `FRESH`, `CHANGED`, `MISSING`, or
-`UNKNOWN`. It never mutates a task record or model conclusion.
+Freshness is an objective observation: `FRESH`, `PARTIAL`, `RECORDED`,
+`CHANGED`, `MISSING`, or `UNKNOWN`. It never mutates a task record or model
+conclusion.
 
 ### Memory and milestones
 
@@ -112,6 +114,12 @@ Memory is explicit storage and retrieval. Search returns candidates; get returns
 one selected body. Audience, Topics, Symbols, Applicability, Kind, Status, and
 Confidence are model-authored display/search metadata, not propagation
 permissions or semantic gates.
+
+SessionStart exposes only a small bounded durable catalog to Root. It shows
+paths, counts, and index pointers so a new session can discover candidates;
+it does not include document bodies or select relevant content. ACTIVE Root
+uses bounded `task-status` and single-object `task-get`; full `task-show` is an
+offline/human diagnostic surface.
 
 Milestones are ordinary long-lived documents. Core does not inject them into
 role context or treat them as semantic authority.
@@ -144,7 +152,7 @@ on that delta.
 - bounded missing-stop reconciliation
 - explicit native blocking wait, only with a pending dependency
 - explicit memory search/get and Artifact addressing
-- native read-only Reviewer profile when supported
+- Reviewer developer instruction and obvious-write guard
 - mechanical candidate and task-surface identity
 - adapter/hook/lifecycle diagnostics
 

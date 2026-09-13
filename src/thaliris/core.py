@@ -324,6 +324,8 @@ def stale(root: Path) -> dict[str, object]:
 _STATE_NAME = ".context/state.json"
 _STATE_SCHEMA_VERSION = 7
 ROUTING_STATE_MAX_BYTES = 8 * 1024
+EXPLICIT_DOCUMENT_MAX_BYTES = 64 * 1024
+DURABLE_CATALOG_MAX_BYTES = 3 * 1024
 _PACK_ROLES = {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}
 _EXECUTION_ROLES = _PACK_ROLES - {"controller"}
 _STATE_FIELDS = {
@@ -412,7 +414,8 @@ def _surface_snapshot(root: Path) -> list[dict[str, object]] | str:
             continue
         status, path = item[:2], item[3:].replace("\\", "/")
         if status[:1] in {"R", "C"} and index < len(fields):
-            path = fields[index].replace("\\", "/")
+            # Porcelain -z reports the current/destination path in this item
+            # and the source/old path in the following field.
             index += 1
         _valid_relative(root, path)
         result.append(_surface_identity(root, path, status))
@@ -485,7 +488,7 @@ def _artifact_ref(root: Path, value: object, *, require_target: bool = False) ->
         raise ValueError("invalid artifact reference")
     allowed = {
         "id", "path", "summary", "producer_role", "producer", "registered_by", "scope",
-        "evidence_refs", "source_refs", "content_sha256", "supersedes", "task_id",
+        "source_refs", "content_sha256", "supersedes", "task_id",
         "revision", "created_at",
     }
     if set(value) - allowed or not {"id", "path", "summary"} <= set(value):
@@ -499,6 +502,9 @@ def _artifact_ref(root: Path, value: object, *, require_target: bool = False) ->
     identity = value.get("content_sha256")
     if identity is not None and (not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity)):
         raise ValueError("invalid artifact content identity")
+    refs = value.get("source_refs", [])
+    if not isinstance(refs, list) or len(refs) > 64 or len(set(refs)) != len(refs) or not all(isinstance(ref, str) for ref in refs):
+        raise ValueError("invalid artifact source refs")
     supersedes = value.get("supersedes", [])
     if not isinstance(supersedes, list) or len(supersedes) > 64 or len(set(supersedes)) != len(supersedes) or value["id"] in supersedes or not all(isinstance(item, str) for item in supersedes):
         raise ValueError("invalid artifact supersession")
@@ -624,6 +630,8 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         if identifier in artifact_ids:
             raise ValueError("duplicate artifact reference id")
         artifact_ids.add(identifier)
+    if any(any(ref not in source_ids for ref in artifact.get("source_refs", [])) for artifact in artifacts):
+        raise ValueError("artifact source reference is unknown")
     _artifact_activity(artifacts)
 
     results = state.get("verification_results")
@@ -635,6 +643,10 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         if result["id"] in result_ids:
             raise ValueError("duplicate verification observation id")
         result_ids.add(str(result["id"]))
+
+    object_groups = (source_ids, record_ids, artifact_ids, result_ids)
+    if sum(len(group) for group in object_groups) != len(set().union(*object_groups)):
+        raise ValueError("task object id collision")
 
     baseline = state.get("task_surface_baseline")
     if baseline != "UNAVAILABLE" and not isinstance(baseline, list):
@@ -678,6 +690,15 @@ def _load_state(root: Path, *, active: bool = False) -> dict[str, object]:
     return state
 
 
+def _task_object_ids(state: dict[str, object]) -> set[str]:
+    """Return the single task-wide identity set for addressable objects."""
+    return {
+        str(item["id"])
+        for field in ("evidence_refs", "records", "artifact_refs", "verification_results")
+        for item in state[field]
+    }
+
+
 def _read_input(value: str | None) -> dict[str, object]:
     if value is None:
         return {}
@@ -711,7 +732,7 @@ def _blank_state(root: Path, goal: str, milestone: str | None) -> dict[str, obje
 def _normalize_new_record(value: object, *, producer: str, revision: int, known_sources: set[str], known_records: set[str]) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("invalid task record")
-    allowed = {"id", "kind", "text", "producer", "revision", "source_refs", "evidence_refs", "status", "supersedes"}
+    allowed = {"id", "kind", "text", "producer", "revision", "source_refs", "status", "supersedes"}
     if set(value) - allowed:
         raise ValueError("invalid task record")
     record = {
@@ -720,7 +741,7 @@ def _normalize_new_record(value: object, *, producer: str, revision: int, known_
         "text": value.get("text"),
         "producer": value.get("producer", producer),
         "revision": value.get("revision", revision),
-        "source_refs": value.get("source_refs", value.get("evidence_refs", [])),
+        "source_refs": value.get("source_refs", []),
         "status": value.get("status", "RECORDED"),
         "supersedes": value.get("supersedes", []),
     }
@@ -817,6 +838,44 @@ def task_show(root: Path) -> dict[str, object]:
     return {"ok": True, "state": state, "task_surface_delta": _surface_delta(root, state["task_surface_baseline"])}
 
 
+def task_get(root: Path, object_id: str) -> dict[str, object]:
+    """Retrieve exactly one current-task ledger object by its task-wide ID."""
+    root = _repo_root(root)
+    identifier = _bounded_label(object_id, "task object id")
+    state = _load_state(root)
+    collections = (
+        ("source", state["evidence_refs"]),
+        ("record", state["records"]),
+        ("artifact", state["artifact_refs"]),
+        ("verification", state["verification_results"]),
+    )
+    matches = [(kind, item) for kind, values in collections for item in values if item.get("id") == identifier]
+    if len(matches) != 1:
+        raise ValueError("task object not found")
+    kind, item = matches[0]
+    return {"ok": True, "task_id": state["task_id"], "revision": state["revision"], "object_type": kind, "object": item}
+
+
+def artifact_get(root: Path, artifact_id: str) -> dict[str, object]:
+    """Explicitly retrieve one bounded task Artifact body and its descriptor."""
+    root = _repo_root(root)
+    found = task_get(root, artifact_id)
+    if found["object_type"] != "artifact":
+        raise ValueError("task object is not an artifact")
+    artifact = found["object"]
+    target = _safe(root, str(artifact["path"]))
+    if target.is_symlink() or not target.is_file():
+        raise ValueError("artifact body not found")
+    body = target.read_bytes()
+    if len(body) > EXPLICIT_DOCUMENT_MAX_BYTES:
+        raise ValueError(f"artifact body exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("artifact body is not UTF-8 text") from exc
+    return {**found, "body": text, "current_sha256": _digest(body), "freshness": _artifact_freshness(root, artifact)}
+
+
 def _controller_status(state: dict[str, object]) -> dict[str, object]:
     """Return current routing mechanics without replaying the durable ledger."""
     goal = str(state["goal"])
@@ -869,8 +928,8 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
         state = _load_state(root, active=True)
         if state["revision"] != base_revision:
             raise ValueError("task revision conflict")
-        if artifact_id in {item["id"] for item in state["artifact_refs"]}:
-            raise ValueError("artifact reference id already exists")
+        if artifact_id in _task_object_ids(state):
+            raise ValueError("task object id already exists")
         known_sources = {str(item["id"]) for item in state["evidence_refs"]}
         refs = evidence_refs or []
         if any(ref not in known_sources for ref in refs):
@@ -929,8 +988,8 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
         state = _load_state(root, active=True)
         if state["revision"] != base_revision:
             raise ValueError("task revision conflict")
-        if result_id in {item["id"] for item in state["verification_results"]}:
-            raise ValueError("verification result id already exists")
+        if result_id in _task_object_ids(state):
+            raise ValueError("task object id already exists")
         if source_refs is not None and source_paths is not None:
             raise ValueError("provide source refs or source paths, not both")
         known_sources = {str(item["id"]) for item in state["evidence_refs"]}
@@ -995,6 +1054,7 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
         writes: dict[str, bytes] = {}
         promoted: list[str] = []
         promotion_ids: set[str] = set()
+        task_object_ids = _task_object_ids(state)
         for value in payload["records"]:
             if not isinstance(value, dict):
                 raise ValueError("invalid promotion record")
@@ -1004,6 +1064,8 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
             identifier = _bounded_label(value.get("id"), "promotion id")
             if identifier in promotion_ids:
                 raise ValueError("duplicate promotion id")
+            if identifier in task_object_ids:
+                raise ValueError("promotion id conflicts with task object")
             promotion_ids.add(identifier)
             title = value.get("title", identifier)
             text = value.get("text")
@@ -1163,6 +1225,87 @@ def memory_get(root: Path, path: str) -> dict[str, object]:
         "freshness": freshness,
         "freshness_detail": detail,
     }
+
+
+def _durable_relative_path(root: Path, path: str) -> tuple[str, Path]:
+    relative = path.rstrip("/")
+    _valid_relative(root, relative)
+    if relative not in {".agent-memory", ".milestones"} and not relative.startswith((".agent-memory/", ".milestones/")):
+        raise ValueError("durable path must be under .agent-memory or .milestones")
+    return relative, _safe(root, relative)
+
+
+def catalog(root: Path, path: str | None = None) -> dict[str, object]:
+    """Return bounded durable-document discovery metadata, never document bodies."""
+    root = _repo_root(root)
+    requested = path.rstrip("/") if isinstance(path, str) and path else None
+    directories = [requested] if requested else [".agent-memory", ".milestones"]
+    result: dict[str, object] = {
+        "ok": True,
+        "path": requested,
+        "discovery_only": True,
+        "max_bytes": DURABLE_CATALOG_MAX_BYTES,
+        "directories": [],
+        "documents": [],
+        "truncated": False,
+    }
+    directory_items: list[dict[str, object]] = result["directories"]  # type: ignore[assignment]
+    document_items: list[dict[str, object]] = result["documents"]  # type: ignore[assignment]
+    candidates: list[Path] = []
+    for relative in directories:
+        assert relative is not None
+        normalized, target = _durable_relative_path(root, relative)
+        if target.is_symlink() or (target.exists() and not target.is_dir()):
+            raise ValueError("catalog path must name a durable directory")
+        documents = sorted(target.rglob("*.md")) if target.is_dir() else []
+        directory_items.append({
+            "path": normalized,
+            "document_count": len(documents),
+            "index": f"{normalized}/INDEX.md" if (target / "INDEX.md").is_file() else None,
+            "subdirectories": sorted(
+                child.relative_to(root).as_posix()
+                for child in target.iterdir()
+                if child.is_dir() and not child.is_symlink()
+            ) if target.is_dir() else [],
+        })
+        if requested and target.is_dir():
+            candidates = sorted(child for child in target.iterdir() if child.is_file() and child.suffix.lower() == ".md")
+    result["total_documents"] = sum(int(item["document_count"]) for item in directory_items)
+    for candidate in candidates:
+        item: dict[str, object] = {"path": candidate.relative_to(root).as_posix(), "title": candidate.stem}
+        try:
+            parsed = parse(candidate)
+            item["metadata"] = {key: parsed.meta[key] for key in ("Kind", "Status", "Revision") if key in parsed.meta}
+        except (OSError, ValueError):
+            item["metadata"] = {"state": "INVALID"}
+        document_items.append(item)
+        if len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > DURABLE_CATALOG_MAX_BYTES:
+            document_items.pop()
+            result["truncated"] = True
+            break
+    if len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > DURABLE_CATALOG_MAX_BYTES:
+        # Top-level metadata remains sufficient for further explicit catalog
+        # calls even if an unusually broad subdirectory list must be omitted.
+        for item in directory_items:
+            item["subdirectories"] = []
+        result["truncated"] = True
+    return result
+
+
+def document_get(root: Path, path: str) -> dict[str, object]:
+    """Explicitly retrieve one bounded document from a durable namespace."""
+    root = _repo_root(root)
+    relative, target = _durable_relative_path(root, path)
+    if target.is_symlink() or not target.is_file() or target.suffix.lower() != ".md":
+        raise ValueError("durable document not found")
+    raw = target.read_bytes()
+    if len(raw) > EXPLICIT_DOCUMENT_MAX_BYTES:
+        raise ValueError(f"durable document exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("durable document is not UTF-8 text") from exc
+    return {"ok": True, "path": relative, "content_sha256": _digest(raw), "body": text}
 
 
 def prepare(root: Path, task: str | None, role: str, *, include_protocol_notice: bool = True) -> dict[str, object]:

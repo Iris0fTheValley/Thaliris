@@ -93,19 +93,40 @@ def test_subagent_start_binds_explicit_handoff_without_injecting_projection(tmp_
     assert all("additionalContextLimit" not in handler for handler in start_handlers)
 
 
-def test_session_start_catalog_is_root_only_and_bounded(tmp_path: Path) -> None:
+def test_session_start_global_map_enables_one_explicit_retrieval_without_scan(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     (root / ".agent-memory" / "promoted").mkdir(parents=True, exist_ok=True)
     for index in range(100):
         (root / ".agent-memory" / "promoted" / f"doc-{index}.md").write_bytes(
             core._entry(f"Doc {index}", f"PRIVATE_BODY_{index}", evidence="NONE")
         )
+    target = root / ".agent-memory" / "model-tree" / "deep" / "target.md"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(core._entry("Target", "DECISION_CHANGING_BODY", evidence="NONE"))
+    (root / ".agent-memory" / "INDEX.md").write_bytes(core._entry(
+        "Global map",
+        "Implementation target: [Target](model-tree/deep/target.md)",
+        evidence="NONE",
+        kind="MEMORY",
+    ))
+
+    def no_recursive_scan(*args, **kwargs):
+        raise AssertionError("SessionStart catalog must not recursively scan durable documents")
+
+    monkeypatch.setattr(Path, "rglob", no_recursive_scan)
     output = json.loads(handle_hook(root, "SessionStart", hook_payload(source="resume")))
     context = output["hookSpecificOutput"]["additionalContext"]
     assert len(context.encode("utf-8")) < 4 * 1024
     assert "discovery only" in context
-    assert ".agent-memory" in context
+    assert "model-tree/deep/target.md" in context
     assert "PRIVATE_BODY" not in context
+    assert "DECISION_CHANGING_BODY" not in context
+
+    # The global map supplies the exact path, so one explicit retrieval call
+    # returns the selected document without intermediate catalog traversal.
+    fetched = core.document_get(root, [".agent-memory/model-tree/deep/target.md"])
+    assert len(fetched["documents"]) == 1
+    assert "DECISION_CHANGING_BODY" in fetched["documents"][0]["body"]
 
     child_output = handle_hook(root, "SubagentStart", hook_payload(
         source="resume", agent_id="unmanaged-child", agent_type="worker",
@@ -230,6 +251,17 @@ def test_active_controller_uses_only_the_mechanical_tool_allowlist(tmp_path: Pat
         tool_name="Bash", tool_input={"command": r"C:\untrusted\context.exe task-status"},
     )))
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    for command in (
+        "context init",
+        "context uninstall",
+        "context rollback backup-id",
+        "context task-start another-task",
+        "context stale",
+    ):
+        denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(
+            tool_name="Bash", tool_input={"command": command},
+        )))
+        assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
     for name in ("wait_agent", "list_agents", "interrupt_agent"):
         assert handle_hook(root, "PreToolUse", hook_payload(tool_name=name, tool_input={})) == ""
     for name in ("followup_task", "send_message", "send_input"):
@@ -251,26 +283,24 @@ def test_no_task_is_transparent_to_ordinary_spawn(tmp_path: Path) -> None:
     assert not (root / ".context" / "audit" / "lifecycle").exists()
 
 
-def test_child_control_context_reads_are_allowed_recorded_and_notified_once(tmp_path: Path) -> None:
+@pytest.mark.parametrize("agent_type", ("thaliris-investigator", "worker"))
+def test_execution_role_extra_context_reads_are_telemetry_only(tmp_path: Path, agent_type: str) -> None:
     root = repo(tmp_path)
     core.task_start(root, "deviation telemetry", None, None)
-    spawn_start(root, "investigator-3", "thaliris-investigator")
+    spawn_start(root, "reader-3", agent_type)
     child_read = hook_payload(
-        agent_id="investigator-3",
-        agent_type="thaliris-investigator",
+        agent_id="reader-3",
+        agent_type=agent_type,
         tool_name="Bash",
         tool_input={"command": "context task-show"},
     )
     assert handle_hook(root, "PreToolUse", child_read) == ""
     deviation = lifecycle(root)["protocol_deviations"][0]
-    assert deviation["agent_id"] == "investigator-3"
-    assert deviation["agent_type"] == "thaliris-investigator"
+    assert deviation["agent_id"] == "reader-3"
+    assert deviation["agent_type"] == agent_type
     assert deviation["operation"] == "task-show"
     assert deviation["blocked"] is False
 
-    first = core.task_status(root)
-    assert "Child investigator-3 directly retrieved control context" in first["Protocol deviation"]
-    assert "No control-state mutation occurred" in first["Protocol deviation"]
     assert "Protocol deviation" not in core.task_status(root)
 
     child_status = {**child_read, "tool_input": {"command": "context task-status"}}
@@ -278,27 +308,54 @@ def test_child_control_context_reads_are_allowed_recorded_and_notified_once(tmp_
     assert rewrite["hookSpecificOutput"]["permissionDecision"] == "allow"
     assert rewrite["hookSpecificOutput"]["updatedInput"]["command"].endswith("--suppress-protocol-notice")
     assert "Protocol deviation" not in core.task_status(root, include_protocol_notice=False)
-    assert "context task-status" in core.task_status(root)["Protocol deviation"]
+    assert "Protocol deviation" not in core.task_status(root)
 
 
-def test_protocol_deviation_ring_keeps_late_events_and_reports_overflow(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("agent_type", "expected_role"), (
+    ("thaliris-reviewer", "reviewer"),
+    ("thaliris-reasoning-specialist", "reasoning-specialist"),
+    ("thaliris-curator", "curator"),
+))
+def test_selected_roles_receive_one_bounded_aggregate_deviation_notice(
+    tmp_path: Path, agent_type: str, expected_role: str,
+) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "role-aware telemetry", None, None)
+    spawn_start(root, "reader-1", agent_type)
+    for operation in ("catalog", "document-get", "artifact-get"):
+        assert handle_hook(root, "PreToolUse", hook_payload(
+            agent_id="reader-1",
+            agent_type=agent_type,
+            tool_name="Bash",
+            tool_input={"command": f"context {operation} .agent-memory/INDEX.md"},
+        )) == ""
+    notice = core.task_status(root)["Protocol deviation"]
+    assert "Protocol deviations (batched)" in notice
+    assert f"{expected_role}=3" in notice
+    assert "context catalog" in notice and "context artifact-get" in notice
+    assert len(notice.encode("utf-8")) < 1024
+    assert "Protocol deviation" not in core.task_status(root)
+
+
+def test_protocol_deviation_ring_keeps_late_events_in_one_aggregate(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.task_start(root, "deviation overflow", None, None)
-    spawn_start(root, "reader", "thaliris-investigator")
+    spawn_start(root, "reader", "thaliris-reviewer")
     for index in range(40):
         assert handle_hook(root, "PreToolUse", hook_payload(
             agent_id="reader",
-            agent_type="thaliris-investigator",
+            agent_type="thaliris-reviewer",
             tool_name="Bash",
             tool_input={"command": f"context task-show --marker {index}"},
         )) == ""
     state = lifecycle(root)
     assert len(state["protocol_deviations"]) == 32
     assert state["protocol_deviation_overflow_count"] == 8
-    assert state["protocol_deviation_counts"]["allowed_read"] == 40
-    notices = [core.task_status(root).get("Protocol deviation") for _ in range(33)]
-    assert any(notice and "directly retrieved" in notice for notice in notices)
-    assert any(notice and "8 older events were coalesced" in notice for notice in notices)
+    assert state["protocol_deviation_counts"]["reviewer:allowed_read"] == 40
+    notice = core.task_status(root)["Protocol deviation"]
+    assert "reviewer=40" in notice
+    assert "diagnostic ring overflow=8" in notice
+    assert "Protocol deviation" not in core.task_status(root)
 
 
 def test_child_control_state_mutation_is_blocked_and_recorded(tmp_path: Path) -> None:

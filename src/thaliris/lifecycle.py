@@ -77,10 +77,16 @@ _CONTEXT_OPERATIONS = frozenset({
     "task-status", "task-get", "artifact-get", "catalog", "document-get",
     "task-artifact", "task-close", "task-promote", "rollback", "version",
 })
-_ACTIVE_ROOT_CONTEXT_OPERATIONS = _CONTEXT_OPERATIONS - {"task-show"}
+_ACTIVE_ROOT_CONTEXT_OPERATIONS = frozenset({
+    "doctor", "milestone-check", "memory-status", "prepare", "recall",
+    "memory-get", "task-update", "task-status", "task-get", "artifact-get",
+    "catalog", "document-get", "task-artifact", "task-close", "task-promote",
+    "version",
+})
 _CHILD_CONTEXT_READS = frozenset({
     "task-show", "task-status", "recall", "memory-get", "prepare", "stale",
-    "memory-status", "milestone-check",
+    "memory-status", "milestone-check", "task-get", "artifact-get", "catalog",
+    "document-get",
 })
 _CHILD_CONTEXT_MUTATIONS = frozenset({
     "task-start", "task-update", "task-artifact", "task-close", "task-promote",
@@ -625,6 +631,7 @@ def _record_protocol_deviation(
     operation: str,
     target: str,
     blocked: bool,
+    notify_controller: bool = True,
 ) -> None:
     """Record one bounded mechanical protocol deviation for Controller notice."""
     task_id = _active_task_id(root)
@@ -633,15 +640,17 @@ def _record_protocol_deviation(
     tool = payload.get("tool_name") or payload.get("tool")
     if task_id is None or not isinstance(agent_id, str) or not agent_id or not isinstance(tool, str):
         return
+    role = _NATIVE_AGENT_ROLES.get(str(agent_type), "unknown")
     item = {
         "agent_id": agent_id[:128],
         "agent_type": agent_type[:128] if isinstance(agent_type, str) else "unknown",
+        "role": role,
         "tool": tool[:128],
         "operation": operation[:128],
         "target": target[:256],
         "blocked": blocked,
         "observed_at_ns": time.time_ns(),
-        "notice_delivered": False,
+        "notice_delivered": not notify_controller,
     }
     fingerprint = hashlib.sha256(json.dumps({
         key: item[key] for key in ("agent_id", "agent_type", "tool", "operation", "target", "blocked")
@@ -659,15 +668,26 @@ def _record_protocol_deviation(
             state["protocol_deviation_overflow_notice_delivered"] = False
         counters = state.setdefault("protocol_deviation_counts", {})
         if isinstance(counters, dict):
-            category = "blocked" if blocked else "allowed_read"
+            category = f"{role}:{'blocked' if blocked else 'allowed_read'}"
             counters[category] = int(counters.get(category, 0)) + 1
+        if notify_controller:
+            pending = state.setdefault("protocol_deviation_pending_counts", {})
+            if isinstance(pending, dict):
+                category = f"{role}:{'blocked' if blocked else 'extra_read'}"
+                pending[category] = int(pending.get(category, 0)) + 1
+            targets = state.setdefault("protocol_deviation_pending_targets", [])
+            if isinstance(targets, list):
+                if target in targets:
+                    targets.remove(target)
+                targets.append(target)
+                del targets[:-4]
         deviations.append(item)
         _runtime_metadata(state, payload)
         _write_capture(path, state)
 
 
 def consume_protocol_deviation_notice(root: Path, task_id: str) -> str | None:
-    """Return one pending short notice and mark that deviation delivered once."""
+    """Return one bounded aggregate notice and consume the whole pending batch."""
     with core._lock(root):
         path = _lifecycle_path(root, task_id)
         if not path.is_file():
@@ -676,24 +696,30 @@ def consume_protocol_deviation_notice(root: Path, task_id: str) -> str | None:
         deviations = state.get("protocol_deviations")
         if not isinstance(deviations, list):
             return None
-        item = next((
-            value for value in deviations
-            if isinstance(value, dict) and value.get("notice_delivered") is False
-        ), None)
-        if item is None:
-            overflow = int(state.get("protocol_deviation_overflow_count", 0))
-            if overflow > 0 and state.get("protocol_deviation_overflow_notice_delivered") is not True:
-                state["protocol_deviation_overflow_notice_delivered"] = True
-                _write_capture(path, state)
-                return f"Protocol deviations: {overflow} older events were coalesced; recent events remain available."
+        pending = state.get("protocol_deviation_pending_counts")
+        if not isinstance(pending, dict) or not pending:
             return None
-        item["notice_delivered"] = True
+        counts = {str(key): int(value) for key, value in pending.items() if type(value) is int and value > 0}
+        targets = [str(value) for value in state.get("protocol_deviation_pending_targets", []) if isinstance(value, str)][-4:]
+        for item in deviations:
+            if isinstance(item, dict):
+                item["notice_delivered"] = True
+        state["protocol_deviation_pending_counts"] = {}
+        state["protocol_deviation_pending_targets"] = []
         _write_capture(path, state)
-    agent = str(item.get("agent_id", "unknown"))
-    target = str(item.get("target", item.get("operation", "control state")))
-    if item.get("blocked") is True:
-        return f"Protocol deviation: Child {agent} attempted Controller-owned control-state mutation via `{target}`. The operation was blocked."
-    return f"Protocol deviation: Child {agent} directly retrieved control context via `{target}`. No control-state mutation occurred."
+    reads = sorted((key.split(":", 1)[0], value) for key, value in counts.items() if key.endswith(":extra_read"))
+    blocked = sum(value for key, value in counts.items() if key.endswith(":blocked"))
+    parts = []
+    if reads:
+        parts.append("extra context reads " + ", ".join(f"{role}={count}" for role, count in reads))
+    if blocked:
+        parts.append(f"blocked control mutations={blocked}")
+    if targets:
+        parts.append("recent targets: " + ", ".join(f"`{target}`" for target in targets))
+    overflow = int(state.get("protocol_deviation_overflow_count", 0))
+    if overflow:
+        parts.append(f"diagnostic ring overflow={overflow}")
+    return "Protocol deviations (batched): " + "; ".join(parts) + "."
 
 
 def _lifecycle_path(root: Path, task_id: str) -> Path:
@@ -1365,6 +1391,7 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
     if not isinstance(tool, str):
         return ""
     normalized = _tool_basename(tool)
+    role = _NATIVE_AGENT_ROLES.get(str(payload.get("agent_type")), "unknown")
     if normalized in _DELEGATION_TOOL_NAMES:
         return _permission_deny("THALIRIS_CHILD_DELEGATION: child-to-child delegation is not permitted.")
     operation = _context_operation(payload)
@@ -1374,7 +1401,15 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
         return _permission_deny("THALIRIS_CHILD_CONTROL_STATE_MUTATION: Child may not modify Controller-owned control state.")
     if operation in _CHILD_CONTEXT_READS:
         target = f"context {operation}"
-        _best_effort_record(_record_protocol_deviation, root, payload, operation=operation, target=target, blocked=False)
+        _best_effort_record(
+            _record_protocol_deviation,
+            root,
+            payload,
+            operation=operation,
+            target=target,
+            blocked=False,
+            notify_controller=role in {"reviewer", "reasoning-specialist", "curator"},
+        )
         if operation in {"task-status", "prepare"}:
             return _updated_command_output(payload, "--suppress-protocol-notice")
         return ""
@@ -1388,10 +1423,10 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
             operation="control-state-write" if mutation else "control-state-read",
             target=target,
             blocked=mutation,
+            notify_controller=mutation or role in {"reviewer", "reasoning-specialist", "curator"},
         )
         if mutation:
             return _permission_deny("THALIRIS_CHILD_CONTROL_STATE_MUTATION: Child may not modify Controller-owned control state.")
-    role = _NATIVE_AGENT_ROLES.get(str(payload.get("agent_type")))
     if role == "reviewer" and _obvious_write_attempt(payload):
         _best_effort_record(
             _record_protocol_deviation,

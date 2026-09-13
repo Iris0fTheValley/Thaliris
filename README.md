@@ -72,10 +72,14 @@ Artifact 正文位于显式路径中；账本只保存 ID、producer、path、co
 created revision、source refs 与 optional supersedes。Artifact 不会被自动读取或
 传播。Controller 显式取回正文，并自行选择是否交给下一个 Child。
 
-Memory 默认不注入。Root SessionStart 只收到约 2–4 KiB 的 durable `catalog`，用于
-发现有哪些长期文档，而不包含正文或相关性判断。`recall` 只返回搜索候选，
-`document-get` / `memory-get` 才取回一篇选定正文。ACTIVE Controller 使用 bounded
-`task-status` 和单对象 `task-get`；完整 `task-show` 仅用于 offline/人工诊断。
+Memory 默认不注入。模型自行维护 `.agent-memory/INDEX.md` 和
+`.milestones/INDEX.md` 里的薄全局树状地图，并自行决定目录、层级、移动、合并与
+删除；Core 不递归扫描文件系统来重建第二套 catalog，也不规定 taxonomy。Root
+SessionStart 只收到约 2–4 KiB 的 INDEX 地图，不含文档正文或相关性判断。
+`document-get` 可一次读取最多 8 个由 Controller 明确给出的 path，并受总返回大小
+限制；它不自动搜索、排序或补充文档。ACTIVE Controller 使用 bounded
+`task-status` 和单对象 `task-get`；`init`、`uninstall`、`rollback`、再次
+`task-start` 与完整 `task-show` 均不属于 ACTIVE allow-set。
 Audience、Topics、Symbols、Applicability、Kind、Status 与 Confidence 仅是模型写入
 的搜索或展示 metadata，不是传播权限。
 
@@ -94,8 +98,11 @@ state 与 delta。两者都只提供事实，不成为 correctness、ownership �
 context init
 context task-start "goal"
 context task-status
+context task-get OBJECT_ID
 context task-update --role controller --base-revision N --input update.json
 context task-artifact --base-revision N --id A-001 --path path/to/file.md --summary "..."
+context catalog
+context document-get .agent-memory/model-chosen/a.md .milestones/current/status.md
 context recall "query" --role controller
 context memory-get memory/path.md
 context task-promote --role controller --base-revision N --input promotion.json
@@ -105,7 +112,9 @@ context rollback BACKUP_ID
 context doctor
 ```
 
-`prepare --role <execution-role>` 只返回 `CONTROLLER_HANDOFF_ONLY` 标记，不重建
+`task-promote` 输入中的每条记录必须由 Controller 明确给出 `.agent-memory/**.md`
+目标 path；Core 不按 Kind 自动分类。`prepare --role <execution-role>` 只返回
+`CONTROLLER_HANDOFF_ONLY` 标记，不重建
 task context。
 
 ## Benchmark 边界

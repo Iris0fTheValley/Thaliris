@@ -112,16 +112,8 @@ def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
 
 def _durable_descriptor_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
     """Check only durable descriptors that carry an objective path/hash pair."""
-    marker = "## Durable Source Descriptors\n\n```json\n"
-    start = entry.body.rfind(marker)
-    match = re.fullmatch(r"(\[.*\])\n```\s*", entry.body[start + len(marker):], re.DOTALL) if start >= 0 else None
-    if match is None:
-        return "UNKNOWN", ["invalid durable source descriptors"]
-    try:
-        descriptors = json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return "UNKNOWN", ["invalid durable source descriptors"]
-    if not isinstance(descriptors, list) or not all(isinstance(item, dict) for item in descriptors):
+    descriptors = durable_descriptors(entry)
+    if descriptors is None:
         return "UNKNOWN", ["invalid durable source descriptors"]
 
     specs: list[str] = []
@@ -177,3 +169,19 @@ def _durable_descriptor_status(entry: Entry, root: Path) -> tuple[str, list[str]
     if recorded:
         return "PARTIAL", []
     return "FRESH", []
+
+
+def durable_descriptors(entry: Entry) -> list[dict[str, object]] | None:
+    """Return persisted mechanical provenance descriptors without interpreting them."""
+    marker = "## Durable Source Descriptors\n\n```json\n"
+    start = entry.body.rfind(marker)
+    match = re.fullmatch(r"(\[.*\])\n```\s*", entry.body[start + len(marker):], re.DOTALL) if start >= 0 else None
+    if match is None:
+        return None
+    try:
+        descriptors = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(descriptors, list) or not all(isinstance(item, dict) for item in descriptors):
+        return None
+    return descriptors

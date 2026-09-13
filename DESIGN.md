@@ -110,23 +110,31 @@ conclusion.
 
 ### Memory and milestones
 
-Memory is explicit storage and retrieval. Search returns candidates; get returns
-one selected body. Audience, Topics, Symbols, Applicability, Kind, Status, and
-Confidence are model-authored display/search metadata, not propagation
-permissions or semantic gates.
+Memory is explicit storage and retrieval. The model maintains the directory
+tree and its canonical `.agent-memory/INDEX.md` and `.milestones/INDEX.md`
+maps; Core imposes no taxonomy and does not recursively scan the filesystem to
+derive another catalog. Search returns candidates, while `document-get`
+returns only 1–8 Controller-selected paths under one total response bound.
+Audience, Topics, Symbols, Applicability, Kind, Status, and Confidence are
+model-authored display/search metadata, not propagation permissions or
+semantic gates.
 
-SessionStart exposes only a small bounded durable catalog to Root. It shows
-paths, counts, and index pointers so a new session can discover candidates;
-it does not include document bodies or select relevant content. ACTIVE Root
-uses bounded `task-status` and single-object `task-get`; full `task-show` is an
-offline/human diagnostic surface.
+SessionStart exposes only the small bounded root INDEX maps to Root. They may
+point directly to deep leaves so normal retrieval needs one explicit call;
+they do not include document bodies or select relevant content. ACTIVE Root
+uses an explicit runtime-command allow-set, bounded `task-status`, and
+single-object `task-get`; `init`, `uninstall`, `rollback`, another `task-start`,
+and full `task-show` are blocked.
 
 Milestones are ordinary long-lived documents. Core does not inject them into
 role context or treat them as semantic authority.
 
-`task-promote` stores exactly the Controller-selected record, with append-only
-identity and source references. It does not decide whether confidence or
-evidence makes that record legitimate.
+`task-promote` stores exactly the Controller-selected record at the explicit
+`.agent-memory/**.md` path chosen by the Controller, with identity and source
+references. It does not classify by Kind or decide whether confidence or
+evidence makes that record legitimate. Models may create, edit, move, split,
+merge, or delete durable documents through normal repository changes; INDEX
+validation reports broken references without choosing a replacement.
 
 ### Verification and task surface
 

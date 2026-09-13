@@ -218,22 +218,30 @@ Memory and milestones are ordinary explicit storage. Search results and
 Audience, Topics, Symbols, Applicability, Kind, Status, and Confidence metadata
 are hints for models and displays, never routing permissions or correctness
 gates. Freshness reports only FRESH, PARTIAL, RECORDED, CHANGED, MISSING, or
-UNKNOWN mechanical facts. Root SessionStart receives only a small durable
-catalog showing what documents exist. The Controller explicitly uses
-`catalog`, `recall`, or `document-get` to retrieve selected durable material;
-the catalog never includes document bodies or chooses relevance.
+UNKNOWN mechanical facts. `.agent-memory/INDEX.md` and
+`.milestones/INDEX.md` are model-maintained thin global maps of the durable
+tree; Core does not reconstruct a second catalog by recursively scanning the
+filesystem or impose a taxonomy. Root SessionStart receives only these bounded
+maps, never document bodies. The Controller explicitly uses `catalog`,
+`recall`, or `document-get` to retrieve selected durable material. A single
+bounded `document-get` may name up to eight explicit paths; it never searches,
+ranks, or supplements the selection.
 
 With NO_TASK, Thaliris leaves ordinary Codex tool use and spawn behavior
 transparent. During an ACTIVE managed task the persistent Controller uses only
-native spawn/wait/list/interrupt operations and trusted direct `context`
-control commands. `task-status` is bounded; `task-get`, `artifact-get`,
-`catalog`, `recall`, and `document-get` retrieve explicitly selected objects.
-`task-show` is offline/human diagnostics and is blocked for ACTIVE Root.
+native spawn/wait/list/interrupt operations and an explicit allow-set of
+trusted direct `context` runtime commands. `init`, `uninstall`, `rollback`, a
+second `task-start`, and `task-show` are blocked for ACTIVE Root. `task-status`
+is bounded; `task-get`, `artifact-get`, `catalog`, `recall`, and `document-get`
+retrieve explicitly selected objects.
 Repository investigation, execution, mutation, and testing belong to fresh
 Children. Existing Child threads are never resumed with follow-up/send tools.
-A Child's obvious direct control-context retrieval is allowed but recorded for
-one short Controller notice. Obvious attempts to mutate Controller-owned task
-or lifecycle state are denied and recorded. Reviewer independence is a
+A Child's obvious direct control-context retrieval is allowed and recorded.
+Investigator and Implementer reads remain telemetry-only; Curator, Reasoning
+Specialist, and Reviewer extra reads produce at most one bounded aggregate
+Controller notice per pending batch. Obvious attempts to mutate
+Controller-owned task or lifecycle state are denied, recorded, and included in
+that aggregate notice. Reviewer independence is a
 developer-instruction plus obvious-write hook guard, not a claimed native
 read-only sandbox. Starting managed mode requires a current-session,
 current-hook, one-shot PreToolUse attestation.

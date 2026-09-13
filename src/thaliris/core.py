@@ -15,7 +15,7 @@ import tempfile
 import unicodedata
 import uuid
 
-from .markdown import Entry, evidence_status, parse, parse_text
+from .markdown import Entry, durable_descriptors, evidence_status, parse, parse_text
 from .models import ContextConfig
 
 IGNORE_START = "# thaliris:begin"
@@ -169,20 +169,16 @@ def _template_files() -> dict[str, bytes]:
         kind = kwargs.pop("kind")
         return _entry(title, body, kind=kind, **kwargs)
     return {
-        ".agent-memory/INDEX.md": template("Memory index", "- [Operator](operator.md)\n- [Prompt policy](prompt-policy.md)\n- [Project conventions](project-conventions.md)\n- [Decisions](decisions/INDEX.md)\n- [Lessons](lessons/INDEX.md)", audience=["all"], kind="MEMORY"),
-        ".agent-memory/operator.md": template("Operator notes", "Unknown. Record only confirmed operating constraints.", kind="HARD_CONSTRAINT"),
-        ".agent-memory/prompt-policy.md": template("Prompt policy", "Use explicit recall only. Retained memory is never automatically added to a Child handoff. Automatic compression is disabled.", audience=["controller"], kind="HARD_CONSTRAINT"),
-        ".agent-memory/project-conventions.md": template("Project conventions", "Unknown. Add conventions only with evidence.", kind="HARD_CONSTRAINT"),
-        ".agent-memory/decisions/INDEX.md": template("Decision index", "- [PD-001 decision template](PD-001.md)", kind="MEMORY"),
-        ".agent-memory/decisions/PD-001.md": template("PD-001: decision template", "This is an unadopted template, not a project fact.\n\n## Decision\n\nUnknown.\n\n## Rationale\n\nUnknown.", kind="MEMORY"),
-        ".agent-memory/lessons/INDEX.md": template("Lessons index", "- [L-001 lesson template](L-001.md)", kind="MEMORY"),
-        ".agent-memory/lessons/L-001.md": template("L-001: lesson template", "This is an unadopted template, not a historical claim.\n\n## Failure mode\n\nUnknown.\n\n## Prevention\n\nUnknown.", kind="MEMORY"),
-        ".milestones/INDEX.md": _entry("Milestone index", "- [M001-name](M001-name/INDEX.md)"),
-        ".milestones/M001-name/INDEX.md": _entry("M001-name", "- [Scope](scope.md)\n- [Decisions](decisions.md)\n- [Progress](progress.md)\n- [Verification](verification.md)"),
-        ".milestones/M001-name/scope.md": _entry("Scope", "Unknown."),
-        ".milestones/M001-name/decisions.md": _entry("Decisions", "None."),
-        ".milestones/M001-name/progress.md": _entry("Progress", "0%."),
-        ".milestones/M001-name/verification.md": _entry("Verification", "Not run."),
+        ".agent-memory/INDEX.md": template(
+            "Durable memory index",
+            "Maintain a thin global map here. The model chooses directory names, hierarchy, and document links.",
+            audience=["all"],
+            kind="MEMORY",
+        ),
+        ".milestones/INDEX.md": _entry(
+            "Milestone index",
+            "Maintain a thin global milestone map here. The model chooses its structure and links.",
+        ),
     }
 
 
@@ -1054,12 +1050,13 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
         writes: dict[str, bytes] = {}
         promoted: list[str] = []
         promotion_ids: set[str] = set()
+        promotion_paths: set[str] = set()
         task_object_ids = _task_object_ids(state)
         for value in payload["records"]:
             if not isinstance(value, dict):
                 raise ValueError("invalid promotion record")
-            allowed = {"id", "kind", "title", "text", "source_refs", "status", "audience", "topics", "symbols", "applicability", "confidence"}
-            if set(value) - allowed:
+            allowed = {"id", "path", "kind", "title", "text", "source_refs", "status", "audience", "topics", "symbols", "applicability", "confidence"}
+            if set(value) - allowed or "path" not in value:
                 raise ValueError("invalid promotion record")
             identifier = _bounded_label(value.get("id"), "promotion id")
             if identifier in promotion_ids:
@@ -1121,7 +1118,12 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
                         append_source_descriptor(str(source_ref))
                 else:
                     append_source_descriptor(ref)
-            relative = f".agent-memory/promoted/{identifier}.md"
+            relative = _valid_relative(root, value.get("path"))
+            if not relative.startswith(".agent-memory/") or not relative.endswith(".md") or relative.endswith("/INDEX.md"):
+                raise ValueError("promotion path must name a non-INDEX Markdown document under .agent-memory")
+            if relative in promotion_paths:
+                raise ValueError("duplicate promotion path")
+            promotion_paths.add(relative)
             if _safe(root, relative).exists():
                 raise ValueError("promotion refuses to overwrite an existing durable target")
             kind = value.get("kind", "record")
@@ -1196,13 +1198,16 @@ def recall(root: Path, query: str, role: str) -> dict[str, object]:
     if role not in _PACK_ROLES:
         raise ValueError("invalid role")
     root = _repo_root(root)
-    return {
+    result = {
         "ok": True,
         "schema_version": 2,
         "role_hint": role,
         "query": query,
         "candidates": _memory_candidates(root, query),
     }
+    if len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > EXPLICIT_DOCUMENT_MAX_BYTES:
+        raise ValueError(f"recall response exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes; refine the explicit query")
+    return result
 
 
 def memory_get(root: Path, path: str) -> dict[str, object]:
@@ -1214,6 +1219,8 @@ def memory_get(root: Path, path: str) -> dict[str, object]:
     target = _safe(root, path)
     if target.is_symlink() or not target.is_file():
         raise ValueError("memory entry not found")
+    if target.stat().st_size > EXPLICIT_DOCUMENT_MAX_BYTES:
+        raise ValueError(f"memory entry exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
     entry = parse(target)
     freshness, detail = evidence_status(entry, root)
     return {
@@ -1235,77 +1242,113 @@ def _durable_relative_path(root: Path, path: str) -> tuple[str, Path]:
     return relative, _safe(root, relative)
 
 
+def _index_reference_errors(root: Path, index: Path, body: str) -> list[str]:
+    """Validate explicit Markdown links without deriving a filesystem catalog."""
+    errors: list[str] = []
+    for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", body):
+        target = target.strip().strip("<>")
+        if not target or target.startswith(("#", "http://", "https://", "mailto:")):
+            continue
+        relative_link = target.split("#", 1)[0]
+        candidate = (index.parent / relative_link).resolve(strict=False)
+        try:
+            relative = candidate.relative_to(root.resolve(strict=True)).as_posix()
+            _durable_relative_path(root, relative)
+        except (OSError, ValueError):
+            errors.append(f"{index.relative_to(root).as_posix()}: invalid link {target}")
+            continue
+        if candidate.is_symlink() or not candidate.exists():
+            errors.append(f"{index.relative_to(root).as_posix()}: missing link target {relative}")
+    return errors
+
+
+def _catalog_index(root: Path, relative: str) -> tuple[dict[str, object], list[str]]:
+    normalized, target = _durable_relative_path(root, relative)
+    index = target if target.name == "INDEX.md" else target / "INDEX.md"
+    if index.is_symlink() or not index.is_file():
+        return {"path": index.relative_to(root).as_posix(), "state": "MISSING"}, [f"{normalized}: missing INDEX.md"]
+    if index.stat().st_size > EXPLICIT_DOCUMENT_MAX_BYTES:
+        return {"path": index.relative_to(root).as_posix(), "state": "OVERSIZED"}, [f"{normalized}: INDEX.md exceeds limit"]
+    try:
+        parsed = parse(index)
+    except (OSError, ValueError) as exc:
+        return {"path": index.relative_to(root).as_posix(), "state": "INVALID"}, [str(exc)]
+    errors = _index_reference_errors(root, index, parsed.body)
+    heading = re.search(r"(?m)^#\s+(.+?)\s*$", parsed.body)
+    return {
+        "path": index.relative_to(root).as_posix(),
+        "title": heading.group(1) if heading else index.parent.name,
+        "metadata": {key: parsed.meta[key] for key in ("Kind", "Status", "Revision") if key in parsed.meta},
+        "map": parsed.body,
+        "link_count": len(re.findall(r"\[[^]]+\]\(([^)]+)\)", parsed.body)),
+        "state": "VALID" if not errors else "BROKEN_REFERENCES",
+    }, errors
+
+
 def catalog(root: Path, path: str | None = None) -> dict[str, object]:
-    """Return bounded durable-document discovery metadata, never document bodies."""
+    """Read canonical INDEX maps without recursively reconstructing the tree."""
     root = _repo_root(root)
     requested = path.rstrip("/") if isinstance(path, str) and path else None
-    directories = [requested] if requested else [".agent-memory", ".milestones"]
+    paths = [requested] if requested else [".agent-memory", ".milestones"]
+    indexes: list[dict[str, object]] = []
+    errors: list[str] = []
+    for relative in paths:
+        assert relative is not None
+        item, item_errors = _catalog_index(root, relative)
+        indexes.append(item)
+        errors.extend(item_errors)
     result: dict[str, object] = {
-        "ok": True,
+        "ok": not errors,
         "path": requested,
         "discovery_only": True,
+        "canonical_source": "INDEX.md",
         "max_bytes": DURABLE_CATALOG_MAX_BYTES,
-        "directories": [],
-        "documents": [],
-        "truncated": False,
+        "indexes": indexes,
+        "errors": errors[:8],
+        "truncated": len(errors) > 8,
     }
-    directory_items: list[dict[str, object]] = result["directories"]  # type: ignore[assignment]
-    document_items: list[dict[str, object]] = result["documents"]  # type: ignore[assignment]
-    candidates: list[Path] = []
-    for relative in directories:
-        assert relative is not None
-        normalized, target = _durable_relative_path(root, relative)
-        if target.is_symlink() or (target.exists() and not target.is_dir()):
-            raise ValueError("catalog path must name a durable directory")
-        documents = sorted(target.rglob("*.md")) if target.is_dir() else []
-        directory_items.append({
-            "path": normalized,
-            "document_count": len(documents),
-            "index": f"{normalized}/INDEX.md" if (target / "INDEX.md").is_file() else None,
-            "subdirectories": sorted(
-                child.relative_to(root).as_posix()
-                for child in target.iterdir()
-                if child.is_dir() and not child.is_symlink()
-            ) if target.is_dir() else [],
-        })
-        if requested and target.is_dir():
-            candidates = sorted(child for child in target.iterdir() if child.is_file() and child.suffix.lower() == ".md")
-    result["total_documents"] = sum(int(item["document_count"]) for item in directory_items)
-    for candidate in candidates:
-        item: dict[str, object] = {"path": candidate.relative_to(root).as_posix(), "title": candidate.stem}
-        try:
-            parsed = parse(candidate)
-            item["metadata"] = {key: parsed.meta[key] for key in ("Kind", "Status", "Revision") if key in parsed.meta}
-        except (OSError, ValueError):
-            item["metadata"] = {"state": "INVALID"}
-        document_items.append(item)
-        if len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > DURABLE_CATALOG_MAX_BYTES:
-            document_items.pop()
-            result["truncated"] = True
-            break
     if len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > DURABLE_CATALOG_MAX_BYTES:
-        # Top-level metadata remains sufficient for further explicit catalog
-        # calls even if an unusually broad subdirectory list must be omitted.
-        for item in directory_items:
-            item["subdirectories"] = []
+        for item in indexes:
+            if "map" in item:
+                item["map_bytes"] = len(str(item.pop("map")).encode("utf-8"))
+                item["map_omitted"] = True
         result["truncated"] = True
     return result
 
 
-def document_get(root: Path, path: str) -> dict[str, object]:
-    """Explicitly retrieve one bounded document from a durable namespace."""
+def document_get(root: Path, paths: str | list[str]) -> dict[str, object]:
+    """Retrieve only explicitly named durable documents in one bounded batch."""
     root = _repo_root(root)
-    relative, target = _durable_relative_path(root, path)
-    if target.is_symlink() or not target.is_file() or target.suffix.lower() != ".md":
-        raise ValueError("durable document not found")
-    raw = target.read_bytes()
-    if len(raw) > EXPLICIT_DOCUMENT_MAX_BYTES:
-        raise ValueError(f"durable document exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ValueError("durable document is not UTF-8 text") from exc
-    return {"ok": True, "path": relative, "content_sha256": _digest(raw), "body": text}
+    selected = [paths] if isinstance(paths, str) else paths
+    if not isinstance(selected, list) or not 1 <= len(selected) <= 8 or len(set(selected)) != len(selected) or not all(isinstance(path, str) for path in selected):
+        raise ValueError("document-get requires 1 to 8 unique paths")
+    documents: list[dict[str, object]] = []
+    for path in selected:
+        relative, target = _durable_relative_path(root, path)
+        if target.is_symlink() or not target.is_file() or target.suffix.lower() != ".md":
+            raise ValueError("durable document not found")
+        raw = target.read_bytes()
+        try:
+            entry = parse_text(raw.decode("utf-8"), target)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ValueError("durable document is invalid") from exc
+        freshness, detail = evidence_status(entry, root)
+        provenance: object = entry.meta.get("Evidence")
+        if entry.meta.get("Evidence") == "DURABLE_SOURCE_DESCRIPTORS":
+            provenance = durable_descriptors(entry)
+        documents.append({
+            "path": relative,
+            "content_sha256": _digest(raw),
+            "metadata": entry.meta,
+            "body": entry.body,
+            "freshness": freshness,
+            "freshness_detail": detail,
+            "provenance": provenance,
+        })
+        response = {"ok": True, "documents": documents}
+        if len(json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > EXPLICIT_DOCUMENT_MAX_BYTES:
+            raise ValueError(f"document-get response exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
+    return {"ok": True, "documents": documents}
 
 
 def prepare(root: Path, task: str | None, role: str, *, include_protocol_notice: bool = True) -> dict[str, object]:
@@ -1336,21 +1379,5 @@ def prepare(root: Path, task: str | None, role: str, *, include_protocol_notice:
 
 
 def milestone_check(root: Path) -> dict[str, object]:
-    index = root / ".milestones" / "INDEX.md"; errors: list[str] = []; checked: list[str] = []
-    try: top = parse(index)
-    except (ValueError, OSError) as exc: return {"ok": False, "errors": [str(exc)]}
-    links = re.findall(r"\[[^]]+\]\(([^)]+/INDEX\.md)\)", top.body)
-    if not links: errors.append("milestone index has no directory INDEX links")
-    required = {"INDEX.md": "# ", "scope.md": "# Scope", "decisions.md": "# Decisions", "progress.md": "# Progress", "verification.md": "# Verification"}
-    for link in links:
-        try: directory = _safe(index.parent, str(Path(link).parent))
-        except ValueError: errors.append(f"path escapes milestones: {link}"); continue
-        for name, heading in required.items():
-            target = _safe(directory, name)
-            if not target.is_file(): errors.append(f"{link}: missing {name}"); continue
-            try:
-                item = parse(target)
-                if heading not in item.body: errors.append(f"{link}: {name} missing required heading")
-            except ValueError as exc: errors.append(str(exc))
-        checked.append(link)
-    return {"ok": not errors, "checked": checked, "errors": errors}
+    result = catalog(root, ".milestones")
+    return {"ok": result["ok"], "checked": [".milestones/INDEX.md"], "errors": result["errors"]}

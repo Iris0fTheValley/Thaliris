@@ -93,6 +93,7 @@ def test_promotion_stores_controller_selection_without_confidence_gate(tmp_path:
     started = core.task_start(root, "promotion", None, None)
     promotion = write_json(root.parent / "promotion.json", {"records": [{
         "id": "selected",
+        "path": ".agent-memory/model-chosen/selected.md",
         "kind": "decision",
         "title": "Selected record",
         "text": "MODEL_SELECTED_TEXT",
@@ -100,10 +101,10 @@ def test_promotion_stores_controller_selection_without_confidence_gate(tmp_path:
         "source_refs": [],
     }]})
     result = core.task_promote(root, "controller", started["revision"], promotion)
-    assert result["promoted"] == [".agent-memory/promoted/selected.md"]
+    assert result["promoted"] == [".agent-memory/model-chosen/selected.md"]
 
     candidates = core.recall(root, "MODEL_SELECTED_TEXT", "investigator")["candidates"]
-    assert candidates[0]["path"] == ".agent-memory/promoted/selected.md"
+    assert candidates[0]["path"] == ".agent-memory/model-chosen/selected.md"
     fetched = core.memory_get(root, candidates[0]["path"])
     assert "MODEL_SELECTED_TEXT" in fetched["body"]
 
@@ -127,6 +128,7 @@ def test_promoted_provenance_survives_task_state_and_round_trips(tmp_path: Path)
     )
     promotion = write_json(root.parent / "durable.json", {"records": [{
         "id": "durable-decision",
+        "path": ".agent-memory/architecture/durable-decision.md",
         "kind": "decision",
         "title": "Durable decision",
         "text": "Keep this conclusion",
@@ -167,7 +169,7 @@ def test_durable_freshness_distinguishes_fresh_and_recorded(tmp_path: Path) -> N
     (fresh_root / "artifact.md").write_text("stable", encoding="utf-8")
     registered = core.task_artifact(fresh_root, started["revision"], "a1", "artifact.md", "stable")
     promoted = write_json(tmp_path / "fresh-promotion.json", {"records": [{
-        "id": "fresh", "kind": "decision", "title": "Fresh", "text": "fresh", "source_refs": ["a1"],
+        "id": "fresh", "path": ".agent-memory/custom/fresh.md", "kind": "decision", "title": "Fresh", "text": "fresh", "source_refs": ["a1"],
     }]})
     fresh_path = core.task_promote(fresh_root, "controller", registered["revision"], promoted)["promoted"][0]
     assert core.memory_get(fresh_root, fresh_path)["freshness"] == "FRESH"
@@ -177,7 +179,7 @@ def test_durable_freshness_distinguishes_fresh_and_recorded(tmp_path: Path) -> N
         "evidence_refs": [{"id": "s1", "kind": "external", "locator": "ticket-17", "summary": "recorded only"}],
     }))
     recorded_promotion = write_json(tmp_path / "recorded-promotion.json", {"records": [{
-        "id": "recorded", "kind": "decision", "title": "Recorded", "text": "recorded", "source_refs": ["s1"],
+        "id": "recorded", "path": ".agent-memory/custom/recorded.md", "kind": "decision", "title": "Recorded", "text": "recorded", "source_refs": ["s1"],
     }]})
     recorded_path = core.task_promote(
         recorded_root, "controller", recorded_started["revision"], recorded_promotion,
@@ -200,11 +202,11 @@ def test_durable_freshness_distinguishes_fresh_and_recorded(tmp_path: Path) -> N
 def test_invalid_promotion_metadata_is_rejected_without_writing(tmp_path: Path, field: str, value: object) -> None:
     root = repo(tmp_path)
     started = core.task_start(root, "invalid promotion", None, None)
-    record = {"id": "invalid", "kind": "decision", "title": "Title", "text": "body", field: value}
+    record = {"id": "invalid", "path": ".agent-memory/custom/invalid.md", "kind": "decision", "title": "Title", "text": "body", field: value}
     promotion = write_json(root.parent / "invalid.json", {"records": [record]})
     with pytest.raises(ValueError):
         core.task_promote(root, "controller", started["revision"], promotion)
-    assert not (root / ".agent-memory" / "promoted" / "invalid.md").exists()
+    assert not (root / ".agent-memory" / "custom" / "invalid.md").exists()
 
 
 def test_verification_source_refs_survive_and_affect_result_identity(tmp_path: Path) -> None:
@@ -264,12 +266,12 @@ def test_record_artifact_and_promotion_ids_are_unique(tmp_path: Path) -> None:
         core.task_artifact(root, first["revision"], "same-artifact", "a.md", "again")
 
     duplicate_promotions = write_json(tmp_path / "duplicate-promotions.json", {"records": [
-        {"id": "same-promotion", "kind": "decision", "title": "One", "text": "one"},
-        {"id": "same-promotion", "kind": "decision", "title": "Two", "text": "two"},
+        {"id": "same-promotion", "path": ".agent-memory/custom/one.md", "kind": "decision", "title": "One", "text": "one"},
+        {"id": "same-promotion", "path": ".agent-memory/custom/two.md", "kind": "decision", "title": "Two", "text": "two"},
     ]})
     with pytest.raises(ValueError, match="duplicate promotion id"):
         core.task_promote(root, "controller", first["revision"], duplicate_promotions)
-    assert not (root / ".agent-memory" / "promoted" / "same-promotion.md").exists()
+    assert not (root / ".agent-memory" / "custom" / "one.md").exists()
 
 
 def test_task_object_ids_are_unique_across_object_kinds(tmp_path: Path) -> None:
@@ -284,7 +286,7 @@ def test_task_object_ids_are_unique_across_object_kinds(tmp_path: Path) -> None:
             core.task_artifact(root, started["revision"], collision, "artifact.md", "artifact")
 
     promotion = write_json(tmp_path / "collision-promotion.json", {"records": [{
-        "id": "R1", "kind": "decision", "title": "Collision", "text": "body",
+        "id": "R1", "path": ".agent-memory/custom/collision.md", "kind": "decision", "title": "Collision", "text": "body",
     }]})
     with pytest.raises(ValueError, match="promotion id conflicts with task object"):
         core.task_promote(root, "controller", started["revision"], promotion)
@@ -345,26 +347,100 @@ def test_task_get_and_artifact_get_return_only_the_selected_object(tmp_path: Pat
     assert fetched["object_type"] == "artifact"
 
 
-def test_durable_catalog_is_bounded_and_document_get_is_single_document(tmp_path: Path) -> None:
+def test_root_index_is_canonical_global_map_without_recursive_scan(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
-    durable = root / ".agent-memory" / "promoted"
-    durable.mkdir(parents=True, exist_ok=True)
-    for index in range(200):
-        (durable / f"doc-{index}.md").write_bytes(core._entry(
-            f"Document {index}", f"BODY_{index}", evidence="NONE",
-        ))
-    discovered = core.catalog(root, ".agent-memory/promoted")
+    target = root / ".agent-memory" / "projects" / "alpha" / "guide.md"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(core._entry("Guide", "TARGET_BODY", evidence="NONE"))
+    (root / ".agent-memory" / "INDEX.md").write_bytes(core._entry(
+        "Global memory map",
+        "Projects: [Alpha guide](projects/alpha/guide.md) — implementation routing.",
+        evidence="NONE",
+        kind="MEMORY",
+    ))
+
+    def no_recursive_scan(*args, **kwargs):
+        raise AssertionError("catalog must not recursively scan the durable tree")
+
+    monkeypatch.setattr(Path, "rglob", no_recursive_scan)
+    discovered = core.catalog(root)
     encoded = json.dumps(discovered, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     assert len(encoded) <= core.DURABLE_CATALOG_MAX_BYTES
-    assert discovered["total_documents"] == 200
-    assert discovered["truncated"] is True
-    assert "BODY_199" not in encoded.decode("utf-8")
+    assert discovered["canonical_source"] == "INDEX.md"
+    assert "projects/alpha/guide.md" in encoded.decode("utf-8")
+    assert "TARGET_BODY" not in encoded.decode("utf-8")
 
-    fetched = core.document_get(root, ".agent-memory/promoted/doc-7.md")
-    assert "BODY_7" in fetched["body"]
-    assert "BODY_8" not in fetched["body"]
+    fetched = core.document_get(root, [".agent-memory/projects/alpha/guide.md"])
+    assert len(fetched["documents"]) == 1
+    assert "TARGET_BODY" in fetched["documents"][0]["body"]
     with pytest.raises(ValueError, match="durable path"):
         core.document_get(root, "README.md")
+
+
+def test_init_creates_only_durable_entrypoints_without_taxonomy(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    assert (root / ".agent-memory" / "INDEX.md").is_file()
+    assert (root / ".milestones" / "INDEX.md").is_file()
+    for imposed in (
+        ".agent-memory/decisions",
+        ".agent-memory/lessons",
+        ".agent-memory/runtime",
+        ".milestones/M001-name",
+    ):
+        assert not (root / imposed).exists()
+
+
+def test_document_get_batches_only_selected_paths_and_enforces_total_size(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    durable = root / ".agent-memory" / "custom"
+    durable.mkdir(parents=True)
+    for name in ("a", "b", "c"):
+        (durable / f"{name}.md").write_bytes(core._entry(name.upper(), f"BODY_{name.upper()}", evidence="NONE"))
+    fetched = core.document_get(root, [
+        ".agent-memory/custom/a.md",
+        ".agent-memory/custom/c.md",
+    ])
+    serialized = json.dumps(fetched)
+    assert [item["path"] for item in fetched["documents"]] == [
+        ".agent-memory/custom/a.md",
+        ".agent-memory/custom/c.md",
+    ]
+    assert "BODY_A" in serialized and "BODY_C" in serialized and "BODY_B" not in serialized
+
+    for name in ("large-1", "large-2"):
+        (durable / f"{name}.md").write_bytes(core._entry(name, "x" * 40_000, evidence="NONE"))
+    with pytest.raises(ValueError, match="response exceeds"):
+        core.document_get(root, [
+            ".agent-memory/custom/large-1.md",
+            ".agent-memory/custom/large-2.md",
+        ])
+
+
+def test_document_get_preserves_memory_freshness_and_provenance(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "durable retrieval", None, None)
+    (root / "artifact.md").write_text("stable", encoding="utf-8")
+    registered = core.task_artifact(root, started["revision"], "A1", "artifact.md", "stable")
+    promotion = write_json(tmp_path / "promotion.json", {"records": [{
+        "id": "D1", "path": ".agent-memory/model-tree/decision.md", "kind": "decision", "title": "Decision", "text": "selected", "source_refs": ["A1"],
+    }]})
+    path = core.task_promote(root, "controller", registered["revision"], promotion)["promoted"][0]
+    item = core.document_get(root, path)["documents"][0]
+    assert item["freshness"] == "FRESH"
+    assert item["freshness_detail"] == []
+    assert item["metadata"]["Evidence"] == "DURABLE_SOURCE_DESCRIPTORS"
+    assert item["provenance"][0]["artifact_id"] == "A1"
+
+
+def test_broken_index_reference_is_mechanically_reported(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    (root / ".agent-memory" / "INDEX.md").write_bytes(core._entry(
+        "Memory map", "- [Missing](model-chosen/missing.md)", evidence="NONE", kind="MEMORY",
+    ))
+    result = core.catalog(root)
+    assert result["ok"] is False
+    assert result["indexes"][0]["state"] == "BROKEN_REFERENCES"
+    assert "missing link target" in result["errors"][0]
 
 
 def test_git_status_failure_is_reported_as_unavailable(tmp_path: Path, monkeypatch) -> None:

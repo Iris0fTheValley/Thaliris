@@ -35,8 +35,8 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("path")
     q = sub.add_parser("catalog", help="discover bounded durable document metadata")
     q.add_argument("path", nargs="?")
-    q = sub.add_parser("document-get", help="retrieve one durable document")
-    q.add_argument("path")
+    q = sub.add_parser("document-get", help="retrieve 1 to 8 explicitly selected durable documents")
+    q.add_argument("path", nargs="+")
     q = sub.add_parser("task-start")
     q.add_argument("goal")
     q.add_argument("--milestone")
@@ -67,7 +67,7 @@ def _parser() -> argparse.ArgumentParser:
         "task-promote",
         help="persist Controller-selected durable records",
         description="Store exactly the records selected by the Controller; metadata is descriptive only.",
-        epilog='Minimal JSON: {"records":[{"kind":"decision","id":"D-001","title":"Use X","text":"Adopt X.","source_refs":[]}]}',
+        epilog='Minimal JSON: {"records":[{"kind":"decision","id":"D-001","path":".agent-memory/chosen/use-x.md","title":"Use X","text":"Adopt X.","source_refs":[]}]}',
     )
     q.add_argument("--role", required=True, choices=codex_adapter.ROLE_CHOICES)
     q.add_argument("--base-revision", required=True, type=int)

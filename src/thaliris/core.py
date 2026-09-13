@@ -321,7 +321,8 @@ _STATE_NAME = ".context/state.json"
 _STATE_SCHEMA_VERSION = 7
 ROUTING_STATE_MAX_BYTES = 8 * 1024
 EXPLICIT_DOCUMENT_MAX_BYTES = 64 * 1024
-DURABLE_CATALOG_MAX_BYTES = 3 * 1024
+DURABLE_INDEX_RECOMMENDED_BYTES = 3 * 1024
+DURABLE_INDEX_HARD_MAX_BYTES = 16 * 1024
 _PACK_ROLES = {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}
 _EXECUTION_ROLES = _PACK_ROLES - {"controller"}
 _STATE_FIELDS = {
@@ -1038,7 +1039,7 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
     if role != "controller":
         raise ValueError("only the Controller may promote durable records")
     payload = _read_input(input_file)
-    if set(payload) != {"records"} or not isinstance(payload["records"], list) or not payload["records"]:
+    if set(payload) - {"records", "index_update"} or "records" not in payload or not isinstance(payload["records"], list) or not payload["records"]:
         raise ValueError("task-promote requires a non-empty records list")
     with _lock(root):
         state = _load_state(root, active=True)
@@ -1151,8 +1152,40 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
             parse_text(rendered.decode("utf-8"), Path(relative))
             writes[relative] = rendered
             promoted.append(relative)
+        index_updated: str | None = None
+        if "index_update" in payload:
+            update = payload["index_update"]
+            if not isinstance(update, dict) or set(update) != {"path", "base_sha256", "content"}:
+                raise ValueError("invalid INDEX update")
+            index_updated = _valid_relative(root, update["path"])
+            if (
+                index_updated not in {".agent-memory/INDEX.md", ".milestones/INDEX.md"}
+                and not index_updated.startswith((".agent-memory/", ".milestones/"))
+            ) or not index_updated.endswith("/INDEX.md"):
+                raise ValueError("INDEX update path must name INDEX.md under a durable namespace")
+            if index_updated in writes:
+                raise ValueError("INDEX update conflicts with promotion document")
+            base_sha256 = update["base_sha256"]
+            content = update["content"]
+            if not isinstance(base_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", base_sha256):
+                raise ValueError("invalid INDEX base_sha256")
+            if not isinstance(content, str):
+                raise ValueError("invalid INDEX content")
+            encoded = content.encode("utf-8")
+            if len(encoded) > DURABLE_INDEX_HARD_MAX_BYTES:
+                raise ValueError("INDEX_OVERSIZED")
+            index_target = _safe(root, index_updated)
+            if index_target.is_symlink() or not index_target.is_file():
+                raise ValueError("INDEX update target does not exist")
+            if _digest(index_target.read_bytes()) != base_sha256:
+                raise ValueError("INDEX revision conflict")
+            parsed_index = parse_text(content, index_target)
+            reference_errors = _index_reference_errors(root, index_target, parsed_index.body, planned_paths=set(writes))
+            if reference_errors:
+                raise ValueError("invalid INDEX references: " + "; ".join(reference_errors))
+            writes[index_updated] = encoded
         backup = _apply_with_backup(root, writes, [], "task-promote")
-    return {"ok": True, "task_id": state["task_id"], "state_revision": state["revision"], "promoted": promoted, "backup": backup}
+    return {"ok": True, "task_id": state["task_id"], "state_revision": state["revision"], "promoted": promoted, "index_updated": index_updated, "backup": backup}
 
 
 def _tokens(text: str) -> set[str]:
@@ -1242,7 +1275,7 @@ def _durable_relative_path(root: Path, path: str) -> tuple[str, Path]:
     return relative, _safe(root, relative)
 
 
-def _index_reference_errors(root: Path, index: Path, body: str) -> list[str]:
+def _index_reference_errors(root: Path, index: Path, body: str, *, planned_paths: set[str] | None = None) -> list[str]:
     """Validate explicit Markdown links without deriving a filesystem catalog."""
     errors: list[str] = []
     for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", body):
@@ -1257,7 +1290,7 @@ def _index_reference_errors(root: Path, index: Path, body: str) -> list[str]:
         except (OSError, ValueError):
             errors.append(f"{index.relative_to(root).as_posix()}: invalid link {target}")
             continue
-        if candidate.is_symlink() or not candidate.exists():
+        if relative not in (planned_paths or set()) and (candidate.is_symlink() or not candidate.exists()):
             errors.append(f"{index.relative_to(root).as_posix()}: missing link target {relative}")
     return errors
 
@@ -1267,8 +1300,14 @@ def _catalog_index(root: Path, relative: str) -> tuple[dict[str, object], list[s
     index = target if target.name == "INDEX.md" else target / "INDEX.md"
     if index.is_symlink() or not index.is_file():
         return {"path": index.relative_to(root).as_posix(), "state": "MISSING"}, [f"{normalized}: missing INDEX.md"]
-    if index.stat().st_size > EXPLICIT_DOCUMENT_MAX_BYTES:
-        return {"path": index.relative_to(root).as_posix(), "state": "OVERSIZED"}, [f"{normalized}: INDEX.md exceeds limit"]
+    size = index.stat().st_size
+    if size > DURABLE_INDEX_HARD_MAX_BYTES:
+        return {
+            "path": index.relative_to(root).as_posix(),
+            "state": "INDEX_OVERSIZED",
+            "size_bytes": size,
+            "hard_limit_bytes": DURABLE_INDEX_HARD_MAX_BYTES,
+        }, [f"INDEX_OVERSIZED: {normalized}/INDEX.md exceeds {DURABLE_INDEX_HARD_MAX_BYTES} bytes"]
     try:
         parsed = parse(index)
     except (OSError, ValueError) as exc:
@@ -1302,18 +1341,54 @@ def catalog(root: Path, path: str | None = None) -> dict[str, object]:
         "path": requested,
         "discovery_only": True,
         "canonical_source": "INDEX.md",
-        "max_bytes": DURABLE_CATALOG_MAX_BYTES,
+        "recommended_index_bytes": DURABLE_INDEX_RECOMMENDED_BYTES,
+        "hard_index_bytes": DURABLE_INDEX_HARD_MAX_BYTES,
         "indexes": indexes,
         "errors": errors[:8],
         "truncated": len(errors) > 8,
     }
-    if len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > DURABLE_CATALOG_MAX_BYTES:
-        for item in indexes:
-            if "map" in item:
-                item["map_bytes"] = len(str(item.pop("map")).encode("utf-8"))
-                item["map_omitted"] = True
-        result["truncated"] = True
     return result
+
+
+def durable_index_check(root: Path, roots: list[str] | None = None) -> dict[str, object]:
+    """Follow only explicit durable INDEX links for an on-demand integrity check."""
+    root = _repo_root(root)
+    pending = list(roots or [".agent-memory/INDEX.md", ".milestones/INDEX.md"])
+    visited: set[str] = set()
+    checked: list[str] = []
+    errors: list[str] = []
+    while pending:
+        relative = pending.pop()
+        normalized, index = _durable_relative_path(root, relative)
+        if index.name != "INDEX.md":
+            errors.append(f"{normalized}: durable integrity root is not INDEX.md")
+            continue
+        canonical = index.relative_to(root).as_posix()
+        if canonical in visited:
+            continue
+        visited.add(canonical)
+        checked.append(canonical)
+        item, item_errors = _catalog_index(root, canonical)
+        errors.extend(item_errors)
+        if item.get("state") not in {"VALID", "BROKEN_REFERENCES"}:
+            continue
+        try:
+            body = parse(index).body
+        except (OSError, ValueError):
+            continue
+        for link in re.findall(r"\[[^]]+\]\(([^)]+)\)", body):
+            link = link.strip().strip("<>")
+            if not link or link.startswith(("#", "http://", "https://", "mailto:")):
+                continue
+            candidate = (index.parent / link.split("#", 1)[0]).resolve(strict=False)
+            try:
+                child = candidate.relative_to(root.resolve(strict=True)).as_posix()
+                _durable_relative_path(root, child)
+            except (OSError, ValueError):
+                continue
+            if candidate.name == "INDEX.md" and candidate.is_file() and not candidate.is_symlink():
+                pending.append(child)
+    return {"ok": not errors, "checked": checked, "errors": errors}
 
 
 def document_get(root: Path, paths: str | list[str]) -> dict[str, object]:
@@ -1327,6 +1402,8 @@ def document_get(root: Path, paths: str | list[str]) -> dict[str, object]:
         relative, target = _durable_relative_path(root, path)
         if target.is_symlink() or not target.is_file() or target.suffix.lower() != ".md":
             raise ValueError("durable document not found")
+        if target.stat().st_size > EXPLICIT_DOCUMENT_MAX_BYTES:
+            raise ValueError(f"durable document exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
         raw = target.read_bytes()
         try:
             entry = parse_text(raw.decode("utf-8"), target)
@@ -1379,5 +1456,4 @@ def prepare(root: Path, task: str | None, role: str, *, include_protocol_notice:
 
 
 def milestone_check(root: Path) -> dict[str, object]:
-    result = catalog(root, ".milestones")
-    return {"ok": result["ok"], "checked": [".milestones/INDEX.md"], "errors": result["errors"]}
+    return durable_index_check(root, [".milestones/INDEX.md"])

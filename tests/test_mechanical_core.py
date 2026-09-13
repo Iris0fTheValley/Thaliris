@@ -102,11 +102,85 @@ def test_promotion_stores_controller_selection_without_confidence_gate(tmp_path:
     }]})
     result = core.task_promote(root, "controller", started["revision"], promotion)
     assert result["promoted"] == [".agent-memory/model-chosen/selected.md"]
+    assert result["index_updated"] is None
+    assert "model-chosen/selected.md" not in (root / ".agent-memory" / "INDEX.md").read_text(encoding="utf-8")
 
     candidates = core.recall(root, "MODEL_SELECTED_TEXT", "investigator")["candidates"]
     assert candidates[0]["path"] == ".agent-memory/model-chosen/selected.md"
     fetched = core.memory_get(root, candidates[0]["path"])
     assert "MODEL_SELECTED_TEXT" in fetched["body"]
+
+
+def test_promotion_can_atomically_commit_model_authored_index_update(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "promotion and index", None, None)
+    index_path = root / ".agent-memory" / "INDEX.md"
+    original_index = index_path.read_bytes()
+    updated_index = core._entry(
+        "Memory map",
+        "Model chosen area: [Decision](model-tree/decision.md)",
+        evidence="NONE",
+        kind="MEMORY",
+    ).decode("utf-8")
+    payload = {
+        "records": [{
+            "id": "D1", "path": ".agent-memory/model-tree/decision.md",
+            "kind": "unclassified-by-core", "title": "Decision", "text": "MODEL_PLACED", "source_refs": [],
+        }],
+        "index_update": {
+            "path": ".agent-memory/INDEX.md",
+            "base_sha256": hashlib.sha256(original_index).hexdigest(),
+            "content": updated_index,
+        },
+    }
+    result = core.task_promote(root, "controller", started["revision"], write_json(tmp_path / "promotion-index.json", payload))
+    assert result["index_updated"] == ".agent-memory/INDEX.md"
+    assert (root / ".agent-memory" / "model-tree" / "decision.md").is_file()
+    assert index_path.read_text(encoding="utf-8") == updated_index
+
+    rollback_root = repo(tmp_path / "rollback")
+    rollback_started = core.task_start(rollback_root, "rollback", None, None)
+    rollback_index = rollback_root / ".agent-memory" / "INDEX.md"
+    rollback_original = rollback_index.read_bytes()
+    rollback_payload = dict(payload)
+    rollback_payload["index_update"] = dict(payload["index_update"], base_sha256=hashlib.sha256(rollback_original).hexdigest())
+    original_atomic_write = core._atomic_write
+
+    def fail_index_write(target: Path, content: bytes) -> None:
+        if target == rollback_index:
+            raise OSError("simulated INDEX write failure")
+        original_atomic_write(target, content)
+
+    monkeypatch.setattr(core, "_atomic_write", fail_index_write)
+    with pytest.raises(OSError, match="simulated INDEX"):
+        core.task_promote(
+            rollback_root,
+            "controller",
+            rollback_started["revision"],
+            write_json(tmp_path / "promotion-rollback.json", rollback_payload),
+        )
+    assert not (rollback_root / ".agent-memory" / "model-tree" / "decision.md").exists()
+    assert rollback_index.read_bytes() == rollback_original
+
+
+def test_promotion_index_update_rejects_stale_task_revision(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "stale promotion", None, None)
+    core.task_update(root, "controller", started["revision"], write_json(tmp_path / "update.json", {
+        "records": [{"id": "R1", "kind": "note", "text": "advance revision"}],
+    }))
+    index = root / ".agent-memory" / "INDEX.md"
+    promotion = write_json(tmp_path / "stale-promotion.json", {
+        "records": [{"id": "D1", "path": ".agent-memory/custom/d.md", "text": "body"}],
+        "index_update": {
+            "path": ".agent-memory/INDEX.md",
+            "base_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+            "content": core._entry("Memory", "[D](custom/d.md)", evidence="NONE").decode("utf-8"),
+        },
+    })
+    with pytest.raises(ValueError, match="task revision conflict"):
+        core.task_promote(root, "controller", started["revision"], promotion)
+    assert not (root / ".agent-memory" / "custom" / "d.md").exists()
 
 
 def test_promoted_provenance_survives_task_state_and_round_trips(tmp_path: Path) -> None:
@@ -365,7 +439,6 @@ def test_root_index_is_canonical_global_map_without_recursive_scan(tmp_path: Pat
     monkeypatch.setattr(Path, "rglob", no_recursive_scan)
     discovered = core.catalog(root)
     encoded = json.dumps(discovered, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    assert len(encoded) <= core.DURABLE_CATALOG_MAX_BYTES
     assert discovered["canonical_source"] == "INDEX.md"
     assert "projects/alpha/guide.md" in encoded.decode("utf-8")
     assert "TARGET_BODY" not in encoded.decode("utf-8")
@@ -375,6 +448,28 @@ def test_root_index_is_canonical_global_map_without_recursive_scan(tmp_path: Pat
     assert "TARGET_BODY" in fetched["documents"][0]["body"]
     with pytest.raises(ValueError, match="durable path"):
         core.document_get(root, "README.md")
+
+
+def test_catalog_keeps_reasonably_large_root_map_and_reports_hard_oversize(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    index = root / ".agent-memory" / "INDEX.md"
+    body = "Thin global route\n\n" + ("routing-hint " * 300)
+    index.write_bytes(core._entry("Global map", body, evidence="NONE", kind="MEMORY"))
+    assert index.stat().st_size > core.DURABLE_INDEX_RECOMMENDED_BYTES
+    result = core.catalog(root)
+    memory = result["indexes"][0]
+    assert memory["state"] == "VALID"
+    assert "Thin global route" in memory["map"]
+    assert "map_omitted" not in memory
+
+    index.write_bytes(core._entry(
+        "Global map", "route " * (core.DURABLE_INDEX_HARD_MAX_BYTES // 4), evidence="NONE", kind="MEMORY",
+    ))
+    result = core.catalog(root)
+    assert result["ok"] is False
+    assert result["indexes"][0]["state"] == "INDEX_OVERSIZED"
+    assert "map" not in result["indexes"][0]
+    assert "INDEX_OVERSIZED" in result["errors"][0]
 
 
 def test_init_creates_only_durable_entrypoints_without_taxonomy(tmp_path: Path) -> None:
@@ -415,6 +510,11 @@ def test_document_get_batches_only_selected_paths_and_enforces_total_size(tmp_pa
             ".agent-memory/custom/large-2.md",
         ])
 
+    too_large = durable / "too-large.md"
+    too_large.write_bytes(b"x" * (core.EXPLICIT_DOCUMENT_MAX_BYTES + 1))
+    with pytest.raises(ValueError, match="durable document exceeds"):
+        core.document_get(root, ".agent-memory/custom/too-large.md")
+
 
 def test_document_get_preserves_memory_freshness_and_provenance(tmp_path: Path) -> None:
     root = repo(tmp_path)
@@ -441,6 +541,26 @@ def test_broken_index_reference_is_mechanically_reported(tmp_path: Path) -> None
     assert result["ok"] is False
     assert result["indexes"][0]["state"] == "BROKEN_REFERENCES"
     assert "missing link target" in result["errors"][0]
+
+
+def test_explicit_integrity_check_follows_deep_index_links_with_cycle_protection(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    memory = root / ".agent-memory"
+    (memory / "area" / "deep").mkdir(parents=True)
+    (memory / "INDEX.md").write_bytes(core._entry("Root", "[Area](area/INDEX.md)", evidence="NONE"))
+    (memory / "area" / "INDEX.md").write_bytes(core._entry(
+        "Area", "[Root](../INDEX.md)\n[Deep](deep/INDEX.md)", evidence="NONE",
+    ))
+    (memory / "area" / "deep" / "INDEX.md").write_bytes(core._entry(
+        "Deep", "[Missing](deleted.md)", evidence="NONE",
+    ))
+
+    # Normal catalog/SessionStart work validates only the root map.
+    assert core.catalog(root)["indexes"][0]["state"] == "VALID"
+    checked = core.durable_index_check(root, [".agent-memory/INDEX.md"])
+    assert checked["ok"] is False
+    assert len(checked["checked"]) == 3
+    assert any("deleted.md" in error for error in checked["errors"])
 
 
 def test_git_status_failure_is_reported_as_unavailable(tmp_path: Path, monkeypatch) -> None:

@@ -646,6 +646,7 @@ def doctor(root: Path) -> dict[str, object]:
     from .doctor import report
     root = core._repo_root(root)
     result = report(root)
+    result["durable_index_integrity"] = core.durable_index_check(root)
     result["managed_task_state"] = lifecycle.managed_task_state(root)[0]
     observations: list[tuple[int, int, dict[str, object]]] = []
     events: set[str] = set()

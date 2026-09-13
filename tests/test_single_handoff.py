@@ -274,6 +274,23 @@ def test_active_controller_uses_only_the_mechanical_tool_allowlist(tmp_path: Pat
     )) == ""
 
 
+def test_session_start_retains_root_map_above_recommended_size_without_document_body(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    target = root / ".agent-memory" / "selected.md"
+    target.write_bytes(core._entry("Selected", "PRIVATE_DOCUMENT_BODY", evidence="NONE"))
+    route = "[Selected](selected.md)\n\n" + ("model-authored-routing-hint " * 160)
+    index = root / ".agent-memory" / "INDEX.md"
+    index.write_bytes(core._entry("Global map", route, evidence="NONE", kind="MEMORY"))
+    assert core.DURABLE_INDEX_RECOMMENDED_BYTES < index.stat().st_size < core.DURABLE_INDEX_HARD_MAX_BYTES
+
+    output = json.loads(handle_hook(root, "SessionStart", hook_payload(source="startup")))
+    context = output["hookSpecificOutput"]["additionalContext"]
+    assert "model-authored-routing-hint" in context
+    assert "selected.md" in context
+    assert "PRIVATE_DOCUMENT_BODY" not in context
+    assert "map_omitted" not in context
+
+
 def test_no_task_is_transparent_to_ordinary_spawn(tmp_path: Path) -> None:
     root = repo(tmp_path)
     assert handle_hook(root, "PreToolUse", hook_payload(
@@ -332,8 +349,56 @@ def test_selected_roles_receive_one_bounded_aggregate_deviation_notice(
     notice = core.task_status(root)["Protocol deviation"]
     assert "Protocol deviations (batched)" in notice
     assert f"{expected_role}=3" in notice
-    assert "context catalog" in notice and "context artifact-get" in notice
+    assert ".agent-memory/INDEX.md" in notice
     assert len(notice.encode("utf-8")) < 1024
+    assert "Protocol deviation" not in core.task_status(root)
+
+
+def test_selected_role_records_actual_context_and_obvious_shell_durable_targets(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "actual durable targets", None, None)
+    spawn_start(root, "reviewer-reader", "thaliris-reviewer")
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        agent_id="reviewer-reader",
+        agent_type="thaliris-reviewer",
+        tool_name="Bash",
+        tool_input={"command": "context document-get .agent-memory/a.md .milestones/b.md"},
+    )) == ""
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        agent_id="reviewer-reader",
+        agent_type="thaliris-reviewer",
+        tool_name="Bash",
+        tool_input={"command": "cat .agent-memory/reviews/old-review.md"},
+    )) == ""
+    state = lifecycle(root)
+    targets = [item["target"] for item in state["protocol_deviations"]]
+    assert targets == [
+        ".agent-memory/a.md",
+        ".milestones/b.md",
+        ".agent-memory/reviews/old-review.md",
+    ]
+    notice = core.task_status(root)["Protocol deviation"]
+    assert "reviewer=3" in notice
+    assert ".agent-memory/a.md" in notice
+    assert ".milestones/b.md" in notice
+    assert ".agent-memory/reviews/old-review.md" in notice
+    assert len(notice.encode("utf-8")) < 1024
+    assert "Protocol deviation" not in core.task_status(root)
+
+
+def test_investigator_obvious_shell_durable_read_is_telemetry_only(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "investigator durable read", None, None)
+    spawn_start(root, "investigator-reader", "thaliris-investigator")
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        agent_id="investigator-reader",
+        agent_type="thaliris-investigator",
+        tool_name="Bash",
+        tool_input={"command": "rg needle .milestones/current/INDEX.md"},
+    )) == ""
+    state = lifecycle(root)
+    assert state["protocol_deviations"][-1]["target"] == ".milestones/current/INDEX.md"
+    assert state["protocol_deviations"][-1]["notice_delivered"] is True
     assert "Protocol deviation" not in core.task_status(root)
 
 

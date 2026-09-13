@@ -94,6 +94,7 @@ _CHILD_CONTEXT_MUTATIONS = frozenset({
 })
 _INVALID_STATE_DIAGNOSTICS = frozenset({"doctor", "task-show", "task-status", "version"})
 _CONTROL_STATE_TARGET = re.compile(r"(?i)\.context[\\/](?:state\.json|audit[\\/]lifecycle(?:[\\/][^\s\"']+)?)")
+_DURABLE_PATH_TARGET = re.compile(r"(?i)(?:^|[\s\"'=])((?:\.agent-memory|\.milestones)(?:[\\/][^\s\"'|;&<>]*)?)")
 _START_ATTESTATION_TTL_NS = 120 * 1_000_000_000
 def hook_spec() -> dict[str, Any]:
     """Return the exact managed hooks fragment; callers merge it conservatively."""
@@ -457,7 +458,7 @@ def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
 
 
 def _session_start_output(root: Path, payload: dict[str, Any]) -> str:
-    """Expose only a tiny Root discovery catalog on supported start causes."""
+    """Expose only the bounded Root discovery catalog on supported start causes."""
     if payload.get("source") not in {"startup", "resume", "clear", "compact"}:
         return ""
     discovered = core.catalog(root)
@@ -1324,18 +1325,18 @@ def _codex_bash_outcome(response: object) -> str:
     return "UNKNOWN"
 
 
-def _context_operation(payload: dict[str, Any]) -> str | None:
-    """Recognize only a direct, single `context <operation>` shell command."""
+def _context_call(payload: dict[str, Any]) -> tuple[str | None, list[str]]:
+    """Recognize a direct context call and its explicit bounded retrieval targets."""
     command = _bash_command(payload)
     if command is None or _COMMAND_SEPARATOR.search(command):
-        return None
+        return None, []
     arguments = _context_arguments(command)
     if arguments is None:
-        return None
+        return None, []
     try:
         tokens = shlex.split(arguments, posix=False)
     except ValueError:
-        return None
+        return None, []
     index = 0
     while index < len(tokens):
         token = tokens[index].strip("\"'")
@@ -1345,8 +1346,34 @@ def _context_operation(payload: dict[str, Any]) -> str | None:
         if token == "--root" and index + 1 < len(tokens):
             index += 2
             continue
-        return token if token in _CONTEXT_OPERATIONS else None
-    return None
+        if token not in _CONTEXT_OPERATIONS:
+            return None, []
+        operands = [value.strip("\"'")[:256] for value in tokens[index + 1:] if value and not value.startswith("--")]
+        if token == "document-get":
+            return token, operands[:8]
+        if token in {"task-get", "artifact-get", "memory-get", "catalog", "recall"}:
+            return token, operands[:1]
+        return token, []
+    return None, []
+
+
+def _context_operation(payload: dict[str, Any]) -> str | None:
+    return _context_call(payload)[0]
+
+
+def _visible_durable_paths(payload: dict[str, Any]) -> list[str]:
+    """Best-effort observation of obvious durable paths, not a shell parser."""
+    command = _bash_command(payload)
+    if not isinstance(command, str) or _obvious_write_attempt(payload):
+        return []
+    targets: list[str] = []
+    for match in _DURABLE_PATH_TARGET.finditer(command):
+        target = match.group(1).replace("\\", "/").rstrip(".,:)]}")[:256]
+        if target not in targets:
+            targets.append(target)
+        if len(targets) == 8:
+            break
+    return targets
 
 
 def _control_state_target(payload: dict[str, Any]) -> str | None:
@@ -1394,22 +1421,22 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
     role = _NATIVE_AGENT_ROLES.get(str(payload.get("agent_type")), "unknown")
     if normalized in _DELEGATION_TOOL_NAMES:
         return _permission_deny("THALIRIS_CHILD_DELEGATION: child-to-child delegation is not permitted.")
-    operation = _context_operation(payload)
+    operation, context_targets = _context_call(payload)
     if operation in _CHILD_CONTEXT_MUTATIONS:
         target = f"context {operation}"
         _best_effort_record(_record_protocol_deviation, root, payload, operation=operation, target=target, blocked=True)
         return _permission_deny("THALIRIS_CHILD_CONTROL_STATE_MUTATION: Child may not modify Controller-owned control state.")
     if operation in _CHILD_CONTEXT_READS:
-        target = f"context {operation}"
-        _best_effort_record(
-            _record_protocol_deviation,
-            root,
-            payload,
-            operation=operation,
-            target=target,
-            blocked=False,
-            notify_controller=role in {"reviewer", "reasoning-specialist", "curator"},
-        )
+        for target in context_targets or [f"context {operation}"]:
+            _best_effort_record(
+                _record_protocol_deviation,
+                root,
+                payload,
+                operation=operation,
+                target=target,
+                blocked=False,
+                notify_controller=role in {"reviewer", "reasoning-specialist", "curator"},
+            )
         if operation in {"task-status", "prepare"}:
             return _updated_command_output(payload, "--suppress-protocol-notice")
         return ""
@@ -1427,6 +1454,16 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
         )
         if mutation:
             return _permission_deny("THALIRIS_CHILD_CONTROL_STATE_MUTATION: Child may not modify Controller-owned control state.")
+    for durable_target in _visible_durable_paths(payload):
+        _best_effort_record(
+            _record_protocol_deviation,
+            root,
+            payload,
+            operation="durable-path-read",
+            target=durable_target,
+            blocked=False,
+            notify_controller=role in {"reviewer", "reasoning-specialist", "curator"},
+        )
     if role == "reviewer" and _obvious_write_attempt(payload):
         _best_effort_record(
             _record_protocol_deviation,

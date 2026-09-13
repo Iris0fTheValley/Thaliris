@@ -322,7 +322,7 @@ def stale(root: Path) -> dict[str, object]:
 # Task state is a mechanical ledger. Models author record labels and interpret
 # them; Core validates only shape, identity, references, bounds, and CAS.
 _STATE_NAME = ".context/state.json"
-_STATE_SCHEMA_VERSION = 6
+_STATE_SCHEMA_VERSION = 7
 ROUTING_STATE_MAX_BYTES = 8 * 1024
 _PACK_ROLES = {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}
 _EXECUTION_ROLES = _PACK_ROLES - {"controller"}
@@ -395,10 +395,13 @@ def _surface_identity(root: Path, path: str, status: str) -> dict[str, object]:
     return {"path": path, "state": "FILE", "identity": _digest(raw.read_bytes()), "mode": raw.stat().st_mode & 0o7777, "git_status": status}
 
 
-def _surface_snapshot(root: Path) -> list[dict[str, object]]:
-    proc = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=root, capture_output=True, check=False)
+def _surface_snapshot(root: Path) -> list[dict[str, object]] | str:
+    try:
+        proc = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=root, capture_output=True, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return "UNAVAILABLE"
     if proc.returncode:
-        return []
+        return "UNAVAILABLE"
     fields = proc.stdout.decode("utf-8", errors="surrogateescape").split("\0")
     result: list[dict[str, object]] = []
     index = 0
@@ -416,11 +419,14 @@ def _surface_snapshot(root: Path) -> list[dict[str, object]]:
     return sorted(result, key=lambda item: str(item["path"]))
 
 
-def _surface_delta(root: Path, baseline: list[dict[str, object]]) -> dict[str, object]:
+def _surface_delta(root: Path, baseline: list[dict[str, object]] | str) -> dict[str, object]:
+    current = _surface_snapshot(root)
+    if baseline == "UNAVAILABLE" or current == "UNAVAILABLE":
+        return {"status": "UNAVAILABLE", "before": baseline, "after": current, "paths": None}
     before = {str(item["path"]): item for item in baseline}
-    after = {str(item["path"]): item for item in _surface_snapshot(root)}
+    after = {str(item["path"]): item for item in current}
     paths = sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
-    return {"before": [before[path] for path in paths if path in before], "after": [after[path] for path in paths if path in after], "paths": paths}
+    return {"status": "AVAILABLE", "before": [before[path] for path in paths if path in before], "after": [after[path] for path in paths if path in after], "paths": paths}
 
 
 def _git_head(root: Path) -> str | None:
@@ -433,6 +439,8 @@ def _record(value: object, source_ids: set[str], record_ids: set[str]) -> dict[s
     if not isinstance(value, dict) or set(value) != _RECORD_FIELDS:
         raise ValueError("invalid task record")
     identifier = _bounded_label(value.get("id"), "record id")
+    if identifier in record_ids:
+        raise ValueError("duplicate task record id")
     _bounded_label(value.get("kind"), "record kind")
     _bounded_label(value.get("producer"), "record producer")
     _bounded_label(value.get("status"), "record status")
@@ -525,10 +533,10 @@ def _artifact_activity(artifacts: list[dict[str, object]]) -> set[str]:
     return ids - inactive
 
 
-def _verification_result(value: object) -> dict[str, object]:
+def _verification_result(value: object, source_ids: set[str] | None = None) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("invalid verification observation")
-    required = {"id", "kind", "outcome", "summary", "observed_by", "observed_at", "observed_at_revision", "candidate_identity", "observed_files", "result_hash"}
+    required = {"id", "kind", "outcome", "summary", "source_refs", "observed_by", "observed_at", "observed_at_revision", "candidate_identity", "observed_files", "result_hash"}
     if set(value) != required:
         raise ValueError("invalid verification observation")
     _bounded_label(value.get("id"), "verification id")
@@ -537,6 +545,11 @@ def _verification_result(value: object) -> dict[str, object]:
     _bounded_label(value.get("observed_by"), "verification observer")
     if not isinstance(value.get("summary"), str) or len(value["summary"]) > 4096:
         raise ValueError("invalid verification summary")
+    refs = value.get("source_refs")
+    if not isinstance(refs, list) or len(refs) > 64 or not all(isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs):
+        raise ValueError("invalid verification source refs")
+    if source_ids is not None and any(ref not in source_ids for ref in refs):
+        raise ValueError("verification source reference is unknown")
     if not isinstance(value.get("observed_at"), str) or type(value.get("observed_at_revision")) is not int:
         raise ValueError("invalid verification timestamp")
     if not isinstance(value.get("candidate_identity"), str) or not re.fullmatch(r"[0-9a-f]{64}", value["candidate_identity"]):
@@ -618,18 +631,19 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         raise ValueError("invalid verification observations")
     result_ids: set[str] = set()
     for result in results:
-        _verification_result(result)
+        _verification_result(result, source_ids)
         if result["id"] in result_ids:
             raise ValueError("duplicate verification observation id")
         result_ids.add(str(result["id"]))
 
     baseline = state.get("task_surface_baseline")
-    if not isinstance(baseline, list):
+    if baseline != "UNAVAILABLE" and not isinstance(baseline, list):
         raise ValueError("invalid task surface baseline")
-    for item in baseline:
-        if not isinstance(item, dict) or set(item) != {"path", "state", "identity", "mode", "git_status"}:
-            raise ValueError("invalid task surface baseline")
-        _valid_relative(root, item.get("path"))
+    if isinstance(baseline, list):
+        for item in baseline:
+            if not isinstance(item, dict) or set(item) != {"path", "state", "identity", "mode", "git_status"}:
+                raise ValueError("invalid task surface baseline")
+            _valid_relative(root, item.get("path"))
     base_head = state.get("task_base_head")
     if base_head is not None and (not isinstance(base_head, str) or not re.fullmatch(r"[0-9a-f]{40,64}", base_head)):
         raise ValueError("invalid task base head")
@@ -832,9 +846,17 @@ def _controller_status(state: dict[str, object]) -> dict[str, object]:
     }
 
 
-def task_status(root: Path) -> dict[str, object]:
+def task_status(root: Path, *, include_protocol_notice: bool = True) -> dict[str, object]:
     root = _repo_root(root)
-    return _controller_status(_load_state(root))
+    state = _load_state(root)
+    result = _controller_status(state)
+    if include_protocol_notice:
+        # Lifecycle imports Core, so keep this adapter-side lookup lazy.
+        from . import lifecycle
+        notice = lifecycle.consume_protocol_deviation_notice(root, str(state["task_id"]))
+        if notice is not None:
+            result["Protocol deviation"] = notice
+    return result
 
 
 def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer_role: str | None = None, registered_by: str = "controller", scope: str | None = None, evidence_refs: list[str] | None = None, supersedes: list[str] | None = None) -> dict[str, object]:
@@ -912,7 +934,8 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
         if source_refs is not None and source_paths is not None:
             raise ValueError("provide source refs or source paths, not both")
         known_sources = {str(item["id"]) for item in state["evidence_refs"]}
-        if source_refs is not None and any(ref not in known_sources for ref in source_refs):
+        refs = source_refs or []
+        if not all(isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs) or any(ref not in known_sources for ref in refs):
             raise ValueError("verification source reference is unknown")
         paths = source_paths or []
         for path in paths:
@@ -924,6 +947,7 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
             "kind": kind,
             "outcome": outcome,
             "summary": summary,
+            "source_refs": refs,
             "observed_by": observed_by,
             "candidate_identity": candidate["candidate_identity"],
             "observed_files": observed_files,
@@ -970,6 +994,7 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
         known_refs = set(sources) | set(artifacts)
         writes: dict[str, bytes] = {}
         promoted: list[str] = []
+        promotion_ids: set[str] = set()
         for value in payload["records"]:
             if not isinstance(value, dict):
                 raise ValueError("invalid promotion record")
@@ -977,6 +1002,9 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
             if set(value) - allowed:
                 raise ValueError("invalid promotion record")
             identifier = _bounded_label(value.get("id"), "promotion id")
+            if identifier in promotion_ids:
+                raise ValueError("duplicate promotion id")
+            promotion_ids.add(identifier)
             title = value.get("title", identifier)
             text = value.get("text")
             if not isinstance(title, str) or not title.strip() or len(title) > 300 or "\n" in title or "\r" in title or not isinstance(text, str) or not text.strip() or len(text) > 16_384:
@@ -994,6 +1022,7 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
                 source = sources.get(source_id)
                 if source is None:
                     raise ValueError("artifact provenance source reference is unknown")
+                described.add(key)
                 descriptor = {
                     "type": "source",
                     "source_id": source["id"],
@@ -1005,7 +1034,8 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
                 if "confidence" in source:
                     descriptor["confidence"] = source["confidence"]
                 descriptors.append(descriptor)
-                described.add(key)
+                for parent_ref in source.get("source_refs", []):
+                    append_source_descriptor(str(parent_ref))
 
             for ref in refs:
                 if ref in sources and ref in artifacts:
@@ -1135,7 +1165,7 @@ def memory_get(root: Path, path: str) -> dict[str, object]:
     }
 
 
-def prepare(root: Path, task: str | None, role: str) -> dict[str, object]:
+def prepare(root: Path, task: str | None, role: str, *, include_protocol_notice: bool = True) -> dict[str, object]:
     """Return Controller state or a context-free execution-role marker.
 
     Execution roles receive their task-specific information only in the native
@@ -1147,7 +1177,7 @@ def prepare(root: Path, task: str | None, role: str) -> dict[str, object]:
     root = _repo_root(root)
     if role == "controller":
         if task is None:
-            return task_status(root)
+            return task_status(root, include_protocol_notice=include_protocol_notice)
         return {
             "ok": True,
             "schema_version": _STATE_SCHEMA_VERSION,

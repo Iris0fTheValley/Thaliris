@@ -129,6 +129,7 @@ def _durable_descriptor_status(entry: Entry, root: Path) -> tuple[str, list[str]
     changed: list[str] = []
     invalid: list[str] = []
     checked = False
+    recorded = 0
     for descriptor in descriptors:
         if descriptor.get("type") == "artifact":
             path = descriptor.get("path")
@@ -151,6 +152,10 @@ def _durable_descriptor_status(entry: Entry, root: Path) -> tuple[str, list[str]
             locator = descriptor.get("locator")
             if isinstance(locator, str) and re.fullmatch(r"(?:file|git):[^#]+#[0-9a-fA-F]{40,64}", locator):
                 specs.append(locator)
+            else:
+                recorded += 1
+        else:
+            invalid.append("invalid durable descriptor type")
     if specs:
         checked = True
         mechanical = Entry(entry.path, {**entry.meta, "Evidence": specs}, entry.body)
@@ -169,4 +174,6 @@ def _durable_descriptor_status(entry: Entry, root: Path) -> tuple[str, list[str]
         return "UNKNOWN", invalid
     if not checked:
         return "RECORDED", []
+    if recorded:
+        return "PARTIAL", []
     return "FRESH", []

@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
+import shlex
 import subprocess
 import time
 from typing import Any
@@ -14,10 +16,10 @@ from . import core
 
 HOOK_COMMAND_PREFIX = "context audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
-CODEX_ADAPTER_PROTOCOL_VERSION = 6
+CODEX_ADAPTER_PROTOCOL_VERSION = 7
 # Private adapter lifecycle state. This is deliberately separate from Core
 # state/schema and records only bounded native child provenance.
-LIFECYCLE_STATE_VERSION = 10
+LIFECYCLE_STATE_VERSION = 11
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed lifecycle hooks"
 MAX_RAW_RECORDS = 64
 CONTEXT_EXECUTABLE_ENV = "THALIRIS_CONTEXT_EXECUTABLE"
@@ -63,11 +65,29 @@ POST_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_C
 # also intercept unrelated tools whose payload cannot be classified safely.
 PRE_TOOL_MATCHER = rf"^(?:{_COLLABORATION_TOOL_PATTERN}|(?:[A-Za-z0-9_]+\.)+{_COLLABORATION_TOOL_PATTERN}|collaboration{_COLLABORATION_TOOL_PATTERN}|{_CONTROLLER_EXECUTION_TOOL_PATTERN}|{_CONTROLLER_MUTATION_TOOL_PATTERN}|mcp__.*)$"
 _DELEGATION_TOOL_NAMES = frozenset({"spawn_agent", "Agent", "followup_task", "send_input", "send_message"})
+_FRESH_CHILD_REUSE_TOOL_NAMES = frozenset({"followup_task", "send_input", "send_message"})
+_ROOT_MANAGED_TOOL_NAMES = frozenset({"spawn_agent", "wait_agent", "list_agents", "interrupt_agent"})
 _CONTROLLER_BOUNDARY_REASON = "THALIRIS_CONTROLLER_BOUNDARY: delegate investigation and edits to a fresh child; root may run only bounded control-plane or acceptance checks."
-_SOURCE_MUTATION = re.compile(
+_OBVIOUS_WRITE = re.compile(
     r"(?i)(?:apply_patch|git\s+(?:apply|commit|reset|checkout|restore|rebase)|(?:set|add|clear|out|remove|move|copy|rename|new)-content|(?:set|add|remove|move|copy|rename|new)-item|\b(?:ni|mkdir)\b|(?<![<>])>{1,2}(?![&]))"
 )
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
+_CONTEXT_OPERATIONS = frozenset({
+    "init", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
+    "prepare", "recall", "memory-get", "task-start", "task-update", "task-show",
+    "task-status", "task-artifact", "task-close", "task-promote", "rollback", "version",
+})
+_CHILD_CONTEXT_READS = frozenset({
+    "task-show", "task-status", "recall", "memory-get", "prepare", "stale",
+    "memory-status", "milestone-check",
+})
+_CHILD_CONTEXT_MUTATIONS = frozenset({
+    "task-start", "task-update", "task-artifact", "task-close", "task-promote",
+    "rollback", "init", "uninstall",
+})
+_INVALID_STATE_DIAGNOSTICS = frozenset({"doctor", "task-show", "task-status", "version"})
+_CONTROL_STATE_TARGET = re.compile(r"(?i)\.context[\\/](?:state\.json|audit[\\/]lifecycle(?:[\\/][^\s\"']+)?)")
+_START_ATTESTATION_TTL_NS = 120 * 1_000_000_000
 def hook_spec() -> dict[str, Any]:
     """Return the exact managed hooks fragment; callers merge it conservatively."""
     hooks: dict[str, list[dict[str, Any]]] = {}
@@ -338,9 +358,8 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             _best_effort_record(_record_subagent_stop, root, payload)
             return ""
         if payload.get("agent_id") is not None:
-            tool = payload.get("tool_name") or payload.get("tool")
-            if event == "PreToolUse" and isinstance(tool, str) and _tool_basename(tool) in _DELEGATION_TOOL_NAMES:
-                return _permission_deny("THALIRIS_CHILD_DELEGATION: child-to-child delegation is not permitted.")
+            if event == "PreToolUse":
+                return _child_pre_tool_output(root, payload)
             _best_effort_record(_record_child_runtime_event, root, payload, event)
             return ""
         if event == "PreToolUse":
@@ -376,10 +395,10 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
         return ""
 
 
-def _best_effort_record(function: Any, *args: Any) -> None:
+def _best_effort_record(function: Any, *args: Any, **kwargs: Any) -> None:
     """Persist observation without coupling audit availability to policy."""
     try:
-        function(*args)
+        function(*args, **kwargs)
     except Exception:
         pass
 
@@ -582,6 +601,75 @@ def _record_child_runtime_event(root: Path, payload: dict[str, Any], event: str)
         if normalized not in tools and len(tools) < 16:
             tools.append(normalized)
         _write_capture(path, state)
+
+
+def _record_protocol_deviation(
+    root: Path,
+    payload: dict[str, Any],
+    *,
+    operation: str,
+    target: str,
+    blocked: bool,
+) -> None:
+    """Record one bounded mechanical protocol deviation for Controller notice."""
+    task_id = _active_task_id(root)
+    agent_id = payload.get("agent_id")
+    agent_type = payload.get("agent_type")
+    tool = payload.get("tool_name") or payload.get("tool")
+    if task_id is None or not isinstance(agent_id, str) or not agent_id or not isinstance(tool, str):
+        return
+    item = {
+        "agent_id": agent_id[:128],
+        "agent_type": agent_type[:128] if isinstance(agent_type, str) else "unknown",
+        "tool": tool[:128],
+        "operation": operation[:128],
+        "target": target[:256],
+        "blocked": blocked,
+        "observed_at_ns": time.time_ns(),
+        "notice_delivered": False,
+    }
+    fingerprint = hashlib.sha256(json.dumps({
+        key: item[key] for key in ("agent_id", "agent_type", "tool", "operation", "target", "blocked")
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    item["fingerprint"] = fingerprint
+    with core._lock(root):
+        path = _lifecycle_path(root, task_id)
+        state = _load_lifecycle(path, task_id)
+        deviations = state.setdefault("protocol_deviations", [])
+        if not isinstance(deviations, list):
+            return
+        if any(isinstance(existing, dict) and existing.get("fingerprint") == fingerprint for existing in deviations):
+            return
+        if len(deviations) >= 32:
+            return
+        deviations.append(item)
+        _runtime_metadata(state, payload)
+        _write_capture(path, state)
+
+
+def consume_protocol_deviation_notice(root: Path, task_id: str) -> str | None:
+    """Return one pending short notice and mark that deviation delivered once."""
+    with core._lock(root):
+        path = _lifecycle_path(root, task_id)
+        if not path.is_file():
+            return None
+        state = _load_lifecycle(path, task_id)
+        deviations = state.get("protocol_deviations")
+        if not isinstance(deviations, list):
+            return None
+        item = next((
+            value for value in deviations
+            if isinstance(value, dict) and value.get("notice_delivered") is False
+        ), None)
+        if item is None:
+            return None
+        item["notice_delivered"] = True
+        _write_capture(path, state)
+    agent = str(item.get("agent_id", "unknown"))
+    target = str(item.get("target", item.get("operation", "control state")))
+    if item.get("blocked") is True:
+        return f"Protocol deviation: Child {agent} attempted Controller-owned control-state mutation via `{target}`. The operation was blocked."
+    return f"Protocol deviation: Child {agent} directly retrieved control context via `{target}`. No control-state mutation occurred."
 
 
 def _lifecycle_path(root: Path, task_id: str) -> Path:
@@ -1203,19 +1291,113 @@ def _codex_bash_outcome(response: object) -> str:
     return "UNKNOWN"
 
 
-def _controller_command_action(root: Path, payload: dict[str, Any]) -> str | None:
-    """Deny only explicit source-mutating shell forms at an ACTIVE root.
-
-    Shell text is not a semantic classifier. Ambiguous or read-only commands
-    remain under the Controller model's instruction rather than a regex-built
-    allowlist.
-    """
-    if _active_task_id(root) is None:
-        return None
+def _context_operation(payload: dict[str, Any]) -> str | None:
+    """Recognize only a direct, single `context <operation>` shell command."""
     command = _bash_command(payload)
-    if command is None:
+    if command is None or _COMMAND_SEPARATOR.search(command):
         return None
-    return "SOURCE_MUTATION" if _SOURCE_MUTATION.search(command) else None
+    try:
+        tokens = shlex.split(command, posix=False)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    executable = tokens[0].strip("\"'").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if executable not in {"context", "context.exe"}:
+        return None
+    index = 1
+    while index < len(tokens):
+        token = tokens[index].strip("\"'")
+        if token == "--pretty":
+            index += 1
+            continue
+        if token == "--root" and index + 1 < len(tokens):
+            index += 2
+            continue
+        return token if token in _CONTEXT_OPERATIONS else None
+    return None
+
+
+def _control_state_target(payload: dict[str, Any]) -> str | None:
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    material = json.dumps(tool_input, ensure_ascii=False, sort_keys=True)
+    match = _CONTROL_STATE_TARGET.search(material)
+    return match.group(0).replace("\\", "/") if match is not None else None
+
+
+def _obvious_write_attempt(payload: dict[str, Any]) -> bool:
+    tool = payload.get("tool_name") or payload.get("tool")
+    if not isinstance(tool, str):
+        return False
+    if _tool_basename(tool) in _CONTROLLER_MUTATION_TOOL_NAMES:
+        return True
+    command = _bash_command(payload)
+    return isinstance(command, str) and _OBVIOUS_WRITE.search(command) is not None
+
+
+def _updated_command_output(payload: dict[str, Any], argument: str) -> str:
+    original = payload.get("tool_input")
+    if not isinstance(original, dict):
+        return _permission_deny("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
+    key = next((name for name in ("cmd", "command") if isinstance(original.get(name), str)), None)
+    if key is None:
+        return _permission_deny("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
+    updated = dict(original)
+    updated[key] = f"{original[key]} {argument}"
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "updatedInput": updated,
+    }}, ensure_ascii=False, separators=(",", ":"))
+
+
+def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
+    """Allow reads with telemetry; block only mechanical protocol mutations."""
+    _best_effort_record(_record_child_runtime_event, root, payload, "PreToolUse")
+    tool = payload.get("tool_name") or payload.get("tool")
+    if not isinstance(tool, str):
+        return ""
+    normalized = _tool_basename(tool)
+    if normalized in _DELEGATION_TOOL_NAMES:
+        return _permission_deny("THALIRIS_CHILD_DELEGATION: child-to-child delegation is not permitted.")
+    operation = _context_operation(payload)
+    if operation in _CHILD_CONTEXT_MUTATIONS:
+        target = f"context {operation}"
+        _best_effort_record(_record_protocol_deviation, root, payload, operation=operation, target=target, blocked=True)
+        return _permission_deny("THALIRIS_CHILD_CONTROL_STATE_MUTATION: Child may not modify Controller-owned control state.")
+    if operation in _CHILD_CONTEXT_READS:
+        target = f"context {operation}"
+        _best_effort_record(_record_protocol_deviation, root, payload, operation=operation, target=target, blocked=False)
+        if operation in {"task-status", "prepare"}:
+            return _updated_command_output(payload, "--suppress-protocol-notice")
+        return ""
+    target = _control_state_target(payload)
+    if target is not None:
+        mutation = _obvious_write_attempt(payload)
+        _best_effort_record(
+            _record_protocol_deviation,
+            root,
+            payload,
+            operation="control-state-write" if mutation else "control-state-read",
+            target=target,
+            blocked=mutation,
+        )
+        if mutation:
+            return _permission_deny("THALIRIS_CHILD_CONTROL_STATE_MUTATION: Child may not modify Controller-owned control state.")
+    role = _NATIVE_AGENT_ROLES.get(str(payload.get("agent_type")))
+    if role == "reviewer" and _obvious_write_attempt(payload):
+        _best_effort_record(
+            _record_protocol_deviation,
+            root,
+            payload,
+            operation="reviewer-write-attempt",
+            target=normalized,
+            blocked=True,
+        )
+        return _permission_deny("THALIRIS_REVIEWER_WRITE_BLOCKED: Reviewer must remain an independent non-writing checker.")
+    return ""
 
 
 def _load_runtime(path: Path) -> dict[str, Any]:
@@ -1231,17 +1413,87 @@ def _identity_hash(value: str | None) -> str | None:
     return hashlib.sha256(value.encode("utf-8")).hexdigest() if value else None
 
 
-def _active_task_id(root: Path) -> str | None:
+def managed_task_state(root: Path) -> tuple[str, str | None]:
+    """Distinguish absent/inactive state from an unreadable mechanical ledger."""
+    path = root / ".context" / "state.json"
+    if not path.is_file():
+        return "NO_TASK", None
     try:
-        value = json.loads((root / ".context" / "state.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError):
-        return None
-    task_id = value.get("task_id") if value.get("status") == "ACTIVE" else None
-    return task_id if isinstance(task_id, str) else None
+        value = core._load_state(root)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return "INVALID_STATE", None
+    if value.get("status") != "ACTIVE":
+        return "NO_TASK", None
+    task_id = value.get("task_id")
+    return ("ACTIVE", task_id) if isinstance(task_id, str) else ("INVALID_STATE", None)
+
+
+def _active_task_id(root: Path) -> str | None:
+    status, task_id = managed_task_state(root)
+    return task_id if status == "ACTIVE" else None
 
 
 def _task_key(task_id: str | None) -> str:
     return hashlib.sha256((task_id or "unknown-task").encode("utf-8")).hexdigest()[:24]
+
+
+def _start_attestation_path(root: Path, nonce: str) -> Path:
+    digest = hashlib.sha256(nonce.encode("utf-8")).hexdigest()
+    return root / ".context" / "audit" / "task-start-attestations" / f"{digest}.json"
+
+
+def _issue_task_start_attestation(root: Path, payload: dict[str, Any]) -> str:
+    session_hash = _session_id_hash(payload)
+    if session_hash is None:
+        return _permission_deny("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
+    nonce = secrets.token_urlsafe(24)
+    token = f"v1.{session_hash}.{nonce}"
+    now = time.time_ns()
+    record = {
+        "version": 1,
+        "nonce_sha256": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        "session_id_hash": session_hash,
+        "managed_hook_spec_hash": managed_hook_spec_hash(),
+        "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
+        "created_at_ns": now,
+        "expires_at_ns": now + _START_ATTESTATION_TTL_NS,
+    }
+    with core._lock(root):
+        _write_capture(_start_attestation_path(root, token), record)
+    return _updated_command_output(payload, f"--hook-attestation {token}")
+
+
+def consume_task_start_attestation(root: Path, token: str | None) -> None:
+    """Consume one current-hook, current-session bearer attestation."""
+    error = ValueError("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
+    if not isinstance(token, str):
+        raise error
+    match = re.fullmatch(r"v1\.([0-9a-f]{64})\.([A-Za-z0-9_-]{16,128})", token)
+    if match is None:
+        raise error
+    path = _start_attestation_path(root, token)
+    with core._lock(root):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            raise error
+        valid = (
+            isinstance(record, dict)
+            and record.get("version") == 1
+            and record.get("nonce_sha256") == hashlib.sha256(token.encode("utf-8")).hexdigest()
+            and record.get("session_id_hash") == match.group(1)
+            and record.get("managed_hook_spec_hash") == managed_hook_spec_hash()
+            and record.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
+            and type(record.get("created_at_ns")) is int
+            and type(record.get("expires_at_ns")) is int
+            and record["created_at_ns"] <= time.time_ns() <= record["expires_at_ns"]
+        )
+        if not valid:
+            raise error
+        try:
+            path.unlink()
+        except OSError:
+            raise error
 
 
 def _write_capture(path: Path, state: dict[str, Any]) -> None:
@@ -1332,26 +1584,50 @@ def _isolation_classification(tool: str, tool_input: dict[str, Any], _role: str)
 
 
 def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
-    """Require an explicit fresh-child spawn before native dispatch."""
+    """Enforce the small ACTIVE Root tool boundary before native dispatch."""
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
         return ""
-    if _tool_basename(tool) in _CONTROLLER_MUTATION_TOOL_NAMES:
-        root = _hook_repository_root(root or Path.cwd(), payload)
-        if _active_task_id(root) is None:
+    root = _hook_repository_root(root or Path.cwd(), payload)
+    normalized = _tool_basename(tool)
+    state_status, _task_id = managed_task_state(root)
+    operation = _context_operation(payload) if normalized in _CONTROLLER_EXECUTION_TOOL_NAMES else None
+
+    if state_status == "INVALID_STATE":
+        if operation in _INVALID_STATE_DIAGNOSTICS:
+            _best_effort_record(_record_controller_guard_event, root, payload, f"CONTEXT_{operation}", "allowed")
             return ""
-        _best_effort_record(_record_controller_guard_event, root, payload, "SOURCE_MUTATION", "blocked")
+        _best_effort_record(_record_controller_guard_event, root, payload, "INVALID_STATE", "blocked")
+        return _permission_deny("THALIRIS_INVALID_STATE: managed control is unavailable until the task state is diagnosed or repaired.")
+
+    if state_status == "NO_TASK" and operation == "task-start":
+        return _issue_task_start_attestation(root, payload)
+
+    if state_status == "ACTIVE":
+        if normalized in _FRESH_CHILD_REUSE_TOOL_NAMES or normalized == "Agent":
+            _best_effort_record(_record_controller_guard_event, root, payload, "CHILD_REUSE", "blocked")
+            return _permission_deny("THALIRIS_FRESH_CHILD_REQUIRED: continue work with a new spawn_agent(fork_turns=\"none\") handoff.")
+        if normalized == "spawn_agent":
+            tool_input = _delegation_input(payload)
+            if tool_input.get("fork_turns") != "none":
+                return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
+            return _reserve_managed_spawn(root, payload)
+        if normalized in _ROOT_MANAGED_TOOL_NAMES:
+            _best_effort_record(_record_controller_guard_event, root, payload, normalized, "allowed")
+            return ""
+        if operation is not None:
+            _best_effort_record(_record_controller_guard_event, root, payload, f"CONTEXT_{operation}", "allowed")
+            return ""
+        _best_effort_record(_record_controller_guard_event, root, payload, "NON_CONTROL_TOOL", "blocked")
         return _permission_deny(_CONTROLLER_BOUNDARY_REASON)
-    if _tool_basename(tool) in _CONTROLLER_EXECUTION_TOOL_NAMES:
-        return _controller_guard_output(payload, root)
-    if _tool_basename(tool) != "spawn_agent":
+
+    if normalized != "spawn_agent":
         return ""
     tool_input = _delegation_input(payload)
     if not isinstance(tool_input, dict):
         return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
     fork = tool_input.get("fork_turns")
     if fork == "none":
-        root = _hook_repository_root(root or Path.cwd(), payload)
         return _reserve_managed_spawn(root, payload)
     return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
 
@@ -1364,24 +1640,6 @@ def _permission_deny(reason: str) -> str:
             "permissionDecisionReason": reason,
         }
     }, ensure_ascii=False, separators=(",", ":"))
-
-
-def _controller_guard_output(payload: dict[str, Any], root: Path | None = None) -> str:
-    """Keep an ACTIVE persistent root to its small control-plane allowlist."""
-    root = _hook_repository_root(root or Path.cwd(), payload)
-    action = _controller_command_action(root, payload)
-    if action is not None:
-        _best_effort_record(_record_controller_guard_event, root, payload, action, "blocked")
-        reason = _CONTROLLER_BOUNDARY_REASON
-        return json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            }
-        }, ensure_ascii=False, separators=(",", ":"))
-    _best_effort_record(_record_controller_guard_event, root, payload, action or "UNKNOWN", "allowed" if action is None else "unknown")
-    return ""
 
 
 def _dispatch_status(response: object) -> str:

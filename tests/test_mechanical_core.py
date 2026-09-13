@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import pytest
 
-from thaliris import codex_adapter, core
+from thaliris import cli, codex_adapter, core
 
 
 def repo(tmp_path: Path) -> Path:
@@ -82,6 +82,7 @@ def test_verification_and_task_surface_are_observations_not_close_authority(tmp_
     shown = core.task_show(root)
     assert shown["task_surface_delta"]["paths"] == ["unattributed.py"]
     assert shown["state"]["verification_results"][0]["outcome"] == "FAILED"
+    assert shown["state"]["verification_results"][0]["source_refs"] == []
 
     closed = core.task_close(root, observed["revision"], expected_task_id=started["task_id"])
     assert closed["status"] == "DONE"
@@ -110,9 +111,13 @@ def test_promotion_stores_controller_selection_without_confidence_gate(tmp_path:
 def test_promoted_provenance_survives_task_state_and_round_trips(tmp_path: Path) -> None:
     root = repo(tmp_path)
     started = core.task_start(root, "promotion provenance", None, write_json(root.parent / "sources.json", {
-        "evidence_refs": [{
-            "id": "source-1", "kind": "repository", "locator": "src/module.py#symbol", "summary": "source",
-        }],
+        "evidence_refs": [
+            {"id": "source-0", "kind": "repository", "locator": "src/base.py#root", "summary": "root source"},
+            {
+                "id": "source-1", "kind": "repository", "locator": "src/module.py#symbol",
+                "summary": "source", "source_refs": ["source-0"],
+            },
+        ],
     }))
     artifact_path = root / "details.md"
     artifact_path.write_text("artifact details", encoding="utf-8")
@@ -146,10 +151,38 @@ def test_promoted_provenance_survives_task_state_and_round_trips(tmp_path: Path)
     assert started["task_id"] in fetched["body"]
     assert "source-1" in fetched["body"]
     assert "src/module.py#symbol" in fetched["body"]
-    assert fetched["freshness"] == "FRESH"
+    assert "source-0" in fetched["body"]
+    assert "src/base.py#root" in fetched["body"]
+    assert fetched["freshness"] == "PARTIAL"
     assert core.recall(root, "Durable decision", "controller")["candidates"][0]["path"] == durable_path
     artifact_path.write_text("changed artifact details", encoding="utf-8")
     assert core.memory_get(root, durable_path)["freshness"] == "CHANGED"
+    artifact_path.unlink()
+    assert core.memory_get(root, durable_path)["freshness"] == "MISSING"
+
+
+def test_durable_freshness_distinguishes_fresh_and_recorded(tmp_path: Path) -> None:
+    fresh_root = repo(tmp_path / "fresh")
+    started = core.task_start(fresh_root, "fresh durable", None, None)
+    (fresh_root / "artifact.md").write_text("stable", encoding="utf-8")
+    registered = core.task_artifact(fresh_root, started["revision"], "a1", "artifact.md", "stable")
+    promoted = write_json(tmp_path / "fresh-promotion.json", {"records": [{
+        "id": "fresh", "kind": "decision", "title": "Fresh", "text": "fresh", "source_refs": ["a1"],
+    }]})
+    fresh_path = core.task_promote(fresh_root, "controller", registered["revision"], promoted)["promoted"][0]
+    assert core.memory_get(fresh_root, fresh_path)["freshness"] == "FRESH"
+
+    recorded_root = repo(tmp_path / "recorded")
+    recorded_started = core.task_start(recorded_root, "recorded durable", None, write_json(tmp_path / "recorded-source.json", {
+        "evidence_refs": [{"id": "s1", "kind": "external", "locator": "ticket-17", "summary": "recorded only"}],
+    }))
+    recorded_promotion = write_json(tmp_path / "recorded-promotion.json", {"records": [{
+        "id": "recorded", "kind": "decision", "title": "Recorded", "text": "recorded", "source_refs": ["s1"],
+    }]})
+    recorded_path = core.task_promote(
+        recorded_root, "controller", recorded_started["revision"], recorded_promotion,
+    )["promoted"][0]
+    assert core.memory_get(recorded_root, recorded_path)["freshness"] == "RECORDED"
 
 
 @pytest.mark.parametrize("field,value", [
@@ -172,6 +205,89 @@ def test_invalid_promotion_metadata_is_rejected_without_writing(tmp_path: Path, 
     with pytest.raises(ValueError):
         core.task_promote(root, "controller", started["revision"], promotion)
     assert not (root / ".agent-memory" / "promoted" / "invalid.md").exists()
+
+
+def test_verification_source_refs_survive_and_affect_result_identity(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "verification provenance", None, write_json(root.parent / "sources.json", {
+        "evidence_refs": [{"id": "source-1", "kind": "repo", "locator": "src/a.py", "summary": "source"}],
+    }))
+    observed = core.task_record_verification(
+        root, started["revision"], "verify-1", "test", "PASSED", "observed",
+        source_refs=["source-1"], observed_by="native-tool",
+    )
+    result = core.task_show(root)["state"]["verification_results"][0]
+    assert observed["revision"] == started["revision"] + 1
+    assert result["source_refs"] == ["source-1"]
+    material = {key: result[key] for key in (
+        "id", "kind", "outcome", "summary", "source_refs", "observed_by",
+        "candidate_identity", "observed_files",
+    )}
+    assert result["result_hash"] == hashlib.sha256(
+        json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def test_task_artifact_cli_accepts_repeatable_source_refs(tmp_path: Path, capsys) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "artifact cli", None, write_json(root.parent / "sources.json", {
+        "evidence_refs": [
+            {"id": "s0", "kind": "repo", "locator": "src/a.py", "summary": "a"},
+            {"id": "s1", "kind": "repo", "locator": "src/b.py", "summary": "b"},
+        ],
+    }))
+    (root / "artifact.md").write_text("details", encoding="utf-8")
+    exit_code = cli.main([
+        "--root", str(root), "task-artifact", "--base-revision", str(started["revision"]),
+        "--id", "artifact-cli", "--path", "artifact.md", "--summary", "details",
+        "--source-ref", "s0", "--source-ref", "s1",
+    ])
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+    assert core.task_show(root)["state"]["artifact_refs"][0]["source_refs"] == ["s0", "s1"]
+
+
+def test_record_artifact_and_promotion_ids_are_unique(tmp_path: Path) -> None:
+    duplicate_records_root = repo(tmp_path / "records")
+    duplicate_records = write_json(tmp_path / "duplicate-records.json", {"records": [
+        {"id": "same", "kind": "note", "text": "one"},
+        {"id": "same", "kind": "note", "text": "two"},
+    ]})
+    with pytest.raises(ValueError, match="duplicate task record id"):
+        core.task_start(duplicate_records_root, "duplicates", None, duplicate_records)
+
+    root = repo(tmp_path / "other-ids")
+    started = core.task_start(root, "other ids", None, None)
+    (root / "a.md").write_text("a", encoding="utf-8")
+    first = core.task_artifact(root, started["revision"], "same-artifact", "a.md", "a")
+    with pytest.raises(ValueError, match="artifact reference id already exists"):
+        core.task_artifact(root, first["revision"], "same-artifact", "a.md", "again")
+
+    duplicate_promotions = write_json(tmp_path / "duplicate-promotions.json", {"records": [
+        {"id": "same-promotion", "kind": "decision", "title": "One", "text": "one"},
+        {"id": "same-promotion", "kind": "decision", "title": "Two", "text": "two"},
+    ]})
+    with pytest.raises(ValueError, match="duplicate promotion id"):
+        core.task_promote(root, "controller", first["revision"], duplicate_promotions)
+    assert not (root / ".agent-memory" / "promoted" / "same-promotion.md").exists()
+
+
+def test_git_status_failure_is_reported_as_unavailable(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+
+    class FailedStatus:
+        returncode = 1
+        stdout = b""
+
+    monkeypatch.setattr(core.subprocess, "run", lambda *args, **kwargs: FailedStatus())
+    assert core._surface_snapshot(root) == "UNAVAILABLE"
+    assert core._surface_delta(root, [])["status"] == "UNAVAILABLE"
+
+    def unavailable_git(*args, **kwargs):
+        raise OSError("git unavailable")
+
+    monkeypatch.setattr(core.subprocess, "run", unavailable_git)
+    assert core._surface_snapshot(root) == "UNAVAILABLE"
 
 
 def test_memory_audience_is_search_metadata_not_access_control(tmp_path: Path) -> None:
@@ -354,6 +470,7 @@ def test_large_task_status_is_bounded_while_task_show_retains_full_ledger(tmp_pa
                 "kind": "test",
                 "outcome": "PASSED",
                 "summary": f"VERIFICATION_BODY_{index}",
+                "source_refs": [],
                 "observed_by": "native-tool",
                 "candidate_identity": "a" * 64,
                 "observed_files": [],

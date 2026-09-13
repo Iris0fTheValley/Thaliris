@@ -70,7 +70,7 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
             "observations; Core does not supply semantic completion authority."
         ),
         "reviewer": (
-            "Act as an independent read-only checker of the candidate named in the handoff. "
+            "Act as an independent non-writing checker of the candidate named in the handoff. "
             "Return findings and a distilled verdict; the Controller decides what follows."
         ),
     }[role]
@@ -80,7 +80,6 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
         f'description = "Thaliris {role} execution role"\n'
         f'model = "{model}"\n'
         f'model_reasoning_effort = "{effort}"\n'
-        + ('sandbox_mode = "read-only"\n' if role == "reviewer" else "")
         + f'developer_instructions = "{instructions}"\n'
     ).encode("utf-8")
 
@@ -217,7 +216,19 @@ supersession only; it does not interpret the body.
 Memory and milestones are ordinary explicit storage. Search results and
 Audience, Topics, Symbols, Applicability, Kind, Status, and Confidence metadata
 are hints for models and displays, never routing permissions or correctness
-gates. Freshness reports only FRESH, CHANGED, MISSING, or UNKNOWN facts.
+gates. Freshness reports only FRESH, PARTIAL, RECORDED, CHANGED, MISSING, or
+UNKNOWN mechanical facts.
+
+During an ACTIVE managed task the persistent Controller uses only native
+spawn/wait/list/interrupt operations and direct `context` control commands;
+repository investigation, execution, mutation, and testing belong to fresh
+Children. Existing Child threads are never resumed with follow-up/send tools.
+A Child's obvious direct control-context retrieval is allowed but recorded for
+one short Controller notice. Obvious attempts to mutate Controller-owned task
+or lifecycle state are denied and recorded. Reviewer independence is a
+developer-instruction plus hook guard, not a claimed native read-only sandbox.
+Starting managed mode requires a current-session, current-hook, one-shot
+PreToolUse attestation.
 
 Managed children are serial. Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
@@ -547,8 +558,15 @@ def uninstall(root: Path) -> dict[str, object]:
     return {"ok": True, "changed": bool(writes or deletes), "backup": backup, "kept": sorted(set(generic_kept) | set(adapter[2])), "manual_action_required": sorted(set(generic_manual) | set(adapter[3]))}
 
 
-def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None) -> dict[str, object]:
+def task_start(
+    root: Path,
+    goal: str,
+    milestone: str | None,
+    input_file: str | None,
+    hook_attestation: str | None = None,
+) -> dict[str, object]:
     root = core._repo_root(root)
+    lifecycle.consume_task_start_attestation(root, hook_attestation)
     mode = selected_continuation_mode(root)
     readiness = {
         "status": "PASS" if mode in {"EVENT_DRIVEN", "BLOCKING_WAIT"} else "MANAGED_CONTINUATION_UNAVAILABLE",
@@ -559,8 +577,6 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
     if mode == "UNAVAILABLE":
         return {"ok": False, "status": "MANAGED_CONTINUATION_UNAVAILABLE", "managed_readiness": readiness}
     result = core.task_start(root, goal, milestone, input_file)
-    # A task is a Core object.  Starting one cannot prove that this already
-    # running Codex session reloaded project hooks, AGENTS, or agent profiles.
     result["managed_readiness"] = {**readiness, **_activation_fields(root)}
     return result
 
@@ -612,6 +628,7 @@ def doctor(root: Path) -> dict[str, object]:
     from .doctor import report
     root = core._repo_root(root)
     result = report(root)
+    result["managed_task_state"] = lifecycle.managed_task_state(root)[0]
     observations: list[tuple[int, int, dict[str, object]]] = []
     events: set[str] = set()
     compatible_profile_observed = False

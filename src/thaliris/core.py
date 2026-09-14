@@ -37,6 +37,14 @@ def _digest(data: bytes | None) -> str | None:
     return hashlib.sha256(data).hexdigest() if data is not None else None
 
 
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _repo_root(root: Path) -> Path:
     proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, text=True, check=False)
     if proc.returncode or not proc.stdout.strip():
@@ -323,6 +331,8 @@ ROUTING_STATE_MAX_BYTES = 8 * 1024
 EXPLICIT_DOCUMENT_MAX_BYTES = 64 * 1024
 DURABLE_INDEX_RECOMMENDED_BYTES = 3 * 1024
 DURABLE_INDEX_HARD_MAX_BYTES = 16 * 1024
+SURFACE_MAX_ENTRIES = 512
+SURFACE_MAX_BYTES = 128 * 1024
 _PACK_ROLES = {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}
 _EXECUTION_ROLES = _PACK_ROLES - {"controller"}
 _STATE_FIELDS = {
@@ -379,6 +389,15 @@ def _valid_relative(root: Path, value: object) -> str:
     return value
 
 
+def _safe_without_final_symlink(root: Path, relative: str) -> Path:
+    """Resolve a validated path only after rejecting a symlink final component."""
+    normalized = _valid_relative(root, relative)
+    lexical = root.joinpath(*normalized.split("/"))
+    if lexical.is_symlink():
+        raise ValueError("path final component must not be a symlink")
+    return _safe(root, normalized)
+
+
 def _surface_identity(root: Path, path: str, status: str) -> dict[str, object]:
     raw = root.joinpath(*path.split("/"))
     if raw.is_symlink():
@@ -391,7 +410,7 @@ def _surface_identity(root: Path, path: str, status: str) -> dict[str, object]:
         return {"path": path, "state": "MISSING", "identity": None, "mode": None, "git_status": status}
     if not raw.is_file():
         return {"path": path, "state": "SPECIAL", "identity": None, "mode": raw.lstat().st_mode & 0o7777, "git_status": status}
-    return {"path": path, "state": "FILE", "identity": _digest(raw.read_bytes()), "mode": raw.stat().st_mode & 0o7777, "git_status": status}
+    return {"path": path, "state": "FILE", "identity": _file_digest(raw), "mode": raw.stat().st_mode & 0o7777, "git_status": status}
 
 
 def _surface_snapshot(root: Path) -> list[dict[str, object]] | str:
@@ -399,7 +418,7 @@ def _surface_snapshot(root: Path) -> list[dict[str, object]] | str:
         proc = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=root, capture_output=True, check=False)
     except (OSError, subprocess.SubprocessError):
         return "UNAVAILABLE"
-    if proc.returncode:
+    if proc.returncode or not isinstance(proc.stdout, bytes) or len(proc.stdout) > SURFACE_MAX_BYTES:
         return "UNAVAILABLE"
     fields = proc.stdout.decode("utf-8", errors="surrogateescape").split("\0")
     result: list[dict[str, object]] = []
@@ -414,6 +433,8 @@ def _surface_snapshot(root: Path) -> list[dict[str, object]] | str:
             # Porcelain -z reports the current/destination path in this item
             # and the source/old path in the following field.
             index += 1
+        if len(result) >= SURFACE_MAX_ENTRIES:
+            return "UNAVAILABLE"
         _valid_relative(root, path)
         result.append(_surface_identity(root, path, status))
     return sorted(result, key=lambda item: str(item["path"]))
@@ -506,23 +527,26 @@ def _artifact_ref(root: Path, value: object, *, require_target: bool = False) ->
     if not isinstance(supersedes, list) or len(supersedes) > 64 or len(set(supersedes)) != len(supersedes) or value["id"] in supersedes or not all(isinstance(item, str) for item in supersedes):
         raise ValueError("invalid artifact supersession")
     if require_target:
-        target = _safe(root, path)
-        if target.is_symlink() or not target.is_file():
+        try:
+            target = _safe_without_final_symlink(root, path)
+        except ValueError as exc:
+            raise ValueError("artifact path must name an existing regular file") from exc
+        if not target.is_file():
             raise ValueError("artifact path must name an existing regular file")
     return value
 
 
 def _artifact_freshness(root: Path, artifact: dict[str, object]) -> str:
     try:
-        target = _safe(root, str(artifact["path"]))
+        target = _safe_without_final_symlink(root, str(artifact["path"]))
     except ValueError:
         return "MISSING"
-    if target.is_symlink() or not target.is_file():
+    if not target.is_file():
         return "MISSING"
     identity = artifact.get("content_sha256")
     if not isinstance(identity, str):
         return "UNKNOWN"
-    return "FRESH" if _digest(target.read_bytes()) == identity else "CHANGED"
+    return "FRESH" if _file_digest(target) == identity else "CHANGED"
 
 
 def _artifact_activity(artifacts: list[dict[str, object]]) -> set[str]:
@@ -726,6 +750,21 @@ def _blank_state(root: Path, goal: str, milestone: str | None) -> dict[str, obje
     }
 
 
+def _ensure_root_navigation(root: Path) -> list[str]:
+    writes: dict[str, bytes] = {}
+    for relative, content in _template_files().items():
+        if relative not in {".agent-memory/INDEX.md", ".milestones/INDEX.md"}:
+            continue
+        lexical = root.joinpath(*relative.split("/"))
+        if lexical.exists() or lexical.is_symlink():
+            continue
+        _valid_relative(root, relative)
+        writes[relative] = content
+    if writes:
+        _apply_with_backup(root, writes, [], "task-start-navigation")
+    return sorted(writes)
+
+
 def _normalize_new_record(value: object, *, producer: str, revision: int, known_sources: set[str], known_records: set[str]) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("invalid task record")
@@ -770,6 +809,7 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
         path = _state_path(root)
         if path.is_file() and _load_state(root)["status"] == "ACTIVE":
             raise ValueError("an ACTIVE task already exists")
+        _ensure_root_navigation(root)
         state = _blank_state(root, goal, milestone)
         state["active_work"] = partial.get("active_work", [])
         state["pending_results"] = partial.get("pending_results", [])
@@ -860,8 +900,11 @@ def artifact_get(root: Path, artifact_id: str) -> dict[str, object]:
     if found["object_type"] != "artifact":
         raise ValueError("task object is not an artifact")
     artifact = found["object"]
-    target = _safe(root, str(artifact["path"]))
-    if target.is_symlink() or not target.is_file():
+    try:
+        target = _safe_without_final_symlink(root, str(artifact["path"]))
+    except ValueError as exc:
+        raise ValueError("artifact body not found") from exc
+    if not target.is_file():
         raise ValueError("artifact body not found")
     body = target.read_bytes()
     if len(body) > EXPLICIT_DOCUMENT_MAX_BYTES:
@@ -870,7 +913,7 @@ def artifact_get(root: Path, artifact_id: str) -> dict[str, object]:
         text = body.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError("artifact body is not UTF-8 text") from exc
-    return {**found, "body": text, "current_sha256": _digest(body), "freshness": _artifact_freshness(root, artifact)}
+    return {**found, "body": text, "current_sha256": _file_digest(target), "freshness": _artifact_freshness(root, artifact)}
 
 
 def _controller_status(state: dict[str, object]) -> dict[str, object]:
@@ -935,7 +978,7 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
         known_artifacts = {str(item["id"]) for item in state["artifact_refs"]}
         if any(item not in known_artifacts for item in superseded):
             raise ValueError("artifact supersession target is not registered")
-        target = _safe(root, path)
+        target = _safe_without_final_symlink(root, path)
         artifact: dict[str, object] = {
             "id": artifact_id,
             "path": path,
@@ -946,7 +989,7 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
             "supersedes": superseded,
             "task_id": state["task_id"],
             "revision": base_revision + 1,
-            "content_sha256": _digest(target.read_bytes()),
+            "content_sha256": _file_digest(target),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         if scope is not None:
@@ -1174,8 +1217,11 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
             encoded = content.encode("utf-8")
             if len(encoded) > DURABLE_INDEX_HARD_MAX_BYTES:
                 raise ValueError("INDEX_OVERSIZED")
-            index_target = _safe(root, index_updated)
-            if index_target.is_symlink() or not index_target.is_file():
+            try:
+                index_target = _safe_without_final_symlink(root, index_updated)
+            except ValueError as exc:
+                raise ValueError("INDEX update target does not exist") from exc
+            if not index_target.is_file():
                 raise ValueError("INDEX update target does not exist")
             if _digest(index_target.read_bytes()) != base_sha256:
                 raise ValueError("INDEX revision conflict")
@@ -1249,8 +1295,11 @@ def memory_get(root: Path, path: str) -> dict[str, object]:
     _valid_relative(root, path)
     if not path.startswith(".agent-memory/"):
         raise ValueError("memory path must be under .agent-memory")
-    target = _safe(root, path)
-    if target.is_symlink() or not target.is_file():
+    try:
+        target = _safe_without_final_symlink(root, path)
+    except ValueError as exc:
+        raise ValueError("memory entry not found") from exc
+    if not target.is_file():
         raise ValueError("memory entry not found")
     if target.stat().st_size > EXPLICIT_DOCUMENT_MAX_BYTES:
         raise ValueError(f"memory entry exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
@@ -1272,7 +1321,7 @@ def _durable_relative_path(root: Path, path: str) -> tuple[str, Path]:
     _valid_relative(root, relative)
     if relative not in {".agent-memory", ".milestones"} and not relative.startswith((".agent-memory/", ".milestones/")):
         raise ValueError("durable path must be under .agent-memory or .milestones")
-    return relative, _safe(root, relative)
+    return relative, _safe_without_final_symlink(root, relative)
 
 
 def _index_reference_errors(root: Path, index: Path, body: str, *, planned_paths: set[str] | None = None) -> list[str]:
@@ -1283,27 +1332,35 @@ def _index_reference_errors(root: Path, index: Path, body: str, *, planned_paths
         if not target or target.startswith(("#", "http://", "https://", "mailto:")):
             continue
         relative_link = target.split("#", 1)[0]
-        candidate = (index.parent / relative_link).resolve(strict=False)
+        lexical = index.parent / relative_link
+        final_symlink = lexical.is_symlink()
+        candidate = lexical.resolve(strict=False)
         try:
             relative = candidate.relative_to(root.resolve(strict=True)).as_posix()
             _durable_relative_path(root, relative)
         except (OSError, ValueError):
             errors.append(f"{index.relative_to(root).as_posix()}: invalid link {target}")
             continue
-        if relative not in (planned_paths or set()) and (candidate.is_symlink() or not candidate.exists()):
+        if relative not in (planned_paths or set()) and (final_symlink or not candidate.exists()):
             errors.append(f"{index.relative_to(root).as_posix()}: missing link target {relative}")
     return errors
 
 
 def _catalog_index(root: Path, relative: str) -> tuple[dict[str, object], list[str]]:
-    normalized, target = _durable_relative_path(root, relative)
-    index = target if target.name == "INDEX.md" else target / "INDEX.md"
-    if index.is_symlink() or not index.is_file():
-        return {"path": index.relative_to(root).as_posix(), "state": "MISSING"}, [f"{normalized}: missing INDEX.md"]
+    normalized = _valid_relative(root, relative.rstrip("/"))
+    lexical_target = root.joinpath(*normalized.split("/"))
+    index_relative = normalized if lexical_target.name == "INDEX.md" else f"{normalized}/INDEX.md"
+    try:
+        index = _safe_without_final_symlink(root, index_relative)
+    except ValueError:
+        index = root.joinpath(*index_relative.split("/"))
+        return {"path": index_relative, "state": "MISSING"}, [f"{normalized}: missing INDEX.md"]
+    if not index.is_file():
+        return {"path": index_relative, "state": "MISSING"}, [f"{normalized}: missing INDEX.md"]
     size = index.stat().st_size
     if size > DURABLE_INDEX_HARD_MAX_BYTES:
         return {
-            "path": index.relative_to(root).as_posix(),
+            "path": index_relative,
             "state": "INDEX_OVERSIZED",
             "size_bytes": size,
             "hard_limit_bytes": DURABLE_INDEX_HARD_MAX_BYTES,
@@ -1315,7 +1372,7 @@ def _catalog_index(root: Path, relative: str) -> tuple[dict[str, object], list[s
     errors = _index_reference_errors(root, index, parsed.body)
     heading = re.search(r"(?m)^#\s+(.+?)\s*$", parsed.body)
     return {
-        "path": index.relative_to(root).as_posix(),
+        "path": index_relative,
         "title": heading.group(1) if heading else index.parent.name,
         "metadata": {key: parsed.meta[key] for key in ("Kind", "Status", "Revision") if key in parsed.meta},
         "map": parsed.body,
@@ -1359,11 +1416,23 @@ def durable_index_check(root: Path, roots: list[str] | None = None) -> dict[str,
     errors: list[str] = []
     while pending:
         relative = pending.pop()
-        normalized, index = _durable_relative_path(root, relative)
-        if index.name != "INDEX.md":
+        try:
+            normalized = _valid_relative(root, relative.rstrip("/"))
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        if not normalized.endswith("/INDEX.md") and normalized != "INDEX.md":
             errors.append(f"{normalized}: durable integrity root is not INDEX.md")
             continue
-        canonical = index.relative_to(root).as_posix()
+        try:
+            index = _safe_without_final_symlink(root, normalized)
+        except ValueError as exc:
+            errors.append(f"{normalized}: {exc}")
+            continue
+        if not index.is_file():
+            errors.append(f"{normalized}: missing INDEX.md")
+            continue
+        canonical = normalized
         if canonical in visited:
             continue
         visited.add(canonical)
@@ -1380,7 +1449,10 @@ def durable_index_check(root: Path, roots: list[str] | None = None) -> dict[str,
             link = link.strip().strip("<>")
             if not link or link.startswith(("#", "http://", "https://", "mailto:")):
                 continue
-            candidate = (index.parent / link.split("#", 1)[0]).resolve(strict=False)
+            lexical = index.parent / link.split("#", 1)[0]
+            if lexical.is_symlink():
+                continue
+            candidate = lexical.resolve(strict=False)
             try:
                 child = candidate.relative_to(root.resolve(strict=True)).as_posix()
                 _durable_relative_path(root, child)
@@ -1403,8 +1475,15 @@ def document_get(root: Path, paths: str | list[str]) -> dict[str, object]:
         raise ValueError("document-get requires 1 to 8 unique paths")
     documents: list[dict[str, object]] = []
     for path in selected:
-        relative, target = _durable_relative_path(root, path)
-        if target.is_symlink() or not target.is_file() or target.suffix.lower() != ".md":
+        relative = path.rstrip("/")
+        _valid_relative(root, relative)
+        if relative not in {".agent-memory", ".milestones"} and not relative.startswith((".agent-memory/", ".milestones/")):
+            raise ValueError("durable path must be under .agent-memory or .milestones")
+        try:
+            target = _safe_without_final_symlink(root, relative)
+        except ValueError as exc:
+            raise ValueError("durable document not found") from exc
+        if not target.is_file() or target.suffix.lower() != ".md":
             raise ValueError("durable document not found")
         if target.stat().st_size > EXPLICIT_DOCUMENT_MAX_BYTES:
             raise ValueError(f"durable document exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")

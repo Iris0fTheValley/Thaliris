@@ -93,7 +93,7 @@ def test_subagent_start_binds_explicit_handoff_without_injecting_projection(tmp_
     assert all("additionalContextLimit" not in handler for handler in start_handlers)
 
 
-def test_session_start_global_map_enables_one_explicit_retrieval_without_scan(tmp_path: Path, monkeypatch) -> None:
+def test_session_start_points_to_root_navigation_without_injecting_map(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     (root / ".agent-memory" / "promoted").mkdir(parents=True, exist_ok=True)
     for index in range(100):
@@ -116,9 +116,11 @@ def test_session_start_global_map_enables_one_explicit_retrieval_without_scan(tm
     monkeypatch.setattr(Path, "rglob", no_recursive_scan)
     output = json.loads(handle_hook(root, "SessionStart", hook_payload(source="resume")))
     context = output["hookSpecificOutput"]["additionalContext"]
-    assert len(context.encode("utf-8")) < 4 * 1024
-    assert "discovery only" in context
-    assert "model-tree/deep/target.md" in context
+    assert len(context.encode("utf-8")) < 1024
+    assert ".agent-memory/INDEX.md" in context
+    assert ".milestones/INDEX.md" in context
+    assert "explicitly read the root navigation" in context
+    assert "model-tree/deep/target.md" not in context
     assert "PRIVATE_BODY" not in context
     assert "DECISION_CHANGING_BODY" not in context
 
@@ -274,7 +276,7 @@ def test_active_controller_uses_only_the_mechanical_tool_allowlist(tmp_path: Pat
     )) == ""
 
 
-def test_session_start_retains_root_map_above_recommended_size_without_document_body(tmp_path: Path) -> None:
+def test_session_start_does_not_inject_large_root_map_or_document_body(tmp_path: Path) -> None:
     root = repo(tmp_path)
     target = root / ".agent-memory" / "selected.md"
     target.write_bytes(core._entry("Selected", "PRIVATE_DOCUMENT_BODY", evidence="NONE"))
@@ -285,10 +287,34 @@ def test_session_start_retains_root_map_above_recommended_size_without_document_
 
     output = json.loads(handle_hook(root, "SessionStart", hook_payload(source="startup")))
     context = output["hookSpecificOutput"]["additionalContext"]
-    assert "model-authored-routing-hint" in context
-    assert "selected.md" in context
+    assert ".agent-memory/INDEX.md" in context
+    assert "model-authored-routing-hint" not in context
+    assert "selected.md" not in context
     assert "PRIVATE_DOCUMENT_BODY" not in context
-    assert "map_omitted" not in context
+
+
+def test_task_start_recreates_missing_root_navigation_before_active(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    (root / ".agent-memory" / "INDEX.md").unlink()
+    (root / ".milestones" / "INDEX.md").unlink()
+    started = core.task_start(root, "establish navigation", None, None)
+    assert started["status"] == "ACTIVE"
+    assert (root / ".agent-memory" / "INDEX.md").is_file()
+    assert (root / ".milestones" / "INDEX.md").is_file()
+
+
+def test_task_status_does_not_reread_navigation_automatically(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    calls: list[object] = []
+
+    def fail_catalog(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("task status must not read durable navigation")
+
+    monkeypatch.setattr(core, "catalog", fail_catalog)
+    core.task_start(root, "no automatic navigation reread", None, None)
+    core.task_status(root)
+    assert calls == []
 
 
 def test_no_task_is_transparent_to_ordinary_spawn(tmp_path: Path) -> None:
@@ -499,6 +525,35 @@ def test_child_control_state_mutation_is_blocked_and_recorded(tmp_path: Path) ->
     assert lifecycle(root)["protocol_deviations"][-1]["operation"] == "control-state-write"
 
 
+def test_non_bash_control_state_mutation_tools_are_blocked_but_reads_and_repo_writes_are_allowed(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "non bash child guard", None, None)
+    spawn_start(root, "worker-1")
+    denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(
+        agent_id="worker-1",
+        agent_type="worker",
+        tool_name="mcp__files__write",
+        tool_input={"path": ".context/state.json", "content": "changed"},
+    )))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert lifecycle(root)["protocol_deviations"][-1]["operation"] == "control-state-write"
+
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        agent_id="worker-1",
+        agent_type="worker",
+        tool_name="mcp__files__read",
+        tool_input={"path": ".context/state.json"},
+    )) == ""
+    assert lifecycle(root)["protocol_deviations"][-1]["blocked"] is False
+
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        agent_id="worker-1",
+        agent_type="worker",
+        tool_name="mcp__files__write",
+        tool_input={"path": "src/example.py", "content": "changed"},
+    )) == ""
+
+
 def test_reviewer_profile_makes_no_native_sandbox_claim_and_obvious_writes_are_blocked(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.task_start(root, "review guard", None, None)
@@ -591,28 +646,66 @@ def test_authorized_spawn_requires_fresh_explicit_serial_handoff(tmp_path: Path)
     assert duplicate["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
-def test_explicit_spawn_failure_atomically_releases_matching_reservation(tmp_path: Path) -> None:
+def test_native_spawn_failure_without_posttool_keeps_pending_reservation(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "spawn failure", None, None)
+    core.task_start(root, "spawn failure recovery", None, None)
     failed_spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "worker", "message": "failed handoff",
     })
     assert handle_hook(root, "PreToolUse", failed_spawn) == ""
+    pending = lifecycle(root)["pending_authorized_spawn"]
+    assert pending is not None
+
+    # Codex 0.154 returns the native error without PostToolUse. The reservation
+    # therefore remains until the Controller explicitly invokes recovery.
+    assert lifecycle(root)["pending_authorized_spawn"] == pending
+
+
+def test_pending_spawn_recovery_requires_exact_handoff_id(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "wrong recovery id", None, None)
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "handoff",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    with pytest.raises(ValueError, match="does not match"):
+        lifecycle_module.recover_pending_spawn(root, "handoff-" + "0" * 32)
     assert lifecycle(root)["pending_authorized_spawn"] is not None
 
-    assert handle_hook(root, "PostToolUse", {
-        **failed_spawn,
-        "tool_response": {"status": "rejected", "error": "native spawn rejected"},
-    }) == ""
-    failed_state = lifecycle(root)
-    assert failed_state["pending_authorized_spawn"] is None
-    assert failed_state["spawn_failures"][-1]["dispatch_status"] == "REJECTED"
+
+def test_exact_pending_spawn_recovery_clears_reservation_and_allows_next_spawn(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "exact recovery id", None, None)
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "handoff",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    handoff_id = lifecycle(root)["pending_authorized_spawn"]["handoff_id"]
+    recovered = lifecycle_module.recover_pending_spawn(root, handoff_id)
+    assert recovered["recovered"] is True
+    state = lifecycle(root)
+    assert state["pending_authorized_spawn"] is None
+    assert state["spawn_recoveries"][-1]["handoff_id"] == handoff_id
 
     next_spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "worker", "message": "next handoff",
     })
     assert handle_hook(root, "PreToolUse", next_spawn) == ""
     assert lifecycle(root)["pending_authorized_spawn"] is not None
+
+
+def test_pending_spawn_recovery_rejects_handoff_already_bound_to_child(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "bound recovery", None, None)
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "bound handoff",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    handoff_id = lifecycle(root)["pending_authorized_spawn"]["handoff_id"]
+    assert handle_hook(root, "SubagentStart", hook_payload(agent_id="bound-child", agent_type="worker")) == ""
+    with pytest.raises(ValueError, match="already bound"):
+        lifecycle_module.recover_pending_spawn(root, handoff_id)
+    assert lifecycle(root)["children"][-1]["managed"] is True
 
 
 def test_unknown_spawn_result_does_not_release_reservation(tmp_path: Path) -> None:

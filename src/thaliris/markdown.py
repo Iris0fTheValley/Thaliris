@@ -58,7 +58,11 @@ def parse_text(text: str, path: Path | None = None) -> Entry:
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:

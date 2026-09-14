@@ -74,8 +74,11 @@ created revision、source refs 与 optional supersedes。Artifact 不会被自�
 
 Memory 默认不注入。模型自行维护 `.agent-memory/INDEX.md` 和
 `.milestones/INDEX.md` 里的薄全局树状地图，并自行决定目录、层级、移动、合并与
-删除；Core 不递归扫描文件系统来重建第二套 catalog，也不规定 taxonomy。Root
-SessionStart 只收到约 2–4 KiB 的 INDEX 地图，不含文档正文或相关性判断。
+删除；Core 不递归扫描文件系统来重建第二套 catalog，也不规定 taxonomy。SessionStart
+只提示两个 root INDEX 的路径，不注入完整地图。开始 managed task 前，Controller
+应显式读取 root navigation；若 INDEX 尚不存在，先建立最小薄 INDEX 再开始 task。
+任务进行中不会自动重复读取，除非地图已修改、信息不足、freshness 失效，或 resume/compact
+需要恢复导航。
 `document-get` 可一次读取最多 8 个由 Controller 明确给出的 path，并受总返回大小
 限制；它不自动搜索、排序或补充文档。ACTIVE Controller 使用 bounded
 `task-status` 和单对象 `task-get`；`init`、`uninstall`、`rollback`、再次
@@ -88,6 +91,8 @@ Controller 明确选择的记录；Core 不裁决其 epistemic legitimacy。
 当一次 promotion 会改变 durable navigation 时，Controller 应在同一次
 `task-promote` 中提供自己写好的 optional `index_update`。Core 不生成 INDEX
 内容，只验证 CAS、引用和原子提交。
+若 Codex 在 `SubagentStart` 前明确返回 native spawn failure，Controller 可针对
+该 handoff 调用 `context recover-pending-spawn HANDOFF_ID`；Core 不从缺失事件、超时或重试推测失败。
 
 ## Verification 与 task surface
 
@@ -110,6 +115,7 @@ context recall "query" --role controller
 context memory-get memory/path.md
 context task-promote --role controller --base-revision N --input promotion.json
 context task-close --base-revision N
+context recover-pending-spawn HANDOFF_ID
 context stale
 context rollback BACKUP_ID
 context doctor

@@ -22,9 +22,10 @@ children are serial. Matching SubagentStart/Stop events bind identity and
 timestamps; bounded native terminal reconciliation handles missing stop
 observations without treating reconciliation as successful work.
 
-The root Controller guard denies only deterministic boundaries such as direct
-known source writes and invalid managed spawn parameters. Read-only inspection
-is prompt policy, not a shell-regex semantic classifier.
+The ACTIVE root Controller uses only bounded control-plane commands and
+explicit retrieval. Repository investigation, edits, and tests belong to fresh
+Children. Read-only inspection is prompt policy, not a shell-regex semantic
+classifier.
 
 When native event-driven continuation is unavailable, `wait_agent` is
 normalized to the supported Host maximum only if an actual pending reservation

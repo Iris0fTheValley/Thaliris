@@ -55,6 +55,10 @@ _NATIVE_AGENT_ROLES = {
 }
 _CONTROLLER_MUTATION_TOOL_NAMES = ("apply_patch", "file_change", "functions.apply_patch", "functions.file_change")
 _CONTROLLER_MUTATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_MUTATION_TOOL_NAMES) + ")"
+_CHILD_CONTROL_MUTATION_ACTIONS = frozenset({
+    "write", "edit", "update", "replace", "patch", "append", "create", "delete", "remove",
+    "move", "rename", "copy",
+})
 # Codex 0.146 Multi-Agent V2 exposes both dotted names and flattened
 # `collaboration<tool>` names to hooks. Keep execution surfaces explicit too:
 # a PostToolUse callback is the only possible completion observation.
@@ -75,13 +79,13 @@ _CONTEXT_OPERATIONS = frozenset({
     "init", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
     "prepare", "recall", "memory-get", "task-start", "task-update", "task-show",
     "task-status", "task-get", "artifact-get", "catalog", "document-get",
-    "task-artifact", "task-close", "task-promote", "rollback", "version",
+    "task-artifact", "task-close", "task-promote", "recover-pending-spawn", "rollback", "version",
 })
 _ACTIVE_ROOT_CONTEXT_OPERATIONS = frozenset({
     "doctor", "milestone-check", "memory-status", "prepare", "recall",
     "memory-get", "task-update", "task-status", "task-get", "artifact-get",
     "catalog", "document-get", "task-artifact", "task-close", "task-promote",
-    "version",
+    "recover-pending-spawn", "version",
 })
 _CHILD_CONTEXT_READS = frozenset({
     "task-show", "task-status", "recall", "memory-get", "prepare", "stale",
@@ -90,7 +94,7 @@ _CHILD_CONTEXT_READS = frozenset({
 })
 _CHILD_CONTEXT_MUTATIONS = frozenset({
     "task-start", "task-update", "task-artifact", "task-close", "task-promote",
-    "rollback", "init", "uninstall",
+    "recover-pending-spawn", "rollback", "init", "uninstall",
 })
 _INVALID_STATE_DIAGNOSTICS = frozenset({"doctor", "task-show", "task-status", "version"})
 _CONTROL_STATE_TARGET = re.compile(r"(?i)\.context[\\/](?:state\.json|audit[\\/]lifecycle(?:[\\/][^\s\"']+)?)")
@@ -387,8 +391,6 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) in _COLLABORATION_TOOL_NAMES:
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
-                if _tool_basename(tool) == "spawn_agent":
-                    _best_effort_record(_clear_explicitly_failed_spawn, root, payload)
                 _best_effort_record(_reconcile_lifecycle_post_tool, root, payload, _tool_basename(tool))
                 if _tool_basename(tool) in _DELEGATION_TOOL_NAMES:
                     _best_effort_record(_record_delegation_telemetry, root, payload)
@@ -458,13 +460,15 @@ def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
 
 
 def _session_start_output(root: Path, payload: dict[str, Any]) -> str:
-    """Expose only the bounded Root discovery catalog on supported start causes."""
+    """Point the Controller at durable navigation without injecting its contents."""
     if payload.get("source") not in {"startup", "resume", "clear", "compact"}:
         return ""
-    discovered = core.catalog(root)
     context = (
-        "Thaliris durable catalog (discovery only; retrieve documents explicitly):\n"
-        + json.dumps(discovered, ensure_ascii=False, separators=(",", ":"))
+        "Durable navigation is available at:\n"
+        ".agent-memory/INDEX.md\n"
+        ".milestones/INDEX.md\n\n"
+        "Before starting managed work, explicitly read the root navigation; "
+        "if either map is missing, establish a minimal thin INDEX first."
     )
     return json.dumps({"hookSpecificOutput": {
         "hookEventName": "SessionStart",
@@ -848,44 +852,42 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
     return ""
 
 
-def _clear_explicitly_failed_spawn(root: Path, payload: dict[str, Any]) -> None:
-    """Release only the reservation proven to belong to a rejected spawn."""
-    if _dispatch_status(_post_tool_response(payload)) != "REJECTED":
-        return
+def recover_pending_spawn(root: Path, handoff_id: str) -> dict[str, object]:
+    """Clear one exact unbound reservation after Controller-observed failure."""
     task_id = _active_task_id(root)
-    session_id_hash = _session_id_hash(payload)
-    agent_type = _native_spawn_agent_type(payload)
-    handoff = _delegation_text(_delegation_input(payload))
-    if task_id is None or session_id_hash is None or agent_type is None or not isinstance(handoff, str):
-        return
-    payload_hash = hashlib.sha256(handoff.encode("utf-8")).hexdigest()
+    if task_id is None:
+        raise ValueError("pending spawn recovery requires an ACTIVE task")
+    if not isinstance(handoff_id, str) or not re.fullmatch(r"handoff-[0-9a-f]{32}", handoff_id):
+        raise ValueError("invalid pending spawn handoff id")
     with core._lock(root):
+        if _active_task_id(root) != task_id:
+            raise ValueError("pending spawn recovery task is no longer ACTIVE")
         path = _lifecycle_path(root, task_id)
         if not path.is_file():
-            return
+            raise ValueError("pending spawn recovery state is unavailable")
         state = _load_lifecycle(path, task_id)
-        pending = state["pending_authorized_spawn"]
-        if not (
-            isinstance(pending, dict)
-            and pending.get("session_id_hash") == session_id_hash
-            and pending.get("expected_agent_type") == agent_type
-            and pending.get("payload_hash") == payload_hash
-        ):
-            return
-        failures = state.setdefault("spawn_failures", [])
-        if isinstance(failures, list) and len(failures) < 16:
-            failures.append({
-                "handoff_id": pending["handoff_id"],
-                "payload_hash": payload_hash,
-                "dispatch_status": "REJECTED",
-                "observed_at_ns": time.time_ns(),
-            })
+        pending = state.get("pending_authorized_spawn")
+        bound_child = any(
+            isinstance(child, dict)
+            and child.get("managed") is True
+            and child.get("handoff_id") == handoff_id
+            for child in state.get("children", [])
+        )
+        if bound_child:
+            raise ValueError("pending spawn is already bound to a managed Child")
+        if not isinstance(pending, dict) or pending.get("handoff_id") != handoff_id:
+            raise ValueError("pending spawn handoff id does not match")
+        recoveries = state.setdefault("spawn_recoveries", [])
+        if not isinstance(recoveries, list):
+            raise ValueError("invalid pending spawn recovery state")
+        if len(recoveries) < 16:
+            recoveries.append({"handoff_id": handoff_id, "observed_at_ns": time.time_ns()})
         state["pending_authorized_spawn"] = None
         state["stall"] = None
         metrics = state.setdefault("metrics", {})
-        metrics["spawn_failures"] = int(metrics.get("spawn_failures", 0)) + 1
-        _runtime_metadata(state, payload)
+        metrics["spawn_recoveries"] = int(metrics.get("spawn_recoveries", 0)) + 1
         _write_capture(path, state)
+    return {"ok": True, "task_id": task_id, "handoff_id": handoff_id, "recovered": True}
 
 
 def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
@@ -1351,7 +1353,7 @@ def _context_call(payload: dict[str, Any]) -> tuple[str | None, list[str]]:
         operands = [value.strip("\"'")[:256] for value in tokens[index + 1:] if value and not value.startswith("--")]
         if token == "document-get":
             return token, operands[:8]
-        if token in {"task-get", "artifact-get", "memory-get", "catalog", "recall"}:
+        if token in {"task-get", "artifact-get", "memory-get", "catalog", "recall", "recover-pending-spawn"}:
             return token, operands[:1]
         return token, []
     return None, []
@@ -1403,6 +1405,10 @@ def _obvious_write_attempt(payload: dict[str, Any]) -> bool:
     return isinstance(command, str) and _OBVIOUS_WRITE.search(command) is not None
 
 
+def _obvious_mutation_tool(tool: str) -> bool:
+    return bool(_CHILD_CONTROL_MUTATION_ACTIONS.intersection(re.split(r"[^A-Za-z0-9]+", _tool_basename(tool).casefold())))
+
+
 def _updated_command_output(payload: dict[str, Any], argument: str) -> str:
     original = payload.get("tool_input")
     if not isinstance(original, dict):
@@ -1450,7 +1456,7 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
         return ""
     target = _control_state_target(payload)
     if target is not None:
-        mutation = _obvious_write_attempt(payload)
+        mutation = _obvious_write_attempt(payload) or _obvious_mutation_tool(normalized)
         _best_effort_record(
             _record_protocol_deviation,
             root,

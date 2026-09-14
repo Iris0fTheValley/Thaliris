@@ -66,6 +66,11 @@ retrieves it and selects any material for a later handoff.
 Memory is explicit store/list/search/get. Search results are candidates.
 Audience, Topics, Symbols, Applicability, Kind, Status, and Confidence are
 model-authored search/display metadata, not propagation permissions.
+SessionStart only points to the two root INDEX paths; it does not inject their
+contents. Before starting managed work, the Controller explicitly reads the
+root navigation and creates a minimal thin INDEX first if one is missing.
+Navigation is not reread automatically during the task unless the map changed,
+is insufficient, freshness is invalid, or resume/compact requires recovery.
 
 Milestones are ordinary documents. Curator is an optional ordinary Child.
 `task-promote` stores what the Controller explicitly selected without an
@@ -73,6 +78,9 @@ epistemic qualification gate.
 When a promotion changes durable navigation, the Controller should provide its
 own optional `index_update` in the same `task-promote` call. Core does not
 generate INDEX content; it validates CAS, references, and the atomic commit.
+If Codex explicitly reports a native spawn failure before `SubagentStart`, the
+Controller may call `context recover-pending-spawn HANDOFF_ID` for that exact
+handoff; Core never infers failure from a missing event, timeout, or retry.
 
 Freshness reports only `FRESH`, `CHANGED`, `MISSING`, or `UNKNOWN` file facts.
 Verification stores command/tool, outcome, candidate identity, observed files,
@@ -91,6 +99,7 @@ context recall "query" --role controller
 context memory-get memory/path.md
 context task-promote --role controller --base-revision N --input promotion.json
 context task-close --base-revision N
+context recover-pending-spawn HANDOFF_ID
 context stale
 context rollback BACKUP_ID
 context doctor

@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from . import codex_adapter
+from . import codex_adapter, lifecycle
 from .core import artifact_get, catalog, document_get, memory_get, milestone_check, prepare, recall, rollback, stale, task_artifact, task_get, task_promote, task_show, task_status, task_update
 
 
@@ -63,6 +63,8 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--supersedes", action="append", default=[])
     q = sub.add_parser("task-close")
     q.add_argument("--base-revision", required=True, type=int)
+    q = sub.add_parser("recover-pending-spawn", help="clear one exact failed pending spawn reservation")
+    q.add_argument("handoff_id")
     q = sub.add_parser(
         "task-promote",
         help="persist Controller-selected durable records",
@@ -122,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "artifact-get": out = artifact_get(root, args.id)
         elif args.command == "task-artifact": out = task_artifact(root, args.base_revision, args.id, args.path, args.summary, producer_role=(codex_adapter.semantic_role(args.producer_role) if getattr(args, "producer_role", None) else None), evidence_refs=args.source_ref or None, supersedes=args.supersedes or None)
         elif args.command == "task-close": out = codex_adapter.task_close(root, args.base_revision)
+        elif args.command == "recover-pending-spawn": out = lifecycle.recover_pending_spawn(root, args.handoff_id)
         elif args.command == "task-promote": out = task_promote(root, codex_adapter.semantic_role(args.role), args.base_revision, args.input)
         elif args.command == "rollback": out = rollback(root, args.backup)
         elif args.command == "uninstall": out = codex_adapter.uninstall(root)

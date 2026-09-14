@@ -221,11 +221,15 @@ gates. Freshness reports only FRESH, PARTIAL, RECORDED, CHANGED, MISSING, or
 UNKNOWN mechanical facts. `.agent-memory/INDEX.md` and
 `.milestones/INDEX.md` are model-maintained thin global maps of the durable
 tree; Core does not reconstruct a second catalog by recursively scanning the
-filesystem or impose a taxonomy. Root SessionStart receives only these bounded
-maps, never document bodies. The Controller explicitly uses `catalog`,
-`recall`, or `document-get` to retrieve selected durable material. A single
-bounded `document-get` may name up to eight explicit paths; it never searches,
-ranks, or supplements the selection.
+filesystem or impose a taxonomy. SessionStart only points to these maps; before
+`task-start`, the Controller explicitly reads the root navigation, and if a map
+is missing it establishes a minimal thin INDEX first. During an active task,
+navigation is not reread automatically; the Controller may reread it when the
+map changed, is insufficient, freshness is invalid, or work is resumed after
+compaction. The Controller explicitly uses `catalog`, `recall`, or
+`document-get` to retrieve selected durable material. A single bounded
+`document-get` may name up to eight explicit paths; it never searches, ranks,
+or supplements the selection.
 When a promotion changes durable navigation, the Controller should include its
 own optional `index_update` in the same `task-promote` call. Core does not
 generate INDEX content; it validates the CAS, references, and atomic commit.
@@ -237,6 +241,9 @@ trusted direct `context` runtime commands. `init`, `uninstall`, `rollback`, a
 second `task-start`, and `task-show` are blocked for ACTIVE Root. `task-status`
 is bounded; `task-get`, `artifact-get`, `catalog`, `recall`, and `document-get`
 retrieve explicitly selected objects.
+If Codex reports a native spawn failure before `SubagentStart`, the Controller
+may explicitly run `context recover-pending-spawn <handoff-id>` for that exact
+reservation. Core never infers failure from a missing event, timeout, or retry.
 Repository investigation, execution, mutation, and testing belong to fresh
 Children. Existing Child threads are never resumed with follow-up/send tools.
 A Child's obvious direct control-context retrieval is allowed and recorded.

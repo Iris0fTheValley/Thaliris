@@ -601,6 +601,97 @@ def test_git_status_failure_is_reported_as_unavailable(tmp_path: Path, monkeypat
     assert core._surface_snapshot(root) == "UNAVAILABLE"
 
 
+def test_task_start_degrades_large_dirty_surface_to_unavailable(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    bulk = root / "bulk"
+    bulk.mkdir()
+    for index in range(core.SURFACE_MAX_ENTRIES + 1):
+        (bulk / f"file-{index}.txt").write_text("x", encoding="utf-8")
+    started = core.task_start(root, "large dirty surface", None, None)
+    assert started["status"] == "ACTIVE"
+    assert core.task_show(root)["state"]["task_surface_baseline"] == "UNAVAILABLE"
+
+
+def test_small_dirty_surface_remains_recorded(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    path = root / "small.txt"
+    path.write_text("small", encoding="utf-8")
+    surface = core._surface_snapshot(root)
+    assert isinstance(surface, list)
+    item = next(item for item in surface if item["path"] == "small.txt")
+    assert item["state"] == "FILE"
+    assert item["identity"] == hashlib.sha256(b"small").hexdigest()
+
+
+def test_surface_identity_hashes_regular_files_streaming(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    path = root / "streamed.bin"
+    path.write_bytes(b"streamed identity")
+
+    def reject_bulk_read(_path: Path):
+        raise AssertionError("surface identity must hash through chunks")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_bulk_read)
+    identity = core._surface_identity(root, "streamed.bin", "??")
+    assert identity["identity"] == hashlib.sha256(b"streamed identity").hexdigest()
+
+
+def test_final_durable_symlink_is_rejected_while_surface_observes_it(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    source = root / "source.md"
+    source.write_bytes(core._entry("Source", "body", evidence="NONE"))
+    link = root / ".agent-memory" / "x.md"
+    try:
+        link.symlink_to(source)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    with pytest.raises(ValueError, match="memory entry not found"):
+        core.memory_get(root, ".agent-memory/x.md")
+    with pytest.raises(ValueError, match="durable document not found"):
+        core.document_get(root, ".agent-memory/x.md")
+    observed = core._surface_identity(root, ".agent-memory/x.md", "??")
+    assert observed["state"] == "SYMLINK"
+
+
+def test_artifact_final_symlink_is_rejected_for_register_get_and_freshness(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "artifact symlink", None, None)
+    source = root / "artifact.md"
+    source.write_text("artifact", encoding="utf-8")
+    link = root / "artifact-link.md"
+    try:
+        link.symlink_to(source)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    with pytest.raises(ValueError, match="artifact path must name"):
+        core.task_artifact(root, started["revision"], "bad", "artifact-link.md", "bad")
+
+    registered = core.task_artifact(root, started["revision"], "good", "artifact.md", "good")
+    source.unlink()
+    source.symlink_to(link)
+    artifact = core.task_show(root)["state"]["artifact_refs"][0]
+    assert core._artifact_freshness(root, artifact) == "MISSING"
+    with pytest.raises(ValueError, match="artifact body not found"):
+        core.artifact_get(root, "good")
+
+
+def test_index_final_symlink_is_rejected_by_catalog_and_integrity_check(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    target = root / "real-index.md"
+    target.write_bytes(core._entry("Real", "map", evidence="NONE"))
+    link = root / ".agent-memory" / "INDEX.md"
+    try:
+        link.unlink()
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    catalog = core.catalog(root, ".agent-memory")
+    assert catalog["indexes"][0]["state"] == "MISSING"
+    checked = core.durable_index_check(root, [".agent-memory/INDEX.md"])
+    assert checked["ok"] is False
+    assert any("final component" in error for error in checked["errors"])
+
+
 def test_memory_audience_is_search_metadata_not_access_control(tmp_path: Path) -> None:
     root = repo(tmp_path)
     path = root / ".agent-memory" / "review-only.md"

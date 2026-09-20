@@ -1,4 +1,4 @@
-# Codex host capability record — 2026-09-12
+# Codex host capability record — 2026-09-20
 
 This is a version-bound maintenance observation for the local Codex host. It
 does not claim that another CLI, Desktop, app-server, or rollout surface has
@@ -7,8 +7,9 @@ the same behaviour.
 ## Host
 
 - executable contract source: `codex-cli 0.155.1`
-- matching upstream release: `rust-v0.155.1` (`4e21628f…`, tag object; peeled
-  source commit `be2951ea…`)
+- matching upstream release: `rust-v0.155.1`
+  (`4e21628f9ec9ee656650cd2b62ef92225725b5ac`, tag object; peeled source
+  commit `be2951ea34f0d295ed0becf97079f92fa5f6950e`)
 - V2 wait defaults in that release: minimum `10000`, default `30000`, maximum
   `3600000` milliseconds
 - explicit `wait_agent(timeout_ms=...)`: accepts values in the release's
@@ -40,7 +41,7 @@ without a timer/retry loop. The release source establishes that the wait occurs
 inside tool execution; no intermediate Root model activation was observed by
 the probe, but no model-activation counter is exposed by this Host.
 
-On 2026-09-13, a second disposable Git probe used a separate `CODEX_HOME` with
+On 2026-09-20, a second disposable Git probe used a separate `CODEX_HOME` with
 an explicit trusted-project entry, project `hooks = true`, and a distinct
 60-second project wait default. That fresh process could not sample because
 the isolated home had no transferable authentication (`401` before any tool

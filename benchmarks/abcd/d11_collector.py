@@ -172,6 +172,28 @@ def _mechanical_repo_read(event: dict[str, Any]) -> bool:
     return any(token in f" {command} " for token in (" rg ", " grep ", "get-content", " cat ", " find ", " ls ", " dir "))
 
 
+def _valid_root_turn(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _root_spawn_attribution(event: dict[str, Any]) -> str:
+    """Return ROOT, NON_ROOT, or AMBIGUOUS from native observation fields."""
+    actor = event.get("actor")
+    if isinstance(actor, str):
+        return "ROOT" if actor == "root" else "NON_ROOT"
+    if actor is not None:
+        return "AMBIGUOUS"
+    agent_id = event.get("agent_id")
+    if agent_id == "root":
+        return "ROOT"
+    # Native root spawn observations may name the newly-created child rather
+    # than their root actor.  A root-turn binding makes that record shape
+    # mechanically distinguishable; child ids alone never establish actor.
+    if isinstance(agent_id, str) and agent_id and _valid_root_turn(event.get("root_turn")):
+        return "ROOT"
+    return "AMBIGUOUS"
+
+
 def collect_delegation_rollout_metrics(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Cheap offline counts from native rollout tool observations only.
 
@@ -180,17 +202,30 @@ def collect_delegation_rollout_metrics(events: Iterable[dict[str, Any]]) -> dict
     schema does not bind that fact to a root turn.
     """
     ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
-    first_spawn = next((event for event in ordered if event.get("_trusted_source") == "codex_rollout"
-                        and _kind(event) == "tool_observation" and _rollout_tool_name(event) == "spawn_agent"
-                        and str(event.get("agent_id") or event.get("actor") or "root") == "root"), None)
+    spawn_events = [event for event in ordered if event.get("_trusted_source") == "codex_rollout"
+                    and _kind(event) == "tool_observation" and _rollout_tool_name(event) == "spawn_agent"]
+    spawn_attribution = [_root_spawn_attribution(event) for event in spawn_events]
+    first_root_index = next((index for index, attribution in enumerate(spawn_attribution) if attribution == "ROOT"), None)
+    first_spawn = spawn_events[first_root_index] if first_root_index is not None else None
+    ambiguous_before_first_root = any(
+        attribution == "AMBIGUOUS"
+        for attribution in spawn_attribution[:first_root_index]
+    ) if first_root_index is not None else "AMBIGUOUS" in spawn_attribution
     before = ordered if first_spawn is None else ordered[:ordered.index(first_spawn)]
     reads = [event for event in before if event.get("_trusted_source") == "codex_rollout"
              and _kind(event) == "tool_observation" and _mechanical_repo_read(event)]
-    output_bytes = sum(value for event in reads if isinstance((value := event.get("output_bytes")), int) and not isinstance(value, bool) and value >= 0)
+    output_values = [event.get("output_bytes") for event in reads]
+    output_bytes_available = all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in output_values)
+    metrics_unavailable = ambiguous_before_first_root
     return {
-        "FIRST_CHILD_SPAWN_ROOT_TURN": first_spawn.get("root_turn") if isinstance(first_spawn, dict) else "UNAVAILABLE",
-        "PRE_DELEGATION_REPO_READ_CALLS": len(reads),
-        "PRE_DELEGATION_REPO_OUTPUT_BYTES": output_bytes,
+        "FIRST_CHILD_SPAWN_ROOT_TURN": (
+            first_spawn["root_turn"] if isinstance(first_spawn, dict) and _valid_root_turn(first_spawn.get("root_turn"))
+            else "UNAVAILABLE"
+        ),
+        "PRE_DELEGATION_REPO_READ_CALLS": "UNAVAILABLE" if metrics_unavailable else len(reads),
+        "PRE_DELEGATION_REPO_OUTPUT_BYTES": (
+            "UNAVAILABLE" if metrics_unavailable or not output_bytes_available else sum(output_values)
+        ),
     }
 
 

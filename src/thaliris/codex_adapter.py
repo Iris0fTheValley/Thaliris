@@ -130,7 +130,14 @@ def _host_wait_mode_cached(runner: str) -> dict[str, object]:
         completed = subprocess.run([runner, "--version"], capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return {"status": "UNSUPPORTED", "version": "UNKNOWN", "reason": "Codex executable is unavailable"}
-    match = re.search(r"(?:codex(?:-cli)?\s+)?(\d+\.\d+\.\d+)", (completed.stdout or "") + (completed.stderr or ""))
+    # A release pin is useful only when the executable identifies itself as
+    # that exact release.  Do not extract a numeric prefix from prerelease or
+    # decorated output: those builds have no recorded capability contract.
+    match = re.fullmatch(
+        r"(?:codex(?:-cli)?\s+)?(\d+\.\d+\.\d+)",
+        ((completed.stdout or "") + (completed.stderr or "")).strip(),
+        flags=re.IGNORECASE,
+    )
     if completed.returncode != 0 or match is None:
         return {"status": "UNSUPPORTED", "version": "UNKNOWN", "reason": "Codex version could not be determined"}
     version = match.group(1)

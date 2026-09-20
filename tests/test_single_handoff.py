@@ -214,6 +214,22 @@ def test_historical_codex_wait_capabilities_remain_exactly_pinned(monkeypatch, v
     codex_adapter._host_wait_mode_cached.cache_clear()
 
 
+@pytest.mark.parametrize("version", ["0.153.4", "0.154.0", "0.155.1"])
+@pytest.mark.parametrize("suffix", ["-alpha", "-dev", "-nightly"])
+def test_prerelease_codex_wait_capabilities_fail_closed(monkeypatch, version: str, suffix: str) -> None:
+    class Version:
+        returncode = 0
+        stdout = f"codex-cli {version}{suffix}\n"
+        stderr = ""
+
+    codex_adapter._host_wait_mode_cached.cache_clear()
+    monkeypatch.setattr(codex_adapter.subprocess, "run", lambda *args, **kwargs: Version())
+    capability = codex_adapter.host_explicit_blocking_wait("codex-prerelease-test")
+    assert capability["status"] != "PASS"
+    assert capability["host"]["status"] != "PASS"
+    codex_adapter._host_wait_mode_cached.cache_clear()
+
+
 def test_future_codex_wait_capability_is_conservative(monkeypatch) -> None:
     class Version:
         returncode = 0

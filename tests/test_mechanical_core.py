@@ -467,7 +467,6 @@ def test_durable_freshness_distinguishes_fresh_and_recorded(tmp_path: Path) -> N
 
 @pytest.mark.parametrize("field,value", [
     ("kind", "bad\nkind"),
-    ("status", "bad\nstatus"),
     ("confidence", "bad\nconfidence"),
     ("applicability", "bad\napplicability"),
     ("audience", ["bad\naudience"]),
@@ -1014,7 +1013,7 @@ def test_legacy_config_is_ignored_and_new_durable_documents_are_minimal(tmp_path
     created = root / ".agent-memory" / "minimal.md"
     created.write_bytes(core._entry("Minimal", "body"))
     document = core.document_get(root, ".agent-memory/minimal.md")["documents"][0]
-    assert set(document["metadata"]) == {"Evidence", "Revision", "Status"}
+    assert set(document["metadata"]) == {"Evidence", "Revision"}
 
 
 def test_production_package_has_no_benchmark_authority_module() -> None:

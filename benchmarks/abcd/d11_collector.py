@@ -54,6 +54,11 @@ def load_trusted_events(registry: dict[str, Any], *, authority_registry: Authori
                 if not isinstance(raw, dict):
                     continue
                 payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else {}
+                # Rollout attribution is per native event.  Do not inherit an
+                # invented session/actor from session_meta into later events.
+                rollout_session_identity = raw.get("session_id")
+                controller_session_identity = raw.get("controller_session_id")
+                parent_session_identity = raw.get("parent_session_id")
                 if raw.get("type") == "session_meta":
                     session_identity = payload.get("id") or payload.get("session_id")
                     role_identity = payload.get("agent_role")
@@ -93,9 +98,12 @@ def load_trusted_events(registry: dict[str, Any], *, authority_registry: Authori
                     "_native_event_id": str(native_id),
                     "_ingestion_index": len(records),
                     "_normalized_kind": normalized_kind,
-                    "_session_identity": str(session_identity) if session_identity else None,
-                    "_role_identity": str(role_identity) if role_identity else None,
-                    "_model_identity": str(model_identity) if model_identity else None,
+                    "_session_identity": str(rollout_session_identity or session_identity) if (rollout_session_identity or session_identity) else None,
+                    "_rollout_session_identity": str(rollout_session_identity) if rollout_session_identity else None,
+                    "_controller_session_identity": str(controller_session_identity) if controller_session_identity else None,
+                    "_parent_session_identity": str(parent_session_identity) if parent_session_identity else None,
+                    "_role_identity": str(raw.get("role") or raw.get("agent_role") or role_identity) if (raw.get("role") or raw.get("agent_role") or role_identity) else None,
+                    "_model_identity": str(raw.get("model") or model_identity) if (raw.get("model") or model_identity) else None,
                 })
     return records
 
@@ -176,39 +184,27 @@ def _valid_root_turn(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
-def _root_spawn_attribution(event: dict[str, Any]) -> str:
-    """Return ROOT, NON_ROOT, or AMBIGUOUS from native observation fields."""
-    actor = event.get("actor")
-    if isinstance(actor, str):
-        return "ROOT" if actor == "root" else "NON_ROOT"
-    if actor is not None:
-        return "AMBIGUOUS"
-    # ``agent_id`` can identify the spawned child, and ``root_turn`` is not
-    # bound to an actor by the rollout capture schema.  Neither establishes a
-    # root-originating spawn without the capture's explicit actor field.
-    return "AMBIGUOUS"
-
-
 def _confirmed_root_session(events: list[dict[str, Any]]) -> tuple[str, str] | None:
-    """Identify exactly one Controller/Root source-session from native evidence."""
+    """Identify one explicit source/controller stream with root observations.
+
+    Codex JSONL exposes the controller relationship as concrete session IDs;
+    roles, actors, tools, and turns are not identity evidence.
+    """
     controller_sessions: set[tuple[str, str]] = set()
-    root_actor_sessions: set[tuple[str, str]] = set()
+    root_observations: set[tuple[str, str]] = set()
     for event in events:
         if event.get("_trusted_source") != "codex_rollout":
             continue
-        session = event.get("_session_identity") or event.get("session_id")
+        session = event.get("_rollout_session_identity")
+        controller = event.get("_controller_session_identity")
         source = event.get("_source_id")
-        if not isinstance(session, str) or not session or not isinstance(source, str) or not source:
+        if not isinstance(session, str) or not session or not isinstance(controller, str) or not controller or not isinstance(source, str) or not source:
             continue
-        identity = (source, session)
-        role = str(event.get("_role_identity") or event.get("role") or event.get("agent_role") or "").strip().lower()
-        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
-        actor = event.get("actor", payload.get("actor"))
-        if _kind(event) == "session_meta" and role in {"controller", "root"}:
-            controller_sessions.add(identity)
-        if actor == "root":
-            root_actor_sessions.add(identity)
-    candidates = controller_sessions & root_actor_sessions
+        identity = (source, controller)
+        controller_sessions.add(identity)
+        if session == controller:
+            root_observations.add(identity)
+    candidates = controller_sessions & root_observations
     return next(iter(candidates)) if len(candidates) == 1 else None
 
 
@@ -228,9 +224,10 @@ def collect_delegation_rollout_metrics(events: Iterable[dict[str, Any]]) -> dict
     root_source, root_session = root_source_session
     scoped = [event for event in ordered if event.get("_trusted_source") == "codex_rollout"
               and event.get("_source_id") == root_source
-              and (event.get("_session_identity") or event.get("session_id")) == root_session]
+              and event.get("_rollout_session_identity") == root_session
+              and event.get("_controller_session_identity") == root_session]
     spawn_events = [event for event in scoped if _kind(event) == "tool_observation" and _rollout_tool_name(event) == "spawn_agent"]
-    first_spawn = next((event for event in spawn_events if _root_spawn_attribution(event) == "ROOT"), None)
+    first_spawn = next(iter(spawn_events), None)
     if first_spawn is None or not _valid_root_turn(first_spawn.get("root_turn")):
         return {key: "UNAVAILABLE" for key in (
             "FIRST_CHILD_SPAWN_ROOT_TURN", "PRE_DELEGATION_REPO_READ_CALLS", "PRE_DELEGATION_REPO_OUTPUT_BYTES",

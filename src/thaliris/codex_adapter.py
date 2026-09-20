@@ -20,8 +20,6 @@ _NATIVE_CODEX_ROLE_MAP = {
     "thaliris-investigator": "investigator", "thaliris-curator": "curator",
     "thaliris-reasoning-specialist": "reasoning-specialist",
     "thaliris-implementer": "implementer", "thaliris-reviewer": "reviewer",
-    # Private native Codex identifiers; these are not public Thaliris roles.
-    "worker": "implementer", "explorer": "investigator",
 }
 # This adapter-owned vocabulary is a CLI ingress contract. Core receives an
 # opaque actor marker after this boundary has authorized the operation.
@@ -235,8 +233,8 @@ it and whether any selected content belongs in a later handoff. Artifact
 registration stores address, producer, revision, hash, provenance, and optional
 supersession only; it does not interpret the body.
 
-Memory and milestones are ordinary explicit storage. Search results and
-Status is a bounded mechanical record label. Legacy metadata remains readable
+Memory and milestones are ordinary explicit storage. Search results are ordinary explicit inputs.
+Status is a bounded mechanical record label. Legacy durable Markdown Status metadata remains readable
 as opaque compatibility data, never routing authority. Freshness reports only FRESH, PARTIAL, RECORDED, CHANGED, MISSING, or
 UNKNOWN mechanical facts. `.agent-memory/INDEX.md` and
 `.milestones/INDEX.md` are model-maintained thin global maps of the durable
@@ -634,7 +632,7 @@ def task_start(
     }
     if mode == "UNAVAILABLE":
         return {"ok": False, "status": "MANAGED_CONTINUATION_UNAVAILABLE", "managed_readiness": readiness}
-    result = core.task_start(root, goal, milestone, input_file)
+    result = core.task_start(root, goal, milestone, input_file, actor="controller")
     result["managed_readiness"] = {**readiness, **_activation_fields(root)}
     return result
 

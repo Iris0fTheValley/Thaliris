@@ -43,10 +43,9 @@ _TRUSTED_CODEX_SHELL_TOOL_NAMES = ("Bash",)
 _CONTROLLER_EXECUTION_TOOL_NAMES = _OBSERVED_EXECUTION_TOOL_NAMES
 _CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _OBSERVED_EXECUTION_TOOL_NAMES) + ")"
 _NATIVE_AGENT_ROLES = {
-    # Only concrete Codex native agent_type values may cross the managed
-    # spawn boundary. Semantic/CLI aliases stay in codex_adapter.
-    "explorer": "investigator",
-    "worker": "implementer",
+    # Only the five concrete Thaliris Codex profiles may cross the managed
+    # spawn boundary.  Ordinary Codex worker/explorer remains transparent
+    # outside an ACTIVE managed task.
     "thaliris-investigator": "investigator",
     "thaliris-curator": "curator",
     "thaliris-reasoning-specialist": "reasoning-specialist",

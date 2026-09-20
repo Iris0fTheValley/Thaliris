@@ -22,8 +22,8 @@ it and whether any selected content belongs in a later handoff. Artifact
 registration stores address, producer, revision, hash, provenance, and optional
 supersession only; it does not interpret the body.
 
-Memory and milestones are ordinary explicit storage. Search results and
-Status is a bounded mechanical record label. Legacy metadata remains readable
+Memory and milestones are ordinary explicit storage. Search results are ordinary explicit inputs.
+Status is a bounded mechanical record label. Legacy durable Markdown Status metadata remains readable
 as opaque compatibility data, never routing authority. Freshness reports only FRESH, PARTIAL, RECORDED, CHANGED, MISSING, or
 UNKNOWN mechanical facts. `.agent-memory/INDEX.md` and
 `.milestones/INDEX.md` are model-maintained thin global maps of the durable

@@ -136,17 +136,16 @@ def _apply_with_backup(root: Path, writes: dict[str, bytes], deletes: list[str],
     return backup_id
 
 
-def _entry(title: str, body: str, *, status: str = "DRAFT", evidence: str = "NONE") -> bytes:
+def _entry(title: str, body: str, *, evidence: str = "NONE") -> bytes:
     for field, value, maximum in (
         ("title", title, 300),
-        ("status", status, 128),
         ("evidence", evidence, 65_536),
     ):
         if not isinstance(value, str) or not value.strip() or len(value) > maximum or "\n" in value or "\r" in value:
             raise ValueError(f"invalid durable {field}")
     if not isinstance(body, str):
         raise ValueError("invalid durable body")
-    rendered = f"---\nEvidence: {evidence}\nRevision: 1\nStatus: {status}\n---\n\n# {title}\n\n{body}\n"
+    rendered = f"---\nEvidence: {evidence}\nRevision: 1\n---\n\n# {title}\n\n{body}\n"
     parse_text(rendered)
     return rendered.encode()
 
@@ -1074,6 +1073,9 @@ def task_promote(root: Path, actor: str, base_revision: int, input_file: str | N
         for value in payload["records"]:
             if not isinstance(value, dict):
                 raise ValueError("invalid promotion record")
+            # Legacy promotion inputs may carry durable Markdown Status.  It
+            # is opaque compatibility data and is deliberately not rendered
+            # or validated for new documents.
             allowed = {"id", "path", "title", "text", "source_refs", "status"}
             if set(value) - allowed or "path" not in value:
                 raise ValueError("invalid promotion record")
@@ -1144,14 +1146,12 @@ def task_promote(root: Path, actor: str, base_revision: int, input_file: str | N
             target = _safe_without_final_symlink(root, relative)
             if target.exists():
                 raise ValueError("promotion refuses to overwrite an existing durable target")
-            status = value.get("status", "ACTIVE")
             durable_body = text
             if descriptors:
                 durable_body += "\n\n## Durable Source Descriptors\n\n```json\n" + json.dumps(descriptors, ensure_ascii=False, sort_keys=True, indent=2) + "\n```"
             rendered = _entry(
                 title,
                 durable_body,
-                status=status,
                 evidence="DURABLE_SOURCE_DESCRIPTORS" if descriptors else "NONE",
             )
             # Build the same item and response that document-get will return.
@@ -1269,7 +1269,7 @@ def _catalog_index(root: Path, relative: str) -> tuple[dict[str, object], list[s
     return {
         "path": index_relative,
         "title": heading.group(1) if heading else index.parent.name,
-        "metadata": {key: parsed.meta[key] for key in ("Status", "Revision")},
+        "metadata": {key: parsed.meta[key] for key in ("Status", "Revision") if key in parsed.meta},
         "map": parsed.body,
         "link_count": len(re.findall(r"\[[^]]+\]\(([^)]+)\)", parsed.body)),
         "state": "VALID" if not errors else "BROKEN_REFERENCES",

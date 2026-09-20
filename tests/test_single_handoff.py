@@ -19,6 +19,13 @@ def repo(tmp_path: Path) -> Path:
 
 
 def hook_payload(**values: object) -> dict[str, object]:
+    # Managed lifecycle tests exercise the concrete named profile.  Ordinary
+    # worker remains covered separately in the NO_TASK transparency test.
+    tool_input = values.get("tool_input")
+    if isinstance(tool_input, dict) and tool_input.get("agent_type") == "worker":
+        values["tool_input"] = {**tool_input, "agent_type": "thaliris-implementer"}
+    if values.get("agent_type") == "worker":
+        values["agent_type"] = "thaliris-implementer"
     return {"session_id": "controller-session", "turn_id": "controller-turn", **values}
 
 
@@ -375,14 +382,41 @@ def test_task_status_does_not_reread_navigation_automatically(tmp_path: Path, mo
 
 def test_no_task_is_transparent_to_ordinary_spawn(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    assert handle_hook(root, "PreToolUse", hook_payload(
-        tool_name="spawn_agent",
-        tool_input={"agent_type": "worker", "message": "ordinary Codex child"},
-    )) == ""
+    assert handle_hook(root, "PreToolUse", {
+        "session_id": "controller-session", "turn_id": "controller-turn",
+        "tool_name": "spawn_agent",
+        "tool_input": {"agent_type": "worker", "message": "ordinary Codex child"},
+    }) == ""
     assert not (root / ".context" / "audit" / "lifecycle").exists()
 
 
-@pytest.mark.parametrize("agent_type", ("thaliris-investigator", "worker"))
+@pytest.mark.parametrize("agent_type", ("worker", "explorer"))
+def test_active_managed_spawn_rejects_ordinary_codex_agent_types(tmp_path: Path, agent_type: str) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "named roles only", None, None)
+    payload = {
+        "session_id": "controller-session", "turn_id": "controller-turn",
+        "tool_name": "spawn_agent",
+        "tool_input": {"fork_turns": "none", "agent_type": agent_type, "message": "handoff"},
+    }
+    assert "THALIRIS_MANAGED_AGENT_REQUIRED" in handle_hook(root, "PreToolUse", payload)
+
+
+def test_adapter_task_start_records_controller_actor(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    initial = root.parent / "initial.json"
+    initial.write_text(json.dumps({"records": [{"id": "R1", "kind": "note", "text": "initial"}]}), encoding="utf-8")
+    monkeypatch.setattr(lifecycle_module, "consume_task_start_attestation", lambda *_args: None)
+    monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "EVENT_DRIVEN")
+    result = codex_adapter.task_start(root, "adapter actor", None, str(initial))
+    assert result["status"] == "ACTIVE"
+    assert core.task_show(root)["state"]["records"][0]["producer"] == "controller"
+
+
+@pytest.mark.parametrize("agent_type", (
+    "thaliris-investigator", "thaliris-curator", "thaliris-reasoning-specialist",
+    "thaliris-implementer", "thaliris-reviewer",
+))
 def test_execution_role_extra_context_reads_are_telemetry_only(tmp_path: Path, agent_type: str) -> None:
     root = repo(tmp_path)
     core.task_start(root, "deviation telemetry", None, None)

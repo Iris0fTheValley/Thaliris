@@ -120,13 +120,12 @@ def test_controller_probe_rejects_bound_operation_with_side_effect(tmp_path: Pat
 def test_rollout_delegation_metrics_are_mechanical_and_exclude_bootstrap_reads(tmp_path: Path) -> None:
     stream = tmp_path / "rollout.jsonl"
     stream.write_text("".join(json.dumps(event) + "\n" for event in [
-        {"type": "session_meta", "payload": {"id": "root-1", "agent_role": "controller", "actor": "root"}},
-        {"event": "tool_observation", "tool": "Bash", "command": "codex --version", "output_bytes": 9, "root_turn": 1},
-        {"event": "tool_observation", "tool": "Bash", "command": "git status --short", "output_bytes": 9, "root_turn": 1},
-        {"event": "tool_observation", "tool": "Bash", "command": "rg -n target src", "output_bytes": 12, "root_turn": 2},
-        {"event": "tool_observation", "tool": "open", "root_turn": 2, "output_bytes": 8},
-        {"event": "tool_observation", "tool": "spawn_agent", "actor": "root", "root_turn": 3},
-        {"event": "tool_observation", "tool": "Bash", "command": "rg ignored src", "output_bytes": 99, "root_turn": 4},
+        {"event": "tool_observation", "session_id": "root-1", "controller_session_id": "root-1", "parent_session_id": None, "tool": "Bash", "command": "codex --version", "output_bytes": 9, "root_turn": 1},
+        {"event": "tool_observation", "session_id": "root-1", "controller_session_id": "root-1", "parent_session_id": None, "tool": "Bash", "command": "git status --short", "output_bytes": 9, "root_turn": 1},
+        {"event": "tool_observation", "session_id": "root-1", "controller_session_id": "root-1", "parent_session_id": None, "tool": "Bash", "command": "rg -n target src", "output_bytes": 12, "root_turn": 2},
+        {"event": "tool_observation", "session_id": "root-1", "controller_session_id": "root-1", "parent_session_id": None, "tool": "open", "root_turn": 2, "output_bytes": 8},
+        {"event": "tool_observation", "session_id": "root-1", "controller_session_id": "root-1", "parent_session_id": None, "tool": "spawn_agent", "root_turn": 3},
+        {"event": "tool_observation", "session_id": "root-1", "controller_session_id": "root-1", "parent_session_id": None, "tool": "Bash", "command": "rg ignored src", "output_bytes": 99, "root_turn": 4},
     ]), encoding="utf-8")
     events = d11_collector.load_test_events([{"kind": "codex_rollout", "path": stream}])
     metrics = d11_collector.collect_delegation_rollout_metrics(events)
@@ -155,13 +154,12 @@ def test_rollout_metrics_mark_child_agent_root_turn_attribution_unavailable(tmp_
     }
 
 
-def test_rollout_metrics_accept_explicit_root_actor_for_child_spawn(tmp_path: Path) -> None:
+def test_rollout_metrics_accept_real_root_session_for_child_spawn(tmp_path: Path) -> None:
     stream = tmp_path / "rollout-explicit-root-actor.jsonl"
     stream.write_text("".join(json.dumps(event) + "\n" for event in [
-        {"type": "session_meta", "payload": {"id": "root-1", "agent_role": "controller", "actor": "root"}},
-        {"event": "tool_observation", "tool": "rg", "root_turn": 1, "output_bytes": 7},
-        {"event": "tool_observation", "tool": "spawn_agent", "actor": "root", "agent_id": "child-1", "root_turn": 2},
-        {"event": "tool_observation", "tool": "rg", "root_turn": 3, "output_bytes": 99},
+        {"event": "tool_observation", "session_id": "root-1", "controller_session_id": "root-1", "parent_session_id": None, "tool": "rg", "root_turn": 1, "output_bytes": 7},
+        {"event": "tool_observation", "session_id": "root-1", "controller_session_id": "root-1", "parent_session_id": None, "tool": "spawn_agent", "agent_id": "child-1", "root_turn": 2},
+        {"event": "tool_observation", "session_id": "root-1", "controller_session_id": "root-1", "parent_session_id": None, "tool": "rg", "root_turn": 3, "output_bytes": 99},
     ]), encoding="utf-8")
     metrics = d11_collector.collect_delegation_rollout_metrics(
         d11_collector.load_test_events([{"kind": "codex_rollout", "path": stream}])
@@ -190,6 +188,14 @@ def test_rollout_metrics_mark_ambiguous_or_incomplete_attribution_unavailable(tm
     }
 
 
+def test_rollout_metrics_real_codex_fixture_without_root_observation_is_unavailable() -> None:
+    fixture = ROOT / "benchmarks" / "abcd" / "fixtures" / "real_codex_rollout.jsonl"
+    metrics = d11_collector.collect_delegation_rollout_metrics(
+        d11_collector.load_test_events([{"kind": "codex_rollout", "path": fixture}])
+    )
+    assert set(metrics.values()) == {"UNAVAILABLE"}
+
+
 def test_rollout_metrics_do_not_fill_missing_root_turn_or_output_bytes(tmp_path: Path) -> None:
     stream = tmp_path / "rollout-missing-fields.jsonl"
     stream.write_text("".join(json.dumps(event) + "\n" for event in [
@@ -210,14 +216,11 @@ def test_rollout_metrics_do_not_fill_missing_root_turn_or_output_bytes(tmp_path:
 def test_rollout_metrics_scope_to_one_confirmed_root_session(tmp_path: Path) -> None:
     stream = tmp_path / "mixed-rollout.jsonl"
     stream.write_text("".join(json.dumps(event) + "\n" for event in [
-        {"type": "session_meta", "payload": {"id": "implementer-1", "agent_role": "implementer"}},
-        {"event": "tool_observation", "tool": "rg", "output_bytes": 90, "root_turn": 1},
-        {"event": "tool_observation", "tool": "spawn_agent", "actor": "root", "root_turn": 2},
-        {"type": "session_meta", "payload": {"id": "root-1", "agent_role": "controller", "actor": "root"}},
-        {"event": "tool_observation", "tool": "rg", "output_bytes": 7, "root_turn": 3},
-        {"event": "tool_observation", "tool": "spawn_agent", "actor": "root", "root_turn": 4},
-        {"type": "session_meta", "payload": {"id": "reviewer-1", "agent_role": "reviewer"}},
-        {"event": "tool_observation", "tool": "rg", "output_bytes": 80, "root_turn": 5},
+        {"event": "tool_observation", "role": "implementer", "session_id": "implementer-1", "controller_session_id": "root-1", "parent_session_id": "root-1", "tool": "rg", "output_bytes": 90, "root_turn": 1},
+        {"event": "tool_observation", "role": "implementer", "session_id": "implementer-1", "controller_session_id": "root-1", "parent_session_id": "root-1", "tool": "spawn_agent", "root_turn": 2},
+        {"event": "tool_observation", "session_id": "root-1", "controller_session_id": "root-1", "parent_session_id": None, "tool": "rg", "output_bytes": 7, "root_turn": 3},
+        {"event": "tool_observation", "session_id": "root-1", "controller_session_id": "root-1", "parent_session_id": None, "tool": "spawn_agent", "root_turn": 4},
+        {"event": "tool_observation", "role": "reviewer", "session_id": "reviewer-1", "controller_session_id": "root-1", "parent_session_id": "root-1", "tool": "rg", "output_bytes": 80, "root_turn": 5},
     ]), encoding="utf-8")
     metrics = d11_collector.collect_delegation_rollout_metrics(
         d11_collector.load_test_events([{"kind": "codex_rollout", "path": stream}])

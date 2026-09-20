@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 
-REQUIRED = ("Evidence", "Revision", "Status")
+REQUIRED = ("Evidence", "Revision")
 # Freshness detail is diagnostic, while durable bodies and provenance are the
 # retrieval contract.  Keep diagnostics bounded so later source churn cannot
 # inflate a previously readable document-get response.
@@ -54,8 +54,6 @@ def parse_text(text: str, path: Path | None = None) -> Entry:
         raise ValueError(f"{source}: Revision must be a positive integer")
     if not isinstance(meta["Evidence"], (str, list)):
         raise ValueError(f"{source}: Evidence must be text or a JSON list")
-    if not isinstance(meta["Status"], str) or not meta["Status"] or len(meta["Status"]) > 128:
-        raise ValueError(f"{source}: Status must be bounded text")
     return Entry(source, meta, text[end + 5:])
 
 

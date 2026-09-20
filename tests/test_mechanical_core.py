@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import importlib.util
 import hashlib
+import re
 from pathlib import Path
 import subprocess
 import pytest
@@ -70,6 +71,23 @@ def test_adapter_retains_controller_authorization() -> None:
         codex_adapter.controller_actor("implementer")
 
 
+def test_public_role_ingress_is_exactly_the_six_thaliris_roles(capsys: pytest.CaptureFixture[str]) -> None:
+    expected = (
+        "controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer",
+    )
+    assert codex_adapter.ROLE_CHOICES == expected
+    help_text = cli._parser()._subparsers._group_actions[0].choices["task-update"].format_help()
+    for role in expected:
+        assert role in help_text
+    for alias in ("worker", "explorer", "thaliris-implementer", "luna-investigator"):
+        assert alias not in help_text
+        with pytest.raises(ValueError, match="unknown Thaliris role"):
+            codex_adapter.semantic_role(alias)
+
+    assert cli.main(["task-update", "--role", "worker", "--base-revision", "1", "--input", "input.json"]) == 2
+    assert "invalid choice" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("removed", ["prepare", "recall", "memory-get"])
 def test_cli_rejects_removed_memory_commands(removed: str, capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main([removed]) == 2
@@ -91,6 +109,22 @@ def test_authoritative_prose_uses_role_names_or_explicit_native_child_context() 
     generated = (root / "src" / "thaliris" / "codex_adapter.py").read_text(encoding="utf-8")
     assert "Do not delegate to another child" not in generated
     assert "Shared Child Result" not in generated
+    assert "Repository investigation belongs to fresh Investigator sessions" in generated
+    assert "belong to fresh\nthose roles" not in generated
+    assert "Fresh Investigator,\nCurator, Reasoning Specialist, Implementer, and Reviewer sessions use" in generated
+    assert "and receive their tasks plus selected information" in generated
+
+
+def test_lifecycle_policy_denials_name_role_sessions_or_native_codex_sessions() -> None:
+    source = Path(lifecycle_module.__file__).read_text(encoding="utf-8")
+    denials = re.findall(r'_permission_deny\("([^"]+)', source)
+    assert denials
+    for denial in denials:
+        assert "child" not in denial.lower(), denial
+        assert "Child" not in denial, denial
+    assert "fresh Investigator session and edits to a fresh Implementer session" in source
+    assert "managed native Codex session lifecycle" in source
+    assert "child_id" in source  # Raw native schema fields remain unchanged.
 
 
 def test_artifact_freshness_is_observation_only(tmp_path: Path) -> None:

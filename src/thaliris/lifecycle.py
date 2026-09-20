@@ -70,7 +70,7 @@ PRE_TOOL_MATCHER = "*"
 _DELEGATION_TOOL_NAMES = frozenset({"spawn_agent", "Agent", "followup_task", "send_input", "send_message"})
 _FRESH_CHILD_REUSE_TOOL_NAMES = frozenset({"followup_task", "send_input", "send_message"})
 _ROOT_MANAGED_TOOL_NAMES = frozenset({"spawn_agent", "wait_agent", "list_agents", "interrupt_agent"})
-_CONTROLLER_BOUNDARY_REASON = "THALIRIS_CONTROLLER_BOUNDARY: delegate investigation and edits to a fresh child; root may run only bounded control-plane or acceptance checks."
+_CONTROLLER_BOUNDARY_REASON = "THALIRIS_CONTROLLER_BOUNDARY: delegate investigation to a fresh Investigator session and edits to a fresh Implementer session; the Controller may run only bounded control-plane or acceptance checks."
 _OBVIOUS_WRITE = re.compile(
     r"(?i)(?:apply_patch|git\s+(?:apply|commit|reset|checkout|restore|rebase)|(?:set|add|clear|out|remove|move|copy|rename|new)-content|(?:set|add|remove|move|copy|rename|new)-item|\b(?:ni|mkdir)\b|(?<![<>])>{1,2}(?![&]))"
 )
@@ -820,8 +820,8 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
                 _runtime_metadata(state, payload)
                 _write_capture(path, state)
                 if repeated:
-                    return _permission_deny("ORCHESTRATION_STALLED: the managed child lifecycle has no new terminal information; stop recovery attempts until a native lifecycle event arrives.")
-                return _permission_deny("THALIRIS_SERIAL_CHILD_REQUIRED: wait for the managed child reservation to complete before spawning another child.")
+                    return _permission_deny("ORCHESTRATION_STALLED: the managed native Codex session lifecycle has no new terminal information; stop recovery attempts until a native lifecycle event arrives.")
+                return _permission_deny("THALIRIS_SERIAL_ROLE_SESSION_REQUIRED: wait for the managed native Codex session reservation to complete before spawning another named-role session.")
             state["sequence"] = int(state.get("sequence", 0)) + 1
             task_state = core._load_state(root, active=True)
             if task_state.get("task_id") != task_id:
@@ -1433,12 +1433,12 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
     normalized = _tool_basename(tool)
     role = _NATIVE_AGENT_ROLES.get(str(payload.get("agent_type")), "unknown")
     if normalized in _DELEGATION_TOOL_NAMES:
-        return _permission_deny("THALIRIS_CHILD_DELEGATION: child-to-child delegation is not permitted.")
+        return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: a managed Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer session may not delegate to another session.")
     operation, context_targets = _context_call(payload)
     if operation in _CHILD_CONTEXT_MUTATIONS:
         target = f"context {operation}"
         _best_effort_record(_record_protocol_deviation, root, payload, operation=operation, target=target, blocked=True)
-        return _permission_deny("THALIRIS_CHILD_CONTROL_STATE_MUTATION: Child may not modify Controller-owned control state.")
+        return _permission_deny("THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer session may not modify Controller-owned control state.")
     if operation in _CHILD_CONTEXT_READS:
         for target in context_targets or [f"context {operation}"]:
             _best_effort_record(
@@ -1466,7 +1466,7 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
             notify_controller=mutation or role in {"reviewer", "reasoning-specialist", "curator"},
         )
         if mutation:
-            return _permission_deny("THALIRIS_CHILD_CONTROL_STATE_MUTATION: Child may not modify Controller-owned control state.")
+            return _permission_deny("THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer session may not modify Controller-owned control state.")
     for durable_target in _visible_durable_paths(payload):
         _best_effort_record(
             _record_protocol_deviation,
@@ -1696,11 +1696,11 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
     if state_status == "ACTIVE":
         if normalized in _FRESH_CHILD_REUSE_TOOL_NAMES or normalized == "Agent":
             _best_effort_record(_record_controller_guard_event, root, payload, "CHILD_REUSE", "blocked")
-            return _permission_deny("THALIRIS_FRESH_CHILD_REQUIRED: continue work with a new spawn_agent(fork_turns=\"none\") handoff.")
+            return _permission_deny("THALIRIS_FRESH_ROLE_SESSION_REQUIRED: continue work with a new named-role spawn_agent(fork_turns=\"none\") handoff.")
         if normalized == "spawn_agent":
             tool_input = _delegation_input(payload)
             if tool_input.get("fork_turns") != "none":
-                return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh child explicitly with fork_turns=\"none\".")
+                return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer session explicitly with fork_turns=\"none\".")
             return _reserve_managed_spawn(root, payload)
         if normalized in _ROOT_MANAGED_TOOL_NAMES:
             _best_effort_record(_record_controller_guard_event, root, payload, normalized, "allowed")

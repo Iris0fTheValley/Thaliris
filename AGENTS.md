@@ -5,9 +5,9 @@ Codex is the runtime. Thaliris provides durable records, identities, revisions,
 hashes, provenance, objective freshness observations, explicit retrieval, and
 native lifecycle binding. It is not a semantic decision engine.
 
-The Controller is the sole task-specific semantic router. Every fresh Investigator,
-Curator, Reasoning Specialist, Implementer, and Reviewer uses `fork_turns="none"`
-and receives its task plus selected information in
+The Controller is the sole task-specific semantic router. Fresh Investigator,
+Curator, Reasoning Specialist, Implementer, and Reviewer sessions use `fork_turns="none"`
+and receive their tasks plus selected information in
 the Controller's native spawn message. `SubagentStart` validates authorization,
 identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
@@ -60,8 +60,8 @@ applies. The final report must not claim managed enforcement was verified.
 If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `context recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.
-Repository investigation, execution, mutation, and testing belong to fresh
-those roles. Existing native Codex child threads are never resumed with follow-up/send tools.
+Repository investigation belongs to fresh Investigator sessions; execution,
+mutation, and testing belong to fresh Implementer sessions. Existing native Codex child sessions are never resumed with follow-up/send tools.
 An Investigator's or Implementer's obvious direct control-context retrieval is allowed and recorded.
 Investigator and Implementer reads remain telemetry-only; Curator, Reasoning
 Specialist, and Reviewer extra reads produce at most one bounded aggregate

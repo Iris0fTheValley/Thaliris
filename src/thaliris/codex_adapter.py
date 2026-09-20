@@ -13,19 +13,23 @@ import tomllib
 from . import core, lifecycle
 from .lifecycle import MANAGED_HOOKS_DESCRIPTION, handle_hook, merge_hooks, remove_hooks
 
-CODEX_ROLE_MAP = {
+_NATIVE_CODEX_ROLE_MAP = {
     "luna": "investigator", "luna-investigator": "investigator",
     "luna-curator": "curator", "sol-high": "reasoning-specialist",
     "terra-implementer": "implementer", "terra-reviewer": "reviewer",
     "thaliris-investigator": "investigator", "thaliris-curator": "curator",
     "thaliris-reasoning-specialist": "reasoning-specialist",
     "thaliris-implementer": "implementer", "thaliris-reviewer": "reviewer",
-    # Codex built-in profile compatibility aliases; these are not Core roles.
+    # Private native Codex identifiers; these are not public Thaliris roles.
     "worker": "implementer", "explorer": "investigator",
 }
 # This adapter-owned vocabulary is a CLI ingress contract. Core receives an
 # opaque actor marker after this boundary has authorized the operation.
-ROLE_CHOICES = tuple(sorted({"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"} | set(CODEX_ROLE_MAP)))
+# This is the complete public CLI ingress vocabulary. Native identifiers are
+# translated only at the native adapter boundary and never accepted as roles.
+ROLE_CHOICES = (
+    "controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer",
+)
 
 _AGENT_PROFILES = {
     "thaliris-investigator.toml": ("gpt-5.6-luna", "medium", "investigator"),
@@ -114,12 +118,9 @@ def _activation_fields(
 
 
 def semantic_role(runtime_role: str) -> str:
-    if runtime_role in {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}:
+    if runtime_role in ROLE_CHOICES:
         return runtime_role
-    try:
-        return CODEX_ROLE_MAP[runtime_role]
-    except KeyError as exc:
-        raise ValueError(f"unknown Codex role: {runtime_role}") from exc
+    raise ValueError(f"unknown Thaliris role: {runtime_role}")
 
 
 def controller_actor(runtime_role: str) -> str:
@@ -217,9 +218,9 @@ Codex is the runtime. Thaliris provides durable records, identities, revisions,
 hashes, provenance, objective freshness observations, explicit retrieval, and
 native lifecycle binding. It is not a semantic decision engine.
 
-The Controller is the sole task-specific semantic router. Every fresh Investigator,
-Curator, Reasoning Specialist, Implementer, and Reviewer uses `fork_turns="none"`
-and receives its task plus selected information in
+The Controller is the sole task-specific semantic router. Fresh Investigator,
+Curator, Reasoning Specialist, Implementer, and Reviewer sessions use `fork_turns="none"`
+and receive their tasks plus selected information in
 the Controller's native spawn message. `SubagentStart` validates authorization,
 identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
@@ -272,8 +273,8 @@ applies. The final report must not claim managed enforcement was verified.
 If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `context recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.
-Repository investigation, execution, mutation, and testing belong to fresh
-those roles. Existing native Codex child threads are never resumed with follow-up/send tools.
+Repository investigation belongs to fresh Investigator sessions; execution,
+mutation, and testing belong to fresh Implementer sessions. Existing native Codex child sessions are never resumed with follow-up/send tools.
 An Investigator's or Implementer's obvious direct control-context retrieval is allowed and recorded.
 Investigator and Implementer reads remain telemetry-only; Curator, Reasoning
 Specialist, and Reviewer extra reads produce at most one bounded aggregate

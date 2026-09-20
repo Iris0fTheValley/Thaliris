@@ -391,6 +391,16 @@ def test_no_task_is_transparent_to_ordinary_spawn(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("agent_type", ("worker", "explorer"))
+def test_no_task_child_worker_and_explorer_execution_is_transparent(tmp_path: Path, agent_type: str) -> None:
+    root = repo(tmp_path)
+    assert handle_hook(root, "PreToolUse", {
+        "session_id": "ordinary-session", "turn_id": "ordinary-turn",
+        "agent_id": f"ordinary-{agent_type}", "agent_type": agent_type,
+        "tool_name": "Bash", "tool_input": {"command": "Set-Content ordinary.txt value"},
+    }) == ""
+
+
+@pytest.mark.parametrize("agent_type", ("worker", "explorer"))
 def test_active_managed_spawn_rejects_ordinary_codex_agent_types(tmp_path: Path, agent_type: str) -> None:
     root = repo(tmp_path)
     core.task_start(root, "named roles only", None, None)
@@ -400,6 +410,69 @@ def test_active_managed_spawn_rejects_ordinary_codex_agent_types(tmp_path: Path,
         "tool_input": {"fork_turns": "none", "agent_type": agent_type, "message": "handoff"},
     }
     assert "THALIRIS_MANAGED_AGENT_REQUIRED" in handle_hook(root, "PreToolUse", payload)
+
+
+def test_active_spawn_rejects_conflicting_or_unsupported_native_type_fields(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "exact native role fields", None, None)
+    for fields in (
+        {"agent_type": "worker", "agentType": "thaliris-reviewer"},
+        {"agent_type": "thaliris-implementer", "agentType": "thaliris-reviewer"},
+        {"agent_type": "worker"},
+        {"agentType": "explorer"},
+        {"agent_type": "worker", "agentType": "explorer"},
+        {"agent_type": "thaliris-implementer", "agentType": 1},
+    ):
+        denied = json.loads(handle_hook(root, "PreToolUse", {
+            "session_id": "controller-session", "turn_id": "controller-turn",
+            "tool_name": "spawn_agent",
+            "tool_input": {"fork_turns": "none", "message": "handoff", **fields},
+        }))
+        assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "THALIRIS_MANAGED_AGENT_REQUIRED" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize(("agent_type", "command"), (
+    ("worker", "Set-Content unbound.txt value"),
+    ("explorer", "Get-Content unbound.txt"),
+    ("explorer", "Set-Content unbound.txt value"),
+))
+def test_active_unbound_native_children_are_rejected_before_tool_rules(
+    tmp_path: Path, agent_type: str, command: str,
+) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "unbound child", None, None)
+    denied = json.loads(handle_hook(root, "PreToolUse", {
+        "session_id": "unbound-session", "turn_id": "unbound-turn",
+        "agent_id": f"unbound-{agent_type}", "agent_type": agent_type,
+        "tool_name": "Bash", "tool_input": {"command": command},
+    }))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "THALIRIS_BOUND_ROLE_SESSION_REQUIRED" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("agent_type", (
+    "thaliris-investigator", "thaliris-implementer", "thaliris-reviewer",
+    "thaliris-curator", "thaliris-reasoning-specialist",
+))
+def test_all_exact_bound_roles_pass_active_child_lifecycle(tmp_path: Path, agent_type: str) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "bound exact roles", None, None)
+    payload = {
+        "session_id": f"{agent_type}-session", "turn_id": f"{agent_type}-turn",
+        "tool_name": "spawn_agent",
+        "tool_input": {"fork_turns": "none", "agent_type": agent_type, "message": "handoff"},
+    }
+    assert handle_hook(root, "PreToolUse", payload) == ""
+    child = {
+        "session_id": payload["session_id"], "turn_id": payload["turn_id"],
+        "agent_id": f"{agent_type}-child", "agent_type": agent_type,
+    }
+    assert handle_hook(root, "SubagentStart", child) == ""
+    assert handle_hook(root, "PreToolUse", {
+        **child, "tool_name": "Bash", "tool_input": {"command": "Get-Content README.md"},
+    }) == ""
+    assert lifecycle(root)["children"][-1]["handoff_bound"] is True
 
 
 def test_adapter_task_start_records_controller_actor(tmp_path: Path, monkeypatch) -> None:

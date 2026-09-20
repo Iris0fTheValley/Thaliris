@@ -755,23 +755,54 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
 
 def _managed_spawn_role(payload: dict[str, Any]) -> str | None:
     """Map only an explicitly supported native agent_type to a semantic role."""
-    tool_input = _delegation_input(payload)
-    for key in ("agent_type", "agentType"):
-        value = tool_input.get(key)
-        if isinstance(value, str):
-            role = _NATIVE_AGENT_ROLES.get(value)
-            if role is not None:
-                return role
-    return None
+    native_agent_type = _native_spawn_agent_type(payload)
+    return _NATIVE_AGENT_ROLES.get(native_agent_type) if native_agent_type is not None else None
 
 
 def _native_spawn_agent_type(payload: dict[str, Any]) -> str | None:
+    """Accept one exact supported native profile, never a first-match alias."""
     tool_input = _delegation_input(payload)
-    for key in ("agent_type", "agentType"):
-        value = tool_input.get(key)
-        if isinstance(value, str) and value in _NATIVE_AGENT_ROLES:
-            return value
-    return None
+    supplied = [tool_input[key] for key in ("agent_type", "agentType") if key in tool_input]
+    if not supplied or any(not isinstance(value, str) or value not in _NATIVE_AGENT_ROLES for value in supplied):
+        return None
+    return supplied[0] if all(value == supplied[0] for value in supplied) else None
+
+
+def _bound_managed_child(root: Path, payload: dict[str, Any]) -> bool:
+    """Match a child PreToolUse call to one live, handoff-bound role session."""
+    task_id = _active_task_id(root)
+    agent_id = payload.get("agent_id")
+    native_agent_type = _native_spawn_agent_type({"tool_input": payload})
+    session_id_hash = _session_id_hash(payload)
+    turn_id_hash = _turn_id_hash(payload)
+    if (
+        task_id is None
+        or not isinstance(agent_id, str)
+        or not agent_id
+        or native_agent_type is None
+        or session_id_hash is None
+        or turn_id_hash is None
+    ):
+        return False
+    role = _NATIVE_AGENT_ROLES[native_agent_type]
+    try:
+        with core._lock(root):
+            state = _load_lifecycle(_lifecycle_path(root, task_id), task_id)
+            return any(
+                isinstance(child, dict)
+                and child.get("agent_id_hash") == _identity_hash(agent_id)
+                and child.get("agent_type") == native_agent_type
+                and child.get("session_id_hash") == session_id_hash
+                and child.get("turn_id_hash") == turn_id_hash
+                and child.get("role") == role
+                and child.get("managed") is True
+                and child.get("handoff_bound") is True
+                and isinstance(child.get("handoff_id"), str)
+                and child.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"}
+                for child in state["children"]
+            )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
 
 
 def _session_id_hash(payload: dict[str, Any]) -> str | None:
@@ -1426,11 +1457,16 @@ def _updated_command_output(payload: dict[str, Any], argument: str) -> str:
 def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
     """Allow reads with telemetry; block only mechanical protocol mutations."""
     _best_effort_record(_record_child_runtime_event, root, payload, "PreToolUse")
+    if managed_task_state(root)[0] == "ACTIVE" and not _bound_managed_child(root, payload):
+        return _permission_deny(
+            "THALIRIS_BOUND_ROLE_SESSION_REQUIRED: ACTIVE child execution requires a currently authorized, handoff-bound exact Thaliris role session."
+        )
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
         return ""
     normalized = _tool_basename(tool)
-    role = _NATIVE_AGENT_ROLES.get(str(payload.get("agent_type")), "unknown")
+    native_agent_type = _native_spawn_agent_type({"tool_input": payload})
+    role = _NATIVE_AGENT_ROLES.get(native_agent_type, "unknown")
     if normalized in _DELEGATION_TOOL_NAMES:
         return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: a managed Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer session may not delegate to another session.")
     operation, context_targets = _context_call(payload)

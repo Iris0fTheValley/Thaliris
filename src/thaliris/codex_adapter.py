@@ -38,8 +38,7 @@ _AGENT_PROFILES = {
 _NATIVE_PROFILE_NAMES = frozenset(name.removesuffix(".toml") for name in _AGENT_PROFILES)
 _KNOWN_HOST_WAIT_CAPABILITIES = {
     # These are release-pinned observations, not a cross-version assumption.
-    "0.153.4": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
-    "0.154.0": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
+    "0.155.1": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
 }
 
 
@@ -722,7 +721,7 @@ def doctor(root: Path) -> dict[str, object]:
         "verification_terminal_status": "UNAVAILABLE",
         "observed_outcome": latest_item.get("outcome") if latest_item is not None else "UNKNOWN",
         "hook_trust": "UNKNOWN",
-        "detail": "Codex 0.153.4 Bash output has no version-pinned terminal-status contract; no automatic PASSED attestation is emitted.",
+        "detail": "No version-pinned terminal-status attestation is recorded; no automatic PASSED attestation is emitted.",
     }
     result["managed_readiness"] = {
         "CORE_READY": "YES",
@@ -766,7 +765,7 @@ def doctor(root: Path) -> dict[str, object]:
     posttool_schema = "PASS" if host_wait_mode().get("status") == "PASS" else "UNKNOWN"
     result["lifecycle_reconciliation"] = {
         "subagent_stop_path": "PASS" if lifecycle_stop else "UNKNOWN",
-        # 0.153.4 supplies these shapes in its version-pinned schemas, but a
+        # The pinned source supplies these shapes, but a
         # project hook must observe a real payload before this is a live PASS.
         "native_terminal_reconciliation": "PASS" if lifecycle_reconciled else ("LIVE_NOT_OBSERVED" if posttool_schema == "PASS" else "UNKNOWN"),
         "PostToolUse_source_schema_support": posttool_schema,

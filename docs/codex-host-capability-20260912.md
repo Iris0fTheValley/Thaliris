@@ -6,18 +6,24 @@ the same behaviour.
 
 ## Host
 
-- executable: `codex-cli 0.153.4`
-- matching upstream release: `rust-v0.153.4` (`3d2ee51c…`)
+- executable contract source: `codex-cli 0.155.1`
+- matching upstream release: `rust-v0.155.1` (`4e21628f…`, tag object; peeled
+  source commit `be2951ea…`)
 - V2 wait defaults in that release: minimum `10000`, default `30000`, maximum
   `3600000` milliseconds
 - explicit `wait_agent(timeout_ms=...)`: accepts values in the release's
   min/max range and blocks natively until activity, input, or timeout;
   `HOST_EXPLICIT_BLOCKING_WAIT=PASS` is independent of project config loading
 
-The release's child-completion path sends its inter-agent completion message
-with `trigger_turn = false`. Therefore this release records
+The V2 wait result is a summary of activity, not a native completion re-entry.
+The release's child-completion path therefore records
 `NATIVE_CHILD_COMPLETION_REENTERS_ROOT = UNSUPPORTED`; it must not select
 EVENT_DRIVEN mode without a later contrary live probe.
+
+The source runs PostToolUse only after successful tool output, so failed tool
+execution has no normal PostToolUse callback. It has no independent role-level
+native read-only sandbox projection; any reviewer guard remains adapter policy,
+not a native role sandbox claim.
 
 ## Disposable native wait probe
 

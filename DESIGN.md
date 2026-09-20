@@ -119,9 +119,10 @@ Audience, Topics, Symbols, Applicability, Kind, Status, and Confidence are
 model-authored display/search metadata, not propagation permissions or
 semantic gates.
 
-SessionStart exposes only the small bounded root INDEX maps to Root. They may
-point directly to deep leaves so normal retrieval needs one explicit call;
-they do not include document bodies or select relevant content. ACTIVE Root
+SessionStart points Root only to the two root INDEX paths; it does not inject
+their bodies. Before a managed task, the Controller explicitly reads that
+navigation. The maps may point directly to deep leaves so normal retrieval
+needs one explicit call; they do not select relevant content. ACTIVE Root
 uses an explicit runtime-command allow-set, bounded `task-status`, and
 single-object `task-get`; `init`, `uninstall`, `rollback`, another `task-start`,
 and full `task-show` are blocked.

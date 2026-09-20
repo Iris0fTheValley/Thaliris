@@ -17,6 +17,16 @@ class _Parser(argparse.ArgumentParser):
         raise ValueError(message)
 
 
+def _task_status(root: Path, *, suppress_protocol_notice: bool) -> dict[str, object]:
+    """Attach the one-shot lifecycle notice at the Codex CLI boundary."""
+    out = task_status(root)
+    if not suppress_protocol_notice:
+        notice = lifecycle.consume_protocol_deviation_notice(root, str(out["Task"]["id"]))
+        if notice is not None:
+            out["Protocol deviation"] = notice
+    return out
+
+
 def _parser() -> argparse.ArgumentParser:
     p = _Parser(prog="context", description="Thaliris: Git-native context packs for Codex workflows")
     p.add_argument("--pretty", action="store_true")
@@ -119,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "task-start": out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.hook_attestation)
         elif args.command == "task-update": out = task_update(root, codex_adapter.semantic_role(args.role), args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
-        elif args.command == "task-status": out = task_status(root, include_protocol_notice=not args.suppress_protocol_notice)
+        elif args.command == "task-status": out = _task_status(root, suppress_protocol_notice=args.suppress_protocol_notice)
         elif args.command == "task-get": out = task_get(root, args.id)
         elif args.command == "artifact-get": out = artifact_get(root, args.id)
         elif args.command == "task-artifact": out = task_artifact(root, args.base_revision, args.id, args.path, args.summary, producer_role=(codex_adapter.semantic_role(args.producer_role) if getattr(args, "producer_role", None) else None), evidence_refs=args.source_ref or None, supersedes=args.supersedes or None)

@@ -166,24 +166,38 @@ def test_blocking_wait_is_normalized_only_with_a_managed_dependency(tmp_path: Pa
     assert rewritten["hookSpecificOutput"]["updatedInput"]["timeout_ms"] == 3_600_000
 
 
-def test_codex_0154_wait_capability_is_version_pinned(monkeypatch) -> None:
+def test_codex_01551_wait_capability_is_version_pinned(monkeypatch) -> None:
     class Version:
         returncode = 0
-        stdout = "codex-cli 0.154.0\n"
+        stdout = "codex-cli 0.155.1\n"
         stderr = ""
 
     codex_adapter._host_wait_mode_cached.cache_clear()
     monkeypatch.setattr(codex_adapter.subprocess, "run", lambda *args, **kwargs: Version())
-    capability = codex_adapter.host_explicit_blocking_wait("codex-0.154-test")
+    capability = codex_adapter.host_explicit_blocking_wait("codex-0.155-test")
     assert capability == {
         "status": "PASS",
-        "version": "0.154.0",
+        "version": "0.155.1",
         "min_wait_timeout_ms": 10_000,
         "default_wait_timeout_ms": 30_000,
         "max_wait_timeout_ms": 3_600_000,
         "explicit_timeout_supported": True,
     }
-    assert codex_adapter.native_child_completion_reenters_root("codex-0.154-test") == "UNSUPPORTED"
+    assert codex_adapter.native_child_completion_reenters_root("codex-0.155-test") == "UNSUPPORTED"
+    codex_adapter._host_wait_mode_cached.cache_clear()
+
+
+def test_future_codex_wait_capability_is_conservative(monkeypatch) -> None:
+    class Version:
+        returncode = 0
+        stdout = "codex-cli 0.155.2\n"
+        stderr = ""
+
+    codex_adapter._host_wait_mode_cached.cache_clear()
+    monkeypatch.setattr(codex_adapter.subprocess, "run", lambda *args, **kwargs: Version())
+    capability = codex_adapter.host_explicit_blocking_wait("codex-future-test")
+    assert capability["status"] == "UNKNOWN"
+    assert codex_adapter.selected_continuation_mode(Path("."), "codex-future-test") == "UNAVAILABLE"
     codex_adapter._host_wait_mode_cached.cache_clear()
 
 
@@ -350,9 +364,23 @@ def test_execution_role_extra_context_reads_are_telemetry_only(tmp_path: Path, a
     rewrite = json.loads(handle_hook(root, "PreToolUse", child_status))
     assert rewrite["hookSpecificOutput"]["permissionDecision"] == "allow"
     assert rewrite["hookSpecificOutput"]["updatedInput"]["command"].endswith("--suppress-protocol-notice")
-    assert "Protocol deviation" not in core.task_status(root, include_protocol_notice=False)
+    assert "Protocol deviation" not in cli._task_status(root, suppress_protocol_notice=True)
     assert "Protocol deviation" not in core.task_status(root)
 
+
+def test_task_status_keeps_core_ledger_only_and_cli_consumes_one_shot_notice(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "cli notice", None, None)
+    spawn_start(root, "reader", "thaliris-reviewer")
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        agent_id="reader", agent_type="thaliris-reviewer", tool_name="Bash",
+        tool_input={"command": "context task-show"},
+    )) == ""
+    assert "Protocol deviation" not in core.task_status(root)
+    assert "lifecycle" not in Path(core.__file__).read_text(encoding="utf-8")
+    assert "Protocol deviation" not in cli._task_status(root, suppress_protocol_notice=True)
+    assert "Protocol deviation" in cli._task_status(root, suppress_protocol_notice=False)
+    assert "Protocol deviation" not in cli._task_status(root, suppress_protocol_notice=False)
 
 @pytest.mark.parametrize(("agent_type", "expected_role"), (
     ("thaliris-reviewer", "reviewer"),
@@ -372,12 +400,12 @@ def test_selected_roles_receive_one_bounded_aggregate_deviation_notice(
             tool_name="Bash",
             tool_input={"command": f"context {operation} .agent-memory/INDEX.md"},
         )) == ""
-    notice = core.task_status(root)["Protocol deviation"]
+    notice = cli._task_status(root, suppress_protocol_notice=False)["Protocol deviation"]
     assert "Protocol deviations (batched)" in notice
     assert f"{expected_role}=3" in notice
     assert ".agent-memory/INDEX.md" in notice
     assert len(notice.encode("utf-8")) < 1024
-    assert "Protocol deviation" not in core.task_status(root)
+    assert "Protocol deviation" not in cli._task_status(root, suppress_protocol_notice=False)
 
 
 def test_selected_role_records_actual_context_and_obvious_shell_durable_targets(tmp_path: Path) -> None:
@@ -403,13 +431,13 @@ def test_selected_role_records_actual_context_and_obvious_shell_durable_targets(
         ".milestones/b.md",
         ".agent-memory/reviews/old-review.md",
     ]
-    notice = core.task_status(root)["Protocol deviation"]
+    notice = cli._task_status(root, suppress_protocol_notice=False)["Protocol deviation"]
     assert "reviewer=3" in notice
     assert ".agent-memory/a.md" in notice
     assert ".milestones/b.md" in notice
     assert ".agent-memory/reviews/old-review.md" in notice
     assert len(notice.encode("utf-8")) < 1024
-    assert "Protocol deviation" not in core.task_status(root)
+    assert "Protocol deviation" not in cli._task_status(root, suppress_protocol_notice=False)
 
 
 def test_investigator_obvious_shell_durable_read_is_telemetry_only(tmp_path: Path) -> None:
@@ -441,7 +469,7 @@ def test_reviewer_non_bash_durable_path_read_is_aggregated(tmp_path: Path) -> No
     state = lifecycle(root)
     assert state["protocol_deviations"][-1]["target"] == ".agent-memory/x.md"
     assert state["protocol_deviations"][-1]["notice_delivered"] is False
-    notice = core.task_status(root)["Protocol deviation"]
+    notice = cli._task_status(root, suppress_protocol_notice=False)["Protocol deviation"]
     assert "reviewer=1" in notice
     assert ".agent-memory/x.md" in notice
 
@@ -459,7 +487,7 @@ def test_investigator_non_bash_durable_path_read_is_telemetry_only(tmp_path: Pat
     state = lifecycle(root)
     assert state["protocol_deviations"][-1]["target"] == ".milestones/x.md"
     assert state["protocol_deviations"][-1]["notice_delivered"] is True
-    assert "Protocol deviation" not in core.task_status(root)
+    assert "Protocol deviation" not in cli._task_status(root, suppress_protocol_notice=False)
 
 
 def test_one_generic_read_call_deduplicates_durable_targets(tmp_path: Path) -> None:
@@ -491,10 +519,10 @@ def test_protocol_deviation_ring_keeps_late_events_in_one_aggregate(tmp_path: Pa
     assert len(state["protocol_deviations"]) == 32
     assert state["protocol_deviation_overflow_count"] == 8
     assert state["protocol_deviation_counts"]["reviewer:allowed_read"] == 40
-    notice = core.task_status(root)["Protocol deviation"]
+    notice = cli._task_status(root, suppress_protocol_notice=False)["Protocol deviation"]
     assert "reviewer=40" in notice
     assert "diagnostic ring overflow=8" in notice
-    assert "Protocol deviation" not in core.task_status(root)
+    assert "Protocol deviation" not in cli._task_status(root, suppress_protocol_notice=False)
 
 
 def test_child_control_state_mutation_is_blocked_and_recorded(tmp_path: Path) -> None:

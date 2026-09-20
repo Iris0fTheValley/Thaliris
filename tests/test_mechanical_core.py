@@ -163,6 +163,28 @@ def test_promotion_can_atomically_commit_model_authored_index_update(tmp_path: P
     assert rollback_index.read_bytes() == rollback_original
 
 
+def test_promotion_rejects_rendered_record_over_explicit_bound_before_writes(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    sources = [
+        {"id": f"S{index}", "kind": "repo", "locator": "x" * 4096, "summary": "source" * 600}
+        for index in range(32)
+    ]
+    started = core.task_start(root, "large promotion", None, write_json(tmp_path / "sources.json", {
+        "evidence_refs": sources,
+    }))
+    index_before = (root / ".agent-memory" / "INDEX.md").read_bytes()
+    payload = write_json(tmp_path / "promotion.json", {"records": [{
+        "id": "D1", "path": ".agent-memory/large.md", "title": "Large", "text": "body", "source_refs": [item["id"] for item in sources],
+    }], "index_update": {
+        "path": ".agent-memory/INDEX.md", "base_sha256": hashlib.sha256(index_before).hexdigest(),
+        "content": core._entry("Map", "[D](large.md)", evidence="NONE").decode("utf-8"),
+    }})
+    with pytest.raises(ValueError, match="promotion record exceeds"):
+        core.task_promote(root, "controller", started["revision"], payload)
+    assert not (root / ".agent-memory" / "large.md").exists()
+    assert (root / ".agent-memory" / "INDEX.md").read_bytes() == index_before
+
+
 def test_promotion_index_update_rejects_stale_task_revision(tmp_path: Path) -> None:
     root = repo(tmp_path)
     started = core.task_start(root, "stale promotion", None, None)
@@ -421,6 +443,17 @@ def test_task_get_and_artifact_get_return_only_the_selected_object(tmp_path: Pat
     assert fetched["object_type"] == "artifact"
 
 
+def test_artifact_get_checks_stat_bound_before_read(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "artifact bound", None, None)
+    artifact = root / "large.md"
+    artifact.write_bytes(b"x" * (core.EXPLICIT_DOCUMENT_MAX_BYTES + 1))
+    core.task_artifact(root, started["revision"], "A1", "large.md", "large")
+    monkeypatch.setattr(Path, "read_bytes", lambda _self: (_ for _ in ()).throw(AssertionError("read guard invoked")))
+    with pytest.raises(ValueError, match="artifact body exceeds"):
+        core.artifact_get(root, "A1")
+
+
 def test_root_index_is_canonical_global_map_without_recursive_scan(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     target = root / ".agent-memory" / "projects" / "alpha" / "guide.md"
@@ -623,6 +656,24 @@ def test_small_dirty_surface_remains_recorded(tmp_path: Path) -> None:
     assert item["identity"] == hashlib.sha256(b"small").hexdigest()
 
 
+def test_large_surface_file_stat_degrades_whole_snapshot_without_hash(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    path = root / "large.txt"
+    path.write_text("small placeholder", encoding="utf-8")
+    original_stat = core.os.stat
+
+    def large_stat(candidate: object, *args: object, **kwargs: object):
+        result = original_stat(candidate, *args, **kwargs)
+        if "large" in str(candidate):
+            return type("Stat", (), {"st_size": core.SURFACE_MAX_FILE_BYTES + 1, "st_mode": result.st_mode})()
+        return result
+
+    monkeypatch.setattr(core.os, "stat", large_stat)
+    monkeypatch.setattr(core, "_file_digest", lambda _path: (_ for _ in ()).throw(AssertionError("large file hashed")))
+    assert core._surface_snapshot(root) == "UNAVAILABLE"
+    assert core.task_start(root, "large file surface", None, None)["status"] == "ACTIVE"
+
+
 def test_surface_identity_hashes_regular_files_streaming(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     path = root / "streamed.bin"
@@ -651,6 +702,42 @@ def test_final_durable_symlink_is_rejected_while_surface_observes_it(tmp_path: P
         core.document_get(root, ".agent-memory/x.md")
     observed = core._surface_identity(root, ".agent-memory/x.md", "??")
     assert observed["state"] == "SYMLINK"
+
+
+def test_promotion_and_maintenance_never_follow_final_memory_symlink(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    target = root / "outside.md"
+    target.write_bytes(core._entry("Outside", "body", evidence="NONE"))
+    link = root / ".agent-memory" / "linked.md"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    started = core.task_start(root, "symlink promotion", None, None)
+    with pytest.raises(ValueError, match="final component"):
+        core.task_promote(root, "controller", started["revision"], write_json(tmp_path / "promotion.json", {
+            "records": [{"id": "D1", "path": ".agent-memory/linked.md", "text": "new"}],
+        }))
+    assert all(entry.path != link for entry in core.entries(root))
+    assert all(item["path"] != ".agent-memory/linked.md" for item in core.stale(root)["entries"])
+
+
+def test_promoted_artifact_provenance_treats_swapped_final_symlink_as_missing(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "provenance symlink", None, None)
+    artifact = root / "artifact.md"
+    artifact.write_text("stable", encoding="utf-8")
+    registered = core.task_artifact(root, started["revision"], "A1", "artifact.md", "artifact")
+    promoted = core.task_promote(root, "controller", registered["revision"], write_json(tmp_path / "promotion.json", {
+        "records": [{"id": "D1", "path": ".agent-memory/d1.md", "text": "selected", "source_refs": ["A1"]}],
+    }))["promoted"][0]
+    replacement = root / "replacement.md"
+    replacement.write_text("stable", encoding="utf-8")
+    try:
+        artifact.unlink(); artifact.symlink_to(replacement)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    assert core.document_get(root, promoted)["documents"][0]["freshness"] == "MISSING"
 
 
 def test_artifact_final_symlink_is_rejected_for_register_get_and_freshness(tmp_path: Path) -> None:

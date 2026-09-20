@@ -85,7 +85,11 @@ def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
         if not match:
             invalid.append(spec)
             continue
-        candidate = (root / match.group(1)).resolve()
+        lexical = root / match.group(1)
+        if lexical.is_symlink():
+            missing.append(match.group(1))
+            continue
+        candidate = lexical.resolve()
         try:
             candidate.relative_to(root.resolve())
         except ValueError:
@@ -134,7 +138,11 @@ def _durable_descriptor_status(entry: Entry, root: Path) -> tuple[str, list[str]
                 invalid.append(str(descriptor.get("artifact_id", "invalid artifact descriptor")))
                 continue
             checked = True
-            candidate = (root / path).resolve()
+            lexical = root / path
+            if lexical.is_symlink():
+                missing.append(path)
+                continue
+            candidate = lexical.resolve()
             try:
                 candidate.relative_to(root.resolve())
             except ValueError:

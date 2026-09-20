@@ -312,7 +312,7 @@ def uninstall(root: Path) -> dict[str, object]:
 
 def entries(root: Path) -> list[Entry]:
     base = root / ".agent-memory"
-    return [parse(path) for path in sorted(base.rglob("*.md"))] if base.exists() else []
+    return [parse(path) for path in sorted(base.rglob("*.md")) if not path.is_symlink()] if base.exists() else []
 
 
 def stale(root: Path) -> dict[str, object]:
@@ -333,6 +333,8 @@ DURABLE_INDEX_RECOMMENDED_BYTES = 3 * 1024
 DURABLE_INDEX_HARD_MAX_BYTES = 16 * 1024
 SURFACE_MAX_ENTRIES = 512
 SURFACE_MAX_BYTES = 128 * 1024
+SURFACE_MAX_FILE_BYTES = 4 * 1024 * 1024
+SURFACE_MAX_TOTAL_FILE_BYTES = 16 * 1024 * 1024
 _PACK_ROLES = {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}
 _EXECUTION_ROLES = _PACK_ROLES - {"controller"}
 _STATE_FIELDS = {
@@ -422,6 +424,7 @@ def _surface_snapshot(root: Path) -> list[dict[str, object]] | str:
         return "UNAVAILABLE"
     fields = proc.stdout.decode("utf-8", errors="surrogateescape").split("\0")
     result: list[dict[str, object]] = []
+    total_file_bytes = 0
     index = 0
     while index < len(fields):
         item = fields[index]
@@ -436,6 +439,12 @@ def _surface_snapshot(root: Path) -> list[dict[str, object]] | str:
         if len(result) >= SURFACE_MAX_ENTRIES:
             return "UNAVAILABLE"
         _valid_relative(root, path)
+        raw = root.joinpath(*path.split("/"))
+        if not raw.is_symlink() and raw.is_file():
+            size = os.stat(raw).st_size
+            total_file_bytes += size
+            if size > SURFACE_MAX_FILE_BYTES or total_file_bytes > SURFACE_MAX_TOTAL_FILE_BYTES:
+                return "UNAVAILABLE"
         result.append(_surface_identity(root, path, status))
     return sorted(result, key=lambda item: str(item["path"]))
 
@@ -906,6 +915,8 @@ def artifact_get(root: Path, artifact_id: str) -> dict[str, object]:
         raise ValueError("artifact body not found") from exc
     if not target.is_file():
         raise ValueError("artifact body not found")
+    if target.stat().st_size > EXPLICIT_DOCUMENT_MAX_BYTES:
+        raise ValueError(f"artifact body exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
     body = target.read_bytes()
     if len(body) > EXPLICIT_DOCUMENT_MAX_BYTES:
         raise ValueError(f"artifact body exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
@@ -945,17 +956,10 @@ def _controller_status(state: dict[str, object]) -> dict[str, object]:
     }
 
 
-def task_status(root: Path, *, include_protocol_notice: bool = True) -> dict[str, object]:
+def task_status(root: Path) -> dict[str, object]:
     root = _repo_root(root)
     state = _load_state(root)
-    result = _controller_status(state)
-    if include_protocol_notice:
-        # Lifecycle imports Core, so keep this adapter-side lookup lazy.
-        from . import lifecycle
-        notice = lifecycle.consume_protocol_deviation_notice(root, str(state["task_id"]))
-        if notice is not None:
-            result["Protocol deviation"] = notice
-    return result
+    return _controller_status(state)
 
 
 def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer_role: str | None = None, registered_by: str = "controller", scope: str | None = None, evidence_refs: list[str] | None = None, supersedes: list[str] | None = None) -> dict[str, object]:
@@ -1168,7 +1172,8 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
             if relative in promotion_paths:
                 raise ValueError("duplicate promotion path")
             promotion_paths.add(relative)
-            if _safe(root, relative).exists():
+            target = _safe_without_final_symlink(root, relative)
+            if target.exists():
                 raise ValueError("promotion refuses to overwrite an existing durable target")
             kind = value.get("kind", "record")
             status = value.get("status", "ACTIVE")
@@ -1193,6 +1198,8 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
                 kind=kind,
             )
             parse_text(rendered.decode("utf-8"), Path(relative))
+            if len(rendered) > EXPLICIT_DOCUMENT_MAX_BYTES:
+                raise ValueError(f"promotion record exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
             writes[relative] = rendered
             promoted.append(relative)
         index_updated: str | None = None
@@ -1523,7 +1530,7 @@ def prepare(root: Path, task: str | None, role: str, *, include_protocol_notice:
     root = _repo_root(root)
     if role == "controller":
         if task is None:
-            return task_status(root, include_protocol_notice=include_protocol_notice)
+            return task_status(root)
         return {
             "ok": True,
             "schema_version": _STATE_SCHEMA_VERSION,

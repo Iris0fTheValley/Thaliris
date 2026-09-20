@@ -48,8 +48,10 @@ task completion, or whether changed evidence invalidates a model conclusion.
 
 The Codex adapter provides fresh spawn isolation, `fork_turns="none"`, an
 authorized serial Child lifecycle, handoff hashes, SubagentStart/Stop identity,
-bounded missing-stop reconciliation, and native blocking waits. A wait is
-normalized only when a pending reservation or managed Child actually exists.
+bounded missing-stop reconciliation, and native blocking waits. An automatic
+long-wait normalization occurs only when a pending reservation or managed Child
+exists and a current-session effective maximum is mechanically verified;
+otherwise the requested timeout is preserved without automatic expansion.
 
 ## Mechanical stores
 

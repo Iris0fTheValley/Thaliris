@@ -28,8 +28,11 @@ Children. Read-only inspection is prompt policy, not a shell-regex semantic
 classifier.
 
 When native event-driven continuation is unavailable, `wait_agent` is
-normalized to the supported Host maximum only if an actual pending reservation
-or managed Child exists. Thaliris provides no scheduler or polling loop.
+automatically normalized to a long wait only when an actual pending reservation
+or managed Child exists and a current-session effective maximum is mechanically
+verified. When that maximum is unavailable, the requested timeout is preserved;
+there is no automatic expansion. Thaliris provides no scheduler or polling
+loop.
 
 ## Child results
 

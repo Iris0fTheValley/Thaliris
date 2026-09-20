@@ -218,6 +218,69 @@ def test_promotion_rejects_exact_document_get_overflow_before_any_writes(tmp_pat
     assert (root / ".agent-memory" / "INDEX.md").read_bytes() == index_before
 
 
+@pytest.mark.parametrize("later_state", ["MISSING", "CHANGED"])
+def test_promotion_reserves_exact_future_freshness_response_boundary(tmp_path: Path, later_state: str) -> None:
+    """A worst-case preflight keeps later source churn retrievable at 64 KiB."""
+    def setup(root: Path, body: str) -> tuple[list[Path], str]:
+        started = core.task_start(root, "future freshness boundary", None, None)
+        sources: list[Path] = []
+        evidence_refs = []
+        for index in range(64):
+            source = root / "sources" / ("路径" * 32) / f"証拠-{index:03}.txt"
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text("stable", encoding="utf-8")
+            relative = source.relative_to(root).as_posix()
+            sources.append(source)
+            evidence_refs.append({
+                "id": f"S{index}", "kind": "repo",
+                "locator": f"file:{relative}#{hashlib.sha256(source.read_bytes()).hexdigest()}",
+                "summary": "long Unicode source path",
+            })
+        updated = core.task_update(root, "controller", started["revision"], write_json(root.parent / "sources.json", {
+            "evidence_refs": evidence_refs,
+        }))
+        promoted = core.task_promote(root, "controller", updated["revision"], write_json(root.parent / "promotion.json", {
+            "records": [{
+                "id": "D1", "path": ".agent-memory/边界/near-limit.md", "title": "Boundary",
+                "text": body, "source_refs": [item["id"] for item in evidence_refs],
+            }],
+        }))["promoted"][0]
+        return sources, promoted
+
+    # Use a small promoted exemplar to derive the exact public response size,
+    # then promote a fresh record whose worst-case reservation is exactly 64 KiB.
+    exemplar_root = tmp_path / "exemplar"
+    exemplar_root.mkdir()
+    sources, path = setup(repo(exemplar_root), "BODY_PRESERVED")
+    exemplar = core.document_get(exemplar_root, path)["documents"][0]
+    reserved = {**exemplar, "freshness": "MISSING", "freshness_detail": markdown.freshness_detail_budget_placeholder()}
+    filler = core.EXPLICIT_DOCUMENT_MAX_BYTES - core._document_response_size({"ok": True, "documents": [reserved]})
+    assert core._document_response_size({"ok": True, "documents": [reserved]}) + filler == core.EXPLICIT_DOCUMENT_MAX_BYTES
+
+    root = tmp_path / "boundary"
+    root.mkdir()
+    sources, path = setup(repo(root), "BODY_PRESERVED" + ("x" * filler))
+    fresh = core.document_get(root, path)["documents"][0]
+    if later_state == "MISSING":
+        for source in sources:
+            source.unlink()
+    else:
+        for source in sources:
+            source.write_text("changed", encoding="utf-8")
+    fetched = core.document_get(root, path)
+    item = fetched["documents"][0]
+    assert item["freshness"] == later_state
+    assert "BODY_PRESERVED" in item["body"]
+    assert item["metadata"] == fresh["metadata"]
+    assert item["body"] == fresh["body"]
+    assert item["provenance"] == fresh["provenance"]
+    assert len(item["provenance"]) == 64
+    assert item["metadata"]["Evidence"] == "DURABLE_SOURCE_DESCRIPTORS"
+    assert item["provenance"][0]["locator"].startswith("file:sources/路径")
+    assert len(json.dumps(item["freshness_detail"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 1800
+    assert core._document_response_size(fetched) <= core.EXPLICIT_DOCUMENT_MAX_BYTES
+
+
 def test_promotion_index_update_rejects_stale_task_revision(tmp_path: Path) -> None:
     root = repo(tmp_path)
     started = core.task_start(root, "stale promotion", None, None)

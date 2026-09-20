@@ -1205,8 +1205,11 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
                 raise ValueError(f"promotion record exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
             preflight_item = _document_get_item(root, relative, rendered, entry)
             # A fresh document has no detail today, but source churn may add
-            # the fixed diagnostic budget tomorrow. Reserve that exact public
-            # JSON budget at promotion time so retrieval remains available.
+            # the fixed diagnostic budget tomorrow. Reserve the longest later
+            # freshness label too (MISSING and CHANGED are two bytes longer
+            # than FRESH) in this same public item/response construction so
+            # retrieval remains available at the boundary.
+            preflight_item["freshness"] = "MISSING"
             preflight_item["freshness_detail"] = freshness_detail_budget_placeholder()
             if _document_response_size({"ok": True, "documents": [preflight_item]}) > EXPLICIT_DOCUMENT_MAX_BYTES:
                 raise ValueError(f"document-get response exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")

@@ -11,7 +11,7 @@ Thaliris 是一个 Git-native 的机械上下文与生命周期层。它不运�
 Controller
     │ explicit task + selected information
     ▼
-Child
+Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
     ├── private working set
     ├── optional detailed Artifact
     └── distilled result
@@ -21,26 +21,26 @@ Child
             └── decides next handoff
 ```
 
-Controller 的原生 spawn message 是 Child 唯一的 task-specific 语义输入。
+Controller 的原生 spawn message 是 Investigator、Curator、Reasoning Specialist、Implementer 与 Reviewer 唯一的 task-specific 语义输入。
 `SubagentStart` 只验证授权、身份、角色与 session，绑定 lifecycle 和 handoff
 metadata；它不构建 task-specific `additionalContext`。
 
 不存在以下生产路径：
 
 ```text
-task state -> role projection -> automatic child injection
+task state -> role projection -> automatic native Codex child injection
 hidden model auditor -> Controller correction/block
 ```
 
 ## 职责
 
-Controller 负责路由、上下文选择、解释、接受与完成判断。Child 在私有 working
+Controller 负责路由、上下文选择、解释、接受与完成判断。Investigator、Curator、Reasoning Specialist、Implementer 与 Reviewer 在私有 working
 set 中调查、实现或审查，默认只返回精炼结论、关键发现、会改变决策的未知、
 矛盾、验证与 Artifact pointer。
 
 Core 只提供：
 
-- task / child / handoff / artifact identity
+- task / native Codex child / handoff / artifact identity
 - revision 与 compare-and-swap
 - lock、atomic write、backup 与 rollback
 - hash、provenance、supersedes/history
@@ -51,9 +51,9 @@ Core 只提供：
 Core 不判断 relevance、importance、correctness、role applicability、task
 completion，也不根据 stale evidence 自动改写 decision、constraint 或 workflow。
 
-Codex adapter 只负责 fresh spawn、`fork_turns="none"`、授权的串行 Child、
+Codex adapter 只负责 fresh spawn、`fork_turns="none"`、授权的串行 native Codex child lifecycle、
 handoff hash、SubagentStart/Stop identity、missing-stop reconciliation 和 native
-wait。只有确实存在 pending reservation 或 managed Child、且当前 session effective
+wait。只有确实存在 pending reservation 或 managed native Codex child、且当前 session effective
 maximum 已被机械验证时，短 wait 才会被规范化为长 blocking wait；否则不会自动规范化。
 `SubagentStop` 本身不是成功；只有明确观测到
 native `Completed` 才满足 lifecycle completion。
@@ -71,7 +71,7 @@ lifecycle。它不判断测试是否充分，也不裁决任务语义上是否�
 
 Artifact 正文位于显式路径中；账本只保存 ID、producer、path、content hash、
 created revision、source refs 与 optional supersedes。Artifact 不会被自动读取或
-传播。Controller 显式取回正文，并自行选择是否交给下一个 Child。
+传播。Controller 显式取回正文，并自行选择是否交给下一个 Investigator、Curator、Reasoning Specialist、Implementer 或 Reviewer。
 
 Memory 默认不注入。模型自行维护 `.agent-memory/INDEX.md` 和
 `.milestones/INDEX.md` 里的薄全局树状地图，并自行决定目录、层级、移动、合并与
@@ -87,7 +87,7 @@ Memory 默认不注入。模型自行维护 `.agent-memory/INDEX.md` 和
 `Status` 是有界的记录标签。旧文档中的其它 metadata 仍可读取，但只作为不透明兼容字段，
 不是传播权限。
 
-Milestone 是普通长期文档。Curator 是普通可选 Child。`task-promote` 保存
+Milestone 是普通长期文档。Curator 是普通可选角色。`task-promote` 保存
 Controller 明确选择的记录；Core 不裁决其 epistemic legitimacy。
 当一次 promotion 会改变 durable navigation 时，Controller 应在同一次
 `task-promote` 中提供自己写好的 optional `index_update`。Core 不生成 INDEX

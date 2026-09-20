@@ -23,8 +23,8 @@ CODEX_ROLE_MAP = {
     # Codex built-in profile compatibility aliases; these are not Core roles.
     "worker": "implementer", "explorer": "investigator",
 }
-# This adapter-owned vocabulary is a CLI ingress contract.  Core receives only
-# the Controller marker where its mechanical write boundary needs one.
+# This adapter-owned vocabulary is a CLI ingress contract. Core receives an
+# opaque actor marker after this boundary has authorized the operation.
 ROLE_CHOICES = tuple(sorted({"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"} | set(CODEX_ROLE_MAP)))
 
 _AGENT_PROFILES = {
@@ -51,7 +51,7 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
         "reads, tool output, test logs, and intermediate exploration in your private working "
         "set. Return a distilled result with Conclusion, Key findings, Decision-changing "
         "unknowns, Contradictions if any, Verification performed, and Artifact refs if detailed "
-        "reusable material was retained. Do not delegate to another child. "
+        "reusable material was retained. Do not delegate to another native Codex child session. "
     )
     role_instruction = {
         "investigator": (
@@ -120,6 +120,14 @@ def semantic_role(runtime_role: str) -> str:
         return CODEX_ROLE_MAP[runtime_role]
     except KeyError as exc:
         raise ValueError(f"unknown Codex role: {runtime_role}") from exc
+
+
+def controller_actor(runtime_role: str) -> str:
+    """Authorize a Controller-only adapter operation and return its marker."""
+    actor = semantic_role(runtime_role)
+    if actor != "controller":
+        raise ValueError("only Controller may perform this operation")
+    return actor
 
 
 @lru_cache(maxsize=8)
@@ -215,7 +223,7 @@ and receives its task plus selected information in
 the Controller's native spawn message. `SubagentStart` validates authorization,
 identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
-and Artifact bodies never enter a child automatically.
+and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer automatically.
 
 Each Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer keeps
 its private working set private. By default it returns a distilled conclusion, key findings,
@@ -257,7 +265,7 @@ rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
 Codex version, host capability, task schema, git/worktree identity,
 hook/profile presence, and the `task-start` error are allowed reads. Once the
 cause is known, do not read user-task repository source, tests, docs, or search
-results. If work continues, use fresh serial Children (`fork_turns="none"`),
+results. If work continues, use fresh serial Investigator, Implementer, and Reviewer sessions (`fork_turns="none"`),
 distilled returns, and a fresh Reviewer; the Controller must not take over
 repository investigation, implementation, or testing merely because NO_TASK
 applies. The final report must not claim managed enforcement was verified.
@@ -265,8 +273,8 @@ If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `context recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.
 Repository investigation, execution, mutation, and testing belong to fresh
-Children. Existing Child threads are never resumed with follow-up/send tools.
-A Child's obvious direct control-context retrieval is allowed and recorded.
+those roles. Existing native Codex child threads are never resumed with follow-up/send tools.
+An Investigator's or Implementer's obvious direct control-context retrieval is allowed and recorded.
 Investigator and Implementer reads remain telemetry-only; Curator, Reasoning
 Specialist, and Reviewer extra reads produce at most one bounded aggregate
 Controller notice per pending batch. Obvious attempts to mutate
@@ -276,13 +284,13 @@ developer-instruction plus obvious-write hook guard, not a claimed native
 read-only sandbox. Starting managed mode requires a current-session,
 current-hook, one-shot PreToolUse attestation.
 
-Managed children are serial. Spawn authorization, native identity binding,
+Managed native Codex child lifecycles are serial. Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
 mechanical. SubagentStop alone is not success; only an explicitly observed
 native Completed status can satisfy lifecycle completion. A short native wait
-is normalized only while an authorized reservation or managed child is pending
+is normalized only while an authorized reservation or managed native Codex child is pending
 and the current-session effective maximum is mechanically verified; otherwise
-no automatic long-wait normalization occurs. The Controller interprets Child results,
+no automatic long-wait normalization occurs. The Controller interprets Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 {MANAGED_END}
@@ -293,9 +301,9 @@ ROLE_PACKS = """<!-- thaliris-role-packs:v4 -->
 
 These profiles are working-style defaults, not routing rules or semantic
 permissions. The Controller's explicit native spawn message is the sole
-task-specific input to every Child.
+task-specific input to every Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer.
 
-## Shared Child Result
+## Shared Role Result
 
 Return a distilled result by default:
 
@@ -307,7 +315,7 @@ Return a distilled result by default:
 - Artifact refs, if detailed reusable material was retained
 
 Keep repository reads, tool output, test logs, and intermediate exploration in
-the Child's private working set. Do not copy an Artifact body into the result
+the role session's private working set. Do not copy an Artifact body into the result
 unless the Controller explicitly requested that content.
 
 ## Investigator

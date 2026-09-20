@@ -64,7 +64,7 @@ def test_subagent_start_binds_explicit_handoff_without_injecting_projection(tmp_
         "private-notes",
         "private.md",
         "private investigation notes",
-        producer_role="implementer",
+        producer="implementer",
     )
 
     handoff = "SELECTED_FACT HANDOFF_SENTINEL; artifact pointer: private-notes"

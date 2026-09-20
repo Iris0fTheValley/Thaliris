@@ -19,7 +19,7 @@ Controller
     │
     │ explicit task + selected information
     ▼
-Child
+Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
     │
     ├── private working set
     ├── optional detailed Artifact
@@ -36,23 +36,23 @@ The only adjacent mechanisms are the Task Ledger, Artifact Store, Explicit
 Retrieval, and Native Lifecycle.
 
 There is no production path from task state through a Core-generated role
-projection into a Child. There is no hidden model auditor that corrects or
+projection into a role session. There is no hidden model auditor that corrects or
 blocks the Controller.
 
 ## Responsibility boundaries
 
 ### Controller
 
-The Controller selects the next Child, writes the native handoff, chooses the
+The Controller selects the next Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer, writes the native handoff, chooses the
 information in that handoff, interprets results and observations, accepts or
 rejects conclusions, and decides when the task is complete.
 
 Routing, categorizing, and status labels in task records are model-authored.
 Core does not attach behavior to them.
 
-### Child
+### Role sessions
 
-A Child receives task-specific information only from the Controller's explicit
+An Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer receives task-specific information only from the Controller's explicit
 native spawn message. Repository reads, search results, test output, logs, and
 intermediate exploration stay in its private working set.
 
@@ -61,7 +61,7 @@ decision-changing unknowns, contradictions if any, verification performed, and
 optional Artifact references. These are prompt conventions, not Core schema
 authority.
 
-Curator is an optional ordinary Child. Reviewer classifications are ordinary
+Curator is an optional ordinary role session. Reviewer classifications are ordinary
 model output. Neither role activates a Core workflow state machine.
 
 ### Core
@@ -76,7 +76,7 @@ promotion.
 
 ### Codex adapter
 
-The adapter handles fresh native spawn isolation, authorized serial Child
+The adapter handles fresh native spawn isolation, authorized serial native Codex child
 lifecycle, handoff identity/hash binding, SubagentStart/Stop identity,
 missing-stop reconciliation, Reviewer developer instructions plus an
 obvious-write guard, and explicit blocking wait normalization. The current
@@ -91,7 +91,7 @@ returns task-specific `additionalContext`.
 
 The native spawn message carries the content. The adapter records only bounded
 metadata such as handoff ID, task ID/revision, role, producer, payload hash, and
-creation time. This proves which explicit handoff was bound to a Child without
+creation time. This proves which explicit handoff was bound to a native Codex child without
 creating a second knowledge system.
 
 ### Artifact
@@ -150,16 +150,16 @@ on that delta.
 ## Retained guarantees
 
 - Git-native persistence
-- task, Child, handoff, and Artifact identity
+- task, native Codex child, handoff, and Artifact identity
 - revision/CAS
 - lock, atomic write, backup, and safe rollback
 - Artifact content hash, provenance, history, and supersession references
-- `fork_turns="none"` and fresh Child lifecycle
+- `fork_turns="none"` and fresh Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer lifecycles
 - authorized serial spawn
 - SubagentStart/Stop identity binding
 - bounded missing-stop reconciliation
 - explicit native blocking wait, only with a pending dependency
-- explicit memory search/get and Artifact addressing
+- explicit `catalog` and exact-path `document-get` retrieval and Artifact addressing
 - Reviewer developer instruction and obvious-write guard
 - mechanical candidate and task-surface identity
 - adapter/hook/lifecycle diagnostics

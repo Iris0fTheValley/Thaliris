@@ -12,7 +12,7 @@ finish a task.
 Controller
     │ explicit task + selected information
     ▼
-Child
+Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
     ├── private working set
     ├── optional detailed Artifact
     └── distilled result
@@ -22,18 +22,18 @@ Child
             └── decides the next handoff
 ```
 
-The Controller's native spawn message is the Child's only task-specific
+The Controller's native spawn message is each Investigator's, Curator's, Reasoning Specialist's, Implementer's, or Reviewer's only task-specific
 semantic input. `SubagentStart` validates authorization, identity, role, and
-session and binds lifecycle and handoff metadata. It neither calls `prepare`
+session and binds lifecycle and handoff metadata. It does not construct a context packet
 nor returns task-specific `additionalContext`.
 
 There is no production path from task state through a role projection into a
-Child, and no hidden model auditor that corrects or blocks the Controller.
+role session, and no hidden model auditor that corrects or blocks the Controller.
 
 ## Responsibilities
 
 The Controller owns routing, context selection, interpretation, acceptance,
-and completion. A Child keeps repository reads, searches, logs, tests, and
+and completion. An Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer keeps repository reads, searches, logs, tests, and
 intermediate work private and normally returns only a distilled conclusion,
 key findings, decision-changing unknowns, contradictions, verification, and
 optional Artifact pointers.
@@ -47,15 +47,15 @@ Core does not decide relevance, importance, correctness, role applicability,
 task completion, or whether changed evidence invalidates a model conclusion.
 
 The Codex adapter provides fresh spawn isolation, `fork_turns="none"`, an
-authorized serial Child lifecycle, handoff hashes, SubagentStart/Stop identity,
+authorized serial native Codex child lifecycle, handoff hashes, SubagentStart/Stop identity,
 bounded missing-stop reconciliation, and native blocking waits. An automatic
-long-wait normalization occurs only when a pending reservation or managed Child
+long-wait normalization occurs only when a pending reservation or managed native Codex child
 exists and a current-session effective maximum is mechanically verified;
 otherwise the requested timeout is preserved without automatic expansion.
 
 ## Mechanical stores
 
-The task ledger accepts Controller-authored records with identity, text,
+The task ledger accepts caller-authored records with identity, text,
 producer, revision, source references, optional supersession, and descriptive
 kind/status labels. Core validates schema and references but attaches no
 semantic workflow to those labels.
@@ -65,16 +65,16 @@ revision, optional source references, and optional supersession. Core never
 reads an Artifact body for automatic propagation. The Controller explicitly
 retrieves it and selects any material for a later handoff.
 
-Memory is explicit store/list/search/get. Search results are candidates.
-Audience, Topics, Symbols, Applicability, Kind, Status, and Confidence are
-model-authored search/display metadata, not propagation permissions.
+Durable navigation uses `catalog` and explicit exact-path `document-get` only.
+Legacy semantic metadata is opaque compatibility data, never search, display,
+or routing authority.
 SessionStart only points to the two root INDEX paths; it does not inject their
 contents. Before starting managed work, the Controller explicitly reads the
 root navigation and creates a minimal thin INDEX first if one is missing.
 Navigation is not reread automatically during the task unless the map changed,
 is insufficient, freshness is invalid, or resume/compact requires recovery.
 
-Milestones are ordinary documents. Curator is an optional ordinary Child.
+Milestones are ordinary documents. Curator is an optional role session.
 `task-promote` stores what the Controller explicitly selected without an
 epistemic qualification gate.
 When a promotion changes durable navigation, the Controller should provide its
@@ -97,8 +97,6 @@ context task-start "goal"
 context task-status
 context task-update --role controller --base-revision N --input update.json
 context task-artifact --base-revision N --id A-001 --path path/to/file.md --summary "..."
-context recall "query" --role controller
-context memory-get memory/path.md
 context task-promote --role controller --base-revision N --input promotion.json
 context task-close --base-revision N
 context recover-pending-spawn HANDOFF_ID
@@ -106,9 +104,6 @@ context stale
 context rollback BACKUP_ID
 context doctor
 ```
-
-`prepare --role <execution-role>` returns only a
-`CONTROLLER_HANDOFF_ONLY` marker. It never reconstructs task context.
 
 ## Benchmark boundary
 

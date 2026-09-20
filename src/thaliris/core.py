@@ -766,7 +766,7 @@ def _normalize_new_record(value: object, *, producer: str, revision: int, known_
     return record
 
 
-def _controller_ack(state: dict[str, object], changed: list[str]) -> dict[str, object]:
+def _task_ack(state: dict[str, object], changed: list[str]) -> dict[str, object]:
     return {
         "ok": True,
         "task_id": state["task_id"],
@@ -776,7 +776,7 @@ def _controller_ack(state: dict[str, object], changed: list[str]) -> dict[str, o
     }
 
 
-def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None) -> dict[str, object]:
+def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None, *, actor: str = "unspecified") -> dict[str, object]:
     root = _repo_root(root)
     if not _state_ignored(root):
         raise ValueError("task state is not ignored; run context init first")
@@ -798,17 +798,17 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
         source_ids = {str(item.get("id")) for item in state["evidence_refs"] if isinstance(item, dict)}
         known: set[str] = set()
         for item in partial.get("records", []):
-            record = _normalize_new_record(item, producer="controller", revision=1, known_sources=source_ids, known_records=known)
+            record = _normalize_new_record(item, producer=actor, revision=1, known_sources=source_ids, known_records=known)
             state["records"].append(record)
             known.add(str(record["id"]))
         _write_state(root, state)
-    return _controller_ack(state, ["task"])
+    return _task_ack(state, ["task"])
 
 
-def task_update(root: Path, role: str, base_revision: int, input_file: str | None) -> dict[str, object]:
+def task_update(root: Path, actor: str, base_revision: int, input_file: str | None) -> dict[str, object]:
     root = _repo_root(root)
-    if role != "controller" or type(base_revision) is not int:
-        raise ValueError("only Controller may update the task ledger")
+    if not isinstance(actor, str) or not actor or type(base_revision) is not int:
+        raise ValueError("invalid task update identity or revision")
     partial = _read_input(input_file)
     allowed = {"records", "active_work", "pending_results", "evidence_refs", "current_milestone"}
     if not partial or set(partial) - allowed:
@@ -837,7 +837,7 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
             known_sources = {str(item["id"]) for item in state["evidence_refs"]}
             known_records = {str(item["id"]) for item in state["records"]}
             for item in additions:
-                record = _normalize_new_record(item, producer="controller", revision=base_revision + 1, known_sources=known_sources, known_records=known_records)
+                record = _normalize_new_record(item, producer=actor, revision=base_revision + 1, known_sources=known_sources, known_records=known_records)
                 state["records"].append(record)
                 known_records.add(str(record["id"]))
             changed.append("records")
@@ -847,7 +847,7 @@ def task_update(root: Path, role: str, base_revision: int, input_file: str | Non
                 changed.append(field)
         state["revision"] = base_revision + 1
         _write_state(root, state)
-    return _controller_ack(state, changed)
+    return _task_ack(state, changed)
 
 
 def task_show(root: Path) -> dict[str, object]:
@@ -899,14 +899,13 @@ def artifact_get(root: Path, artifact_id: str) -> dict[str, object]:
     return {**found, "body": text, "current_sha256": _file_digest(target), "freshness": _artifact_freshness(root, artifact)}
 
 
-def _controller_status(state: dict[str, object]) -> dict[str, object]:
+def _task_status_packet(state: dict[str, object]) -> dict[str, object]:
     """Return current routing mechanics without replaying the durable ledger."""
     goal = str(state["goal"])
     artifact_ids = [str(item["id"]) for item in state["artifact_refs"]]
     return {
         "ok": True,
         "schema_version": state["schema_version"],
-        "role": "controller",
         "Task": {
             "id": state["task_id"],
             "goal_preview": goal[:1024],
@@ -931,13 +930,13 @@ def _controller_status(state: dict[str, object]) -> dict[str, object]:
 def task_status(root: Path) -> dict[str, object]:
     root = _repo_root(root)
     state = _load_state(root)
-    return _controller_status(state)
+    return _task_status_packet(state)
 
 
-def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer_role: str | None = None, registered_by: str = "controller", scope: str | None = None, evidence_refs: list[str] | None = None, supersedes: list[str] | None = None) -> dict[str, object]:
+def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer: str | None = None, registered_by: str = "unspecified", scope: str | None = None, evidence_refs: list[str] | None = None, supersedes: list[str] | None = None) -> dict[str, object]:
     root = _repo_root(root)
-    if registered_by != "controller":
-        raise ValueError("only Controller may register artifact pointers")
+    if not isinstance(registered_by, str) or not registered_by:
+        raise ValueError("invalid artifact registrar")
     draft: dict[str, object] = {"id": artifact_id, "path": path, "summary": summary}
     _artifact_ref(root, draft, require_target=True)
     with _lock(root):
@@ -959,8 +958,8 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
             "id": artifact_id,
             "path": path,
             "summary": summary,
-            "producer": producer_role or "unspecified",
-            "registered_by": "controller",
+            "producer": producer or "unspecified",
+            "registered_by": registered_by,
             "source_refs": refs,
             "supersedes": superseded,
             "task_id": state["task_id"],
@@ -975,7 +974,7 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
         _artifact_activity(state["artifact_refs"])
         state["revision"] = base_revision + 1
         _write_state(root, state)
-    return _controller_ack(state, ["artifact_refs"])
+    return _task_ack(state, ["artifact_refs"])
 
 
 def task_candidate_observation(root: Path) -> dict[str, object]:
@@ -1037,7 +1036,7 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
         state["verification_results"].append(observation)
         state["revision"] = base_revision + 1
         _write_state(root, state)
-    return _controller_ack(state, ["verification_results"])
+    return _task_ack(state, ["verification_results"])
 
 
 def task_close(root: Path, base_revision: int, *, expected_task_id: str | None = None) -> dict[str, object]:
@@ -1049,14 +1048,14 @@ def task_close(root: Path, base_revision: int, *, expected_task_id: str | None =
         state["status"] = "DONE"
         state["revision"] = base_revision + 1
         _write_state(root, state)
-    return _controller_ack(state, ["status"])
+    return _task_ack(state, ["status"])
 
 
-def task_promote(root: Path, role: str, base_revision: int, input_file: str | None) -> dict[str, object]:
+def task_promote(root: Path, actor: str, base_revision: int, input_file: str | None) -> dict[str, object]:
     """Persist exactly the model-selected records without epistemic adjudication."""
     root = _repo_root(root)
-    if role != "controller":
-        raise ValueError("only the Controller may promote durable records")
+    if not isinstance(actor, str) or not actor:
+        raise ValueError("invalid promotion identity")
     payload = _read_input(input_file)
     if set(payload) - {"records", "index_update"} or "records" not in payload or not isinstance(payload["records"], list) or not payload["records"]:
         raise ValueError("task-promote requires a non-empty records list")

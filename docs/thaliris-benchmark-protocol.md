@@ -14,7 +14,7 @@ Reusable evidence is required only when a result must cross a role boundary:
 
 ```text
 need -> fresh Investigator -> bounded artifact -> Controller registration
-     -> selected facts -> downstream consumer -> decision/implementation/review
+     -> selected facts -> downstream Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer -> decision/implementation/review
 ```
 
 The Controller registers the artifact pointer before the dependent decision with

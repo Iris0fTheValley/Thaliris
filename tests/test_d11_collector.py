@@ -60,7 +60,7 @@ def test_collector_derives_artifact_identity_order_and_consumer(tmp_path: Path) 
     started = core.task_start(root, "collector", None, None)
     task_id = core.task_show(root)["state"]["task_id"]
     evidence.write_text(evidence_envelope(task_id, started["revision"] + 1, "evidence-1"), encoding="utf-8")
-    registered = core.task_artifact(root, started["revision"], "evidence-1", "evidence.md", "bounded fact", producer_role="investigator")
+    registered = core.task_artifact(root, started["revision"], "evidence-1", "evidence.md", "bounded fact", producer="investigator", registered_by="controller")
     sha = registered["revision"]  # revision is deliberately not a content identity
     actual = __import__("hashlib").sha256(evidence.read_bytes()).hexdigest()
     facts = d11_collector.collect_evidence(root, trusted_events(tmp_path, [
@@ -80,7 +80,7 @@ def test_collector_does_not_accept_report_booleans_or_unproven_consumption(tmp_p
     started = core.task_start(root, "collector", None, None)
     task_id = core.task_show(root)["state"]["task_id"]
     (root / "evidence.md").write_text(evidence_envelope(task_id, started["revision"] + 1, "evidence-1"), encoding="utf-8")
-    core.task_artifact(root, started["revision"], "evidence-1", "evidence.md", "bounded fact", producer_role="investigator")
+    core.task_artifact(root, started["revision"], "evidence-1", "evidence.md", "bounded fact", producer="investigator", registered_by="controller")
     facts = d11_collector.collect_evidence(root, trusted_events(tmp_path, [{"event": "artifact_produced", "sequence": 1, "artifact_id": "evidence-1"}]))
     facts["produced_before_decision"] = True
     assert d11_protocol.validate_collected_evidence(facts)["code"] == "EVIDENCE_ORDERING"
@@ -285,7 +285,7 @@ def test_malformed_artifact_bytes_fail_even_when_registered(tmp_path: Path) -> N
     core.init(root)
     started = core.task_start(root, "malformed artifact", None, None)
     (root / "evidence.md").write_text("confirmed fact", encoding="utf-8")
-    core.task_artifact(root, started["revision"], "evidence-1", "evidence.md", "bad", producer_role="investigator")
+    core.task_artifact(root, started["revision"], "evidence-1", "evidence.md", "bad", producer="investigator", registered_by="controller")
     facts = d11_collector.collect_evidence(root, trusted_events(tmp_path / "events", [
         {"event": "artifact_produced", "artifact_id": "evidence-1"},
         {"event": "artifact_registered", "artifact_id": "evidence-1"},
@@ -301,10 +301,10 @@ def test_superseded_same_path_uses_registration_attestation_and_is_not_reused(tm
     path = root / "evidence.md"
     old_envelope = json.loads(evidence_envelope(task_id, started["revision"] + 1, "evidence-1"))
     path.write_text(json.dumps(old_envelope, separators=(",", ":")), encoding="utf-8")
-    old = core.task_artifact(root, started["revision"], "evidence-1", "evidence.md", "old", producer_role="investigator")
+    old = core.task_artifact(root, started["revision"], "evidence-1", "evidence.md", "old", producer="investigator", registered_by="controller")
     new_envelope = json.loads(evidence_envelope(task_id, old["revision"] + 1, "evidence-2"))
     path.write_text(json.dumps(new_envelope, separators=(",", ":")), encoding="utf-8")
-    new = core.task_artifact(root, old["revision"], "evidence-2", "evidence.md", "new", producer_role="investigator", supersedes=["evidence-1"])
+    new = core.task_artifact(root, old["revision"], "evidence-2", "evidence.md", "new", producer="investigator", registered_by="controller", supersedes=["evidence-1"])
     actual_new = __import__("hashlib").sha256(path.read_bytes()).hexdigest()
     facts = d11_collector.collect_evidence(root, trusted_events(tmp_path / "events", [
         {"event": "artifact_produced", "artifact_id": "evidence-1"},
@@ -957,7 +957,7 @@ def test_structured_evidence_source_ref_is_resolved_against_actual_bytes(tmp_pat
     }
     artifact_path = root / "evidence.json"
     artifact_path.write_text(json.dumps(envelope, separators=(",", ":")), encoding="utf-8")
-    registered = core.task_artifact(root, started["revision"], "evidence-1", "evidence.json", "bounded fact", producer_role="investigator")
+    registered = core.task_artifact(root, started["revision"], "evidence-1", "evidence.json", "bounded fact", producer="investigator", registered_by="controller")
     sha = __import__("hashlib").sha256(artifact_path.read_bytes()).hexdigest()
     events_dir = tmp_path / "events"
     events_dir.mkdir()

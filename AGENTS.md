@@ -11,7 +11,7 @@ and receives its task plus selected information in
 the Controller's native spawn message. `SubagentStart` validates authorization,
 identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
-and Artifact bodies never enter a child automatically.
+and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer automatically.
 
 Each Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer keeps
 its private working set private. By default it returns a distilled conclusion, key findings,
@@ -53,7 +53,7 @@ rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
 Codex version, host capability, task schema, git/worktree identity,
 hook/profile presence, and the `task-start` error are allowed reads. Once the
 cause is known, do not read user-task repository source, tests, docs, or search
-results. If work continues, use fresh serial Children (`fork_turns="none"`),
+results. If work continues, use fresh serial Investigator, Implementer, and Reviewer sessions (`fork_turns="none"`),
 distilled returns, and a fresh Reviewer; the Controller must not take over
 repository investigation, implementation, or testing merely because NO_TASK
 applies. The final report must not claim managed enforcement was verified.
@@ -61,8 +61,8 @@ If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `context recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.
 Repository investigation, execution, mutation, and testing belong to fresh
-Children. Existing Child threads are never resumed with follow-up/send tools.
-A Child's obvious direct control-context retrieval is allowed and recorded.
+those roles. Existing native Codex child threads are never resumed with follow-up/send tools.
+An Investigator's or Implementer's obvious direct control-context retrieval is allowed and recorded.
 Investigator and Implementer reads remain telemetry-only; Curator, Reasoning
 Specialist, and Reviewer extra reads produce at most one bounded aggregate
 Controller notice per pending batch. Obvious attempts to mutate
@@ -72,13 +72,13 @@ developer-instruction plus obvious-write hook guard, not a claimed native
 read-only sandbox. Starting managed mode requires a current-session,
 current-hook, one-shot PreToolUse attestation.
 
-Managed children are serial. Spawn authorization, native identity binding,
+Managed native Codex child lifecycles are serial. Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
 mechanical. SubagentStop alone is not success; only an explicitly observed
 native Completed status can satisfy lifecycle completion. A short native wait
-is normalized only while an authorized reservation or managed child is pending
+is normalized only while an authorized reservation or managed native Codex child is pending
 and the current-session effective maximum is mechanically verified; otherwise
-no automatic long-wait normalization occurs. The Controller interprets Child results,
+no automatic long-wait normalization occurs. The Controller interprets Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 <!-- thaliris:end -->
@@ -91,6 +91,6 @@ projection, automatic Artifact or memory propagation, semantic state
 transitions, verification sufficiency gates, hidden model auditors, or
 benchmark authority to the production package.
 
-Detailed Child work stays private unless explicitly saved as an Artifact.
+Detailed Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer work stays private unless explicitly saved as an Artifact.
 Controller handoffs and retrieval are explicit. Runtime-specific lifecycle and
 role-profile instructions belong in the adapter.

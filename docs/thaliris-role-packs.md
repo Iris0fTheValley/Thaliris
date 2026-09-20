@@ -4,7 +4,7 @@
 Role profiles are native prompt guidance. They do not authorize Core to select,
 filter, complete, or propagate semantic information.
 
-## Shared child contract
+## Shared role contract
 
 - The native Controller spawn message is the sole task-specific input.
 - Keep repository reads, searches, logs, tool output, tests, and intermediate
@@ -14,11 +14,11 @@ filter, complete, or propagate semantic information.
 - Save reusable detail as an optional Artifact and return only its pointer.
 - Do not expect task state, Artifact bodies, memory, milestones, or earlier
   reviews to appear unless the Controller explicitly included them.
-- Do not create child-to-child workflow.
+- Do not create Investigator-to-Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer delegation workflow.
 
 ## Controller
 
-Selects the next Child and all information in its explicit handoff. Interprets
+Selects the next Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer and all information in its explicit handoff. Interprets
 results and mechanical observations, decides what to store or retrieve, and
 decides whether more work is needed or the task is complete.
 
@@ -51,6 +51,6 @@ not route corrections from it.
 
 ## Curator
 
-Curator is an optional ordinary Child for compressing selected findings or
+Curator is an optional ordinary role session for compressing selected findings or
 Artifacts. Its output may itself be an Artifact. There is no Curator-specific
 coverage, snapshot, or supersession state machine in Core.

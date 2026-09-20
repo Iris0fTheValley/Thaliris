@@ -29,7 +29,7 @@ In a fresh session created after normal project-hook review/trust:
   `git log -1 --oneline` and one root output-redirection write were denied by
   `THALIRIS_CONTROLLER_BOUNDARY`; the requested file was not created;
 - the root's native `spawn_agent` call explicitly supplied `fork_turns="none"`;
-- the fresh child self-ran `context prepare --role implementer`, completed, and
+- the fresh native Codex child completed; the removed `context prepare` command was not part of the current protocol, and
   returned a bounded report through native wait;
 - the child made one nested `spawn_agent` attempt, which the current
   `PreToolUse` handler denied with `THALIRIS_CHILD_DELEGATION`; no nested child

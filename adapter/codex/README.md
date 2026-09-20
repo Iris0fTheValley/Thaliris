@@ -10,41 +10,40 @@ semantic handoff. An allowed spawn records a bounded reservation containing
 task/revision, role, producer, handoff ID, payload hash, and creation time.
 
 The matching `SubagentStart` verifies authorization and binds the native agent
-identity. It returns no task-specific `additionalContext` and never invokes
-`core.prepare()`. System/developer instructions, AGENTS, native role profile,
+identity. It returns no task-specific `additionalContext` and never invokes a
+Core context-construction API. System/developer instructions, AGENTS, native role profile,
 tools, and environment remain native context and are outside this regression.
 
 ## Lifecycle
 
-Managed root children must use `fork_turns="none"`, a supported native role
-profile, and an explicit non-empty message. Reservations and started managed
-children are serial. Matching SubagentStart/Stop events bind identity and
+Managed root native Codex child sessions must use `fork_turns="none"`, a supported native role
+profile, and an explicit non-empty message. Reservations and started managed native Codex child sessions are serial. Matching SubagentStart/Stop events bind identity and
 timestamps; bounded native terminal reconciliation handles missing stop
 observations without treating reconciliation as successful work.
 
 The ACTIVE root Controller uses only bounded control-plane commands and
 explicit retrieval. Repository investigation, edits, and tests belong to fresh
-Children. Read-only inspection is prompt policy, not a shell-regex semantic
+Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer sessions. Read-only inspection is prompt policy, not a shell-regex semantic
 classifier.
 
 When native event-driven continuation is unavailable, `wait_agent` is
 automatically normalized to a long wait only when an actual pending reservation
-or managed Child exists and a current-session effective maximum is mechanically
+or managed native Codex child exists and a current-session effective maximum is mechanically
 verified. When that maximum is unavailable, the requested timeout is preserved;
 there is no automatic expansion. Thaliris provides no scheduler or polling
 loop.
 
-## Child results
+## Role results
 
-Role profiles ask a Child to keep its working set private and return a distilled
+Role profiles ask each Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer to keep its working set private and return a distilled
 result plus optional Artifact pointers. This is a prompt convention, not a Core
 result schema. Artifact bodies, memory, milestone text, task history, and prior
-reviews are never automatically added to another Child.
+reviews are never automatically added to another role session.
 
 ## Telemetry
 
 Production hooks may record bounded hashes and lifecycle identities for the
-root prompt, delegation, Child, and result. They do not invoke a model auditor,
+root prompt, delegation, native Codex child, and result. They do not invoke a model auditor,
 block completion based on model judgment, or inject corrections into the
 Controller. Model-based intent evaluation belongs in explicit offline/debug
 work only.

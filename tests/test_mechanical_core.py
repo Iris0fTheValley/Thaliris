@@ -32,12 +32,65 @@ def test_core_has_no_execution_role_context_packet(tmp_path: Path) -> None:
     started = core.task_start(root, "explicit handoff only", "MILESTONE_TEXT", task_input)
     artifact = root / "artifact.md"
     artifact.write_text("ARTIFACT_PRIVATE_SENTINEL", encoding="utf-8")
-    core.task_artifact(root, started["revision"], "details", "artifact.md", "details", producer_role="investigator")
+    core.task_artifact(root, started["revision"], "details", "artifact.md", "details", producer="investigator")
     memory = root / ".agent-memory" / "private.md"
     memory.write_bytes(core._entry("Private", "MEMORY_TEXT"))
 
     assert not hasattr(core, "prepare")
     assert not hasattr(core, "recall")
+
+
+def test_core_mechanically_accepts_opaque_actor_and_provenance(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    actor = "external-orchestrator:42"
+    started = core.task_start(root, "opaque identities", None, write_json(tmp_path / "initial.json", {
+        "records": [{"id": "r1", "kind": "note", "text": "initial"}],
+    }), actor=actor)
+    assert core.task_show(root)["state"]["records"][0]["producer"] == actor
+    updated = core.task_update(root, actor, started["revision"], write_json(tmp_path / "update.json", {
+        "records": [{"id": "r2", "kind": "note", "text": "updated"}],
+    }))
+    artifact = root / "opaque.md"
+    artifact.write_text("body", encoding="utf-8")
+    core.task_artifact(root, updated["revision"], "a1", "opaque.md", "opaque", producer="another-system", registered_by=actor)
+    state = core.task_show(root)["state"]
+    assert state["records"][-1]["producer"] == actor
+    assert state["artifact_refs"][-1]["producer"] == "another-system"
+    assert state["artifact_refs"][-1]["registered_by"] == actor
+
+
+def test_core_source_has_no_controller_role_contract() -> None:
+    source = Path(core.__file__).read_text(encoding="utf-8").lower()
+    assert "controller" not in source
+
+
+def test_adapter_retains_controller_authorization() -> None:
+    assert codex_adapter.controller_actor("controller") == "controller"
+    with pytest.raises(ValueError, match="only Controller"):
+        codex_adapter.controller_actor("implementer")
+
+
+@pytest.mark.parametrize("removed", ["prepare", "recall", "memory-get"])
+def test_cli_rejects_removed_memory_commands(removed: str, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main([removed]) == 2
+    assert removed in capsys.readouterr().out
+
+
+def test_authoritative_prose_uses_role_names_or_explicit_native_child_context() -> None:
+    root = Path(__file__).resolve().parents[1]
+    surfaces = (
+        root / "AGENTS.md", root / "README.md", root / "README.en.md", root / "DESIGN.md",
+        root / "adapter" / "codex" / "README.md", root / "docs" / "thaliris-routing-protocol.md",
+    )
+    for surface in surfaces:
+        text = surface.read_text(encoding="utf-8")
+        assert "Child" not in text, surface
+        for line in text.splitlines():
+            if "child" in line.lower():
+                assert "native Codex child" in line, (surface, line)
+    generated = (root / "src" / "thaliris" / "codex_adapter.py").read_text(encoding="utf-8")
+    assert "Do not delegate to another child" not in generated
+    assert "Shared Child Result" not in generated
 
 
 def test_artifact_freshness_is_observation_only(tmp_path: Path) -> None:
@@ -47,7 +100,7 @@ def test_artifact_freshness_is_observation_only(tmp_path: Path) -> None:
     }))
     artifact = root / "evidence.md"
     artifact.write_text("before", encoding="utf-8")
-    registered = core.task_artifact(root, started["revision"], "evidence", "evidence.md", "evidence", producer_role="investigator")
+    registered = core.task_artifact(root, started["revision"], "evidence", "evidence.md", "evidence", producer="investigator")
     artifact.write_text("after", encoding="utf-8")
 
     shown = core.task_show(root)
@@ -306,7 +359,7 @@ def test_promoted_provenance_survives_task_state_and_round_trips(tmp_path: Path)
     artifact_path.write_text("artifact details", encoding="utf-8")
     registered = core.task_artifact(
         root, started["revision"], "artifact-7", "details.md", "details",
-        producer_role="investigator", evidence_refs=["source-1"],
+        producer="investigator", evidence_refs=["source-1"],
     )
     promotion = write_json(root.parent / "durable.json", {"records": [{
         "id": "durable-decision",
@@ -808,8 +861,6 @@ def test_final_durable_symlink_is_rejected_while_surface_observes_it(tmp_path: P
         link.symlink_to(source)
     except OSError:
         pytest.skip("symlinks unavailable")
-    with pytest.raises(ValueError, match="memory entry not found"):
-        core.memory_get(root, ".agent-memory/x.md")
     with pytest.raises(ValueError, match="durable document not found"):
         core.document_get(root, ".agent-memory/x.md")
     observed = core._surface_identity(root, ".agent-memory/x.md", "??")
@@ -980,13 +1031,13 @@ def test_artifact_identity_provenance_supersession_and_history(tmp_path: Path) -
     first_path.write_text("first body", encoding="utf-8")
     first = core.task_artifact(
         root, started["revision"], "a1", "first.md", "first",
-        producer_role="investigator", evidence_refs=["source-1"],
+        producer="investigator", evidence_refs=["source-1"],
     )
     second_path = root / "second.md"
     second_path.write_text("second body", encoding="utf-8")
     second = core.task_artifact(
         root, first["revision"], "a2", "second.md", "replacement",
-        producer_role="curator", supersedes=["a1"],
+        producer="curator", supersedes=["a1"],
     )
 
     artifacts = core.task_show(root)["state"]["artifact_refs"]

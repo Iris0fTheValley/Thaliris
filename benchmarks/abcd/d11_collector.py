@@ -183,14 +183,9 @@ def _root_spawn_attribution(event: dict[str, Any]) -> str:
         return "ROOT" if actor == "root" else "NON_ROOT"
     if actor is not None:
         return "AMBIGUOUS"
-    agent_id = event.get("agent_id")
-    if agent_id == "root":
-        return "ROOT"
-    # Native root spawn observations may name the newly-created child rather
-    # than their root actor.  A root-turn binding makes that record shape
-    # mechanically distinguishable; child ids alone never establish actor.
-    if isinstance(agent_id, str) and agent_id and _valid_root_turn(event.get("root_turn")):
-        return "ROOT"
+    # ``agent_id`` can identify the spawned child, and ``root_turn`` is not
+    # bound to an actor by the rollout capture schema.  Neither establishes a
+    # root-originating spawn without the capture's explicit actor field.
     return "AMBIGUOUS"
 
 

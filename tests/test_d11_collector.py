@@ -136,11 +136,28 @@ def test_rollout_delegation_metrics_are_mechanical_and_exclude_bootstrap_reads(t
     }
 
 
-def test_rollout_metrics_recognize_native_root_spawn_that_names_child_agent(tmp_path: Path) -> None:
+def test_rollout_metrics_mark_child_agent_root_turn_attribution_unavailable(tmp_path: Path) -> None:
     stream = tmp_path / "rollout-child-agent.jsonl"
     stream.write_text("".join(json.dumps(event) + "\n" for event in [
         {"event": "tool_observation", "tool": "rg", "root_turn": 1, "output_bytes": 7},
         {"event": "tool_observation", "tool": "spawn_agent", "agent_id": "child-1", "root_turn": 2},
+        {"event": "tool_observation", "tool": "rg", "root_turn": 3, "output_bytes": 99},
+    ]), encoding="utf-8")
+    metrics = d11_collector.collect_delegation_rollout_metrics(
+        d11_collector.load_test_events([{"kind": "codex_rollout", "path": stream}])
+    )
+    assert metrics == {
+        "FIRST_CHILD_SPAWN_ROOT_TURN": "UNAVAILABLE",
+        "PRE_DELEGATION_REPO_READ_CALLS": "UNAVAILABLE",
+        "PRE_DELEGATION_REPO_OUTPUT_BYTES": "UNAVAILABLE",
+    }
+
+
+def test_rollout_metrics_accept_explicit_root_actor_for_child_spawn(tmp_path: Path) -> None:
+    stream = tmp_path / "rollout-explicit-root-actor.jsonl"
+    stream.write_text("".join(json.dumps(event) + "\n" for event in [
+        {"event": "tool_observation", "tool": "rg", "root_turn": 1, "output_bytes": 7},
+        {"event": "tool_observation", "tool": "spawn_agent", "actor": "root", "agent_id": "child-1", "root_turn": 2},
         {"event": "tool_observation", "tool": "rg", "root_turn": 3, "output_bytes": 99},
     ]), encoding="utf-8")
     metrics = d11_collector.collect_delegation_rollout_metrics(

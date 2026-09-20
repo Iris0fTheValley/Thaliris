@@ -12,7 +12,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import unicodedata
 import uuid
 
 from .markdown import Entry, durable_descriptors, evidence_status, freshness_detail_budget_placeholder, parse, parse_text
@@ -137,51 +136,26 @@ def _apply_with_backup(root: Path, writes: dict[str, bytes], deletes: list[str],
     return backup_id
 
 
-def _entry(title: str, body: str, *, status: str = "DRAFT", evidence: str = "NONE", confidence: str = "UNVERIFIED", applicability: str = "PROJECT", audience: list[str] | None = None, topics: list[str] | None = None, symbols: list[str] | None = None, kind: str | None = None, include_routing: bool = True) -> bytes:
-    audience = ["all"] if audience is None else audience
-    topics = [] if topics is None else topics
-    symbols = [] if symbols is None else symbols
+def _entry(title: str, body: str, *, status: str = "DRAFT", evidence: str = "NONE") -> bytes:
     for field, value, maximum in (
         ("title", title, 300),
         ("status", status, 128),
         ("evidence", evidence, 65_536),
-        ("confidence", confidence, 128),
-        ("applicability", applicability, 128),
     ):
         if not isinstance(value, str) or not value.strip() or len(value) > maximum or "\n" in value or "\r" in value:
             raise ValueError(f"invalid durable {field}")
     if not isinstance(body, str):
         raise ValueError("invalid durable body")
-    if kind is not None and (not isinstance(kind, str) or not kind.strip() or len(kind) > 128 or "\n" in kind or "\r" in kind):
-        raise ValueError("invalid durable kind")
-    for field, values in (("audience", audience), ("topics", topics), ("symbols", symbols)):
-        if not isinstance(values, list) or len(values) > 64 or any(
-            not isinstance(item, str) or not item.strip() or len(item) > 256 or "\n" in item or "\r" in item
-            for item in values
-        ):
-            raise ValueError(f"invalid durable {field}")
-    optional = ""
-    for key, value in (("Audience", audience), ("Topics", topics), ("Symbols", symbols)):
-        if not include_routing:
-            continue
-        if value is not None:
-            optional += f"{key}: {json.dumps(value, ensure_ascii=False)}\n"
-    kind_line = f"Kind: {kind}\n" if kind is not None else ""
-    rendered = f"---\nEvidence: {evidence}\nRevision: 1\nStatus: {status}\nApplicability: {applicability}\nConfidence: {confidence}\n{kind_line}{optional}---\n\n# {title}\n\n{body}\n"
+    rendered = f"---\nEvidence: {evidence}\nRevision: 1\nStatus: {status}\n---\n\n# {title}\n\n{body}\n"
     parse_text(rendered)
     return rendered.encode()
 
 
 def _template_files() -> dict[str, bytes]:
-    def template(title: str, body: str, **kwargs: object) -> bytes:
-        kind = kwargs.pop("kind")
-        return _entry(title, body, kind=kind, **kwargs)
     return {
-        ".agent-memory/INDEX.md": template(
+        ".agent-memory/INDEX.md": _entry(
             "Durable memory index",
             "Maintain a thin global map here. The model chooses directory names, hierarchy, and document links.",
-            audience=["all"],
-            kind="MEMORY",
         ),
         ".milestones/INDEX.md": _entry(
             "Milestone index",
@@ -319,7 +293,7 @@ def stale(root: Path) -> dict[str, object]:
     result = []
     for entry in entries(root):
         state, details = evidence_status(entry, root)
-        result.append({"path": str(entry.path.relative_to(root)).replace("\\", "/"), "state": state, "detail": details, "metadata_confidence": entry.meta["Confidence"]})
+        result.append({"path": str(entry.path.relative_to(root)).replace("\\", "/"), "state": state, "detail": details})
     return {"ok": True, "entries": result, "not_fresh": sum(x["state"] in {"CHANGED", "MISSING"} for x in result)}
 
 
@@ -335,8 +309,6 @@ SURFACE_MAX_ENTRIES = 512
 SURFACE_MAX_BYTES = 128 * 1024
 SURFACE_MAX_FILE_BYTES = 4 * 1024 * 1024
 SURFACE_MAX_TOTAL_FILE_BYTES = 16 * 1024 * 1024
-_PACK_ROLES = {"controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"}
-_EXECUTION_ROLES = _PACK_ROLES - {"controller"}
 _STATE_FIELDS = {
     "schema_version", "revision", "task_id", "status", "goal", "current_milestone",
     "records", "active_work", "pending_results", "artifact_refs", "evidence_refs",
@@ -1103,7 +1075,7 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
         for value in payload["records"]:
             if not isinstance(value, dict):
                 raise ValueError("invalid promotion record")
-            allowed = {"id", "path", "kind", "title", "text", "source_refs", "status", "audience", "topics", "symbols", "applicability", "confidence"}
+            allowed = {"id", "path", "title", "text", "source_refs", "status"}
             if set(value) - allowed or "path" not in value:
                 raise ValueError("invalid promotion record")
             identifier = _bounded_label(value.get("id"), "promotion id")
@@ -1138,8 +1110,6 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
                     "summary": source["summary"],
                     "source_refs": source.get("source_refs", []),
                 }
-                if "confidence" in source:
-                    descriptor["confidence"] = source["confidence"]
                 descriptors.append(descriptor)
                 for parent_ref in source.get("source_refs", []):
                     append_source_descriptor(str(parent_ref))
@@ -1175,13 +1145,7 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
             target = _safe_without_final_symlink(root, relative)
             if target.exists():
                 raise ValueError("promotion refuses to overwrite an existing durable target")
-            kind = value.get("kind", "record")
             status = value.get("status", "ACTIVE")
-            confidence = value.get("confidence", "MODEL_AUTHORED")
-            applicability = value.get("applicability", "PROJECT")
-            audience = value.get("audience", ["all"])
-            topics = value.get("topics", [])
-            symbols = value.get("symbols", [])
             durable_body = text
             if descriptors:
                 durable_body += "\n\n## Durable Source Descriptors\n\n```json\n" + json.dumps(descriptors, ensure_ascii=False, sort_keys=True, indent=2) + "\n```"
@@ -1190,12 +1154,6 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
                 durable_body,
                 status=status,
                 evidence="DURABLE_SOURCE_DESCRIPTORS" if descriptors else "NONE",
-                confidence=confidence,
-                applicability=applicability,
-                audience=audience,
-                topics=topics,
-                symbols=symbols,
-                kind=kind,
             )
             # Build the same item and response that document-get will return.
             # A file-size check alone misses metadata, freshness, and expanded
@@ -1252,88 +1210,6 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
             writes[index_updated] = encoded
         backup = _apply_with_backup(root, writes, [], "task-promote")
     return {"ok": True, "task_id": state["task_id"], "state_revision": state["revision"], "promoted": promoted, "index_updated": index_updated, "backup": backup}
-
-
-def _tokens(text: str) -> set[str]:
-    normalized = unicodedata.normalize("NFKC", text).casefold()
-    return {token for token in re.findall(r"[\w.-]+", normalized) if len(token) > 1}
-
-
-def _memory_candidates(root: Path, query: str) -> list[dict[str, object]]:
-    wanted = _tokens(query)
-    candidates: list[dict[str, object]] = []
-    for entry in entries(root):
-        relative = entry.path.relative_to(root).as_posix()
-        searchable = " ".join((
-            relative,
-            entry.path.stem,
-            entry.body,
-            json.dumps(entry.meta.get("Topics", []), ensure_ascii=False),
-            json.dumps(entry.meta.get("Symbols", []), ensure_ascii=False),
-        ))
-        score = len(wanted & _tokens(searchable)) if wanted else 0
-        if wanted and score == 0:
-            continue
-        freshness, detail = evidence_status(entry, root)
-        candidates.append({
-            "path": relative,
-            "title": entry.path.stem,
-            "status": entry.meta.get("Status"),
-            "kind": entry.meta.get("Kind"),
-            "confidence": entry.meta.get("Confidence"),
-            "audience": entry.meta.get("Audience"),
-            "topics": entry.meta.get("Topics", []),
-            "symbols": entry.meta.get("Symbols", []),
-            "applicability": entry.meta.get("Applicability"),
-            "freshness": freshness,
-            "freshness_detail": detail,
-            "score": score,
-        })
-    return sorted(candidates, key=lambda item: (-int(item["score"]), str(item["path"])))
-
-
-def recall(root: Path, query: str, role: str) -> dict[str, object]:
-    """Explicit memory search. Metadata is a search hint, never a permission gate."""
-    if role not in _PACK_ROLES:
-        raise ValueError("invalid role")
-    root = _repo_root(root)
-    result = {
-        "ok": True,
-        "schema_version": 2,
-        "role_hint": role,
-        "query": query,
-        "candidates": _memory_candidates(root, query),
-    }
-    if len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > EXPLICIT_DOCUMENT_MAX_BYTES:
-        raise ValueError(f"recall response exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes; refine the explicit query")
-    return result
-
-
-def memory_get(root: Path, path: str) -> dict[str, object]:
-    """Explicitly retrieve one memory document by its repo-relative address."""
-    root = _repo_root(root)
-    _valid_relative(root, path)
-    if not path.startswith(".agent-memory/"):
-        raise ValueError("memory path must be under .agent-memory")
-    try:
-        target = _safe_without_final_symlink(root, path)
-    except ValueError as exc:
-        raise ValueError("memory entry not found") from exc
-    if not target.is_file():
-        raise ValueError("memory entry not found")
-    if target.stat().st_size > EXPLICIT_DOCUMENT_MAX_BYTES:
-        raise ValueError(f"memory entry exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
-    entry = parse(target)
-    freshness, detail = evidence_status(entry, root)
-    return {
-        "ok": True,
-        "path": path,
-        "title": entry.path.stem,
-        "metadata": entry.meta,
-        "body": entry.body,
-        "freshness": freshness,
-        "freshness_detail": detail,
-    }
 
 
 def _durable_relative_path(root: Path, path: str) -> tuple[str, Path]:
@@ -1394,7 +1270,7 @@ def _catalog_index(root: Path, relative: str) -> tuple[dict[str, object], list[s
     return {
         "path": index_relative,
         "title": heading.group(1) if heading else index.parent.name,
-        "metadata": {key: parsed.meta[key] for key in ("Kind", "Status", "Revision") if key in parsed.meta},
+        "metadata": {key: parsed.meta[key] for key in ("Status", "Revision")},
         "map": parsed.body,
         "link_count": len(re.findall(r"\[[^]]+\]\(([^)]+)\)", parsed.body)),
         "state": "VALID" if not errors else "BROKEN_REFERENCES",
@@ -1539,33 +1415,6 @@ def document_get(root: Path, paths: str | list[str]) -> dict[str, object]:
         if _document_response_size(response) > EXPLICIT_DOCUMENT_MAX_BYTES:
             raise ValueError(f"document-get response exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
     return {"ok": True, "documents": documents}
-
-
-def prepare(root: Path, task: str | None, role: str, *, include_protocol_notice: bool = True) -> dict[str, object]:
-    """Return Controller state or a context-free execution-role marker.
-
-    Execution roles receive their task-specific information only in the native
-    Controller handoff. This command never rebuilds task, memory, milestone,
-    artifact, finding, or review context for a child.
-    """
-    if role not in _PACK_ROLES:
-        raise ValueError("invalid role")
-    root = _repo_root(root)
-    if role == "controller":
-        if task is None:
-            return task_status(root)
-        return {
-            "ok": True,
-            "schema_version": _STATE_SCHEMA_VERSION,
-            "role": "controller",
-            "Task": {"id": None, "goal": task, "status": "UNBOUND", "revision": None, "milestone": None},
-        }
-    return {
-        "ok": True,
-        "schema_version": _STATE_SCHEMA_VERSION,
-        "role": role,
-        "task_specific_context": "CONTROLLER_HANDOFF_ONLY",
-    }
 
 
 def milestone_check(root: Path) -> dict[str, object]:

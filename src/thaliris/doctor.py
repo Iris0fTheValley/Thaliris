@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import tomllib
@@ -199,35 +198,12 @@ def _version(command: str) -> str:
     except (OSError, subprocess.SubprocessError): return UNKNOWN
 
 
-def _adapter(name: str, expected: str, entry: object | None, project_enabled: bool | None, probe: bool) -> dict[str, str]:
-    result = _states("YES" if entry is not None else "NO", "UNKNOWN" if project_enabled is None else ("YES" if project_enabled else "NO"))
-    result["installed"] = "YES" if shutil.which(name) else "NO"
-    result["version"] = _version(name) if probe else UNKNOWN
-    result["expected_version"] = expected
-    matches_expected = re.search(rf"(?<![0-9.]){re.escape(expected)}(?![0-9.])", result["version"]) is not None
-    result["version_validated"] = "UNKNOWN" if result["version"] == UNKNOWN else ("YES" if matches_expected else "NO")
-    return result
-
-
 def report(root: Path) -> dict[str, object]:
-    raw, codex_configured = _codex_config(); servers = raw.get("mcp_servers") if isinstance(raw, dict) else None
-    lookup = lambda name: servers.get(name) if isinstance(servers, dict) else None
+    raw, codex_configured = _codex_config()
     try:
-        project_config = ContextConfig.load(root); context_config = "YES"
-        enabled = lambda name: project_config.adapters.get(name, False)
-        probes = project_config.adapter_probes
+        ContextConfig.load(root); context_config = "YES"
     except ValueError:
-        project_config = None; context_config = "NO"
-        enabled = lambda name: None
-        probes = False
-    serena = _adapter("serena", "1.7.0", lookup("serena"), enabled("serena"), probes)
-    cachebro = _adapter("cachebro", "0.2.2", lookup("cachebro"), enabled("cachebro"), probes)
-    agentmemory = _adapter("agentmemory", "0.9.29", lookup("agentmemory"), enabled("agentmemory"), probes)
-    serena["activation"] = "YES" if any((root / ".serena" / n).is_file() for n in ("project.yml", "project.yaml")) else "NO"
-    cache_entry = lookup("cachebro")
-    cachebro["cache"] = "YES" if isinstance(cache_entry, dict) and (cache_entry.get("cache") is True or isinstance(cache_entry.get("cache_path"), str)) else UNKNOWN
-    agentmemory["automatic_injection"] = "UNKNOWN" if project_config is None else ("YES" if project_config.automatic_injection else "NO")
-    agentmemory["automatic_compression"] = "UNKNOWN" if project_config is None else ("YES" if project_config.automatic_compression else "NO")
+        context_config = "NO"
     model = raw.get("model", UNKNOWN) if isinstance(raw.get("model", UNKNOWN), str) else UNKNOWN
     reasoning = raw.get("model_reasoning_effort", UNKNOWN) if isinstance(raw.get("model_reasoning_effort", UNKNOWN), str) else UNKNOWN
     memory, milestones = (root / ".agent-memory").is_dir(), (root / ".milestones").is_dir()
@@ -288,4 +264,4 @@ def report(root: Path) -> dict[str, object]:
     }
     lifecycle = hooks_health(root)
     isolation = _context_isolation(root)
-    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "adapters": {"serena": serena, "cachebro": cachebro, "agentmemory": agentmemory}, "lifecycle_hooks": lifecycle, "context_isolation": isolation, "controller_boundary": {"observed": _controller_boundary_evidence(root)}, "host_capability": _host_capability(root, hooks=lifecycle, lifecycle={"start": False, "stop": False}, events=set()), "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}
+    return {"ok": True, "codex": {"version": _version("codex"), "model_configured": model, "reasoning_configured": reasoning, "configured": "YES" if codex_configured else "NO"}, "subagents": {"status": UNKNOWN}, "lifecycle_hooks": lifecycle, "context_isolation": isolation, "controller_boundary": {"observed": _controller_boundary_evidence(root)}, "host_capability": _host_capability(root, hooks=lifecycle, lifecycle={"start": False, "stop": False}, events=set()), "context": {"config": context_config, "agents": agents_state, "memory": memory_state, "milestones": milestone_state, "task_state": task, "ready_for_routing": routing_ready, "routing": routing}, "fallbacks": {"rg": "YES" if shutil.which("rg") else "NO", "git": "YES" if shutil.which("git") else "NO"}}

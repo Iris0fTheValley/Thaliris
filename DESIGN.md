@@ -82,7 +82,7 @@ missing-stop reconciliation, Reviewer developer instructions plus an
 obvious-write guard, and explicit blocking wait normalization. The current
 stable Host does not provide an independent role-level read-only sandbox.
 
-`SubagentStart` is lifecycle-only. It never calls `core.prepare()` and never
+`SubagentStart` is lifecycle-only. It never constructs a context packet and never
 returns task-specific `additionalContext`.
 
 ## Mechanical objects
@@ -113,11 +113,10 @@ conclusion.
 Memory is explicit storage and retrieval. The model maintains the directory
 tree and its canonical `.agent-memory/INDEX.md` and `.milestones/INDEX.md`
 maps; Core imposes no taxonomy and does not recursively scan the filesystem to
-derive another catalog. Search returns candidates, while `document-get`
+derive another catalog. `document-get`
 returns only 1–8 Controller-selected paths under one total response bound.
-Audience, Topics, Symbols, Applicability, Kind, Status, and Confidence are
-model-authored display/search metadata, not propagation permissions or
-semantic gates.
+Status is a bounded record label. Legacy metadata is preserved as opaque
+compatibility data, not propagation permissions or semantic gates.
 
 SessionStart points Root only to the two root INDEX paths; it does not inject
 their bodies. Before a managed task, the Controller explicitly reads that
@@ -132,7 +131,7 @@ role context or treat them as semantic authority.
 
 `task-promote` stores exactly the Controller-selected record at the explicit
 `.agent-memory/**.md` path chosen by the Controller, with identity and source
-references. It does not classify by Kind or decide whether confidence or
+references. It does not classify by document metadata or decide whether
 evidence makes that record legitimate. Models may create, edit, move, split,
 merge, or delete durable documents through normal repository changes; INDEX
 validation reports broken references without choosing a replacement.

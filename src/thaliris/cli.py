@@ -8,7 +8,7 @@ import sys
 
 from . import __version__
 from . import codex_adapter, lifecycle
-from .core import artifact_get, catalog, document_get, memory_get, milestone_check, prepare, recall, rollback, stale, task_artifact, task_get, task_promote, task_show, task_status, task_update
+from .core import artifact_get, catalog, document_get, milestone_check, rollback, stale, task_artifact, task_get, task_promote, task_show, task_status, task_update
 
 
 class _Parser(argparse.ArgumentParser):
@@ -34,15 +34,6 @@ def _parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
     for name in ("init", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
         sub.add_parser(name)
-    q = sub.add_parser("prepare")
-    q.add_argument("task", nargs="?")
-    q.add_argument("--role", required=True, choices=codex_adapter.ROLE_CHOICES)
-    q.add_argument("--suppress-protocol-notice", action="store_true", help=argparse.SUPPRESS)
-    q = sub.add_parser("recall", help="explicitly search retained durable memory")
-    q.add_argument("query")
-    q.add_argument("--role", required=True, choices=codex_adapter.ROLE_CHOICES)
-    q = sub.add_parser("memory-get", help="explicitly retrieve one memory document")
-    q.add_argument("path")
     q = sub.add_parser("catalog", help="discover bounded durable document metadata")
     q.add_argument("path", nargs="?")
     q = sub.add_parser("document-get", help="retrieve 1 to 8 explicitly selected durable documents")
@@ -121,9 +112,6 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "memory-status":
             data = stale(root); out = {"ok": data["ok"], "entries": len(data["entries"]), "not_fresh": data["not_fresh"]}
         elif args.command == "milestone-check": out = milestone_check(root)
-        elif args.command == "prepare": out = prepare(root, args.task, codex_adapter.semantic_role(args.role), include_protocol_notice=not args.suppress_protocol_notice)
-        elif args.command == "recall": out = recall(root, args.query, codex_adapter.semantic_role(args.role))
-        elif args.command == "memory-get": out = memory_get(root, args.path)
         elif args.command == "catalog": out = catalog(root, args.path)
         elif args.command == "document-get": out = document_get(root, args.path)
         elif args.command == "task-start": out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.hook_attestation)

@@ -23,7 +23,7 @@ Child
 
 Controller 的原生 spawn message 是 Child 唯一的 task-specific 语义输入。
 `SubagentStart` 只验证授权、身份、角色与 session，绑定 lifecycle 和 handoff
-metadata；它不调用 `prepare`，也不返回 task-specific `additionalContext`。
+metadata；它不构建 task-specific `additionalContext`。
 
 不存在以下生产路径：
 
@@ -46,7 +46,7 @@ Core 只提供：
 - hash、provenance、supersedes/history
 - 文件的 `FRESH` / `PARTIAL` / `RECORDED` / `CHANGED` / `MISSING` / `UNKNOWN` 客观事实
 - verification 与 task surface 的机械 observation
-- 显式 store / list / search / get
+- 显式 store / catalog / exact-path get
 
 Core 不判断 relevance、importance、correctness、role applicability、task
 completion，也不根据 stale evidence 自动改写 decision、constraint 或 workflow。
@@ -84,8 +84,8 @@ Memory 默认不注入。模型自行维护 `.agent-memory/INDEX.md` 和
 限制；它不自动搜索、排序或补充文档。ACTIVE Controller 使用 bounded
 `task-status` 和单对象 `task-get`；`init`、`uninstall`、`rollback`、再次
 `task-start` 与完整 `task-show` 均不属于 ACTIVE allow-set。
-Audience、Topics、Symbols、Applicability、Kind、Status 与 Confidence 仅是模型写入
-的搜索或展示 metadata，不是传播权限。
+`Status` 是有界的记录标签。旧文档中的其它 metadata 仍可读取，但只作为不透明兼容字段，
+不是传播权限。
 
 Milestone 是普通长期文档。Curator 是普通可选 Child。`task-promote` 保存
 Controller 明确选择的记录；Core 不裁决其 epistemic legitimacy。
@@ -112,8 +112,6 @@ context task-update --role controller --base-revision N --input update.json
 context task-artifact --base-revision N --id A-001 --path path/to/file.md --summary "..."
 context catalog
 context document-get .agent-memory/model-chosen/a.md .milestones/current/status.md
-context recall "query" --role controller
-context memory-get memory/path.md
 context task-promote --role controller --base-revision N --input promotion.json
 context task-close --base-revision N
 context recover-pending-spawn HANDOFF_ID
@@ -123,9 +121,8 @@ context doctor
 ```
 
 `task-promote` 输入中的每条记录必须由 Controller 明确给出 `.agent-memory/**.md`
-目标 path；Core 不按 Kind 自动分类。`prepare --role <execution-role>` 只返回
-`CONTROLLER_HANDOFF_ONLY` 标记，不重建
-task context。
+目标 path；Core 不按文档 metadata 自动分类。Controller 的 native handoff 是
+Investigator、Curator、Reasoning Specialist、Implementer 与 Reviewer 的唯一工作输入。
 
 ## Benchmark 边界
 

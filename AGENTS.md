@@ -5,15 +5,16 @@ Codex is the runtime. Thaliris provides durable records, identities, revisions,
 hashes, provenance, objective freshness observations, explicit retrieval, and
 native lifecycle binding. It is not a semantic decision engine.
 
-The Controller is the sole task-specific semantic router. Every root child is
-fresh (`fork_turns="none"`) and receives its task plus selected information in
+The Controller is the sole task-specific semantic router. Every fresh Investigator,
+Curator, Reasoning Specialist, Implementer, and Reviewer uses `fork_turns="none"`
+and receives its task plus selected information in
 the Controller's native spawn message. `SubagentStart` validates authorization,
 identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
 and Artifact bodies never enter a child automatically.
 
-A Child keeps its investigation, tool output, tests, and intermediate working
-set private. By default it returns a distilled conclusion, key findings,
+Each Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer keeps
+its private working set private. By default it returns a distilled conclusion, key findings,
 decision-changing unknowns or contradictions, verification performed, and
 optional Artifact pointers. Detailed reusable material may be saved in a
 repo-relative Artifact. The Controller decides whether to register or retrieve
@@ -22,9 +23,8 @@ registration stores address, producer, revision, hash, provenance, and optional
 supersession only; it does not interpret the body.
 
 Memory and milestones are ordinary explicit storage. Search results and
-Audience, Topics, Symbols, Applicability, Kind, Status, and Confidence metadata
-are hints for models and displays, never routing permissions or correctness
-gates. Freshness reports only FRESH, PARTIAL, RECORDED, CHANGED, MISSING, or
+Status is a bounded mechanical record label. Legacy metadata remains readable
+as opaque compatibility data, never routing authority. Freshness reports only FRESH, PARTIAL, RECORDED, CHANGED, MISSING, or
 UNKNOWN mechanical facts. `.agent-memory/INDEX.md` and
 `.milestones/INDEX.md` are model-maintained thin global maps of the durable
 tree; Core does not reconstruct a second catalog by recursively scanning the
@@ -33,7 +33,7 @@ filesystem or impose a taxonomy. SessionStart only points to these maps; before
 is missing it establishes a minimal thin INDEX first. During an active task,
 navigation is not reread automatically; the Controller may reread it when the
 map changed, is insufficient, freshness is invalid, or work is resumed after
-compaction. The Controller explicitly uses `catalog`, `recall`, or
+compaction. The Controller explicitly uses `catalog` or
 `document-get` to retrieve selected durable material. A single bounded
 `document-get` may name up to eight explicit paths; it never searches, ranks,
 or supplements the selection.
@@ -46,7 +46,7 @@ transparent. During an ACTIVE managed task the persistent Controller uses only
 native spawn/wait/list/interrupt operations and an explicit allow-set of
 trusted direct `context` runtime commands. `init`, `uninstall`, `rollback`, a
 second `task-start`, and `task-show` are blocked for ACTIVE Root. `task-status`
-is bounded; `task-get`, `artifact-get`, `catalog`, `recall`, and `document-get`
+is bounded; `task-get`, `artifact-get`, `catalog`, and `document-get`
 retrieve explicitly selected objects.
 If `task-start` was attempted but managed enforcement is unavailable or
 rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:

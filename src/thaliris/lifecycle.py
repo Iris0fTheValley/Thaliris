@@ -77,18 +77,17 @@ _OBVIOUS_WRITE = re.compile(
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
 _CONTEXT_OPERATIONS = frozenset({
     "init", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
-    "prepare", "recall", "memory-get", "task-start", "task-update", "task-show",
+    "task-start", "task-update", "task-show",
     "task-status", "task-get", "artifact-get", "catalog", "document-get",
     "task-artifact", "task-close", "task-promote", "recover-pending-spawn", "rollback", "version",
 })
 _ACTIVE_ROOT_CONTEXT_OPERATIONS = frozenset({
-    "doctor", "milestone-check", "memory-status", "prepare", "recall",
-    "memory-get", "task-update", "task-status", "task-get", "artifact-get",
+    "doctor", "milestone-check", "memory-status", "task-update", "task-status", "task-get", "artifact-get",
     "catalog", "document-get", "task-artifact", "task-close", "task-promote",
     "recover-pending-spawn", "version",
 })
 _CHILD_CONTEXT_READS = frozenset({
-    "task-show", "task-status", "recall", "memory-get", "prepare", "stale",
+    "task-show", "task-status", "stale",
     "memory-status", "milestone-check", "task-get", "artifact-get", "catalog",
     "document-get",
 })
@@ -1353,7 +1352,7 @@ def _context_call(payload: dict[str, Any]) -> tuple[str | None, list[str]]:
         operands = [value.strip("\"'")[:256] for value in tokens[index + 1:] if value and not value.startswith("--")]
         if token == "document-get":
             return token, operands[:8]
-        if token in {"task-get", "artifact-get", "memory-get", "catalog", "recall", "recover-pending-spawn"}:
+        if token in {"task-get", "artifact-get", "catalog", "recover-pending-spawn"}:
             return token, operands[:1]
         return token, []
     return None, []
@@ -1451,7 +1450,7 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
                 blocked=False,
                 notify_controller=role in {"reviewer", "reasoning-specialist", "curator"},
             )
-        if operation in {"task-status", "prepare"}:
+        if operation == "task-status":
             return _updated_command_output(payload, "--suppress-protocol-notice")
         return ""
     target = _control_state_target(payload)

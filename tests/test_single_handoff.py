@@ -107,7 +107,6 @@ def test_session_start_points_to_root_navigation_without_injecting_map(tmp_path:
         "Global map",
         "Implementation target: [Target](model-tree/deep/target.md)",
         evidence="NONE",
-        kind="MEMORY",
     ))
 
     def no_recursive_scan(*args, **kwargs):
@@ -339,7 +338,7 @@ def test_session_start_does_not_inject_large_root_map_or_document_body(tmp_path:
     target.write_bytes(core._entry("Selected", "PRIVATE_DOCUMENT_BODY", evidence="NONE"))
     route = "[Selected](selected.md)\n\n" + ("model-authored-routing-hint " * 160)
     index = root / ".agent-memory" / "INDEX.md"
-    index.write_bytes(core._entry("Global map", route, evidence="NONE", kind="MEMORY"))
+    index.write_bytes(core._entry("Global map", route, evidence="NONE"))
     assert core.DURABLE_INDEX_RECOMMENDED_BYTES < index.stat().st_size < core.DURABLE_INDEX_HARD_MAX_BYTES
 
     output = json.loads(handle_hook(root, "SessionStart", hook_payload(source="startup")))

@@ -687,6 +687,8 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
         profile = codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort).decode()
         assert "sole task-specific input" in profile
         assert "distilled result" in profile
+        assert "another native Codex child session" not in profile
+        assert "another authorized native Codex role session" in profile
         assert "sandbox_mode" not in profile
         for removed in ("context prepare --role", "REVALIDATION_REQUIRED", "MECHANICAL or LOCAL_SEMANTIC"):
             assert removed not in profile
@@ -773,8 +775,9 @@ def test_pending_spawn_recovery_rejects_handoff_already_bound_to_child(tmp_path:
     assert handle_hook(root, "PreToolUse", spawn) == ""
     handoff_id = lifecycle(root)["pending_authorized_spawn"]["handoff_id"]
     assert handle_hook(root, "SubagentStart", hook_payload(agent_id="bound-child", agent_type="worker")) == ""
-    with pytest.raises(ValueError, match="already bound"):
+    with pytest.raises(ValueError, match="already bound") as error:
         lifecycle_module.recover_pending_spawn(root, handoff_id)
+    assert "authorized native Codex role session" in str(error.value)
     assert lifecycle(root)["children"][-1]["managed"] is True
 
 

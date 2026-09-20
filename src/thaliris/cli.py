@@ -28,7 +28,13 @@ def _task_status(root: Path, *, suppress_protocol_notice: bool) -> dict[str, obj
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = _Parser(prog="context", description="Thaliris: Git-native context packs for Codex workflows")
+    p = _Parser(
+        prog="context",
+        description=(
+            "Thaliris: durable records, identities, provenance, explicit retrieval, "
+            "and lifecycle binding for Codex workflows"
+        ),
+    )
     p.add_argument("--pretty", action="store_true")
     p.add_argument("--root", type=Path, default=Path.cwd())
     sub = p.add_subparsers(dest="command", required=True)

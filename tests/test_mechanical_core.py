@@ -88,6 +88,18 @@ def test_public_role_ingress_is_exactly_the_six_thaliris_roles(capsys: pytest.Ca
     assert "invalid choice" in capsys.readouterr().out
 
 
+def test_context_help_describes_mechanical_purpose_without_context_packs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit, match="0"):
+        cli.main(["--help"])
+    help_text = capsys.readouterr().out
+    assert "context pack" not in help_text.lower()
+    for phrase in ("durable records", "identities", "provenance", "explicit retrieval", "lifecycle binding"):
+        assert phrase in help_text
+    assert "semantic routing" not in help_text.lower()
+
+
 @pytest.mark.parametrize("removed", ["prepare", "recall", "memory-get"])
 def test_cli_rejects_removed_memory_commands(removed: str, capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main([removed]) == 2
@@ -108,6 +120,8 @@ def test_authoritative_prose_uses_role_names_or_explicit_native_child_context() 
                 assert "native Codex child" in line, (surface, line)
     generated = (root / "src" / "thaliris" / "codex_adapter.py").read_text(encoding="utf-8")
     assert "Do not delegate to another child" not in generated
+    assert "another native Codex child session" not in generated
+    assert "another authorized native Codex role session" in generated
     assert "Shared Child Result" not in generated
     assert "Repository investigation belongs to fresh Investigator sessions" in generated
     assert "belong to fresh\nthose roles" not in generated
@@ -124,6 +138,10 @@ def test_lifecycle_policy_denials_name_role_sessions_or_native_codex_sessions() 
         assert "Child" not in denial, denial
     assert "fresh Investigator session and edits to a fresh Implementer session" in source
     assert "managed native Codex session lifecycle" in source
+    assert "managed child slot" not in source
+    assert "managed Child" not in source
+    assert "authorized native Codex role-session slot" in source
+    assert "authorized native Codex role session" in source
     assert "child_id" in source  # Raw native schema fields remain unchanged.
 
 

@@ -786,7 +786,7 @@ def _turn_id_hash(payload: dict[str, Any]) -> str | None:
 
 
 def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
-    """Atomically reserve the one managed child slot before allowing spawn."""
+    """Atomically reserve the one authorized native Codex role-session slot before allowing spawn."""
     task_id = _active_task_id(root)
     if task_id is None:
         return ""
@@ -873,7 +873,7 @@ def recover_pending_spawn(root: Path, handoff_id: str) -> dict[str, object]:
             for child in state.get("children", [])
         )
         if bound_child:
-            raise ValueError("pending spawn is already bound to a managed Child")
+            raise ValueError("pending spawn is already bound to an authorized native Codex role session")
         if not isinstance(pending, dict) or pending.get("handoff_id") != handoff_id:
             raise ValueError("pending spawn handoff id does not match")
         recoveries = state.setdefault("spawn_recoveries", [])

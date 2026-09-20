@@ -55,7 +55,7 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
         "reads, tool output, test logs, and intermediate exploration in your private working "
         "set. Return a distilled result with Conclusion, Key findings, Decision-changing "
         "unknowns, Contradictions if any, Verification performed, and Artifact refs if detailed "
-        "reusable material was retained. Do not delegate to another native Codex child session. "
+        "reusable material was retained. Do not delegate to another authorized native Codex role session. "
     )
     role_instruction = {
         "investigator": (

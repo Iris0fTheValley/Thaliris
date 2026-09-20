@@ -48,6 +48,15 @@ trusted direct `context` runtime commands. `init`, `uninstall`, `rollback`, a
 second `task-start`, and `task-show` are blocked for ACTIVE Root. `task-status`
 is bounded; `task-get`, `artifact-get`, `catalog`, `recall`, and `document-get`
 retrieve explicitly selected objects.
+If `task-start` was attempted but managed enforcement is unavailable or
+rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
+Codex version, host capability, task schema, git/worktree identity,
+hook/profile presence, and the `task-start` error are allowed reads. Once the
+cause is known, do not read user-task repository source, tests, docs, or search
+results. If work continues, use fresh serial Children (`fork_turns="none"`),
+distilled returns, and a fresh Reviewer; the Controller must not take over
+repository investigation, implementation, or testing merely because NO_TASK
+applies. The final report must not claim managed enforcement was verified.
 If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `context recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.

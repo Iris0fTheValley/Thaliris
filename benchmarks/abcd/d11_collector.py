@@ -143,6 +143,57 @@ def _provenance(event: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def _rollout_tool_name(event: dict[str, Any]) -> str:
+    return str(event.get("tool") or event.get("tool_name") or "").rsplit("__", 1)[-1].lower()
+
+
+def _rollout_command(event: dict[str, Any]) -> str:
+    value = event.get("command")
+    if not isinstance(value, str):
+        tool_input = event.get("tool_input") or event.get("input")
+        value = tool_input.get("command") if isinstance(tool_input, dict) else ""
+    return value.strip()
+
+
+def _mechanical_repo_read(event: dict[str, Any]) -> bool:
+    """Classify only explicit repository-read tool shapes; never infer intent."""
+    tool = _rollout_tool_name(event)
+    if tool in {"read", "open", "grep", "rg", "search"}:
+        return True
+    if tool not in {"bash", "powershell", "shell", "exec_command"}:
+        return False
+    command = _rollout_command(event).lower()
+    if not command or "codex --version" in command or "git status" in command or "git rev-parse" in command:
+        return False
+    if "context task-status" in command or "host capability" in command or "host_capability" in command:
+        return False
+    if "index.md" in command and not any(token in command for token in (" rg ", " grep ", "get-content", "cat ", "type ")):
+        return False
+    return any(token in f" {command} " for token in (" rg ", " grep ", "get-content", " cat ", " find ", " ls ", " dir "))
+
+
+def collect_delegation_rollout_metrics(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Cheap offline counts from native rollout tool observations only.
+
+    These are audit metrics, not task state or a routing/enforcement signal.
+    Failure-reason-known is deliberately omitted because the current JSONL
+    schema does not bind that fact to a root turn.
+    """
+    ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
+    first_spawn = next((event for event in ordered if event.get("_trusted_source") == "codex_rollout"
+                        and _kind(event) == "tool_observation" and _rollout_tool_name(event) == "spawn_agent"
+                        and str(event.get("agent_id") or event.get("actor") or "root") == "root"), None)
+    before = ordered if first_spawn is None else ordered[:ordered.index(first_spawn)]
+    reads = [event for event in before if event.get("_trusted_source") == "codex_rollout"
+             and _kind(event) == "tool_observation" and _mechanical_repo_read(event)]
+    output_bytes = sum(value for event in reads if isinstance((value := event.get("output_bytes")), int) and not isinstance(value, bool) and value >= 0)
+    return {
+        "FIRST_CHILD_SPAWN_ROOT_TURN": first_spawn.get("root_turn") if isinstance(first_spawn, dict) else "UNAVAILABLE",
+        "PRE_DELEGATION_REPO_READ_CALLS": len(reads),
+        "PRE_DELEGATION_REPO_OUTPUT_BYTES": output_bytes,
+    }
+
+
 def _before(left: dict[str, Any], right: dict[str, Any]) -> bool:
     """Compare only one source stream or an explicit causal edge."""
     # A canonical path alone is not a stream identity.  A registry may (or a

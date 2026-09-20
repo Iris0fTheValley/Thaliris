@@ -185,6 +185,39 @@ def test_promotion_rejects_rendered_record_over_explicit_bound_before_writes(tmp
     assert (root / ".agent-memory" / "INDEX.md").read_bytes() == index_before
 
 
+def test_promotion_preflights_exact_document_get_response_with_provenance(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    sources = [{"id": f"S{index}", "kind": "repo", "locator": "x" * 4000, "summary": "source"} for index in range(5)]
+    started = core.task_start(root, "document response bound", None, write_json(tmp_path / "sources-under.json", {"evidence_refs": sources}))
+    payload = write_json(tmp_path / "promotion-under.json", {"records": [{
+        "id": "D1", "path": ".agent-memory/under.md", "title": "Under", "text": "body" * 4096,
+        "source_refs": [item["id"] for item in sources],
+    }]})
+    result = core.task_promote(root, "controller", started["revision"], payload)
+    raw = (root / result["promoted"][0]).read_bytes()
+    fetched = core.document_get(root, result["promoted"][0])
+    assert len(raw) < core.EXPLICIT_DOCUMENT_MAX_BYTES
+    assert core._document_response_size(fetched) < core.EXPLICIT_DOCUMENT_MAX_BYTES
+
+
+def test_promotion_rejects_exact_document_get_overflow_before_any_writes(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    sources = [{"id": f"S{index}", "kind": "repo", "locator": "x" * 4000, "summary": "source"} for index in range(8)]
+    started = core.task_start(root, "document response overflow", None, write_json(tmp_path / "sources-over.json", {"evidence_refs": sources}))
+    index_before = (root / ".agent-memory" / "INDEX.md").read_bytes()
+    payload = write_json(tmp_path / "promotion-over.json", {"records": [{
+        "id": "D1", "path": ".agent-memory/over.md", "title": "Over", "text": "body" * 4096,
+        "source_refs": [item["id"] for item in sources],
+    }], "index_update": {
+        "path": ".agent-memory/INDEX.md", "base_sha256": hashlib.sha256(index_before).hexdigest(),
+        "content": core._entry("Map", "unchanged", evidence="NONE").decode("utf-8"),
+    }})
+    with pytest.raises(ValueError, match="document-get response exceeds"):
+        core.task_promote(root, "controller", started["revision"], payload)
+    assert not (root / ".agent-memory" / "over.md").exists()
+    assert (root / ".agent-memory" / "INDEX.md").read_bytes() == index_before
+
+
 def test_promotion_index_update_rejects_stale_task_revision(tmp_path: Path) -> None:
     root = repo(tmp_path)
     started = core.task_start(root, "stale promotion", None, None)

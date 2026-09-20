@@ -1197,9 +1197,16 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
                 symbols=symbols,
                 kind=kind,
             )
-            parse_text(rendered.decode("utf-8"), Path(relative))
+            # Build the same item and response that document-get will return.
+            # A file-size check alone misses metadata, freshness, and expanded
+            # durable provenance in the JSON envelope.
+            entry = parse_text(rendered.decode("utf-8"), Path(relative))
             if len(rendered) > EXPLICIT_DOCUMENT_MAX_BYTES:
                 raise ValueError(f"promotion record exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
+            if _document_response_size({"ok": True, "documents": [
+                _document_get_item(root, relative, rendered, entry),
+            ]}) > EXPLICIT_DOCUMENT_MAX_BYTES:
+                raise ValueError(f"document-get response exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
             writes[relative] = rendered
             promoted.append(relative)
         index_updated: str | None = None
@@ -1474,6 +1481,28 @@ def durable_index_check(root: Path, roots: list[str] | None = None) -> dict[str,
     return {"ok": not errors, "checked": checked, "errors": errors}
 
 
+def _document_get_item(root: Path, relative: str, raw: bytes, entry: object) -> dict[str, object]:
+    """Build the exact public document-get item from parsed durable content."""
+    freshness, detail = evidence_status(entry, root)
+    provenance: object = entry.meta.get("Evidence")
+    if entry.meta.get("Evidence") == "DURABLE_SOURCE_DESCRIPTORS":
+        provenance = durable_descriptors(entry)
+    return {
+        "path": relative,
+        "content_sha256": _digest(raw),
+        "metadata": entry.meta,
+        "body": entry.body,
+        "freshness": freshness,
+        "freshness_detail": detail,
+        "provenance": provenance,
+    }
+
+
+def _document_response_size(response: dict[str, object]) -> int:
+    """Size the exact JSON serialization returned by document-get."""
+    return len(json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
 def document_get(root: Path, paths: str | list[str]) -> dict[str, object]:
     """Retrieve only explicitly named durable documents in one bounded batch."""
     root = _repo_root(root)
@@ -1499,21 +1528,9 @@ def document_get(root: Path, paths: str | list[str]) -> dict[str, object]:
             entry = parse_text(raw.decode("utf-8"), target)
         except (UnicodeDecodeError, ValueError) as exc:
             raise ValueError("durable document is invalid") from exc
-        freshness, detail = evidence_status(entry, root)
-        provenance: object = entry.meta.get("Evidence")
-        if entry.meta.get("Evidence") == "DURABLE_SOURCE_DESCRIPTORS":
-            provenance = durable_descriptors(entry)
-        documents.append({
-            "path": relative,
-            "content_sha256": _digest(raw),
-            "metadata": entry.meta,
-            "body": entry.body,
-            "freshness": freshness,
-            "freshness_detail": detail,
-            "provenance": provenance,
-        })
+        documents.append(_document_get_item(root, relative, raw, entry))
         response = {"ok": True, "documents": documents}
-        if len(json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > EXPLICIT_DOCUMENT_MAX_BYTES:
+        if _document_response_size(response) > EXPLICIT_DOCUMENT_MAX_BYTES:
             raise ValueError(f"document-get response exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
     return {"ok": True, "documents": documents}
 

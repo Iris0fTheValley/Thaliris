@@ -38,6 +38,8 @@ _AGENT_PROFILES = {
 _NATIVE_PROFILE_NAMES = frozenset(name.removesuffix(".toml") for name in _AGENT_PROFILES)
 _KNOWN_HOST_WAIT_CAPABILITIES = {
     # These are release-pinned observations, not a cross-version assumption.
+    "0.153.4": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
+    "0.154.0": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
     "0.155.1": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
 }
 
@@ -160,7 +162,11 @@ def host_explicit_blocking_wait(executable: str | None = None) -> dict[str, obje
         "version": host["version"],
         "min_wait_timeout_ms": host["min"],
         "default_wait_timeout_ms": host["default"],
-        "max_wait_timeout_ms": host["max"],
+        # This release pin is a hard contract bound, not proof that the
+        # current hook session accepts that value.  No config file is an
+        # effective-session observation.
+        "release_hard_max_wait_timeout_ms": host["max"],
+        "effective_max_wait_timeout_ms": "UNAVAILABLE",
         "explicit_timeout_supported": True,
     }
 
@@ -240,6 +246,15 @@ trusted direct `context` runtime commands. `init`, `uninstall`, `rollback`, a
 second `task-start`, and `task-show` are blocked for ACTIVE Root. `task-status`
 is bounded; `task-get`, `artifact-get`, `catalog`, `recall`, and `document-get`
 retrieve explicitly selected objects.
+If `task-start` was attempted but managed enforcement is unavailable or
+rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
+Codex version, host capability, task schema, git/worktree identity,
+hook/profile presence, and the `task-start` error are allowed reads. Once the
+cause is known, do not read user-task repository source, tests, docs, or search
+results. If work continues, use fresh serial Children (`fork_turns="none"`),
+distilled returns, and a fresh Reviewer; the Controller must not take over
+repository investigation, implementation, or testing merely because NO_TASK
+applies. The final report must not claim managed enforcement was verified.
 If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `context recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.
@@ -638,7 +653,9 @@ def audit_hook(root: Path, event: str, payload: object) -> str:
     original = payload.get("tool_input")
     if not isinstance(original, dict):
         return ""
-    target = int(capability["max_wait_timeout_ms"])
+    target = capability.get("effective_max_wait_timeout_ms")
+    if not isinstance(target, int) or isinstance(target, bool) or target < 0:
+        return ""
     if original.get("timeout_ms") == target:
         return ""
     # Copy rather than reconstruct: future native arguments survive unchanged.
@@ -736,6 +753,7 @@ def doctor(root: Path) -> dict[str, object]:
         "controller_activation_bridge": "CODEX_NATIVE",
         "NATIVE_CHILD_COMPLETION_REENTERS_ROOT": native_child_completion_reenters_root(),
         "HOST_EXPLICIT_BLOCKING_WAIT": host_explicit_blocking_wait().get("status"),
+        "EFFECTIVE_WAIT_MAXIMUM": host_explicit_blocking_wait().get("effective_max_wait_timeout_ms", "UNAVAILABLE"),
         "BLOCKING_WAIT_MODE": "PASS" if selected_continuation_mode(root) == "BLOCKING_WAIT" else "FAIL",
         "selected_continuation_mode": selected_continuation_mode(root),
         **_activation_fields(
@@ -760,6 +778,7 @@ def doctor(root: Path) -> dict[str, object]:
         "controller_side_effect_prevented": "UNKNOWN",
         "reviewer_native_readonly_observed": "UNKNOWN",
         "trusted_runtime_isolation_observed": "UNKNOWN",
+        "effective_wait_maximum": host_explicit_blocking_wait().get("effective_max_wait_timeout_ms", "UNAVAILABLE"),
     })
     result["host_capability"] = host
     posttool_schema = "PASS" if host_wait_mode().get("status") == "PASS" else "UNKNOWN"

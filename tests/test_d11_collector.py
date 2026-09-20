@@ -117,6 +117,25 @@ def test_controller_probe_rejects_bound_operation_with_side_effect(tmp_path: Pat
     assert result["code"] == "HOST_CONTROLLER_ENFORCEMENT_UNSUPPORTED"
 
 
+def test_rollout_delegation_metrics_are_mechanical_and_exclude_bootstrap_reads(tmp_path: Path) -> None:
+    stream = tmp_path / "rollout.jsonl"
+    stream.write_text("".join(json.dumps(event) + "\n" for event in [
+        {"event": "tool_observation", "tool": "Bash", "command": "codex --version", "output_bytes": 9, "root_turn": 1},
+        {"event": "tool_observation", "tool": "Bash", "command": "git status --short", "output_bytes": 9, "root_turn": 1},
+        {"event": "tool_observation", "tool": "Bash", "command": "rg -n target src", "output_bytes": 12, "root_turn": 2},
+        {"event": "tool_observation", "tool": "open", "root_turn": 2, "output_bytes": 8},
+        {"event": "tool_observation", "tool": "spawn_agent", "actor": "root", "root_turn": 3},
+        {"event": "tool_observation", "tool": "Bash", "command": "rg ignored src", "output_bytes": 99, "root_turn": 4},
+    ]), encoding="utf-8")
+    events = d11_collector.load_test_events([{"kind": "codex_rollout", "path": stream}])
+    metrics = d11_collector.collect_delegation_rollout_metrics(events)
+    assert metrics == {
+        "FIRST_CHILD_SPAWN_ROOT_TURN": 3,
+        "PRE_DELEGATION_REPO_READ_CALLS": 2,
+        "PRE_DELEGATION_REPO_OUTPUT_BYTES": 20,
+    }
+
+
 def test_untrusted_dict_cannot_enter_collector_and_missing_artifact_stays_required(tmp_path: Path) -> None:
     root = repo(tmp_path / "missing")
     core.init(root)

@@ -15,7 +15,7 @@ import tempfile
 import unicodedata
 import uuid
 
-from .markdown import Entry, durable_descriptors, evidence_status, parse, parse_text
+from .markdown import Entry, durable_descriptors, evidence_status, freshness_detail_budget_placeholder, parse, parse_text
 from .models import ContextConfig
 
 IGNORE_START = "# thaliris:begin"
@@ -1203,9 +1203,12 @@ def task_promote(root: Path, role: str, base_revision: int, input_file: str | No
             entry = parse_text(rendered.decode("utf-8"), Path(relative))
             if len(rendered) > EXPLICIT_DOCUMENT_MAX_BYTES:
                 raise ValueError(f"promotion record exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
-            if _document_response_size({"ok": True, "documents": [
-                _document_get_item(root, relative, rendered, entry),
-            ]}) > EXPLICIT_DOCUMENT_MAX_BYTES:
+            preflight_item = _document_get_item(root, relative, rendered, entry)
+            # A fresh document has no detail today, but source churn may add
+            # the fixed diagnostic budget tomorrow. Reserve that exact public
+            # JSON budget at promotion time so retrieval remains available.
+            preflight_item["freshness_detail"] = freshness_detail_budget_placeholder()
+            if _document_response_size({"ok": True, "documents": [preflight_item]}) > EXPLICIT_DOCUMENT_MAX_BYTES:
                 raise ValueError(f"document-get response exceeds {EXPLICIT_DOCUMENT_MAX_BYTES} bytes")
             writes[relative] = rendered
             promoted.append(relative)

@@ -120,6 +120,7 @@ def test_controller_probe_rejects_bound_operation_with_side_effect(tmp_path: Pat
 def test_rollout_delegation_metrics_are_mechanical_and_exclude_bootstrap_reads(tmp_path: Path) -> None:
     stream = tmp_path / "rollout.jsonl"
     stream.write_text("".join(json.dumps(event) + "\n" for event in [
+        {"type": "session_meta", "payload": {"id": "root-1", "agent_role": "controller", "actor": "root"}},
         {"event": "tool_observation", "tool": "Bash", "command": "codex --version", "output_bytes": 9, "root_turn": 1},
         {"event": "tool_observation", "tool": "Bash", "command": "git status --short", "output_bytes": 9, "root_turn": 1},
         {"event": "tool_observation", "tool": "Bash", "command": "rg -n target src", "output_bytes": 12, "root_turn": 2},
@@ -139,6 +140,7 @@ def test_rollout_delegation_metrics_are_mechanical_and_exclude_bootstrap_reads(t
 def test_rollout_metrics_mark_child_agent_root_turn_attribution_unavailable(tmp_path: Path) -> None:
     stream = tmp_path / "rollout-child-agent.jsonl"
     stream.write_text("".join(json.dumps(event) + "\n" for event in [
+        {"type": "session_meta", "payload": {"id": "root-1", "agent_role": "controller", "actor": "root"}},
         {"event": "tool_observation", "tool": "rg", "root_turn": 1, "output_bytes": 7},
         {"event": "tool_observation", "tool": "spawn_agent", "agent_id": "child-1", "root_turn": 2},
         {"event": "tool_observation", "tool": "rg", "root_turn": 3, "output_bytes": 99},
@@ -156,6 +158,7 @@ def test_rollout_metrics_mark_child_agent_root_turn_attribution_unavailable(tmp_
 def test_rollout_metrics_accept_explicit_root_actor_for_child_spawn(tmp_path: Path) -> None:
     stream = tmp_path / "rollout-explicit-root-actor.jsonl"
     stream.write_text("".join(json.dumps(event) + "\n" for event in [
+        {"type": "session_meta", "payload": {"id": "root-1", "agent_role": "controller", "actor": "root"}},
         {"event": "tool_observation", "tool": "rg", "root_turn": 1, "output_bytes": 7},
         {"event": "tool_observation", "tool": "spawn_agent", "actor": "root", "agent_id": "child-1", "root_turn": 2},
         {"event": "tool_observation", "tool": "rg", "root_turn": 3, "output_bytes": 99},
@@ -190,6 +193,7 @@ def test_rollout_metrics_mark_ambiguous_or_incomplete_attribution_unavailable(tm
 def test_rollout_metrics_do_not_fill_missing_root_turn_or_output_bytes(tmp_path: Path) -> None:
     stream = tmp_path / "rollout-missing-fields.jsonl"
     stream.write_text("".join(json.dumps(event) + "\n" for event in [
+        {"type": "session_meta", "payload": {"id": "root-1", "agent_role": "controller", "actor": "root"}},
         {"event": "tool_observation", "tool": "rg", "root_turn": 1},
         {"event": "tool_observation", "tool": "spawn_agent", "actor": "root"},
     ]), encoding="utf-8")
@@ -198,9 +202,44 @@ def test_rollout_metrics_do_not_fill_missing_root_turn_or_output_bytes(tmp_path:
     )
     assert metrics == {
         "FIRST_CHILD_SPAWN_ROOT_TURN": "UNAVAILABLE",
-        "PRE_DELEGATION_REPO_READ_CALLS": 1,
+        "PRE_DELEGATION_REPO_READ_CALLS": "UNAVAILABLE",
         "PRE_DELEGATION_REPO_OUTPUT_BYTES": "UNAVAILABLE",
     }
+
+
+def test_rollout_metrics_scope_to_one_confirmed_root_session(tmp_path: Path) -> None:
+    stream = tmp_path / "mixed-rollout.jsonl"
+    stream.write_text("".join(json.dumps(event) + "\n" for event in [
+        {"type": "session_meta", "payload": {"id": "implementer-1", "agent_role": "implementer"}},
+        {"event": "tool_observation", "tool": "rg", "output_bytes": 90, "root_turn": 1},
+        {"event": "tool_observation", "tool": "spawn_agent", "actor": "root", "root_turn": 2},
+        {"type": "session_meta", "payload": {"id": "root-1", "agent_role": "controller", "actor": "root"}},
+        {"event": "tool_observation", "tool": "rg", "output_bytes": 7, "root_turn": 3},
+        {"event": "tool_observation", "tool": "spawn_agent", "actor": "root", "root_turn": 4},
+        {"type": "session_meta", "payload": {"id": "reviewer-1", "agent_role": "reviewer"}},
+        {"event": "tool_observation", "tool": "rg", "output_bytes": 80, "root_turn": 5},
+    ]), encoding="utf-8")
+    metrics = d11_collector.collect_delegation_rollout_metrics(
+        d11_collector.load_test_events([{"kind": "codex_rollout", "path": stream}])
+    )
+    assert metrics == {
+        "FIRST_CHILD_SPAWN_ROOT_TURN": 4,
+        "PRE_DELEGATION_REPO_READ_CALLS": 1,
+        "PRE_DELEGATION_REPO_OUTPUT_BYTES": 7,
+    }
+
+
+def test_rollout_metrics_require_one_explicit_root_session(tmp_path: Path) -> None:
+    stream = tmp_path / "ambiguous-roots.jsonl"
+    stream.write_text("".join(json.dumps(event) + "\n" for event in [
+        {"type": "session_meta", "payload": {"id": "root-a", "agent_role": "controller", "actor": "root"}},
+        {"type": "session_meta", "payload": {"id": "root-b", "agent_role": "controller", "actor": "root"}},
+        {"event": "tool_observation", "tool": "spawn_agent", "actor": "root", "root_turn": 1},
+    ]), encoding="utf-8")
+    metrics = d11_collector.collect_delegation_rollout_metrics(
+        d11_collector.load_test_events([{"kind": "codex_rollout", "path": stream}])
+    )
+    assert set(metrics.values()) == {"UNAVAILABLE"}
 
 
 def test_untrusted_dict_cannot_enter_collector_and_missing_artifact_stays_required(tmp_path: Path) -> None:
@@ -469,18 +508,31 @@ def test_preflight_is_fail_closed_without_clean_fixture_and_calibration(tmp_path
     root = repo(tmp_path)
     (root / "dirty.py").write_text("dirty", encoding="utf-8")
     candidate = repo(tmp_path / "candidate")
+    rollout_events = trusted_events(tmp_path / "rollout-events", [
+        {"type": "session_meta", "payload": {"id": "root-1", "agent_role": "controller", "actor": "root"}},
+        {"event": "tool_observation", "tool": "rg", "root_turn": 1, "output_bytes": 3},
+        {"event": "tool_observation", "tool": "spawn_agent", "actor": "root", "root_turn": 2},
+    ])
+    # The test fixture's source kind is intentionally not codex_rollout, so
+    # preflight must surface the metric fields as UNAVAILABLE rather than
+    # borrowing an unrelated stream.
     result = d11_preflight.run_preflight(
         root,
         candidate,
         expected_adapter_sha="0" * 40,
         harness_paths=[root / "missing-harness.py"],
         evaluator_path=root / "missing-evaluator.py",
-        authority=d11_authority.capture_authority(d11_sources),
+        authority=d11_authority.capture_authority(d11_sources), rollout_events=rollout_events,
     )
     assert result["status"] == "PREFLIGHT_FAIL"
     assert result["checks"]["adapter_sha"]["pass"] is False
     assert result["checks"]["benchmark_harness"]["pass"] is False
     assert result["checks"]["gold"]["pass"] is False
+    assert result["delegation_rollout_metrics"] == {
+        "FIRST_CHILD_SPAWN_ROOT_TURN": "UNAVAILABLE",
+        "PRE_DELEGATION_REPO_READ_CALLS": "UNAVAILABLE",
+        "PRE_DELEGATION_REPO_OUTPUT_BYTES": "UNAVAILABLE",
+    }
 
 
 def test_run_manifest_cannot_be_frozen_from_failed_preflight() -> None:

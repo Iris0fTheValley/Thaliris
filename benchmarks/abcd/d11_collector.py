@@ -189,6 +189,29 @@ def _root_spawn_attribution(event: dict[str, Any]) -> str:
     return "AMBIGUOUS"
 
 
+def _confirmed_root_session(events: list[dict[str, Any]]) -> tuple[str, str] | None:
+    """Identify exactly one Controller/Root source-session from native evidence."""
+    controller_sessions: set[tuple[str, str]] = set()
+    root_actor_sessions: set[tuple[str, str]] = set()
+    for event in events:
+        if event.get("_trusted_source") != "codex_rollout":
+            continue
+        session = event.get("_session_identity") or event.get("session_id")
+        source = event.get("_source_id")
+        if not isinstance(session, str) or not session or not isinstance(source, str) or not source:
+            continue
+        identity = (source, session)
+        role = str(event.get("_role_identity") or event.get("role") or event.get("agent_role") or "").strip().lower()
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        actor = event.get("actor", payload.get("actor"))
+        if _kind(event) == "session_meta" and role in {"controller", "root"}:
+            controller_sessions.add(identity)
+        if actor == "root":
+            root_actor_sessions.add(identity)
+    candidates = controller_sessions & root_actor_sessions
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
 def collect_delegation_rollout_metrics(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Cheap offline counts from native rollout tool observations only.
 
@@ -197,29 +220,31 @@ def collect_delegation_rollout_metrics(events: Iterable[dict[str, Any]]) -> dict
     schema does not bind that fact to a root turn.
     """
     ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
-    spawn_events = [event for event in ordered if event.get("_trusted_source") == "codex_rollout"
-                    and _kind(event) == "tool_observation" and _rollout_tool_name(event) == "spawn_agent"]
-    spawn_attribution = [_root_spawn_attribution(event) for event in spawn_events]
-    first_root_index = next((index for index, attribution in enumerate(spawn_attribution) if attribution == "ROOT"), None)
-    first_spawn = spawn_events[first_root_index] if first_root_index is not None else None
-    ambiguous_before_first_root = any(
-        attribution == "AMBIGUOUS"
-        for attribution in spawn_attribution[:first_root_index]
-    ) if first_root_index is not None else "AMBIGUOUS" in spawn_attribution
-    before = ordered if first_spawn is None else ordered[:ordered.index(first_spawn)]
+    root_source_session = _confirmed_root_session(ordered)
+    if root_source_session is None:
+        return {key: "UNAVAILABLE" for key in (
+            "FIRST_CHILD_SPAWN_ROOT_TURN", "PRE_DELEGATION_REPO_READ_CALLS", "PRE_DELEGATION_REPO_OUTPUT_BYTES",
+        )}
+    root_source, root_session = root_source_session
+    scoped = [event for event in ordered if event.get("_trusted_source") == "codex_rollout"
+              and event.get("_source_id") == root_source
+              and (event.get("_session_identity") or event.get("session_id")) == root_session]
+    spawn_events = [event for event in scoped if _kind(event) == "tool_observation" and _rollout_tool_name(event) == "spawn_agent"]
+    first_spawn = next((event for event in spawn_events if _root_spawn_attribution(event) == "ROOT"), None)
+    if first_spawn is None or not _valid_root_turn(first_spawn.get("root_turn")):
+        return {key: "UNAVAILABLE" for key in (
+            "FIRST_CHILD_SPAWN_ROOT_TURN", "PRE_DELEGATION_REPO_READ_CALLS", "PRE_DELEGATION_REPO_OUTPUT_BYTES",
+        )}
+    before = scoped[:scoped.index(first_spawn)]
     reads = [event for event in before if event.get("_trusted_source") == "codex_rollout"
              and _kind(event) == "tool_observation" and _mechanical_repo_read(event)]
     output_values = [event.get("output_bytes") for event in reads]
     output_bytes_available = all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in output_values)
-    metrics_unavailable = ambiguous_before_first_root
     return {
-        "FIRST_CHILD_SPAWN_ROOT_TURN": (
-            first_spawn["root_turn"] if isinstance(first_spawn, dict) and _valid_root_turn(first_spawn.get("root_turn"))
-            else "UNAVAILABLE"
-        ),
-        "PRE_DELEGATION_REPO_READ_CALLS": "UNAVAILABLE" if metrics_unavailable else len(reads),
+        "FIRST_CHILD_SPAWN_ROOT_TURN": first_spawn["root_turn"],
+        "PRE_DELEGATION_REPO_READ_CALLS": len(reads),
         "PRE_DELEGATION_REPO_OUTPUT_BYTES": (
-            "UNAVAILABLE" if metrics_unavailable or not output_bytes_available else sum(output_values)
+            "UNAVAILABLE" if not output_bytes_available else sum(output_values)
         ),
     }
 

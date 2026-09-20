@@ -281,8 +281,9 @@ Managed children are serial. Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
 mechanical. SubagentStop alone is not success; only an explicitly observed
 native Completed status can satisfy lifecycle completion. A short native wait
-is normalized to the host maximum only while an authorized reservation or
-managed child is actually pending. The Controller interprets Child results,
+is normalized only while an authorized reservation or managed child is pending
+and the current-session effective maximum is mechanically verified; otherwise
+no automatic long-wait normalization occurs. The Controller interprets Child results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 {MANAGED_END}

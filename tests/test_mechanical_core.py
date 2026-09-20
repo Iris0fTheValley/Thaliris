@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import pytest
 
-from thaliris import cli, codex_adapter, core, lifecycle as lifecycle_module
+from thaliris import cli, codex_adapter, core, lifecycle as lifecycle_module, markdown
 
 
 def repo(tmp_path: Path) -> Path:
@@ -596,6 +596,42 @@ def test_document_get_preserves_memory_freshness_and_provenance(tmp_path: Path) 
     assert item["freshness_detail"] == []
     assert item["metadata"]["Evidence"] == "DURABLE_SOURCE_DESCRIPTORS"
     assert item["provenance"][0]["artifact_id"] == "A1"
+
+
+@pytest.mark.parametrize("state", ["missing", "changed"])
+def test_document_get_bounds_adversarial_durable_freshness_detail(tmp_path: Path, state: str) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "bounded freshness detail", None, None)
+    sources = []
+    source_paths = []
+    for index in range(64):
+        path = root / "sources" / ("p" * 160) / f"{index:03}.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("stable", encoding="utf-8")
+        relative = path.relative_to(root).as_posix()
+        sources.append({"id": f"S{index}", "kind": "repo", "locator": f"file:{relative}#{hashlib.sha256(path.read_bytes()).hexdigest()}",
+                        "summary": "adversarial source"})
+        source_paths.append(relative)
+    registered = core.task_update(root, "controller", started["revision"], write_json(tmp_path / "sources.json", {"evidence_refs": sources}))
+    promoted = core.task_promote(root, "controller", registered["revision"], write_json(tmp_path / "promotion.json", {"records": [{
+        "id": "D1", "path": ".agent-memory/bounded.md", "title": "Bounded", "text": "BODY_PRESERVED", "source_refs": [item["id"] for item in sources],
+    }]}))["promoted"][0]
+    if state == "missing":
+        for relative in source_paths:
+            (root / relative).unlink()
+        expected = "MISSING"
+    else:
+        for relative in source_paths:
+            (root / relative).write_text("changed", encoding="utf-8")
+        expected = "CHANGED"
+    first = core.document_get(root, promoted)["documents"][0]
+    second = core.document_get(root, promoted)["documents"][0]
+    assert first == second
+    assert first["freshness"] == expected
+    assert len(json.dumps(first["freshness_detail"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= markdown.FRESHNESS_DETAIL_MAX_BYTES
+    assert "BODY_PRESERVED" in first["body"]
+    assert len(first["provenance"]) == len(sources)
+    assert core._document_response_size({"ok": True, "documents": [first]}) <= core.EXPLICIT_DOCUMENT_MAX_BYTES
 
 
 def test_broken_index_reference_is_mechanically_reported(tmp_path: Path) -> None:

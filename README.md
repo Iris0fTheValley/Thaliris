@@ -53,8 +53,9 @@ completion，也不根据 stale evidence 自动改写 decision、constraint 或 
 
 Codex adapter 只负责 fresh spawn、`fork_turns="none"`、授权的串行 Child、
 handoff hash、SubagentStart/Stop identity、missing-stop reconciliation 和 native
-wait。只有确实存在 pending reservation 或 managed Child 时，短 wait 才会被规范化
-为 Host 支持的长 blocking wait。`SubagentStop` 本身不是成功；只有明确观测到
+wait。只有确实存在 pending reservation 或 managed Child、且当前 session effective
+maximum 已被机械验证时，短 wait 才会被规范化为长 blocking wait；否则不会自动规范化。
+`SubagentStop` 本身不是成功；只有明确观测到
 native `Completed` 才满足 lifecycle completion。
 
 ## Task ledger

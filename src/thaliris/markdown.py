@@ -10,6 +10,12 @@ import subprocess
 
 REQUIRED = ("Evidence", "Revision", "Status", "Applicability", "Confidence")
 OPTIONAL_LISTS = ("Audience", "Topics", "Symbols")
+# Freshness detail is diagnostic, while durable bodies and provenance are the
+# retrieval contract.  Keep diagnostics bounded so later source churn cannot
+# inflate a previously readable document-get response.
+FRESHNESS_DETAIL_MAX_BYTES = 2048
+
+
 @dataclass(frozen=True)
 class Entry:
     path: Path
@@ -69,7 +75,8 @@ def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
     """Evaluate file/content evidence without changing the recorded fact."""
     evidence = entry.meta["Evidence"]
     if evidence == "DURABLE_SOURCE_DESCRIPTORS":
-        return _durable_descriptor_status(entry, root)
+        status, detail = _durable_descriptor_status(entry, root)
+        return status, _bounded_freshness_detail(detail)
     specs = evidence if isinstance(evidence, list) else ([] if evidence == "NONE" else [evidence])
     if not specs:
         return "UNKNOWN", []
@@ -110,12 +117,42 @@ def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
         if actual.lower() != match.group(2).lower():
             changed.append(match.group(1))
     if missing:
-        return "MISSING", missing
+        return "MISSING", _bounded_freshness_detail(missing)
     if changed:
-        return "CHANGED", changed
+        return "CHANGED", _bounded_freshness_detail(changed)
     if invalid:
-        return "UNKNOWN", invalid
+        return "UNKNOWN", _bounded_freshness_detail(invalid)
     return "FRESH", []
+
+
+def _bounded_freshness_detail(detail: list[str]) -> list[str]:
+    """Return a deterministic JSON-byte-bounded diagnostic list.
+
+    The budget is measured in the same UTF-8 JSON representation as public
+    responses.  Sorting removes descriptor/source ordering as an output-size
+    influence; the marker itself is admitted only when it fits the budget.
+    """
+    ordered = sorted(str(item) for item in detail)
+    accepted: list[str] = []
+    for item in ordered:
+        if len(json.dumps(accepted + [item], ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > FRESHNESS_DETAIL_MAX_BYTES:
+            break
+        accepted.append(item)
+    omitted = len(ordered) - len(accepted)
+    if omitted:
+        marker = f"... {omitted} additional freshness detail entries omitted"
+        while accepted and len(json.dumps(accepted + [marker], ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > FRESHNESS_DETAIL_MAX_BYTES:
+            accepted.pop()
+            omitted += 1
+            marker = f"... {omitted} additional freshness detail entries omitted"
+        if len(json.dumps(accepted + [marker], ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= FRESHNESS_DETAIL_MAX_BYTES:
+            accepted.append(marker)
+    return accepted
+
+
+def freshness_detail_budget_placeholder() -> list[str]:
+    """Largest ASCII detail list admitted by the public diagnostic budget."""
+    return ["x" * (FRESHNESS_DETAIL_MAX_BYTES - 4)]
 
 
 def _durable_descriptor_status(entry: Entry, root: Path) -> tuple[str, list[str]]:

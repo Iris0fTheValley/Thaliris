@@ -45,7 +45,9 @@ current state, and delta. The Controller decides what any observation means.
 
 The Host owns creation, execution, waiting, continuation, and result delivery.
 The adapter owns fresh isolation, authorized serial lifecycle, identity binding,
-and wait normalization for real pending dependencies. Core owns durable records,
+and wait normalization for real pending dependencies only when a current-session
+effective maximum is mechanically verified; otherwise it performs no automatic
+long-wait normalization. Core owns durable records,
 CAS, atomicity, hashes, provenance, addressing, and explicit retrieval.
 
 No hidden auditor, role projection, semantic dependency graph, correction state

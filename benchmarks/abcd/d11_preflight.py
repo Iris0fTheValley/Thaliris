@@ -12,6 +12,7 @@ import sys
 import queue
 import threading
 from typing import Any, Iterable
+from d11_collector import collect_delegation_rollout_metrics
 
 from candidate_manifest import build_manifest
 from d11_sources import AuthorityRegistry, verify_source_registry
@@ -306,6 +307,7 @@ def run_preflight(
     trusted_runtime_attack_result: str | None = None,
     calibration_attestation: dict[str, Any] | None = None,
     hook_discovery: dict[str, Any] | None = None,
+    rollout_events: Iterable[dict[str, Any]] = (),
     authority: AuthorityRegistry,
 ) -> dict[str, Any]:
     """Return a fact ledger suitable for freezing, never a model report."""
@@ -410,7 +412,8 @@ def run_preflight(
     )
     checks["adapter_root"] = str(adapter_root)
     checks["candidate_root"] = str(candidate_root)
-    result = {"status": "PASS" if passed else "PREFLIGHT_FAIL", "checks": checks}
+    result = {"status": "PASS" if passed else "PREFLIGHT_FAIL", "checks": checks,
+              "delegation_rollout_metrics": collect_delegation_rollout_metrics(rollout_events)}
     result["fact_source"] = {"kind": "host_preflight", "adapter_root": str(adapter_root), "candidate_root": str(candidate_root)}
     result["identity"] = _fact_identity(result)
     return result

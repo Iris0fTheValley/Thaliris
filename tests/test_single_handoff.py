@@ -1087,6 +1087,19 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "only after Reviewer PASS" in codex_adapter.ROLE_PACKS
 
 
+def test_host_capability_record_requires_sessionmeta_for_live_implementer_activation() -> None:
+    record = Path("docs/codex-host-capability-20260920.md").read_text(encoding="utf-8")
+    assert "source default of `gpt-5.6-luna`" in record
+    assert "installed/generated\n`thaliris-implementer` profile bytes are configuration/install proof only" in record
+    assert "do not prove that a spawned child actually used Luna" in record
+    assert "native,\ncurrent-session `SessionMeta` observation" in record
+    assert "`gpt-5.6-luna` for `thaliris-implementer`" in record
+    assert "Unattested or untrusted alpha,\nstale, or other-session evidence is non-live/`UNKNOWN`" in record
+    assert "cannot satisfy this\ncriterion" in record
+    assert "`profile_native_active` remains\n`UNKNOWN`" in record
+    assert "no live probe was attempted" in record
+
+
 def test_authorized_spawn_requires_fresh_explicit_serial_handoff(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.task_start(root, "spawn contract", None, None)

@@ -26,6 +26,19 @@ execution has no normal PostToolUse callback. It has no independent role-level
 native read-only sandbox projection; any reviewer guard remains adapter policy,
 not a native role sandbox claim.
 
+## Native role-profile activation evidence
+
+The source default of `gpt-5.6-luna` and the installed/generated
+`thaliris-implementer` profile bytes are configuration/install proof only.
+They do not prove that a spawned child actually used Luna.
+
+A future rollout may claim live Implementer activation only when a native,
+current-session `SessionMeta` observation explicitly reports model
+`gpt-5.6-luna` for `thaliris-implementer`. Unattested or untrusted alpha,
+stale, or other-session evidence is non-live/`UNKNOWN` and cannot satisfy this
+criterion. This record has no such observation: `profile_native_active` remains
+`UNKNOWN` and no live probe was attempted.
+
 ## Disposable native wait probe
 
 A fresh temporary Git root ran `codex exec` and asked one root to dispatch one

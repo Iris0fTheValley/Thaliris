@@ -245,6 +245,66 @@ def test_rollout_metrics_require_one_explicit_root_session(tmp_path: Path) -> No
     assert set(metrics.values()) == {"UNAVAILABLE"}
 
 
+def test_codex_v0155_raw_normalization_reports_derived_turn_and_root_only_reads() -> None:
+    raw = [
+        {"type": "session_meta", "payload": {"session_id": "root", "id": "root", "parent_thread_id": None, "agent_role": "controller", "agent_path": "root", "cli_version": "0.155.1"}},
+        {"type": "TurnContextItem", "payload": {"session_id": "root", "root_turn_id": "turn-linux"}},
+        {"type": "CommandExecutionItem", "payload": {"session_id": "root", "command": "rg -n target src", "aggregated_output": "abcdef"}},
+        {"type": "function_call", "payload": {"session_id": "root", "name": "collaboration.spawn_agent", "arguments": {"agent_id": "child"}}},
+        {"type": "SubagentStart", "payload": {"session_id": "child", "parent_session_id": "root"}},
+        {"type": "session_meta", "payload": {"session_id": "child", "id": "child", "parent_thread_id": "root", "agent_role": "implementer", "agent_path": "root/implementer"}},
+        {"type": "TurnContextItem", "payload": {"session_id": "child", "root_turn_id": "child-turn"}},
+        {"type": "CommandExecutionItem", "payload": {"session_id": "child", "command": "rg secret .", "aggregated_output": "must-not-count"}},
+    ]
+    records = d11_collector.normalize_codex_v0155_rollout_records(raw)
+    assert records[1]["derived_root_turn_id"] == "turn-linux"
+    assert records[1]["_codex_raw_provenance"]["normalization"] == d11_collector.CODEX_V0155_NORMALIZATION
+    assert d11_collector.collect_delegation_rollout_metrics(records) == {
+        "FIRST_CHILD_SPAWN_ROOT_TURN": "turn-linux",
+        "PRE_DELEGATION_REPO_READ_CALLS": 1,
+        "PRE_DELEGATION_REPO_OUTPUT_BYTES": 6,
+    }
+
+
+def test_codex_v0155_normalization_accepts_windows_commands_and_base64_delta_bytes() -> None:
+    raw = [
+        {"type": "session_meta", "payload": {"session_id": "r", "id": "r", "parent_thread_id": None, "agent_role": "controller", "cli_version": "v0.155.1"}},
+        {"type": "event_msg", "payload": {"type": "TurnContextItem", "session_id": "r", "root_turn_id": "turn-win"}},
+        {"type": "ExecCommandOutputDeltaEvent", "payload": {"session_id": "r", "command_id": "c1", "chunk": "MTIzNA=="}},
+        {"type": "CommandExecutionItem", "payload": {"session_id": "r", "command_id": "c1", "command": "Get-Content .\\src\\main.py"}},
+        {"type": "function_call", "payload": {"session_id": "r", "name": "collaboration.spawn_agent", "arguments": {"agent_id": "c"}}},
+        {"type": "SubagentStart", "payload": {"session_id": "c", "parent_session_id": "r"}},
+    ]
+    assert d11_collector.collect_delegation_rollout_metrics(d11_collector.normalize_codex_v0155_rollout_records(raw)) == {
+        "FIRST_CHILD_SPAWN_ROOT_TURN": "turn-win", "PRE_DELEGATION_REPO_READ_CALLS": 1,
+        "PRE_DELEGATION_REPO_OUTPUT_BYTES": 4,
+    }
+
+
+@pytest.mark.parametrize("mutation", ("missing-session", "missing-turn", "unbound-start", "cross-session"))
+def test_codex_v0155_metrics_fail_closed_when_identity_or_order_is_not_proven(mutation: str) -> None:
+    raw = [
+        {"type": "session_meta", "payload": {"session_id": "r", "id": "r", "parent_thread_id": None, "agent_role": "controller"}},
+        {"type": "TurnContextItem", "payload": {"session_id": "r", "root_turn_id": "t"}},
+        {"type": "function_call", "payload": {"session_id": "r", "name": "collaboration.spawn_agent", "arguments": {"agent_id": "c"}}},
+        {"type": "SubagentStart", "payload": {"session_id": "c", "parent_session_id": "r"}},
+    ]
+    if mutation == "missing-session": raw[0]["payload"]["id"] = "other"
+    if mutation == "missing-turn": raw[1]["payload"].pop("root_turn_id")
+    if mutation == "unbound-start": raw[3]["payload"]["session_id"] = "other"
+    if mutation == "cross-session": raw[2]["payload"]["session_id"] = "other"
+    assert set(d11_collector.collect_delegation_rollout_metrics(
+        d11_collector.normalize_codex_v0155_rollout_records(raw)).values()) == {"UNAVAILABLE"}
+
+
+def test_codex_v0155_jsonl_reader_marks_truncated_stream_unavailable(tmp_path: Path) -> None:
+    stream = tmp_path / "rollout.jsonl"
+    stream.write_text('{"type":"session_meta","payload":{"session_id":"r"}}\n{"type":', encoding="utf-8")
+    records = d11_collector.normalize_codex_v0155_rollout_jsonl(stream)
+    assert records[-1]["_codex_rollout_incomplete"] is True
+    assert set(d11_collector.collect_delegation_rollout_metrics(records).values()) == {"UNAVAILABLE"}
+
+
 def test_untrusted_dict_cannot_enter_collector_and_missing_artifact_stays_required(tmp_path: Path) -> None:
     root = repo(tmp_path / "missing")
     core.init(root)

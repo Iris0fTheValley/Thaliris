@@ -324,9 +324,21 @@ an optional repo-relative Artifact and return its pointer with a short result.
 
 ## Curator
 
-Optionally compress or reconcile only the material explicitly supplied by the
-Controller. Curator output is an ordinary result or Artifact; Core has no
-Curator state machine.
+Use only when the Controller identifies genuinely reusable knowledge and
+explicitly supplies the material to curate. Do not automatically summarize a
+task, select a next role, or route a result. Curator output is an ordinary
+result or Artifact; Core has no Curator state machine.
+
+## Durable knowledge loop
+
+At task start, the Controller reads the root INDEX map and then makes an exact
+`document-get` request for the selected linked entries. At task end it decides
+whether any knowledge is genuinely reusable; a Curator is optional, never an
+automatic step. If the Controller promotes a selected record that changes the
+durable architecture, it supplies the model-authored INDEX CAS update in that
+same promotion. Otherwise it leaves INDEX bytes unchanged. A fresh later task
+recovers only by reading INDEX and exact selected documents, not by broad
+reinvention or recursive scanning.
 
 ## Reasoning Specialist
 

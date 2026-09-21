@@ -6,6 +6,7 @@ model-authored report field is trusted for ordering, freshness, or identity.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -18,6 +19,187 @@ from d11_sources import AuthorityRegistry, SOURCE_EVENTS, SOURCE_KINDS, _sha_pre
 
 
 TRUSTED_SOURCE_KINDS = SOURCE_KINDS
+
+# This adapter is deliberately an offline reader.  Codex v0.155.1 session
+# JSONL has no native numeric "root turn" counter and no synthetic
+# ``tool=spawn_agent`` event.  The normalized records below retain their raw
+# line provenance and use names which make the derived nature explicit.
+CODEX_V0155_NORMALIZATION = "codex-jsonl-v0.155.1"
+CODEX_V0155_MIN_VERSION = (0, 155, 1)
+
+
+def _payload(raw: dict[str, Any]) -> dict[str, Any]:
+    value = raw.get("payload")
+    return value if isinstance(value, dict) else raw
+
+
+def _raw_type(raw: dict[str, Any]) -> str:
+    payload = _payload(raw)
+    outer = raw.get("type") or raw.get("event")
+    # Recorder envelopes commonly use an outer transport type such as
+    # ``event_msg`` and put the protocol item type in payload.
+    if outer in {"event_msg", "response_item", "event"} and payload.get("type"):
+        return str(payload["type"])
+    return str(outer or payload.get("type") or "")
+
+
+def _raw_id(value: dict[str, Any]) -> str | None:
+    for key in ("call_id", "command_id", "id", "item_id", "event_id"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return None
+
+
+def _native_output_bytes(payload: dict[str, Any]) -> int | None:
+    """Return bytes from one native command result, without double counting.
+
+    The stable aggregate is preferred; stdout/stderr are only a fallback,
+    followed by formatted output.  Delta bytes are joined by the caller only
+    when this result supplies none.
+    """
+    aggregate = payload.get("aggregated_output")
+    if isinstance(aggregate, str):
+        return len(aggregate.encode("utf-8"))
+    stdout, stderr = payload.get("stdout"), payload.get("stderr")
+    if isinstance(stdout, str) or isinstance(stderr, str):
+        return sum(len(item.encode("utf-8")) for item in (stdout, stderr) if isinstance(item, str))
+    formatted = payload.get("formatted_output")
+    return len(formatted.encode("utf-8")) if isinstance(formatted, str) else None
+
+
+def normalize_codex_v0155_rollout_records(raw_records: Iterable[dict[str, Any]], *,
+                                           source_file: str = "<codex-session-jsonl>",
+                                           source_id: str = "codex-v0155-offline") -> list[dict[str, Any]]:
+    """Normalize named Codex v0.155.1 JSONL shapes for *offline audit*.
+
+    ``derived_root_turn_id`` is copied from native ``TurnContextItem.root_turn_id``;
+    it is an attribution string, never a native ordinal.  A record is emitted
+    only when its session identity is explicit.  This function does not grant
+    trust to arbitrary input: callers must still use a frozen Codex rollout
+    capture before feeding the resulting records into a formal collector.
+    """
+    output: list[dict[str, Any]] = []
+    session_meta: dict[str, dict[str, Any]] = {}
+    root_turn: dict[str, str] = {}
+    delta_bytes: dict[str, int] = {}
+    raw_list = list(raw_records)
+    for line, raw in enumerate(raw_list, 1):
+        if not isinstance(raw, dict):
+            continue
+        payload = _payload(raw)
+        kind = _raw_type(raw).lower().replace("_", "")
+        provenance = {"normalization": CODEX_V0155_NORMALIZATION, "raw_line": line,
+                      "raw_type": _raw_type(raw)}
+        if kind in {"sessionmeta", "sessionmetaitem"}:
+            session_id = payload.get("session_id")
+            thread_id = payload.get("id")
+            if isinstance(session_id, str) and session_id and session_id == thread_id:
+                session_meta[session_id] = {
+                    "parent_thread_id": payload.get("parent_thread_id"),
+                    "agent_role": str(payload.get("agent_role") or "").lower(),
+                    "agent_path": payload.get("agent_path"),
+                }
+                output.append({"event": "session_meta", "session_id": session_id, **payload,
+                               "_codex_raw_provenance": provenance})
+            continue
+        session_id = payload.get("session_id") or raw.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            continue
+        if kind in {"turncontextitem", "turncontext"}:
+            value = payload.get("root_turn_id")
+            if isinstance(value, str) and value:
+                root_turn[session_id] = value
+                output.append({"event": "native_turn_context", "session_id": session_id,
+                               "derived_root_turn_id": value, "_codex_raw_provenance": provenance})
+            continue
+        if kind in {"execcommandoutputdeltaevent", "commandexecutionoutputdeltaevent"}:
+            chunk = payload.get("chunk")
+            event_id = _raw_id(payload)
+            if isinstance(chunk, str) and event_id:
+                try:
+                    delta_bytes[event_id] = delta_bytes.get(event_id, 0) + len(base64.b64decode(chunk, validate=True))
+                except (ValueError, TypeError):
+                    pass
+            continue
+        turn = root_turn.get(session_id)
+        if kind in {"commandexecutionitem", "commandexecution"}:
+            command = payload.get("command")
+            if isinstance(command, str) and turn:
+                event_id = _raw_id(payload)
+                bytes_value = _native_output_bytes(payload)
+                if bytes_value is None and event_id:
+                    bytes_value = delta_bytes.get(event_id)
+                output.append({"event": "native_command_execution", "session_id": session_id,
+                               "command": command, "output_bytes": bytes_value,
+                               "derived_root_turn_id": turn, "_codex_raw_provenance": provenance})
+            continue
+        # Tool calls are native collaboration calls when the actual function
+        # name says so.  The old synthetic ``tool=spawn_agent`` is not accepted
+        # by this branch.
+        name = payload.get("name") or payload.get("tool_name")
+        if isinstance(name, str) and "collaboration" in name.lower() and "spawn_agent" in name.lower() and turn:
+            arguments = payload.get("arguments") or payload.get("input")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+            child = arguments.get("agent_id") if isinstance(arguments, dict) else None
+            output.append({"event": "native_collaboration_spawn_call", "session_id": session_id,
+                           "child_session_id": child, "derived_root_turn_id": turn,
+                           "_codex_raw_provenance": provenance})
+            continue
+        if _raw_type(raw) == "SubagentStart":
+            parent = payload.get("parent_session_id") or payload.get("parent_thread_id")
+            child = payload.get("session_id") or payload.get("agent_id")
+            if isinstance(parent, str) and isinstance(child, str):
+                output.append({"event": "SubagentStart", "session_id": child,
+                               "parent_session_id": parent, "_codex_raw_provenance": provenance})
+    # Attach source/trust-shaped metadata only as a normalized offline record;
+    # source registry verification remains the formal trust boundary.
+    for index, record in enumerate(output):
+        record.update({"_trusted_source": "codex_rollout", "_source_id": source_id,
+                       "_registry_identity": "OFFLINE_NORMALIZATION", "_source_file": source_file,
+                       "_source_sha256": None, "_source_line": record["_codex_raw_provenance"]["raw_line"],
+                       "_native_event_id": f"{source_id}:{index + 1}", "_ingestion_index": index,
+                       "_normalized_kind": str(record["event"]),
+                       "_codex_rollout_normalization": CODEX_V0155_NORMALIZATION})
+    return output
+
+
+def normalize_codex_v0155_rollout_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Read one real Codex session JSONL locally; malformed lines fail closed.
+
+    This is intentionally an offline convenience adapter, not a replacement
+    for source-registry capture authority.
+    """
+    raw: list[dict[str, Any]] = []
+    malformed = False
+    with path.open("r", encoding="utf-8") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                malformed = True
+                continue
+            if not isinstance(item, dict):
+                malformed = True
+                continue
+            raw.append(item)
+    records = normalize_codex_v0155_rollout_records(raw, source_file=str(path.resolve()),
+                                                     source_id=f"codex-v0155:{path.resolve()}")
+    if malformed:
+        records.append({"event": "native_rollout_incomplete", "_trusted_source": "codex_rollout",
+                        "_source_id": f"codex-v0155:{path.resolve()}", "_registry_identity": "OFFLINE_NORMALIZATION",
+                        "_source_file": str(path.resolve()), "_source_sha256": None, "_source_line": None,
+                        "_native_event_id": f"codex-v0155:{path.resolve()}:incomplete", "_ingestion_index": len(records),
+                        "_normalized_kind": "native_rollout_incomplete",
+                        "_codex_rollout_normalization": CODEX_V0155_NORMALIZATION,
+                        "_codex_rollout_incomplete": True})
+    return records
 
 
 def load_trusted_events(registry: dict[str, Any], *, authority_registry: AuthorityRegistry | None = None) -> list[dict[str, Any]]:
@@ -216,6 +398,8 @@ def collect_delegation_rollout_metrics(events: Iterable[dict[str, Any]]) -> dict
     schema does not bind that fact to a root turn.
     """
     ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
+    if any(item.get("_codex_rollout_normalization") == CODEX_V0155_NORMALIZATION for item in ordered):
+        return _collect_codex_v0155_delegation_metrics(ordered)
     root_source_session = _confirmed_root_session(ordered)
     if root_source_session is None:
         return {key: "UNAVAILABLE" for key in (
@@ -244,6 +428,83 @@ def collect_delegation_rollout_metrics(events: Iterable[dict[str, Any]]) -> dict
             "UNAVAILABLE" if not output_bytes_available else sum(output_values)
         ),
     }
+
+
+def _unavailable_rollout_metrics() -> dict[str, str]:
+    return {key: "UNAVAILABLE" for key in (
+        "FIRST_CHILD_SPAWN_ROOT_TURN", "PRE_DELEGATION_REPO_READ_CALLS", "PRE_DELEGATION_REPO_OUTPUT_BYTES",
+    )}
+
+
+def _native_root_controller(events: list[dict[str, Any]]) -> str | None:
+    """Prove exactly one root Controller from SessionMeta, or fail closed."""
+    roots: set[str] = set()
+    for event in events:
+        if _kind(event) != "session_meta":
+            continue
+        session = event.get("session_id")
+        parent = event.get("parent_thread_id")
+        role = str(event.get("agent_role") or "").lower()
+        version = event.get("cli_version")
+        if (isinstance(session, str) and session and parent in (None, "") and role == "controller"
+                and _codex_version_at_least(version, CODEX_V0155_MIN_VERSION)):
+            roots.add(session)
+    return next(iter(roots)) if len(roots) == 1 else None
+
+
+def _codex_version_at_least(value: Any, minimum: tuple[int, int, int]) -> bool:
+    if not isinstance(value, str):
+        return False
+    pieces = value.removeprefix("v").split(".")
+    if len(pieces) < 3 or not all(piece.isdigit() for piece in pieces[:3]):
+        return False
+    return tuple(int(piece) for piece in pieces[:3]) >= minimum
+
+
+def _native_repo_read(command: str) -> bool:
+    # CommandExecution is a mechanical shell record.  The command itself must
+    # contain a read primitive; no natural-language intent is inferred.
+    return _mechanical_repo_read({"tool": "Bash", "command": command})
+
+
+def _collect_codex_v0155_delegation_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute offline audit facts from the named v0.155.1 normalization."""
+    if (any(item.get("_codex_rollout_normalization") != CODEX_V0155_NORMALIZATION for item in events)
+            or any(item.get("_codex_rollout_incomplete") for item in events)):
+        return _unavailable_rollout_metrics()
+    root = _native_root_controller(events)
+    if root is None:
+        return _unavailable_rollout_metrics()
+    # SessionMeta parentage is authoritative.  Only events from that one root
+    # session participate, which excludes all five delegated roles by identity
+    # rather than trying to classify their commands after the fact.
+    scoped = [event for event in events if event.get("session_id") == root]
+    starts = [event for event in events if _kind(event) == "SubagentStart" and event.get("parent_session_id") == root]
+    calls = [event for event in scoped if _kind(event) == "native_collaboration_spawn_call"]
+    pairs: list[dict[str, Any]] = []
+    for call in calls:
+        child = call.get("child_session_id")
+        # A native spawn call must be bound to exactly one later typed start.
+        matching = [start for start in starts if isinstance(child, str) and start.get("session_id") == child and _before(call, start)]
+        if len(matching) == 1:
+            pairs.append(call)
+    if not pairs:
+        return _unavailable_rollout_metrics()
+    first = pairs[0]
+    turn = first.get("derived_root_turn_id")
+    if not isinstance(turn, str) or not turn:
+        return _unavailable_rollout_metrics()
+    before = [event for event in scoped if _before(event, first)]
+    reads = [event for event in before if _kind(event) == "native_command_execution"
+             and isinstance(event.get("command"), str) and _native_repo_read(event["command"])]
+    byte_values = [event.get("output_bytes") for event in reads]
+    if not all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in byte_values):
+        return {"FIRST_CHILD_SPAWN_ROOT_TURN": turn,
+                "PRE_DELEGATION_REPO_READ_CALLS": len(reads),
+                "PRE_DELEGATION_REPO_OUTPUT_BYTES": "UNAVAILABLE"}
+    return {"FIRST_CHILD_SPAWN_ROOT_TURN": turn,
+            "PRE_DELEGATION_REPO_READ_CALLS": len(reads),
+            "PRE_DELEGATION_REPO_OUTPUT_BYTES": sum(byte_values)}
 
 
 def _before(left: dict[str, Any], right: dict[str, Any]) -> bool:

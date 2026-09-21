@@ -22,6 +22,38 @@ def write_json(path: Path, value: object) -> str:
     return str(path)
 
 
+def test_durable_task_a_promotion_recovers_in_fresh_task_b_without_automatic_curator(tmp_path: Path) -> None:
+    """The Controller-owned protocol is explicit: map, exact read, promotion.
+
+    This deliberately calls no Curator or broad durable discovery API.  It
+    exercises the high-fidelity recovery path a fresh controller uses after
+    Task A has closed.
+    """
+    root = repo(tmp_path)
+    task_a = core.task_start(root, "Task A durable architecture", None, None)
+    assert core.catalog(root, ".agent-memory")["indexes"][0]["state"] == "VALID"
+    index_path = root / ".agent-memory" / "INDEX.md"
+    old_index = index_path.read_bytes()
+    updated_index = core._entry("Memory map", "[Architecture decision](architecture/decision.md)", evidence="NONE").decode()
+    promoted = core.task_promote(root, "controller", task_a["revision"], write_json(tmp_path / "task-a-promote.json", {
+        "records": [{"id": "architecture-decision", "path": ".agent-memory/architecture/decision.md",
+                     "title": "Architecture decision", "text": "REUSABLE_DECISION", "source_refs": []}],
+        "index_update": {"path": ".agent-memory/INDEX.md", "base_sha256": hashlib.sha256(old_index).hexdigest(),
+                         "content": updated_index},
+    }))
+    closed = core.task_close(root, core.task_show(root)["state"]["revision"], expected_task_id=task_a["task_id"])
+    assert closed["status"] == "DONE"
+
+    # Fresh Task B performs the named recovery reads only.
+    task_b = core.task_start(root, "Task B recover durable decision", None, None)
+    index_before_recovery = index_path.read_bytes()
+    assert core.catalog(root, ".agent-memory")["indexes"][0]["state"] == "VALID"
+    recovered = core.document_get(root, [".agent-memory/architecture/decision.md"])
+    assert "REUSABLE_DECISION" in recovered["documents"][0]["body"]
+    assert index_path.read_bytes() == index_before_recovery
+    assert task_b["status"] == "ACTIVE"
+
+
 def test_core_has_no_execution_role_context_packet(tmp_path: Path) -> None:
     root = repo(tmp_path)
     task_input = write_json(root.parent / "input.json", {"records": [

@@ -29,12 +29,19 @@ ROLE_CHOICES = (
     "controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer",
 )
 
+# Authoritative defaults. Controller is the persistent root, not a sixth child
+# profile; its default is emitted in the generated root instructions below.
+_ROLE_MODEL_DEFAULTS = {
+    "controller": ("gpt-5.6-sol", "xhigh"),
+    "investigator": ("gpt-5.6-luna", "medium"),
+    "curator": ("gpt-5.6-luna", "medium"),
+    "reasoning-specialist": ("gpt-5.6-sol", "xhigh"),
+    "implementer": ("gpt-5.6-luna", "medium"),
+    "reviewer": ("gpt-5.6-terra", "high"),
+}
 _AGENT_PROFILES = {
-    "thaliris-investigator.toml": ("gpt-5.6-luna", "medium", "investigator"),
-    "thaliris-curator.toml": ("gpt-5.6-luna", "medium", "curator"),
-    "thaliris-reasoning-specialist.toml": ("gpt-5.6-sol", "xhigh", "reasoning-specialist"),
-    "thaliris-implementer.toml": ("gpt-5.6-luna", "medium", "implementer"),
-    "thaliris-reviewer.toml": ("gpt-5.6-terra", "high", "reviewer"),
+    f"thaliris-{role}.toml": (*_ROLE_MODEL_DEFAULTS[role], role)
+    for role in ("investigator", "curator", "reasoning-specialist", "implementer", "reviewer")
 }
 _NATIVE_PROFILE_NAMES = frozenset(name.removesuffix(".toml") for name in _AGENT_PROFILES)
 _KNOWN_HOST_WAIT_CAPABILITIES = {
@@ -69,12 +76,14 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
             "fact is missing, identify it without reconstructing unselected task history."
         ),
         "implementer": (
-            "Implement only a decision-complete bounded handoff: Goal, confirmed facts, hard "
-            "invariants, decision-changing unknowns, and acceptance. Preserve each stated "
-            "unknown rather than guessing or freezing it; if Host protocol, serialization, "
-            "identity, or native schema is unknown, require an Investigator/source/real-shaped "
-            "fixture to prove the contract first. Report verification as observations; Core does "
-            "not supply semantic completion authority."
+            "Implement only an implementation task packet containing Goal, confirmed facts, hard "
+            "invariants, Controller-decided boundaries/contracts, decision-changing unknowns, "
+            "non-binding recommendations/advice, and acceptance. Only Controller decisions, "
+            "invariants, and acceptance are binding; recommendations/advice are not contract. "
+            "Do not silently drop, guess, or freeze an unknown that changes direction. Prove Host "
+            "protocol, serialization, identity, or native schema through an Investigator, source, "
+            "or real-shaped fixture before implementation. Report verification as observations; "
+            "Core does not supply semantic completion authority."
         ),
         "reviewer": (
             "Act as an independent non-writing checker of the candidate named in the handoff. "
@@ -230,6 +239,17 @@ identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
 and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer automatically.
 
+Persistent root Controller default: `gpt-5.6-sol` with `xhigh` reasoning. This
+is root instruction metadata, not a native Codex child profile and does not
+change a current task model automatically.
+
+An implementation handoff states Goal, confirmed facts, hard invariants,
+Controller-decided boundaries/contracts, decision-changing unknowns,
+non-binding recommendations/advice, and acceptance. Decisions, invariants, and
+acceptance are contract; recommendations/advice are not. An unknown that can
+change direction cannot be silently dropped, guessed, or frozen: prove Host
+protocol, serialization, identity, and native-schema contracts first.
+
 Each Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer keeps
 its private working set private. By default it returns a distilled conclusion, key findings,
 decision-changing unknowns or contradictions, verification performed, and
@@ -308,6 +328,15 @@ These profiles are working-style defaults, not routing rules or semantic
 permissions. The Controller's explicit native spawn message is the sole
 task-specific input to every Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer.
 
+## Role Defaults
+
+The persistent root Controller default is `gpt-5.6-sol` with `xhigh` reasoning;
+it is root instruction metadata, not a native Codex child profile and does not
+mutate a current task model. The five child profiles are Investigator (`gpt-5.6-luna`,
+`medium`), Curator (`gpt-5.6-luna`, `medium`), Reasoning Specialist
+(`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `medium`), and Reviewer
+(`gpt-5.6-terra`, `high`).
+
 ## Shared Role Result
 
 Return a distilled result by default:
@@ -359,13 +388,15 @@ unselected task history.
 
 ## Implementer
 
-Implement only a decision-complete bounded handoff containing Goal, confirmed
-facts, hard invariants, decision-changing unknowns, and acceptance. Preserve
-decision-changing unknowns rather than guessing or freezing them. For Host
-protocol, serialization, identity, or native schema, prove an unknown contract
-first through an Investigator, source, or real-shaped fixture. Preserve stated
-constraints and report verification as observations. Do not infer additional
-task state from Core.
+An implementation task packet contains Goal, confirmed facts, hard invariants,
+Controller-decided boundaries/contracts, decision-changing unknowns,
+non-binding recommendations/advice, and acceptance. Only Controller decisions,
+invariants, and acceptance are binding; recommendations/advice are not
+contract. Do not silently drop, guess, or freeze an unknown that changes
+direction. Before implementation, prove Host protocol, serialization, identity,
+or native schema through an Investigator, source, or real-shaped fixture.
+Preserve stated constraints and report verification as observations. Do not
+infer additional task state from Core.
 
 ## Reviewer
 

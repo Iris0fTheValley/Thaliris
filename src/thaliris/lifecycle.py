@@ -284,8 +284,13 @@ def _wrapped_audit_hook_signature(command: str, event: str) -> bool:
         return False
     # This is deliberately a signature search, not shell parsing: it requires
     # a recognizable Thaliris/context executable and the exact hook event.
-    executable = r"(?:context|thaliris)(?:\.exe|\.cmd)?|(?:[a-z]:[\\/][^\s\"']*(?:context|thaliris)(?:\.exe|\.cmd)?)"
-    signature = rf"(?i)(?:^|[\s\"'&])(?:{executable})(?:[\"'])?\s+audit-hook\s+{re.escape(event)}(?=$|[\s\"'])"
+    # This recognizes an executable token, not an arbitrary wrapper body. In
+    # particular, quoted paths may contain spaces, but their basename must be
+    # one we historically generated.  It intentionally does not parse or run
+    # the wrapper.
+    basename = r"(?:context(?:\.exe)?|thaliris(?:\.exe)?)"
+    executable = rf"(?:\"[^\"]*[\\/]{basename}\"|'[^']*[\\/]{basename}'|{basename}(?=$|[\s\"'&])|[a-z]:[^\r\n\"']*[\\/]{basename})"
+    signature = rf"(?i)(?:^|[\s\"'&]){executable}\s+audit-hook\s+{re.escape(event)}(?=$|[\s\"'])"
     return re.search(signature, command) is not None
 
 
@@ -294,15 +299,16 @@ def _ambiguous_legacy_managed_handler(value: object, event: str) -> bool:
     if not isinstance(value, dict) or value.get("type") != "command" or not isinstance(value.get("command"), str):
         return False
     command = value["command"]
-    # A direct legacy ``context`` command with a non-exact shape is also never
-    # removed automatically.  Absolute candidates deliberately do not require
-    # a currently valid pin: that is precisely why they need human cleanup.
-    if command.strip().startswith(f"context audit-hook {event}"):
+    # A direct legacy command with a recognizable Thaliris basename and a
+    # non-exact shape is never removed automatically. Absolute candidates
+    # deliberately do not require a currently valid pin: that is precisely
+    # why they need human cleanup. Arbitrary executables are unrelated.
+    if re.match(rf"(?i)^\s*(?:context(?:\.exe)?|thaliris(?:\.exe)?)\s+audit-hook\s+{re.escape(event)}(?=$|\s)", command):
         return not _legacy_managed_handler(value, event)
     if _wrapped_audit_hook_signature(command, event):
         return True
     token = _absolute_command_token(command)
-    if token is None:
+    if token is None or ntpath.basename(token).lower() not in {"context", "context.exe", "thaliris", "thaliris.exe"}:
         return False
     tail = re.sub(r"^\s*(?:\"[^\"]+\"|'[^']+'|[^\s]+)\s*", "", command)
     return tail.startswith(f"audit-hook {event}") and not _legacy_managed_handler(value, event)

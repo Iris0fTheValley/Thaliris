@@ -464,7 +464,9 @@ def test_valid_pin_upgrades_each_canonical_handler_without_manual_cleanup(tmp_pa
 
 def test_valid_pin_bootstraps_without_path_resolution(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
-    executable = tmp_path / "pinned.exe"
+    executable_dir = tmp_path / "pinned tools"
+    executable_dir.mkdir()
+    executable = executable_dir / "thaliris.exe"
     executable.write_bytes(b"pinned bytes")
     monkeypatch.setenv("THALIRIS_EXECUTABLE", str(executable))
     monkeypatch.setenv("THALIRIS_EXECUTABLE_SHA256", hashlib.sha256(executable.read_bytes()).hexdigest())
@@ -476,7 +478,9 @@ def test_valid_pin_bootstraps_without_path_resolution(tmp_path: Path, monkeypatc
 
 def test_ambiguous_legacy_absolute_hook_requires_manual_cleanup(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
-    executable = tmp_path / "pinned.exe"
+    executable_dir = tmp_path / "pinned tools"
+    executable_dir.mkdir()
+    executable = executable_dir / "thaliris.exe"
     executable.write_bytes(b"pinned bytes")
     monkeypatch.setenv("THALIRIS_EXECUTABLE", str(executable))
     monkeypatch.setenv("THALIRIS_EXECUTABLE_SHA256", hashlib.sha256(executable.read_bytes()).hexdigest())
@@ -489,6 +493,30 @@ def test_ambiguous_legacy_absolute_hook_requires_manual_cleanup(tmp_path: Path, 
     installed = json.loads((root / ".codex" / "hooks.json").read_text(encoding="utf-8"))
     commands = [handler["command"] for entry in installed["hooks"]["SessionStart"] for handler in entry.get("hooks", [])]
     assert f'"{executable}" audit-hook SessionStart --extra' in commands
+
+
+@pytest.mark.parametrize("command", [
+    r'"C:\\old tools\\context.exe" audit-hook SessionStart --extra',
+    r'"C:\\old tools\\thaliris.exe" audit-hook SessionStart --extra',
+])
+def test_recognizable_absolute_legacy_hook_with_spaces_requires_manual_cleanup(command: str) -> None:
+    handler = {"type": "command", "command": command, "timeout": 60}
+    assert lifecycle_module._ambiguous_legacy_managed_handler(handler, "SessionStart")
+
+
+def test_unrelated_absolute_audit_hook_is_not_manual_cleanup() -> None:
+    handler = {"type": "command", "command": r'"C:\\tools\\other.exe" audit-hook SessionStart', "timeout": 60}
+    assert not lifecycle_module._ambiguous_legacy_managed_handler(handler, "SessionStart")
+
+
+@pytest.mark.parametrize("command", [
+    "context.cmd audit-hook SessionStart --extra",
+    r'"C:\\old tools\\thaliris.cmd" audit-hook SessionStart --extra',
+    r'cmd /c "C:\\old tools\\context.cmd audit-hook SessionStart"',
+])
+def test_non_executable_aliases_do_not_trigger_manual_cleanup(command: str) -> None:
+    handler = {"type": "command", "command": command, "timeout": 60}
+    assert not lifecycle_module._ambiguous_legacy_managed_handler(handler, "SessionStart")
 
 
 @pytest.mark.parametrize("command", [
@@ -1034,8 +1062,26 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
             assert removed not in profile
     assert "sole task-specific semantic router" in codex_adapter.MANAGED
     assert "never calls Core" in codex_adapter.MANAGED
-    assert codex_adapter._AGENT_PROFILES["thaliris-implementer.toml"][0] == "gpt-5.6-luna"
-    assert "decision-complete bounded handoff" in codex_adapter.ROLE_PACKS
+    assert codex_adapter._ROLE_MODEL_DEFAULTS == {
+        "controller": ("gpt-5.6-sol", "xhigh"),
+        "investigator": ("gpt-5.6-luna", "medium"),
+        "curator": ("gpt-5.6-luna", "medium"),
+        "reasoning-specialist": ("gpt-5.6-sol", "xhigh"),
+        "implementer": ("gpt-5.6-luna", "medium"),
+        "reviewer": ("gpt-5.6-terra", "high"),
+    }
+    assert set(codex_adapter._AGENT_PROFILES) == {
+        "thaliris-investigator.toml", "thaliris-curator.toml",
+        "thaliris-reasoning-specialist.toml", "thaliris-implementer.toml",
+        "thaliris-reviewer.toml",
+    }
+    assert "Persistent root Controller default: `gpt-5.6-sol` with `xhigh` reasoning." in codex_adapter.MANAGED
+    assert "Decisions, invariants, and\nacceptance are contract; recommendations/advice are not." in codex_adapter.MANAGED
+    assert "The five child profiles are Investigator" in codex_adapter.ROLE_PACKS
+    assert "Controller-decided boundaries/contracts" in codex_adapter.ROLE_PACKS
+    assert "recommendations/advice are not\ncontract" in codex_adapter.ROLE_PACKS
+    assert "Do not silently drop, guess, or freeze an unknown" in codex_adapter.ROLE_PACKS
+    assert Path("docs/thaliris-role-packs.md").read_bytes() == codex_adapter.ROLE_PACKS.encode("utf-8")
     assert "only after Reviewer PASS" in codex_adapter.ROLE_PACKS
 
 

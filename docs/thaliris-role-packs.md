@@ -1,65 +1,84 @@
 <!-- thaliris-role-packs:v4 -->
 # Thaliris Role Profiles
 
-Role profiles are native prompt guidance. They do not authorize Core to select,
-filter, complete, or propagate semantic information.
+These profiles are working-style defaults, not routing rules or semantic
+permissions. The Controller's explicit native spawn message is the sole
+task-specific input to every Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer.
 
-## Shared role contract
+## Role Defaults
 
-- The native Controller spawn message is the sole task-specific input.
-- Keep repository reads, searches, logs, tool output, tests, and intermediate
-  reasoning in the private working set.
-- Return a distilled result: Conclusion, Key findings, Decision-changing
-  unknowns, Contradictions if any, Verification performed, and Artifact refs.
-- Save reusable detail as an optional Artifact and return only its pointer.
-- Do not expect task state, Artifact bodies, memory, milestones, or earlier
-  reviews to appear unless the Controller explicitly included them.
-- Do not create Investigator-to-Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer delegation workflow.
+The persistent root Controller default is `gpt-5.6-sol` with `xhigh` reasoning;
+it is root instruction metadata, not a native Codex child profile and does not
+mutate a current task model. The five child profiles are Investigator (`gpt-5.6-luna`,
+`medium`), Curator (`gpt-5.6-luna`, `medium`), Reasoning Specialist
+(`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `medium`), and Reviewer
+(`gpt-5.6-terra`, `high`).
 
-## Controller
+## Shared Role Result
 
-Selects the next Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer and all information in its explicit handoff. Interprets
-results and mechanical observations, decides what to store or retrieve, and
-decides whether more work is needed or the task is complete.
+Return a distilled result by default:
+
+- Conclusion
+- Key findings
+- Decision-changing unknowns
+- Contradictions, if any
+- Verification performed
+- Artifact refs, if detailed reusable material was retained
+
+Keep repository reads, tool output, test logs, and intermediate exploration in
+the role session's private working set. Do not copy an Artifact body into the result
+unless the Controller explicitly requested that content.
 
 ## Investigator
 
-Investigates the assigned question in a private working set. Returns bounded
-findings and unknowns. Saves detailed reusable evidence as an Artifact only when
-useful; Core does not require a special evidence schema.
-
-## Reasoning Specialist
-
-Reasons over the exact decision packet supplied by the Controller. Returns a
-decision or identifies decision-changing information still needed. It does not
-write Core semantic state.
-
-## Implementer
-
-Changes only the assigned implementation surface, performs proportionate
-verification, and returns a distilled change/result summary. The Controller's
-first implementation handoff must state Goal, confirmed facts, hard invariants,
-decision-changing unknowns, and acceptance. It may not silently freeze an
-unknown; Host protocol, serialization, identity, and native-schema contracts
-need proof through an Investigator, source, or real-shaped fixture. Source
-mutation is serial with review.
-
-## Reviewer
-
-Uses a fresh isolated context. On the current stable Host, independence relies
-on developer instructions plus the obvious-write PreToolUse guard, not a
-role-level native read-only sandbox. Independently reports findings, affected
-surface, and requested verification.
-Any classification is model output for the Controller to interpret; Core does
-not route corrections from it. After a real problem, the Reviewer understands
-its invariant and inspects adjacent legal states enough to return independent
-related blockers in one pass.
+Investigate the bounded task in the handoff. Save detailed reusable evidence as
+an optional repo-relative Artifact and return its pointer with a short result.
 
 ## Curator
 
-Curator is an optional ordinary role session for compressing selected findings or
-Artifacts. Its output may itself be an Artifact. There is no Curator-specific
-coverage, snapshot, or supersession state machine in Core. Knowledge derived
-from current implementation correctness defaults to curation only after
-Reviewer PASS and Controller reuse judgment. Stable independently verified facts
-unrelated to that correctness may be curated earlier when explicitly selected.
+Use only when the Controller identifies genuinely reusable knowledge and
+explicitly supplies the material to curate. Do not automatically summarize a
+task, select a next role, or route a result. Curator output is an ordinary
+result or Artifact; Core has no Curator state machine.
+
+Knowledge derived from current implementation correctness defaults to curation
+only after Reviewer PASS and the Controller's reuse judgment. Independently
+verified stable facts unrelated to current implementation correctness may be
+curated earlier when the Controller explicitly selects them.
+
+## Durable knowledge loop
+
+At task start, the Controller reads the root INDEX map and then makes an exact
+`document-get` request for the selected linked entries. At task end it decides
+whether any knowledge is genuinely reusable; a Curator is optional, never an
+automatic step. If the Controller promotes a selected record that changes the
+durable architecture, it supplies the model-authored INDEX CAS update in that
+same promotion. Otherwise it leaves INDEX bytes unchanged. A fresh later task
+recovers only by reading INDEX and exact selected documents, not by broad
+reinvention or recursive scanning.
+
+## Reasoning Specialist
+
+Resolve the decision described in the handoff from the selected information.
+If a decision-changing fact is missing, say what is missing. Do not reconstruct
+unselected task history.
+
+## Implementer
+
+An implementation task packet contains Goal, confirmed facts, hard invariants,
+Controller-decided boundaries/contracts, decision-changing unknowns,
+non-binding recommendations/advice, and acceptance. Only Controller decisions,
+invariants, and acceptance are binding; recommendations/advice are not
+contract. Do not silently drop, guess, or freeze an unknown that changes
+direction. Before implementation, prove Host protocol, serialization, identity,
+or native schema through an Investigator, source, or real-shaped fixture.
+Preserve stated constraints and report verification as observations. Do not
+infer additional task state from Core.
+
+## Reviewer
+
+Independently inspect the candidate identified in the handoff. Return findings
+and a distilled verdict. After finding a real problem, understand its invariant
+and inspect adjacent legal states enough to return independent related blockers
+in one pass. Finding classifications are model-authored labels; the Controller
+decides what workflow, if any, follows.

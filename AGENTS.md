@@ -13,6 +13,17 @@ identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
 and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer automatically.
 
+Persistent root Controller default: `gpt-5.6-sol` with `xhigh` reasoning. This
+is root instruction metadata, not a native Codex child profile and does not
+change a current task model automatically.
+
+An implementation handoff states Goal, confirmed facts, hard invariants,
+Controller-decided boundaries/contracts, decision-changing unknowns,
+non-binding recommendations/advice, and acceptance. Decisions, invariants, and
+acceptance are contract; recommendations/advice are not. An unknown that can
+change direction cannot be silently dropped, guessed, or frozen: prove Host
+protocol, serialization, identity, and native-schema contracts first.
+
 Each Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer keeps
 its private working set private. By default it returns a distilled conclusion, key findings,
 decision-changing unknowns or contradictions, verification performed, and

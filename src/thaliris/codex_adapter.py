@@ -300,9 +300,13 @@ retrieve explicitly selected objects.
 If `task-start` was attempted but managed enforcement is unavailable or
 rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
 Codex version, host capability, task schema, git/worktree identity,
-hook/profile presence, and the `task-start` error are allowed reads. Once the
-cause is known, do not read user-task repository source, tests, docs, or search
-results. If work continues, the Controller selects the minimum necessary fresh
+hook/profile presence, and the `task-start` error are allowed reads. Use only
+the direct canonical `thaliris` command or an absolute executable with an
+explicit exact SHA-256 pin; never recommend or use a shell-wrapper fallback.
+If neither trusted direct route is available, check canonical availability, the
+explicit executable SHA-256 pin, and hook/install state, then report bootstrap
+unavailable. Once the cause is known, do not read user-task repository source,
+tests, docs, or search results. If work continues, the Controller selects the minimum necessary fresh
 role sessions serially (`fork_turns="none"`). A straightforward, bounded,
 low-risk task with confirmed facts may follow Controller -> fresh Implementer
 -> done: that Implementer may perform necessary bounded local reading,

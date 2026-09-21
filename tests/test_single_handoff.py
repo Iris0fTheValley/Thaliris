@@ -1079,6 +1079,11 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "Persistent root Controller model default: `gpt-5.6-sol`. Reasoning effort is" in codex_adapter.MANAGED
     assert "not forced by Thaliris" in codex_adapter.MANAGED
     assert "Decisions, invariants, and\nacceptance are contract; recommendations/advice are not." in codex_adapter.MANAGED
+    assert "direct canonical `thaliris` command or an absolute executable with an" in codex_adapter.MANAGED
+    assert "never recommend or use a shell-wrapper fallback" in codex_adapter.MANAGED
+    assert "explicit executable SHA-256 pin, and hook/install state, then report bootstrap\nunavailable" in codex_adapter.MANAGED
+    agents = Path("AGENTS.md").read_text(encoding="utf-8")
+    assert codex_adapter.MANAGED in agents
     assert "The five child profiles are Investigator" in codex_adapter.ROLE_PACKS
     assert "Controller-decided boundaries/contracts" in codex_adapter.ROLE_PACKS
     assert "recommendations/advice are not\ncontract" in codex_adapter.ROLE_PACKS

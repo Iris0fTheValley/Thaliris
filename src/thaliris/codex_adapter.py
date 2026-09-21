@@ -553,7 +553,14 @@ def init(root: Path) -> dict[str, object]:
         hooks["installed_hook_spec"] == "CURRENT"
         and hooks["current_hook_hash_observed"] == "STALE"
     )
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed or stale_runtime_hook_spec, "hook_trust_required": hook_changed or stale_runtime_hook_spec, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
+    executable_unavailable = hooks["canonical_executable_available"] == "NO"
+    if executable_unavailable:
+        # The installed portable hook invokes the canonical PATH command. Init
+        # cannot make that command available to Codex's already-running host,
+        # so make the required host repair and subsequent re-attestation
+        # explicit even when the hook definition itself is unchanged.
+        manual = sorted(set(manual) | {"canonical_executable_unavailable"})
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": instruction_changed or hook_changed or profile_changed or stale_runtime_hook_spec or executable_unavailable, "hook_trust_required": hook_changed or stale_runtime_hook_spec or executable_unavailable, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
 
 
 def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str], list[str]]:

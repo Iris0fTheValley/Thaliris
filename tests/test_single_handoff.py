@@ -35,6 +35,28 @@ def test_init_requires_restart_and_hook_trust_for_stale_runtime_hook_spec(tmp_pa
     assert result["hook_trust_required"] is True
 
 
+def test_repeated_init_reports_unavailable_canonical_executable_as_manual_action(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    for name in (
+        "THALIRIS_EXECUTABLE",
+        "THALIRIS_EXECUTABLE_SHA256",
+        "THALIRIS_CONTEXT_EXECUTABLE",
+        "THALIRIS_CONTEXT_EXECUTABLE_SHA256",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(lifecycle_module.shutil, "which", lambda command: None)
+
+    result = codex_adapter.init(root)
+
+    assert result["changed"] is False
+    assert result["hook_definition_changed"] is False
+    assert result["canonical_executable_available"] == "NO"
+    assert result["canonical_executable_identity"] == "UNAVAILABLE"
+    assert "canonical_executable_unavailable" in result["manual_action_required"]
+    assert result["session_restart_required"] is True
+    assert result["hook_trust_required"] is True
+
+
 def hook_payload(**values: object) -> dict[str, object]:
     # Managed lifecycle tests exercise the concrete named profile.  Ordinary
     # worker remains covered separately in the NO_TASK transparency test.

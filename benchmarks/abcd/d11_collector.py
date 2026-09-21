@@ -26,6 +26,10 @@ TRUSTED_SOURCE_KINDS = SOURCE_KINDS
 # line provenance and use names which make the derived nature explicit.
 CODEX_V0155_NORMALIZATION = "codex-jsonl-v0.155.1"
 CODEX_V0155_MIN_VERSION = (0, 155, 1)
+# The normalization is deliberately pinned to Codex rust-v0.155.1, peeled at
+# be2951ea34f0d295ed0becf97079f92fa5f6950e.  A later JSONL shape is not
+# silently accepted as evidence for this metric.
+CODEX_V0155_PEELED_COMMIT = "be2951ea34f0d295ed0becf97079f92fa5f6950e"
 
 
 def _payload(raw: dict[str, Any]) -> dict[str, Any]:
@@ -73,11 +77,13 @@ def normalize_codex_v0155_rollout_records(raw_records: Iterable[dict[str, Any]],
                                            source_id: str = "codex-v0155-offline") -> list[dict[str, Any]]:
     """Normalize named Codex v0.155.1 JSONL shapes for *offline audit*.
 
-    ``derived_root_turn_id`` is copied from native ``TurnContextItem.root_turn_id``;
-    it is an attribution string, never a native ordinal.  A record is emitted
-    only when its session identity is explicit.  This function does not grant
-    trust to arbitrary input: callers must still use a frozen Codex rollout
-    capture before feeding the resulting records into a formal collector.
+    The derived turn attribution comes only from the nested
+    ``event_msg``/``item_completed`` envelope's opaque payload ``turn_id``.
+    It is not a native ordinal, and legacy ``TurnContextItem.root_turn_id`` is
+    not root-turn proof.  A record is emitted only when its session identity
+    is explicit.  This function does not grant trust to arbitrary input:
+    callers must still use a frozen Codex rollout capture before feeding the
+    resulting records into a formal collector.
     """
     output: list[dict[str, Any]] = []
     raw_list = list(raw_records)
@@ -161,20 +167,32 @@ def normalize_codex_v0155_rollout_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def load_trusted_codex_v0155_rollout(registry: dict[str, Any], *, authority_registry: AuthorityRegistry | None = None) -> list[dict[str, Any]]:
-    """Ingest v0.155.1 only through an already frozen, verified capture."""
+    """Ingest one frozen root rollout plus its frozen child rollout files.
+
+    ``registry_sources`` verifies every descriptor and its bytes before any
+    normalization.  Collection-level identity/order proof remains a metric
+    concern: an invalid collection is retained as provenance-bearing records
+    and yields ``UNAVAILABLE`` rather than a guessed fact.
+    """
     sources = registry_sources(registry, authority_registry=authority_registry)
     codex = [source for source in sources if source["source_kind"] == "codex_rollout"]
-    if len(codex) != 1:
-        raise ValueError("v0.155.1 ingestion requires exactly one frozen Codex rollout")
-    source = codex[0]
-    path = Path(source["canonical_path"])
-    raw = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    records = normalize_codex_v0155_rollout_records(raw, source_file=str(path), source_id=source["source_id"])
-    for record in records:
-        record.update({"_trusted_source": "codex_rollout", "_source_id": source["source_id"],
-                       "_source_run_id": source["run_id"], "_registry_identity": registry["identity"],
-                       "_source_sha256": source["content_sha256"],
-                       "_native_event_id": f'{source["source_id"]}:{record["_source_line"]}'})
+    if not codex:
+        raise ValueError("v0.155.1 ingestion requires at least one frozen Codex rollout")
+    records: list[dict[str, Any]] = []
+    for source in codex:
+        path = Path(source["canonical_path"])
+        # JSON decoding errors are capture-validation errors, as they were for
+        # the former single-file reader; never normalize a partial collection.
+        raw = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        normalized = normalize_codex_v0155_rollout_records(raw, source_file=str(path), source_id=source["source_id"])
+        for record in normalized:
+            record.update({"_trusted_source": "codex_rollout", "_source_id": source["source_id"],
+                           "_source_run_id": source["run_id"], "_registry_identity": registry["identity"],
+                           "_source_sha256": source["content_sha256"],
+                           "_capture_authority": source.get("capture_authority"),
+                           "_capture_binding": {key: source.get(key) for key in ("task_id", "task_revision", "reservation_id", "session_id")},
+                           "_native_event_id": f'{source["source_id"]}:{record["_source_line"]}'})
+        records.extend(normalized)
     return records
 
 
@@ -419,23 +437,57 @@ def _unavailable_rollout_metrics() -> dict[str, str]:
     )}
 
 
-def _native_root_controller(events: list[dict[str, Any]]) -> str | None:
-    """Prove one root file/thread from SessionMeta, never a fabricated role."""
-    roots: set[str] = set()
+def _codex_v0155_collection(events: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    """Prove a root capture and its separately captured children.
+
+    v0.155.1 writes the child ``SessionMeta`` in the child's rollout file,
+    but retains the root thread in ``session_id``.  No cross-file chronology
+    is inferred: this establishes identity only; root-file ordering remains
+    the sole basis for the pre-delegation count.
+    """
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    records_by_source: dict[str, list[dict[str, Any]]] = {}
     for event in events:
-        if _kind(event) != "session_meta":
-            continue
-        session, thread = event.get("session_id"), event.get("thread_id")
-        parent = event.get("parent_thread_id")
-        version = event.get("cli_version")
-        source = event.get("source")
-        # Root identity is file-level: a self-owned thread, no parent and no
-        # spawned-subagent metadata. agent_role is only meaningful for a child.
-        if (isinstance(session, str) and session and session == thread and parent in (None, "")
-                and not isinstance(source, dict)
-                and _codex_version_at_least(version, CODEX_V0155_MIN_VERSION)):
-            roots.add(session)
-    return next(iter(roots)) if len(roots) == 1 else None
+        source_id = event.get("_source_id")
+        if not isinstance(source_id, str) or not source_id:
+            return None
+        records_by_source.setdefault(source_id, []).append(event)
+        if _kind(event) == "session_meta":
+            by_source.setdefault(source_id, []).append(event)
+    # An exact collection has one SessionMeta per authority-verified file.
+    all_sources = {event.get("_source_id") for event in events}
+    if not all_sources or set(by_source) != all_sources or any(len(items) != 1 for items in by_source.values()):
+        return None
+    metas = [items[0] for items in by_source.values()]
+    # Session identity must precede every normalized fact in its own capture;
+    # separate files intentionally have no comparable clock.
+    for meta in metas:
+        source_records = records_by_source[meta["_source_id"]]
+        line = meta.get("_source_line")
+        lines = [item.get("_source_line") for item in source_records]
+        if (not isinstance(line, int) or not all(isinstance(item, int) for item in lines)
+                or line != min(lines) or len(set(lines)) != len(lines)):
+            return None
+    bindings = {(event.get("_source_run_id"), event.get("_registry_identity"),
+                 tuple(event.get("_capture_binding", {}).get(key) for key in ("task_id", "task_revision", "reservation_id")))
+                for event in metas}
+    if len(bindings) != 1 or any(not _is_codex_v0155(event.get("cli_version")) for event in metas):
+        return None
+    roots = [event for event in metas if isinstance(event.get("session_id"), str)
+             and event.get("session_id") == event.get("thread_id")
+             and event.get("parent_thread_id") in (None, "") and not isinstance(event.get("source"), dict)]
+    if len(roots) != 1:
+        return None
+    root = roots[0]
+    root_thread = root["thread_id"]
+    children = [event for event in metas if event is not root]
+    child_ids = [event.get("thread_id") for event in children]
+    if (not children or any(not isinstance(child, str) or not child or child == root_thread for child in child_ids)
+            or len(set(child_ids)) != len(child_ids)
+            or any(event.get("session_id") != root_thread for event in children)
+            or any(event.get("parent_thread_id") not in (None, "", root_thread) for event in children)):
+        return None
+    return root, children
 
 
 def _codex_version_at_least(value: Any, minimum: tuple[int, int, int]) -> bool:
@@ -445,6 +497,13 @@ def _codex_version_at_least(value: Any, minimum: tuple[int, int, int]) -> bool:
     if len(pieces) < 3 or not all(piece.isdigit() for piece in pieces[:3]):
         return False
     return tuple(int(piece) for piece in pieces[:3]) >= minimum
+
+
+def _is_codex_v0155(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    pieces = value.removeprefix("v").split(".")
+    return len(pieces) == 3 and all(piece.isdigit() for piece in pieces) and tuple(map(int, pieces)) == CODEX_V0155_MIN_VERSION
 
 
 def _native_repo_read(command: str) -> bool:
@@ -458,27 +517,25 @@ def _collect_codex_v0155_delegation_metrics(events: list[dict[str, Any]]) -> dic
     if (any(item.get("_codex_rollout_normalization") != CODEX_V0155_NORMALIZATION for item in events)
             or any(item.get("_codex_rollout_incomplete") for item in events)):
         return _unavailable_rollout_metrics()
-    root = _native_root_controller(events)
-    if root is None:
+    collection = _codex_v0155_collection(events)
+    if collection is None:
         return _unavailable_rollout_metrics()
-    root_meta = next(event for event in events if _kind(event) == "session_meta" and event.get("session_id") == root)
+    root_meta, child_metas = collection
     root_thread = root_meta.get("thread_id")
     if not isinstance(root_thread, str):
         return _unavailable_rollout_metrics()
     # This file has no per-event session id. Its root identity is established
     # once by session-meta; child identity is separately proved by child meta.
     scoped = [event for event in events if event.get("_source_file") == root_meta.get("_source_file")]
-    children = {event.get("thread_id") for event in events if _kind(event) == "session_meta"
-                and event.get("parent_thread_id") == root_thread and isinstance(event.get("thread_id"), str)}
+    children = {event["thread_id"] for event in child_metas}
     calls = [event for event in scoped if _kind(event) == "native_collaboration_spawn_call"]
-    pairs: list[dict[str, Any]] = []
-    for call in calls:
-        child = call.get("child_thread_id")
-        if isinstance(child, str) and child in children:
-            pairs.append(call)
-    if not pairs:
+    # Every frozen child must be paired one-to-one with a root-file native
+    # spawn record.  A child capture never contributes command reads here.
+    call_ids = [call.get("child_thread_id") for call in calls]
+    if (not calls or any(not isinstance(child, str) or child not in children for child in call_ids)
+            or len(set(call_ids)) != len(call_ids) or set(call_ids) != children):
         return _unavailable_rollout_metrics()
-    first = pairs[0]
+    first = calls[0]
     # Native root turns are task_started.turn_id. This is an opaque native ID,
     # not an ordinal; root TurnContextItem.root_turn_id is correctly absent.
     turn = first.get("native_turn_id")

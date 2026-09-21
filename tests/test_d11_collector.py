@@ -259,17 +259,71 @@ def test_codex_v0155_raw_normalization_reports_derived_turn_and_root_only_reads(
 
 
 def test_codex_v0155_frozen_capture_emits_native_metrics_without_root_role(tmp_path: Path) -> None:
-    stream = tmp_path / "captured.jsonl"
-    raw = [
+    root_stream = tmp_path / "root.jsonl"
+    child_stream = tmp_path / "child.jsonl"
+    root_raw = [
         {"type": "session_meta", "payload": {"session_id": "root", "id": "root", "parent_thread_id": None, "thread_source": "user", "cli_version": "0.155.1"}},
         {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "turn-1", "item": {"type": "CommandExecution", "id": "cmd", "command": ["rg", "needle", "src"], "aggregated_output": "bytes"}}},
         {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "turn-1", "item": {"type": "CollabAgentToolCall", "id": "spawn", "tool": "spawn_agent", "receiver_thread_ids": ["child"]}}},
-        {"type": "session_meta", "payload": {"session_id": "child-session", "id": "child", "parent_thread_id": "root", "agent_role": "implementer", "source": {"subagent": {}}, "cli_version": "0.155.1"}},
     ]
-    stream.write_text("".join(json.dumps(item) + "\n" for item in raw), encoding="utf-8")
-    registry = d11_sources.create_source_registry([{"kind": "codex_rollout", "path": stream}], run_id="fixture", test_only=True)
+    child_raw = [
+        # Rust-v0.155.1 preserves the root thread in the child file's
+        # session_id; id is the spawned child thread.
+        {"type": "session_meta", "payload": {"session_id": "root", "id": "child", "parent_thread_id": "root", "agent_role": "implementer", "source": {"subagent": {}}, "cli_version": "0.155.1"}},
+        {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "child-turn", "item": {"type": "CommandExecution", "command": ["rg", "secret", "src"], "aggregated_output": "leak-free"}}},
+    ]
+    root_stream.write_text("".join(json.dumps(item) + "\n" for item in root_raw), encoding="utf-8")
+    child_stream.write_text("".join(json.dumps(item) + "\n" for item in child_raw), encoding="utf-8")
+    registry = d11_sources.create_source_registry([
+        {"kind": "codex_rollout", "path": root_stream},
+        {"kind": "codex_rollout", "path": child_stream},
+    ], run_id="fixture", test_only=True)
     metrics = d11_collector.collect_delegation_rollout_metrics(d11_collector.load_trusted_codex_v0155_rollout(registry))
     assert metrics == {"FIRST_CHILD_SPAWN_ROOT_TURN": "turn-1", "PRE_DELEGATION_REPO_READ_CALLS": 1, "PRE_DELEGATION_REPO_OUTPUT_BYTES": 5}
+
+
+@pytest.mark.parametrize("mutation", ("missing-child", "mismatched-session", "duplicate-child", "ambiguous-root", "version-mismatch"))
+def test_codex_v0155_multifile_collection_fails_closed(tmp_path: Path, mutation: str) -> None:
+    root_stream, child_stream, extra_stream = (tmp_path / name for name in ("root.jsonl", "child.jsonl", "extra.jsonl"))
+    root = {"type": "session_meta", "payload": {"session_id": "root", "id": "root", "parent_thread_id": None, "thread_source": "user", "cli_version": "0.155.1"}}
+    spawn = {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "turn-1", "item": {"type": "CollabAgentToolCall", "tool": "spawn_agent", "receiver_thread_ids": ["child"]}}}
+    child = {"type": "session_meta", "payload": {"session_id": "root", "id": "child", "parent_thread_id": "root", "source": {"subagent": {}}, "cli_version": "0.155.1"}}
+    if mutation == "missing-child":
+        root_stream.write_text(json.dumps(root) + "\n" + json.dumps(spawn) + "\n", encoding="utf-8")
+        registry_entries = [{"kind": "codex_rollout", "path": root_stream}]
+    else:
+        if mutation == "mismatched-session":
+            child["payload"]["session_id"] = "wrong-root"
+        if mutation == "version-mismatch":
+            child["payload"]["cli_version"] = "0.155.2"
+        root_stream.write_text(json.dumps(root) + "\n" + json.dumps(spawn) + "\n", encoding="utf-8")
+        child_stream.write_text(json.dumps(child) + "\n", encoding="utf-8")
+        registry_entries = [{"kind": "codex_rollout", "path": root_stream}, {"kind": "codex_rollout", "path": child_stream}]
+        if mutation == "duplicate-child":
+            # Distinct frozen bytes exercise duplicate child identity rather
+            # than the registry's duplicate-source-id guard.
+            extra_stream.write_text(json.dumps(child) + "\n\n", encoding="utf-8")
+            registry_entries.append({"kind": "codex_rollout", "path": extra_stream})
+        if mutation == "ambiguous-root":
+            extra_stream.write_text(json.dumps(root) + "\n", encoding="utf-8")
+            registry_entries.append({"kind": "codex_rollout", "path": extra_stream})
+    registry = d11_sources.create_source_registry(registry_entries, run_id="fixture", test_only=True)
+    metrics = d11_collector.collect_delegation_rollout_metrics(d11_collector.load_trusted_codex_v0155_rollout(registry))
+    assert set(metrics.values()) == {"UNAVAILABLE"}
+
+
+def test_codex_v0155_multifile_collection_rejects_session_meta_after_root_events(tmp_path: Path) -> None:
+    root_stream, child_stream = tmp_path / "root.jsonl", tmp_path / "child.jsonl"
+    root_stream.write_text("\n".join(json.dumps(item) for item in [
+        {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "turn-1", "item": {"type": "CollabAgentToolCall", "tool": "spawn_agent", "receiver_thread_ids": ["child"]}}},
+        {"type": "session_meta", "payload": {"session_id": "root", "id": "root", "parent_thread_id": None, "cli_version": "0.155.1"}},
+    ]) + "\n", encoding="utf-8")
+    child_stream.write_text(json.dumps({"type": "session_meta", "payload": {"session_id": "root", "id": "child", "parent_thread_id": "root", "source": {"subagent": {}}, "cli_version": "0.155.1"}}) + "\n", encoding="utf-8")
+    registry = d11_sources.create_source_registry([
+        {"kind": "codex_rollout", "path": root_stream}, {"kind": "codex_rollout", "path": child_stream},
+    ], run_id="fixture", test_only=True)
+    metrics = d11_collector.collect_delegation_rollout_metrics(d11_collector.load_trusted_codex_v0155_rollout(registry))
+    assert set(metrics.values()) == {"UNAVAILABLE"}
 
 
 def test_codex_v0155_normalization_accepts_windows_commands_and_base64_delta_bytes() -> None:

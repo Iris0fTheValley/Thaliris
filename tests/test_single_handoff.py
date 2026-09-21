@@ -18,6 +18,23 @@ def repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def test_init_requires_restart_and_hook_trust_for_stale_runtime_hook_spec(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    runtime = root / ".context" / "audit" / "stale-session" / "runtime.json"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text(json.dumps({
+        "managed_hook_spec_hash": "stale-hook-spec",
+        "adapter_protocol_version": "stale-protocol",
+    }), encoding="utf-8")
+
+    result = codex_adapter.init(root)
+
+    assert result["changed"] is False
+    assert result["hook_definition_changed"] is False
+    assert result["session_restart_required"] is True
+    assert result["hook_trust_required"] is True
+
+
 def hook_payload(**values: object) -> dict[str, object]:
     # Managed lifecycle tests exercise the concrete named profile.  Ordinary
     # worker remains covered separately in the NO_TASK transparency test.

@@ -548,7 +548,12 @@ def init(root: Path) -> dict[str, object]:
     hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed, "hook_trust_required": hook_changed, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
+    hooks = lifecycle.hooks_health(root)
+    stale_runtime_hook_spec = (
+        hooks["installed_hook_spec"] == "CURRENT"
+        and hooks["current_hook_hash_observed"] == "STALE"
+    )
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "session_restart_required": instruction_changed or hook_changed or profile_changed or stale_runtime_hook_spec, "hook_trust_required": hook_changed or stale_runtime_hook_spec, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
 
 
 def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str], list[str]]:

@@ -554,6 +554,11 @@ def init(root: Path) -> dict[str, object]:
         and hooks["current_hook_hash_observed"] == "STALE"
     )
     executable_unavailable = hooks["canonical_executable_available"] == "NO"
+    if stale_runtime_hook_spec:
+        # The installed definition is current, but this host's observed runtime
+        # hook identity is stale.  Init cannot re-attest an already-running
+        # session, so require an explicit restart and re-attestation.
+        manual = sorted(set(manual) | {"stale_runtime_hook_re_attestation_required"})
     if executable_unavailable:
         # The installed portable hook invokes the canonical PATH command. Init
         # cannot make that command available to Codex's already-running host,

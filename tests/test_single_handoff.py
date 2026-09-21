@@ -18,7 +18,7 @@ def repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_init_requires_restart_and_hook_trust_for_stale_runtime_hook_spec(tmp_path: Path) -> None:
+def test_init_reports_manual_re_attestation_for_stale_runtime_hook_spec(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     runtime = root / ".context" / "audit" / "stale-session" / "runtime.json"
     runtime.parent.mkdir(parents=True)
@@ -26,11 +26,21 @@ def test_init_requires_restart_and_hook_trust_for_stale_runtime_hook_spec(tmp_pa
         "managed_hook_spec_hash": "stale-hook-spec",
         "adapter_protocol_version": "stale-protocol",
     }), encoding="utf-8")
+    monkeypatch.setattr(
+        lifecycle_module,
+        "managed_executable_health",
+        lambda: {
+            "canonical_executable_available": "YES",
+            "canonical_executable_identity": "TEST_PINNED",
+        },
+    )
 
     result = codex_adapter.init(root)
 
     assert result["changed"] is False
     assert result["hook_definition_changed"] is False
+    assert result["canonical_executable_available"] == "YES"
+    assert "stale_runtime_hook_re_attestation_required" in result["manual_action_required"]
     assert result["session_restart_required"] is True
     assert result["hook_trust_required"] is True
 

@@ -444,6 +444,24 @@ def test_pinned_executable_renders_hook_and_migrates_exact_legacy_shape(tmp_path
     assert handlers == [lifecycle_module.hook_spec()["hooks"]["SessionStart"][0]["hooks"][0]]
 
 
+def test_valid_pin_upgrades_each_canonical_handler_without_manual_cleanup(tmp_path: Path, monkeypatch) -> None:
+    executable = tmp_path / "pinned tool.exe"
+    executable.write_bytes(b"pinned bytes")
+    monkeypatch.setenv("THALIRIS_EXECUTABLE", str(executable))
+    monkeypatch.setenv("THALIRIS_EXECUTABLE_SHA256", hashlib.sha256(executable.read_bytes()).hexdigest())
+    legacy = {"hooks": {
+        event: [{"hooks": [{"type": "command", "command": f"thaliris audit-hook {event}", "timeout": 60}]}]
+        for event in lifecycle_module.HOOK_EVENTS
+    }}
+
+    merged, changed = lifecycle_module.merge_hooks(legacy)
+
+    assert changed
+    assert not lifecycle_module.legacy_managed_handler_cleanup_required(legacy)
+    for event in lifecycle_module.HOOK_EVENTS:
+        assert merged["hooks"][event] == lifecycle_module.hook_spec()["hooks"][event]
+
+
 def test_valid_pin_bootstraps_without_path_resolution(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     executable = tmp_path / "pinned.exe"
@@ -471,6 +489,35 @@ def test_ambiguous_legacy_absolute_hook_requires_manual_cleanup(tmp_path: Path, 
     installed = json.loads((root / ".codex" / "hooks.json").read_text(encoding="utf-8"))
     commands = [handler["command"] for entry in installed["hooks"]["SessionStart"] for handler in entry.get("hooks", [])]
     assert f'"{executable}" audit-hook SessionStart --extra' in commands
+
+
+@pytest.mark.parametrize("command", [
+    r'cmd /c "C:\old\thaliris.exe audit-hook SessionStart"',
+    "powershell -NoProfile -Command \"& 'C:\\old\\thaliris.exe' audit-hook SessionStart\"",
+    "pwsh -c \"& 'C:\\old\\context.exe' audit-hook SessionStart\"",
+])
+def test_wrapped_legacy_hook_requires_manual_cleanup_without_migration(tmp_path: Path, command: str) -> None:
+    root = repo(tmp_path)
+    hooks = {"hooks": {"SessionStart": [{"hooks": [
+        {"type": "command", "command": command, "timeout": 60},
+    ]}]}}
+    (root / ".codex" / "hooks.json").write_text(json.dumps(hooks), encoding="utf-8")
+
+    result = codex_adapter.init(root)
+
+    assert "legacy_managed_handler_manual_cleanup_required" in result["manual_action_required"]
+    installed = json.loads((root / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+    commands = [handler["command"] for entry in installed["hooks"]["SessionStart"] for handler in entry.get("hooks", [])]
+    assert command in commands
+
+
+@pytest.mark.parametrize("command", [
+    'cmd /c "echo audit-hook SessionStart"',
+    'powershell -Command "& \'C:\\old\\other.exe\' audit-hook SessionStart"',
+    'pwsh -c "& \'C:\\old\\thaliris.exe\' audit-hook Stop"',
+])
+def test_wrapper_cleanup_signature_does_not_match_unrelated_commands(command: str) -> None:
+    assert not lifecycle_module._wrapped_audit_hook_signature(command, "SessionStart")
 
 
 def test_session_start_does_not_inject_large_root_map_or_document_body(tmp_path: Path) -> None:
@@ -934,6 +981,22 @@ def test_doctor_separates_hook_spec_executable_and_attestation_facts(tmp_path: P
     assert host["active_codex_host_executable_observed"] == "UNKNOWN"
     assert report["verification_attestation"]["current_session_observed"] == "UNKNOWN"
     assert report["verification_attestation"]["task_start_attestation"] == "CURRENT_SESSION_REQUIRED"
+
+
+def test_doctor_keeps_valid_runtime_and_host_executable_observations_distinct(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    runtime = root / ".context" / "audit" / "observed-session" / "runtime.json"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text(json.dumps({
+        "managed_hook_spec_hash": lifecycle_module.managed_hook_spec_hash(),
+        "adapter_protocol_version": lifecycle_module.CODEX_ADAPTER_PROTOCOL_VERSION,
+        "events_observed": {"PreToolUse": True},
+    }), encoding="utf-8")
+
+    host = codex_adapter.doctor(root)["host_capability"]
+
+    assert host["hook_runtime_observed"] == "YES"
+    assert host["active_codex_host_executable_observed"] == "UNKNOWN"
 
 
 def test_invalid_task_state_fails_closed_for_managed_root_control(tmp_path: Path) -> None:

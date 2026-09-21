@@ -233,6 +233,11 @@ def _legacy_managed_handler(value: object, event: str) -> bool:
     expected = {"type": "command", "command": f"context audit-hook {event}", "timeout": 60}
     if value == expected:
         return True
+    # Before executable pins were introduced, the generated canonical form
+    # used the PATH-relative command.  It remains mechanically identifiable
+    # by its complete generated shape and can therefore be upgraded safely.
+    if value == {"type": "command", "command": f"{HOOK_COMMAND_PREFIX} {event}", "timeout": 60}:
+        return True
     # A prior generated hook used the then-valid, byte-pinned absolute
     # executable.  Migrate only that exact no-wrapper command after proving the
     # same current pin; do not make a path spelling into a trust decision.
@@ -269,6 +274,21 @@ def _absolute_command_token(command: str) -> str | None:
     return token if token is not None and (Path(token).is_absolute() or ntpath.isabs(token)) else None
 
 
+def _wrapped_audit_hook_signature(command: str, event: str) -> bool:
+    """Recognize, but never interpret, common shell wrappers around old hooks."""
+    wrapper = re.match(
+        r"(?is)^\s*(?:cmd(?:\.exe)?(?:\s+/[a-z]+)*\s+/[ck]|(?:powershell|pwsh)(?:\.exe)?\b.*?\s-(?:command|c)\b)",
+        command,
+    )
+    if wrapper is None:
+        return False
+    # This is deliberately a signature search, not shell parsing: it requires
+    # a recognizable Thaliris/context executable and the exact hook event.
+    executable = r"(?:context|thaliris)(?:\.exe|\.cmd)?|(?:[a-z]:[\\/][^\s\"']*(?:context|thaliris)(?:\.exe|\.cmd)?)"
+    signature = rf"(?i)(?:^|[\s\"'&])(?:{executable})(?:[\"'])?\s+audit-hook\s+{re.escape(event)}(?=$|[\s\"'])"
+    return re.search(signature, command) is not None
+
+
 def _ambiguous_legacy_managed_handler(value: object, event: str) -> bool:
     """Identify possible old generated commands that are unsafe to migrate."""
     if not isinstance(value, dict) or value.get("type") != "command" or not isinstance(value.get("command"), str):
@@ -279,6 +299,8 @@ def _ambiguous_legacy_managed_handler(value: object, event: str) -> bool:
     # a currently valid pin: that is precisely why they need human cleanup.
     if command.strip().startswith(f"context audit-hook {event}"):
         return not _legacy_managed_handler(value, event)
+    if _wrapped_audit_hook_signature(command, event):
+        return True
     token = _absolute_command_token(command)
     if token is None:
         return False

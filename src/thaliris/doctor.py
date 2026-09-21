@@ -177,7 +177,10 @@ def _host_capability(root: Path, *, hooks: dict[str, object], lifecycle: dict[st
         "canonical_executable_available": hooks.get("canonical_executable_available", UNKNOWN),
         "canonical_executable_identity": hooks.get("canonical_executable_identity", UNKNOWN),
         "diagnostic_process_executable_resolution": hooks.get("diagnostic_process_executable_resolution", UNKNOWN),
-        "active_codex_host_executable_observed": "YES" if runtime else UNKNOWN,
+        # Runtime records attest hook activity, not the executable identity of
+        # the active Codex host.  The current record schema has no such
+        # evidence, so keep these observations distinct.
+        "active_codex_host_executable_observed": UNKNOWN,
         "legacy_managed_handler_cleanup": hooks.get("legacy_managed_handler_cleanup", UNKNOWN),
         "hook_hash_match": hooks.get("current_hook_hash_observed", UNKNOWN),
         "hook_trust_status": trust,

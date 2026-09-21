@@ -13,9 +13,10 @@ identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
 and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer automatically.
 
-Persistent root Controller default: `gpt-5.6-sol` with `xhigh` reasoning. This
-is root instruction metadata, not a native Codex child profile and does not
-change a current task model automatically.
+Persistent root Controller model default: `gpt-5.6-sol`. Reasoning effort is
+selected by Host, task, or user policy and is not forced by Thaliris. This is
+root instruction metadata, not a native Codex child profile and does not change
+a current task model automatically.
 
 An implementation handoff states Goal, confirmed facts, hard invariants,
 Controller-decided boundaries/contracts, decision-changing unknowns,

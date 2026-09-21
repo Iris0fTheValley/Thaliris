@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -1063,7 +1064,7 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "sole task-specific semantic router" in codex_adapter.MANAGED
     assert "never calls Core" in codex_adapter.MANAGED
     assert codex_adapter._ROLE_MODEL_DEFAULTS == {
-        "controller": ("gpt-5.6-sol", "xhigh"),
+        "controller": ("gpt-5.6-sol", None),
         "investigator": ("gpt-5.6-luna", "medium"),
         "curator": ("gpt-5.6-luna", "medium"),
         "reasoning-specialist": ("gpt-5.6-sol", "xhigh"),
@@ -1075,7 +1076,8 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
         "thaliris-reasoning-specialist.toml", "thaliris-implementer.toml",
         "thaliris-reviewer.toml",
     }
-    assert "Persistent root Controller default: `gpt-5.6-sol` with `xhigh` reasoning." in codex_adapter.MANAGED
+    assert "Persistent root Controller model default: `gpt-5.6-sol`. Reasoning effort is" in codex_adapter.MANAGED
+    assert "not forced by Thaliris" in codex_adapter.MANAGED
     assert "Decisions, invariants, and\nacceptance are contract; recommendations/advice are not." in codex_adapter.MANAGED
     assert "The five child profiles are Investigator" in codex_adapter.ROLE_PACKS
     assert "Controller-decided boundaries/contracts" in codex_adapter.ROLE_PACKS
@@ -1326,8 +1328,25 @@ def test_only_current_lifecycle_schema_is_accepted(tmp_path: Path) -> None:
         raise AssertionError("old lifecycle schema was accepted")
 
 
-def test_no_historical_profile_hash_registry_remains() -> None:
-    source = Path(codex_adapter.__file__).read_text(encoding="utf-8")
-    assert "KNOWN_GENERATED" not in source
-    assert "LEGACY_MANAGED" not in source
-    assert not hasattr(codex_adapter, "migrate")
+def test_exact_role_keyed_historical_profiles_migrate_without_claiming_edits(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    agents = root / ".codex" / "agents"
+    for name, hashes in codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES.items():
+        assert hashes
+        # State recognition is hash-only and role-keyed: an unknown edit stays user-owned.
+        assert codex_adapter._agent_profile_state(b"generated-looking but edited", name) == "user"
+    legacy = agents / "thaliris-implementer.toml"
+    # Recover the exact pre-Luna generator from immutable repository history.
+    source = subprocess.check_output(
+        ["git", "show", "8189ed45:src/thaliris/codex_adapter.py"], text=True,
+    )
+    module = ast.parse(source)
+    historic_fn = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "_agent_profile")
+    namespace: dict[str, object] = {}
+    exec(compile(ast.Module([historic_fn], []), "historic", "exec"), namespace)
+    legacy.write_bytes(namespace["_agent_profile"]("thaliris-implementer", "implementer", "gpt-5.6-terra", "medium"))
+    assert codex_adapter._agent_profile_state(legacy.read_bytes(), legacy.name) == "legacy"
+    first = codex_adapter.init(root)
+    assert first["agent_profile_changed"] is True
+    assert legacy.read_bytes() == codex_adapter._agent_profile("thaliris-implementer", "implementer", "gpt-5.6-luna", "medium")
+    assert codex_adapter.init(root)["changed"] is False

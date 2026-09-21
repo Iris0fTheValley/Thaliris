@@ -32,7 +32,7 @@ ROLE_CHOICES = (
 # Authoritative defaults. Controller is the persistent root, not a sixth child
 # profile; its default is emitted in the generated root instructions below.
 _ROLE_MODEL_DEFAULTS = {
-    "controller": ("gpt-5.6-sol", "xhigh"),
+    "controller": ("gpt-5.6-sol", None),
     "investigator": ("gpt-5.6-luna", "medium"),
     "curator": ("gpt-5.6-luna", "medium"),
     "reasoning-specialist": ("gpt-5.6-sol", "xhigh"),
@@ -44,6 +44,15 @@ _AGENT_PROFILES = {
     for role in ("investigator", "curator", "reasoning-specialist", "implementer", "reviewer")
 }
 _NATIVE_PROFILE_NAMES = frozenset(name.removesuffix(".toml") for name in _AGENT_PROFILES)
+# Exact SHA-256 identities of bytes emitted by earlier Thaliris adapters.
+# Role keying deliberately prevents cross-role ownership claims.
+_KNOWN_GENERATED_AGENT_PROFILE_HASHES = {
+    "thaliris-investigator.toml": frozenset("0720619c1d0b85b80a2981597fcd60086a1bddc7f03f48f88cc8f75c1128d872 199d7b9cb1fb8d1a3536df07395a420b9476ee66d13a4a9ca6d6442215d9e7b8 44781edb6a654db482adafdc20b16f75cdebded2e62e8d86376aefc577a3ae55 f5623ba40d585b1760511344488d71c53e8c08a8c0ad8cbd1b76b268ae02c70f 55ef42ac18d46ed5fe2c624ed0be2c16956ab4fe91dd1e64b6ef3a07bae01cb1 307a3e90b32cf7dcde3cac3c683b3e16f5e13c147191e82e45109a75a6984ff4 188e8cc62bfd8e1f37f3068193deb37431c5ea49356adc99b8873a47e817fbdd caa08fc96fdcff0a47fa05cb8ebba32d93a3336fec64b0a9c93d5467cc3009be c917f0b601dcd689afbb443b98c6b12733d5738ed908a112a5c7948f3321edf9".split()),
+    "thaliris-curator.toml": frozenset("8026959290edeb86d66ee86f9b5db286e7fb31c28c95ec2c42ec8be7f2cda515 f6827c30074554b809b50414bde31146354ec6898fe8bd13a43402134c8b6476 a98489c08e6af01165629b6848667700956d749bf8a676a30ac479c729d916fa 64fece15a4e47b77641039abbf9f7c9a1daab4581b9faa0c066fd7d0c7cab4d4 d11534e931c1c17b51bd846a487ac6609b56db018f5abb6b5ed6991b5b6a71b3 b902b77ca7f0f77f6305cb8bec3e7bf1c8386805a312b816e2a99e1794e9a1f7".split()),
+    "thaliris-reasoning-specialist.toml": frozenset("7e596a38e95606b684b17f25cc0eecb3163aef7d65d36110f6496b3ab7d53692 960190bb4b67b02e7616bcf6dbd71192bcc79327fb0ed72e6f23b3815819afd0 d2191d59621e2765ae7642ca1648d96b4dbfb1a82293a8a02bf8642328fb58a7 60a87a06e97602f10f7f3842061c6eba551e78f76a8fa99b17ba377f48d22117 13b3283ad629bb6d32fe3613462694be14fba3a24c547aa791e1e651c0b3106d 17616dddc351c20f5c98a30a0506253322d0cc5f6480d89690c7a08a70592557 5a22321413193d571a4a3b9189d45951ffda93cefde26f2f3999982233d17a01 813b16ca10985e8e602ee3295eb093115de4505db9cdc9cc6cbd9ef9ad192efd 708bee8d038cdd44bc8b75ee399ff8de09fa9a65e9d46f7060d75a82f04c19aa 1fa5af05b543d22efc20cc8eb7813da51e63a63c58b02bea6c2109918aa5d9d9 b7a6c8ae5655205dbb16a7d90af09a06a21daad78170cc8e55509304770d5b10".split()),
+    "thaliris-implementer.toml": frozenset("a91e41c67930071db4d6eb45342526cbbf67af6d4fda13d1c847d18f28816a35 a1c7a46981512c7e8067dd5e40e193a0b54e34384aefc2b28950d5c6ccb5af9a d24ee0de8a22409bd5a3c9f1359079c4d6c7ccfbb14f65842e84f21ab0a5aa96 360d49c46afe280f85d6857575a12a9eeeff93d1f9aedb4b00ef2a2aa7c8b078 4028038b2153e56881140dabdc9165d2d1866fa737635e33599dc4d3cef0342f a463ea49f2cc308b6457ab63612a5f6b257f7462470118537961315b8e757ed1 fd0e28d2f1cce4f639a34b123bd647c9cd64d8b90fd5fb54a1e8353ecde924ad 7f85c22eb8ca508622b39bb8708e6bd617de3139f9de012ee29d166d4a3aad1e 3fcfcf2a04a8ef9e3a5c52f7414664b3a0d0fbc7f036c2558da1cb8baf955d95".split()),
+    "thaliris-reviewer.toml": frozenset("ae56701985a1d27a2daea326819fa0e93b4350eb6e65d1a299daf198126a7a9a c43274a3f9cb3f93cd662b6477f1dfd07c170c24324c1364df5f59205851b17b d0f488e226888c6a8f6e39ab1deeb1125d3c0e9474dba47af47ec3eab2da45c2 ae51394874f0b35dc2b39577d471bf2f07533962363cdb7ad56e6e08a3860887 322534fb6f2b2abc312bd04a76e477e3e128cf6a194da5817ecaabd0678aa397 b038486edb2c381631e458adac2bff12fbcdc09233b5b1b8f59aeee9dc0e9774 720ef66c9f6023d961ddc1a3329ec4ae3fdf7fe2f6b1252034a7117f5990a125 4cec33fef9151d2ba60483a72b49ccd7dadd0b5c044a69f00f468e71c489fe07 8999980daf617644a36da7579626f122b6c279ad54e055bbaf8242daedbd36c2 b9b3b50f89b1dd7c5f5eaf2ee558b6881b014d66f6b30bc20244f361ebc721d7 e281f8c25451cbccb1509fa07814e4cfeaa8ae113402fc2db9a6c63a165bc1e6 96257cc1ed5c88b37de73e2c355c17c6b1ab26620210effe5b3283c776d0e4b9 357e9364404a2ab249c27ad3a2c93305f38db5afbbec1b56b58ee5e0817d5602 82b410c617589d410deb33f1ff4163d49b22d329ee517442a004965115a46124 fe082be2c5d05675b3ab9a69234851d505db3a3deddb509794b817f5b59a8ab8".split()),
+}
 _KNOWN_HOST_WAIT_CAPABILITIES = {
     # These are release-pinned observations, not a cross-version assumption.
     "0.153.4": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
@@ -107,7 +116,9 @@ def _agent_profile_state(value: bytes, name: str) -> str:
     if profile is None:
         return "user"
     expected = _agent_profile(name.removesuffix(".toml"), profile[2], profile[0], profile[1])
-    return "current" if value == expected else "user"
+    if value == expected:
+        return "current"
+    return "legacy" if hashlib.sha256(value).hexdigest() in _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(name, frozenset()) else "user"
 
 
 def _profile_definition_present(root: Path) -> str:
@@ -239,9 +250,10 @@ identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
 and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer automatically.
 
-Persistent root Controller default: `gpt-5.6-sol` with `xhigh` reasoning. This
-is root instruction metadata, not a native Codex child profile and does not
-change a current task model automatically.
+Persistent root Controller model default: `gpt-5.6-sol`. Reasoning effort is
+selected by Host, task, or user policy and is not forced by Thaliris. This is
+root instruction metadata, not a native Codex child profile and does not change
+a current task model automatically.
 
 An implementation handoff states Goal, confirmed facts, hard invariants,
 Controller-decided boundaries/contracts, decision-changing unknowns,
@@ -330,8 +342,9 @@ task-specific input to every Investigator, Curator, Reasoning Specialist, Implem
 
 ## Role Defaults
 
-The persistent root Controller default is `gpt-5.6-sol` with `xhigh` reasoning;
-it is root instruction metadata, not a native Codex child profile and does not
+The persistent root Controller model default is `gpt-5.6-sol`; its reasoning
+effort is selected by Host, task, or user policy and is not forced by Thaliris.
+It is root instruction metadata, not a native Codex child profile and does not
 mutate a current task model. The five child profiles are Investigator (`gpt-5.6-luna`,
 `medium`), Curator (`gpt-5.6-luna`, `medium`), Reasoning Specialist
 (`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `medium`), and Reviewer
@@ -548,6 +561,8 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
         profile = core._safe(root, relative)
         rendered = _agent_profile(name.removesuffix(".toml"), role, model, effort)
         if not profile.exists():
+            writes[relative] = rendered
+        elif _agent_profile_state(profile.read_bytes(), name) == "legacy":
             writes[relative] = rendered
         elif _agent_profile_state(profile.read_bytes(), name) == "user":
             manual.append(relative)

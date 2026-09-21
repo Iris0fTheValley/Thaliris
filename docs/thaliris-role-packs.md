@@ -7,8 +7,9 @@ task-specific input to every Investigator, Curator, Reasoning Specialist, Implem
 
 ## Role Defaults
 
-The persistent root Controller default is `gpt-5.6-sol` with `xhigh` reasoning;
-it is root instruction metadata, not a native Codex child profile and does not
+The persistent root Controller model default is `gpt-5.6-sol`; its reasoning
+effort is selected by Host, task, or user policy and is not forced by Thaliris.
+It is root instruction metadata, not a native Codex child profile and does not
 mutate a current task model. The five child profiles are Investigator (`gpt-5.6-luna`,
 `medium`), Curator (`gpt-5.6-luna`, `medium`), Reasoning Specialist
 (`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `medium`), and Reviewer

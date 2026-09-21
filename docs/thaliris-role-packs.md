@@ -37,8 +37,12 @@ write Core semantic state.
 ## Implementer
 
 Changes only the assigned implementation surface, performs proportionate
-verification, and returns a distilled change/result summary. Source mutation is
-serial with review.
+verification, and returns a distilled change/result summary. The Controller's
+first implementation handoff must state Goal, confirmed facts, hard invariants,
+decision-changing unknowns, and acceptance. It may not silently freeze an
+unknown; Host protocol, serialization, identity, and native-schema contracts
+need proof through an Investigator, source, or real-shaped fixture. Source
+mutation is serial with review.
 
 ## Reviewer
 
@@ -47,10 +51,15 @@ on developer instructions plus the obvious-write PreToolUse guard, not a
 role-level native read-only sandbox. Independently reports findings, affected
 surface, and requested verification.
 Any classification is model output for the Controller to interpret; Core does
-not route corrections from it.
+not route corrections from it. After a real problem, the Reviewer understands
+its invariant and inspects adjacent legal states enough to return independent
+related blockers in one pass.
 
 ## Curator
 
 Curator is an optional ordinary role session for compressing selected findings or
 Artifacts. Its output may itself be an Artifact. There is no Curator-specific
-coverage, snapshot, or supersession state machine in Core.
+coverage, snapshot, or supersession state machine in Core. Knowledge derived
+from current implementation correctness defaults to curation only after
+Reviewer PASS and Controller reuse judgment. Stable independently verified facts
+unrelated to that correctness may be curated earlier when explicitly selected.

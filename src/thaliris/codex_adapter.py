@@ -33,7 +33,7 @@ _AGENT_PROFILES = {
     "thaliris-investigator.toml": ("gpt-5.6-luna", "medium", "investigator"),
     "thaliris-curator.toml": ("gpt-5.6-luna", "medium", "curator"),
     "thaliris-reasoning-specialist.toml": ("gpt-5.6-sol", "xhigh", "reasoning-specialist"),
-    "thaliris-implementer.toml": ("gpt-5.6-terra", "medium", "implementer"),
+    "thaliris-implementer.toml": ("gpt-5.6-luna", "medium", "implementer"),
     "thaliris-reviewer.toml": ("gpt-5.6-terra", "high", "reviewer"),
 }
 _NATIVE_PROFILE_NAMES = frozenset(name.removesuffix(".toml") for name in _AGENT_PROFILES)
@@ -69,12 +69,18 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
             "fact is missing, identify it without reconstructing unselected task history."
         ),
         "implementer": (
-            "Implement only the bounded change in the handoff and report verification as "
-            "observations; Core does not supply semantic completion authority."
+            "Implement only a decision-complete bounded handoff: Goal, confirmed facts, hard "
+            "invariants, decision-changing unknowns, and acceptance. Preserve each stated "
+            "unknown rather than guessing or freezing it; if Host protocol, serialization, "
+            "identity, or native schema is unknown, require an Investigator/source/real-shaped "
+            "fixture to prove the contract first. Report verification as observations; Core does "
+            "not supply semantic completion authority."
         ),
         "reviewer": (
             "Act as an independent non-writing checker of the candidate named in the handoff. "
-            "Return findings and a distilled verdict; the Controller decides what follows."
+            "After a real problem, understand its invariant and inspect adjacent legal states "
+            "enough to return independent related blockers in one pass. Return findings and a "
+            "distilled verdict; the Controller decides what follows."
         ),
     }[role]
     instructions = shared + role_instruction
@@ -329,6 +335,11 @@ explicitly supplies the material to curate. Do not automatically summarize a
 task, select a next role, or route a result. Curator output is an ordinary
 result or Artifact; Core has no Curator state machine.
 
+Knowledge derived from current implementation correctness defaults to curation
+only after Reviewer PASS and the Controller's reuse judgment. Independently
+verified stable facts unrelated to current implementation correctness may be
+curated earlier when the Controller explicitly selects them.
+
 ## Durable knowledge loop
 
 At task start, the Controller reads the root INDEX map and then makes an exact
@@ -348,15 +359,21 @@ unselected task history.
 
 ## Implementer
 
-Implement the bounded change in the handoff, preserve stated constraints, and
-report verification as observations. Do not infer additional task state from
-Core.
+Implement only a decision-complete bounded handoff containing Goal, confirmed
+facts, hard invariants, decision-changing unknowns, and acceptance. Preserve
+decision-changing unknowns rather than guessing or freezing them. For Host
+protocol, serialization, identity, or native schema, prove an unknown contract
+first through an Investigator, source, or real-shaped fixture. Preserve stated
+constraints and report verification as observations. Do not infer additional
+task state from Core.
 
 ## Reviewer
 
 Independently inspect the candidate identified in the handoff. Return findings
-and a distilled verdict. Finding classifications are model-authored labels; the
-Controller decides what workflow, if any, follows.
+and a distilled verdict. After finding a real problem, understand its invariant
+and inspect adjacent legal states enough to return independent related blockers
+in one pass. Finding classifications are model-authored labels; the Controller
+decides what workflow, if any, follows.
 """
 
 def _codex_config() -> dict[str, object]:
@@ -565,6 +582,8 @@ def init(root: Path) -> dict[str, object]:
         # so make the required host repair and subsequent re-attestation
         # explicit even when the hook definition itself is unchanged.
         manual = sorted(set(manual) | {"canonical_executable_unavailable"})
+    if hooks["legacy_managed_handler_cleanup"] == "MANUAL_CLEANUP_REQUIRED":
+        manual = sorted(set(manual) | {"legacy_managed_handler_manual_cleanup_required"})
     return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": instruction_changed or hook_changed or profile_changed or stale_runtime_hook_spec or executable_unavailable, "hook_trust_required": hook_changed or stale_runtime_hook_spec or executable_unavailable, "host_wait_mode": host_wait_mode(), **_activation_fields(root)}
 
 

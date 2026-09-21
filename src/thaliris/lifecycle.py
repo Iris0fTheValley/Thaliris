@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import ntpath
 from pathlib import Path
 import re
 import secrets
@@ -143,8 +144,12 @@ def _managed_handler(event: str) -> dict[str, Any]:
 
 
 def _hook_command_prefix() -> str:
-    """Return the portable, canonical installed-hook command."""
-    return HOOK_COMMAND_PREFIX
+    """Return the installed-hook command for the current trust boundary."""
+    pinned = _trusted_thaliris_executable()
+    # list2cmdline provides deterministic Windows-compatible quoting, including
+    # an executable path containing spaces.  The logical hook hash replaces this
+    # local rendering with HOOK_COMMAND_PREFIX before hashing.
+    return f"{subprocess.list2cmdline([str(pinned)])} audit-hook" if pinned is not None else HOOK_COMMAND_PREFIX
 
 
 def _digest_file(path: Path) -> str:
@@ -182,13 +187,19 @@ def managed_context_executable_pinned() -> bool:
 
 
 def managed_executable_health() -> dict[str, str]:
-    """Report command availability separately from a byte-pinned identity."""
+    """Report diagnostic-process command resolution and a byte-pinned identity."""
     pinned = _trusted_thaliris_executable()
     if pinned is not None:
-        return {"canonical_executable_available": "YES", "canonical_executable_identity": "SHA256_PINNED"}
+        return {
+            "canonical_executable_available": "YES",
+            "canonical_executable_identity": "SHA256_PINNED",
+            "diagnostic_process_executable_resolution": "SHA256_PINNED",
+        }
+    available = shutil.which("thaliris") is not None
     return {
-        "canonical_executable_available": "YES" if shutil.which("thaliris") else "NO",
-        "canonical_executable_identity": "PATH_UNPINNED" if shutil.which("thaliris") else "UNAVAILABLE",
+        "canonical_executable_available": "YES" if available else "NO",
+        "canonical_executable_identity": "PATH_UNPINNED" if available else "UNAVAILABLE",
+        "diagnostic_process_executable_resolution": "PATH_UNPINNED" if available else "UNAVAILABLE",
     }
 
 
@@ -222,6 +233,20 @@ def _legacy_managed_handler(value: object, event: str) -> bool:
     expected = {"type": "command", "command": f"context audit-hook {event}", "timeout": 60}
     if value == expected:
         return True
+    # A prior generated hook used the then-valid, byte-pinned absolute
+    # executable.  Migrate only that exact no-wrapper command after proving the
+    # same current pin; do not make a path spelling into a trust decision.
+    if isinstance(value, dict) and set(value) == {"type", "command", "timeout"} and value.get("type") == "command" and value.get("timeout") == 60 and isinstance(value.get("command"), str):
+        arguments = _context_arguments(value["command"])
+        trusted = _trusted_thaliris_executable()
+        if arguments == f"audit-hook {event}" and trusted is not None:
+            token = _command_token(value["command"])
+            if token is not None:
+                try:
+                    if Path(token).resolve(strict=True) == trusted:
+                        return True
+                except (OSError, RuntimeError):
+                    pass
     # Historical generated SubagentStart entries carried this no-injection
     # marker. It is also recognized only as the exact generated shape.
     return event == "SubagentStart" and value == {**expected, "additionalContextLimit": 0}
@@ -229,6 +254,51 @@ def _legacy_managed_handler(value: object, event: str) -> bool:
 
 def _owned_managed_handler(value: object, event: str) -> bool:
     return is_managed_handler(value, event) or _legacy_managed_handler(value, event)
+
+
+def _command_token(command: str) -> str | None:
+    match = re.match(r"^\s*(\"[^\"]+\"|'[^']+'|[^\s]+)(?:\s+.*?)?\s*$", command)
+    if not match:
+        return None
+    token = match.group(1)
+    return token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in {'\"', "'"} else token
+
+
+def _absolute_command_token(command: str) -> str | None:
+    token = _command_token(command)
+    return token if token is not None and (Path(token).is_absolute() or ntpath.isabs(token)) else None
+
+
+def _ambiguous_legacy_managed_handler(value: object, event: str) -> bool:
+    """Identify possible old generated commands that are unsafe to migrate."""
+    if not isinstance(value, dict) or value.get("type") != "command" or not isinstance(value.get("command"), str):
+        return False
+    command = value["command"]
+    # A direct legacy ``context`` command with a non-exact shape is also never
+    # removed automatically.  Absolute candidates deliberately do not require
+    # a currently valid pin: that is precisely why they need human cleanup.
+    if command.strip().startswith(f"context audit-hook {event}"):
+        return not _legacy_managed_handler(value, event)
+    token = _absolute_command_token(command)
+    if token is None:
+        return False
+    tail = re.sub(r"^\s*(?:\"[^\"]+\"|'[^']+'|[^\s]+)\s*", "", command)
+    return tail.startswith(f"audit-hook {event}") and not _legacy_managed_handler(value, event)
+
+
+def legacy_managed_handler_cleanup_required(data: object) -> bool:
+    """Whether hooks contain an old-looking command that needs manual cleanup."""
+    if not isinstance(data, dict) or not isinstance(data.get("hooks"), dict):
+        return False
+    for event, entries in data["hooks"].items():
+        if event not in HOOK_EVENTS or not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                continue
+            if any(_ambiguous_legacy_managed_handler(handler, event) for handler in entry["hooks"]):
+                return True
+    return False
 
 
 def merge_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -304,12 +374,14 @@ def remove_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
 def hooks_health(root: Path) -> dict[str, str]:
     path = root / ".codex" / "hooks.json"
     configured = "NO"
+    legacy_cleanup = "NO"
     if path.is_file():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 merged, changed = merge_hooks(data)
                 configured = "NO" if changed else "YES"
+                legacy_cleanup = "MANUAL_CLEANUP_REQUIRED" if legacy_managed_handler_cleanup_required(data) else "NO"
         except (OSError, ValueError, json.JSONDecodeError):
             configured = "UNKNOWN"
     observed = _observed_health(root)
@@ -327,6 +399,7 @@ def hooks_health(root: Path) -> dict[str, str]:
         "current_hook_hash_observed": observed["current_hook_hash_observed"],
         "pretool_child_identity_corroborated": child_identity_corroboration(root),
         "hook_trust_runtime_status": "UNKNOWN",
+        "legacy_managed_handler_cleanup": legacy_cleanup,
         **managed_executable_health(),
     }
 

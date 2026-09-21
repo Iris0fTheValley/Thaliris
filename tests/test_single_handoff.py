@@ -427,6 +427,52 @@ def test_pinned_absolute_thaliris_is_accepted_but_legacy_handlers_only_migrate(t
     assert cleaned["hooks"]["SessionStart"][0]["hooks"][0]["command"].endswith("--user-wrapper")
 
 
+def test_pinned_executable_renders_hook_and_migrates_exact_legacy_shape(tmp_path: Path, monkeypatch) -> None:
+    executable = tmp_path / "pinned tool.exe"
+    executable.write_bytes(b"pinned bytes")
+    monkeypatch.setenv("THALIRIS_EXECUTABLE", str(executable))
+    monkeypatch.setenv("THALIRIS_EXECUTABLE_SHA256", hashlib.sha256(executable.read_bytes()).hexdigest())
+    command = lifecycle_module.hook_spec()["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert command.endswith(" audit-hook SessionStart")
+    assert str(executable) in command
+    legacy = {"hooks": {"SessionStart": [{"hooks": [{
+        "type": "command", "command": f'"{executable}" audit-hook SessionStart', "timeout": 60,
+    }]}]}}
+    merged, changed = lifecycle_module.merge_hooks(legacy)
+    assert changed
+    handlers = [handler for entry in merged["hooks"]["SessionStart"] for handler in entry.get("hooks", [])]
+    assert handlers == [lifecycle_module.hook_spec()["hooks"]["SessionStart"][0]["hooks"][0]]
+
+
+def test_valid_pin_bootstraps_without_path_resolution(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    executable = tmp_path / "pinned.exe"
+    executable.write_bytes(b"pinned bytes")
+    monkeypatch.setenv("THALIRIS_EXECUTABLE", str(executable))
+    monkeypatch.setenv("THALIRIS_EXECUTABLE_SHA256", hashlib.sha256(executable.read_bytes()).hexdigest())
+    monkeypatch.setattr(lifecycle_module.shutil, "which", lambda _name: None)
+    result = codex_adapter.init(root)
+    assert result["canonical_executable_available"] == "YES"
+    assert "canonical_executable_unavailable" not in result["manual_action_required"]
+
+
+def test_ambiguous_legacy_absolute_hook_requires_manual_cleanup(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    executable = tmp_path / "pinned.exe"
+    executable.write_bytes(b"pinned bytes")
+    monkeypatch.setenv("THALIRIS_EXECUTABLE", str(executable))
+    monkeypatch.setenv("THALIRIS_EXECUTABLE_SHA256", hashlib.sha256(executable.read_bytes()).hexdigest())
+    hooks = {"hooks": {"SessionStart": [{"hooks": [{
+        "type": "command", "command": f'"{executable}" audit-hook SessionStart --extra', "timeout": 60,
+    }]}]}}
+    (root / ".codex" / "hooks.json").write_text(json.dumps(hooks), encoding="utf-8")
+    result = codex_adapter.init(root)
+    assert "legacy_managed_handler_manual_cleanup_required" in result["manual_action_required"]
+    installed = json.loads((root / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+    commands = [handler["command"] for entry in installed["hooks"]["SessionStart"] for handler in entry.get("hooks", [])]
+    assert f'"{executable}" audit-hook SessionStart --extra' in commands
+
+
 def test_session_start_does_not_inject_large_root_map_or_document_body(tmp_path: Path) -> None:
     root = repo(tmp_path)
     target = root / ".agent-memory" / "selected.md"
@@ -884,6 +930,8 @@ def test_doctor_separates_hook_spec_executable_and_attestation_facts(tmp_path: P
     assert host["installed_hook_spec"] == "CURRENT"
     assert host["canonical_executable_available"] in {"YES", "NO"}
     assert host["canonical_executable_identity"] in {"SHA256_PINNED", "PATH_UNPINNED", "UNAVAILABLE"}
+    assert host["diagnostic_process_executable_resolution"] in {"SHA256_PINNED", "PATH_UNPINNED", "UNAVAILABLE"}
+    assert host["active_codex_host_executable_observed"] == "UNKNOWN"
     assert report["verification_attestation"]["current_session_observed"] == "UNKNOWN"
     assert report["verification_attestation"]["task_start_attestation"] == "CURRENT_SESSION_REQUIRED"
 
@@ -923,6 +971,9 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
             assert removed not in profile
     assert "sole task-specific semantic router" in codex_adapter.MANAGED
     assert "never calls Core" in codex_adapter.MANAGED
+    assert codex_adapter._AGENT_PROFILES["thaliris-implementer.toml"][0] == "gpt-5.6-luna"
+    assert "decision-complete bounded handoff" in codex_adapter.ROLE_PACKS
+    assert "only after Reviewer PASS" in codex_adapter.ROLE_PACKS
 
 
 def test_authorized_spawn_requires_fresh_explicit_serial_handoff(tmp_path: Path) -> None:

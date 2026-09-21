@@ -6,6 +6,7 @@ import hashlib
 import re
 from pathlib import Path
 import subprocess
+import sys
 import pytest
 
 from thaliris import cli, codex_adapter, core, lifecycle as lifecycle_module, markdown
@@ -31,7 +32,6 @@ def test_durable_task_a_promotion_recovers_in_fresh_task_b_without_automatic_cur
     """
     root = repo(tmp_path)
     task_a = core.task_start(root, "Task A durable architecture", None, None)
-    assert core.catalog(root, ".agent-memory")["indexes"][0]["state"] == "VALID"
     index_path = root / ".agent-memory" / "INDEX.md"
     old_index = index_path.read_bytes()
     updated_index = core._entry("Memory map", "[Architecture decision](architecture/decision.md)", evidence="NONE").decode()
@@ -44,14 +44,28 @@ def test_durable_task_a_promotion_recovers_in_fresh_task_b_without_automatic_cur
     closed = core.task_close(root, core.task_show(root)["state"]["revision"], expected_task_id=task_a["task_id"])
     assert closed["status"] == "DONE"
 
-    # Fresh Task B performs the named recovery reads only.
-    task_b = core.task_start(root, "Task B recover durable decision", None, None)
+    # A genuinely separate interpreter/session starts Task B. It makes the
+    # exact document-get reads selected by the root INDEX, never catalog/search.
     index_before_recovery = index_path.read_bytes()
-    assert core.catalog(root, ".agent-memory")["indexes"][0]["state"] == "VALID"
-    recovered = core.document_get(root, [".agent-memory/architecture/decision.md"])
-    assert "REUSABLE_DECISION" in recovered["documents"][0]["body"]
+    worker = '''
+import json, re, sys
+from pathlib import Path
+from thaliris import core
+root = Path(sys.argv[1])
+started = core.task_start(root, "Task B recover durable decision", None, None)
+reads = [".agent-memory/INDEX.md"]
+index = core.document_get(root, reads)["documents"][0]["body"]
+path = re.search(r"\\]\(([^)]+)\\)", index).group(1)
+reads.append(".agent-memory/" + path)
+doc = core.document_get(root, [reads[-1]])["documents"][0]["body"]
+print(json.dumps({"task": started["status"], "reads": reads, "body": doc}))
+'''
+    result = subprocess.run([sys.executable, "-c", worker, str(root)], check=True, capture_output=True, text=True)
+    recovery = json.loads(result.stdout)
+    assert recovery["task"] == "ACTIVE"
+    assert recovery["reads"] == [".agent-memory/INDEX.md", ".agent-memory/architecture/decision.md"]
+    assert "REUSABLE_DECISION" in recovery["body"]
     assert index_path.read_bytes() == index_before_recovery
-    assert task_b["status"] == "ACTIVE"
 
 
 def test_core_has_no_execution_role_context_packet(tmp_path: Path) -> None:

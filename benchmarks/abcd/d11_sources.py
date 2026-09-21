@@ -63,6 +63,7 @@ SOURCE_EVENTS = {
     }),
     "codex_rollout": frozenset({
         "session_meta", "token_usage_record", "session_usage", "rollout_session", "model_usage",
+        "native_command_execution", "native_collaboration_spawn_call", "native_rollout_incomplete",
         "SubagentStart", "SubagentStop", "native_session_started", "reviewer_native_observation",
         "review_verdict", "tool_observation", "native_status", "native_interruption",
     }),

@@ -80,9 +80,6 @@ def normalize_codex_v0155_rollout_records(raw_records: Iterable[dict[str, Any]],
     capture before feeding the resulting records into a formal collector.
     """
     output: list[dict[str, Any]] = []
-    session_meta: dict[str, dict[str, Any]] = {}
-    root_turn: dict[str, str] = {}
-    delta_bytes: dict[str, int] = {}
     raw_list = list(raw_records)
     for line, raw in enumerate(raw_list, 1):
         if not isinstance(raw, dict):
@@ -92,78 +89,41 @@ def normalize_codex_v0155_rollout_records(raw_records: Iterable[dict[str, Any]],
         provenance = {"normalization": CODEX_V0155_NORMALIZATION, "raw_line": line,
                       "raw_type": _raw_type(raw)}
         if kind in {"sessionmeta", "sessionmetaitem"}:
-            session_id = payload.get("session_id")
-            thread_id = payload.get("id")
-            if isinstance(session_id, str) and session_id and session_id == thread_id:
-                session_meta[session_id] = {
-                    "parent_thread_id": payload.get("parent_thread_id"),
-                    "agent_role": str(payload.get("agent_role") or "").lower(),
-                    "agent_path": payload.get("agent_path"),
-                }
-                output.append({"event": "session_meta", "session_id": session_id, **payload,
+            session_id, thread_id = payload.get("session_id"), payload.get("id")
+            # session_id is file/session identity; id is thread identity.  A
+            # child file deliberately has different values, so never require
+            # equality here.
+            if isinstance(session_id, str) and session_id and isinstance(thread_id, str) and thread_id:
+                output.append({"event": "session_meta", "session_id": session_id,
+                               "thread_id": thread_id, "parent_thread_id": payload.get("parent_thread_id"),
+                               "thread_source": payload.get("thread_source"), "source": payload.get("source"),
+                               "cli_version": payload.get("cli_version"), "agent_role": payload.get("agent_role"),
                                "_codex_raw_provenance": provenance})
             continue
-        session_id = payload.get("session_id") or raw.get("session_id")
-        if not isinstance(session_id, str) or not session_id:
-            continue
-        if kind in {"turncontextitem", "turncontext"}:
-            value = payload.get("root_turn_id")
-            if isinstance(value, str) and value:
-                root_turn[session_id] = value
-                output.append({"event": "native_turn_context", "session_id": session_id,
-                               "derived_root_turn_id": value, "_codex_raw_provenance": provenance})
-            continue
-        if kind in {"execcommandoutputdeltaevent", "commandexecutionoutputdeltaevent"}:
-            chunk = payload.get("chunk")
-            event_id = _raw_id(payload)
-            if isinstance(chunk, str) and event_id:
-                try:
-                    delta_bytes[event_id] = delta_bytes.get(event_id, 0) + len(base64.b64decode(chunk, validate=True))
-                except (ValueError, TypeError):
-                    pass
-            continue
-        turn = root_turn.get(session_id)
-        if kind in {"commandexecutionitem", "commandexecution"}:
-            command = payload.get("command")
-            if isinstance(command, str) and turn:
-                event_id = _raw_id(payload)
-                bytes_value = _native_output_bytes(payload)
-                if bytes_value is None and event_id:
-                    bytes_value = delta_bytes.get(event_id)
-                output.append({"event": "native_command_execution", "session_id": session_id,
-                               "command": command, "output_bytes": bytes_value,
-                               "derived_root_turn_id": turn, "_codex_raw_provenance": provenance})
-            continue
-        # Tool calls are native collaboration calls when the actual function
-        # name says so.  The old synthetic ``tool=spawn_agent`` is not accepted
-        # by this branch.
-        name = payload.get("name") or payload.get("tool_name")
-        if isinstance(name, str) and "collaboration" in name.lower() and "spawn_agent" in name.lower() and turn:
-            arguments = payload.get("arguments") or payload.get("input")
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except json.JSONDecodeError:
-                    arguments = {}
-            child = arguments.get("agent_id") if isinstance(arguments, dict) else None
-            output.append({"event": "native_collaboration_spawn_call", "session_id": session_id,
-                           "child_session_id": child, "derived_root_turn_id": turn,
-                           "_codex_raw_provenance": provenance})
-            continue
-        if _raw_type(raw) == "SubagentStart":
-            parent = payload.get("parent_session_id") or payload.get("parent_thread_id")
-            child = payload.get("session_id") or payload.get("agent_id")
-            if isinstance(parent, str) and isinstance(child, str):
-                output.append({"event": "SubagentStart", "session_id": child,
-                               "parent_session_id": parent, "_codex_raw_provenance": provenance})
-    # Attach source/trust-shaped metadata only as a normalized offline record;
-    # source registry verification remains the formal trust boundary.
+        # Native persisted work is an event_msg item_completed envelope, not a
+        # flat CommandExecutionItem/function_call record.
+        if raw.get("type") == "event_msg" and payload.get("type") == "item_completed":
+            item = payload.get("item")
+            turn = payload.get("turn_id")
+            if not isinstance(item, dict) or not isinstance(turn, str) or not turn:
+                continue
+            item_type = item.get("type")
+            if item_type == "CommandExecution":
+                command = item.get("command")
+                if isinstance(command, list) and all(isinstance(part, str) for part in command):
+                    output.append({"event": "native_command_execution", "command": " ".join(command),
+                                   "output_bytes": _native_output_bytes(item), "native_turn_id": turn,
+                                   "_codex_raw_provenance": provenance})
+            elif item_type == "CollabAgentToolCall" and item.get("tool") == "spawn_agent":
+                children = item.get("receiver_thread_ids")
+                if isinstance(children, list) and len(children) == 1 and isinstance(children[0], str):
+                    output.append({"event": "native_collaboration_spawn_call", "child_thread_id": children[0],
+                                   "native_turn_id": turn, "_codex_raw_provenance": provenance})
+    # Deliberately *not* trusted: only load_trusted_events via a frozen,
+    # authority-verified source registry may add formal collector metadata.
     for index, record in enumerate(output):
-        record.update({"_trusted_source": "codex_rollout", "_source_id": source_id,
-                       "_registry_identity": "OFFLINE_NORMALIZATION", "_source_file": source_file,
-                       "_source_sha256": None, "_source_line": record["_codex_raw_provenance"]["raw_line"],
-                       "_native_event_id": f"{source_id}:{index + 1}", "_ingestion_index": index,
-                       "_normalized_kind": str(record["event"]),
+        record.update({"_source_file": source_file, "_source_line": record["_codex_raw_provenance"]["raw_line"],
+                       "_ingestion_index": index, "_normalized_kind": str(record["event"]),
                        "_codex_rollout_normalization": CODEX_V0155_NORMALIZATION})
     return output
 
@@ -192,13 +152,29 @@ def normalize_codex_v0155_rollout_jsonl(path: Path) -> list[dict[str, Any]]:
     records = normalize_codex_v0155_rollout_records(raw, source_file=str(path.resolve()),
                                                      source_id=f"codex-v0155:{path.resolve()}")
     if malformed:
-        records.append({"event": "native_rollout_incomplete", "_trusted_source": "codex_rollout",
-                        "_source_id": f"codex-v0155:{path.resolve()}", "_registry_identity": "OFFLINE_NORMALIZATION",
-                        "_source_file": str(path.resolve()), "_source_sha256": None, "_source_line": None,
-                        "_native_event_id": f"codex-v0155:{path.resolve()}:incomplete", "_ingestion_index": len(records),
+        records.append({"event": "native_rollout_incomplete", "_source_file": str(path.resolve()),
+                        "_source_line": None, "_ingestion_index": len(records),
                         "_normalized_kind": "native_rollout_incomplete",
                         "_codex_rollout_normalization": CODEX_V0155_NORMALIZATION,
                         "_codex_rollout_incomplete": True})
+    return records
+
+
+def load_trusted_codex_v0155_rollout(registry: dict[str, Any], *, authority_registry: AuthorityRegistry | None = None) -> list[dict[str, Any]]:
+    """Ingest v0.155.1 only through an already frozen, verified capture."""
+    sources = registry_sources(registry, authority_registry=authority_registry)
+    codex = [source for source in sources if source["source_kind"] == "codex_rollout"]
+    if len(codex) != 1:
+        raise ValueError("v0.155.1 ingestion requires exactly one frozen Codex rollout")
+    source = codex[0]
+    path = Path(source["canonical_path"])
+    raw = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    records = normalize_codex_v0155_rollout_records(raw, source_file=str(path), source_id=source["source_id"])
+    for record in records:
+        record.update({"_trusted_source": "codex_rollout", "_source_id": source["source_id"],
+                       "_source_run_id": source["run_id"], "_registry_identity": registry["identity"],
+                       "_source_sha256": source["content_sha256"],
+                       "_native_event_id": f'{source["source_id"]}:{record["_source_line"]}'})
     return records
 
 
@@ -397,7 +373,14 @@ def collect_delegation_rollout_metrics(events: Iterable[dict[str, Any]]) -> dict
     Failure-reason-known is deliberately omitted because the current JSONL
     schema does not bind that fact to a root turn.
     """
-    ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
+    supplied = list(events)
+    # Convenience-normalized records are intentionally not formal evidence.
+    # They may be inspected only as an offline diagnostic and never emit a
+    # formal metric without the authority-verified ingestion path.
+    if any(isinstance(item, dict) and item.get("_codex_rollout_normalization") == CODEX_V0155_NORMALIZATION
+           and not item.get("_trusted_source") for item in supplied):
+        return _unavailable_rollout_metrics()
+    ordered = sorted(_require_trusted(supplied), key=lambda item: _order(item, -1))
     if any(item.get("_codex_rollout_normalization") == CODEX_V0155_NORMALIZATION for item in ordered):
         return _collect_codex_v0155_delegation_metrics(ordered)
     root_source_session = _confirmed_root_session(ordered)
@@ -437,16 +420,19 @@ def _unavailable_rollout_metrics() -> dict[str, str]:
 
 
 def _native_root_controller(events: list[dict[str, Any]]) -> str | None:
-    """Prove exactly one root Controller from SessionMeta, or fail closed."""
+    """Prove one root file/thread from SessionMeta, never a fabricated role."""
     roots: set[str] = set()
     for event in events:
         if _kind(event) != "session_meta":
             continue
-        session = event.get("session_id")
+        session, thread = event.get("session_id"), event.get("thread_id")
         parent = event.get("parent_thread_id")
-        role = str(event.get("agent_role") or "").lower()
         version = event.get("cli_version")
-        if (isinstance(session, str) and session and parent in (None, "") and role == "controller"
+        source = event.get("source")
+        # Root identity is file-level: a self-owned thread, no parent and no
+        # spawned-subagent metadata. agent_role is only meaningful for a child.
+        if (isinstance(session, str) and session and session == thread and parent in (None, "")
+                and not isinstance(source, dict)
                 and _codex_version_at_least(version, CODEX_V0155_MIN_VERSION)):
             roots.add(session)
     return next(iter(roots)) if len(roots) == 1 else None
@@ -475,23 +461,27 @@ def _collect_codex_v0155_delegation_metrics(events: list[dict[str, Any]]) -> dic
     root = _native_root_controller(events)
     if root is None:
         return _unavailable_rollout_metrics()
-    # SessionMeta parentage is authoritative.  Only events from that one root
-    # session participate, which excludes all five delegated roles by identity
-    # rather than trying to classify their commands after the fact.
-    scoped = [event for event in events if event.get("session_id") == root]
-    starts = [event for event in events if _kind(event) == "SubagentStart" and event.get("parent_session_id") == root]
+    root_meta = next(event for event in events if _kind(event) == "session_meta" and event.get("session_id") == root)
+    root_thread = root_meta.get("thread_id")
+    if not isinstance(root_thread, str):
+        return _unavailable_rollout_metrics()
+    # This file has no per-event session id. Its root identity is established
+    # once by session-meta; child identity is separately proved by child meta.
+    scoped = [event for event in events if event.get("_source_file") == root_meta.get("_source_file")]
+    children = {event.get("thread_id") for event in events if _kind(event) == "session_meta"
+                and event.get("parent_thread_id") == root_thread and isinstance(event.get("thread_id"), str)}
     calls = [event for event in scoped if _kind(event) == "native_collaboration_spawn_call"]
     pairs: list[dict[str, Any]] = []
     for call in calls:
-        child = call.get("child_session_id")
-        # A native spawn call must be bound to exactly one later typed start.
-        matching = [start for start in starts if isinstance(child, str) and start.get("session_id") == child and _before(call, start)]
-        if len(matching) == 1:
+        child = call.get("child_thread_id")
+        if isinstance(child, str) and child in children:
             pairs.append(call)
     if not pairs:
         return _unavailable_rollout_metrics()
     first = pairs[0]
-    turn = first.get("derived_root_turn_id")
+    # Native root turns are task_started.turn_id. This is an opaque native ID,
+    # not an ordinal; root TurnContextItem.root_turn_id is correctly absent.
+    turn = first.get("native_turn_id")
     if not isinstance(turn, str) or not turn:
         return _unavailable_rollout_metrics()
     before = [event for event in scoped if _before(event, first)]

@@ -247,23 +247,29 @@ def test_rollout_metrics_require_one_explicit_root_session(tmp_path: Path) -> No
 
 def test_codex_v0155_raw_normalization_reports_derived_turn_and_root_only_reads() -> None:
     raw = [
-        {"type": "session_meta", "payload": {"session_id": "root", "id": "root", "parent_thread_id": None, "agent_role": "controller", "agent_path": "root", "cli_version": "0.155.1"}},
-        {"type": "TurnContextItem", "payload": {"session_id": "root", "root_turn_id": "turn-linux"}},
-        {"type": "CommandExecutionItem", "payload": {"session_id": "root", "command": "rg -n target src", "aggregated_output": "abcdef"}},
-        {"type": "function_call", "payload": {"session_id": "root", "name": "collaboration.spawn_agent", "arguments": {"agent_id": "child"}}},
-        {"type": "SubagentStart", "payload": {"session_id": "child", "parent_session_id": "root"}},
-        {"type": "session_meta", "payload": {"session_id": "child", "id": "child", "parent_thread_id": "root", "agent_role": "implementer", "agent_path": "root/implementer"}},
-        {"type": "TurnContextItem", "payload": {"session_id": "child", "root_turn_id": "child-turn"}},
-        {"type": "CommandExecutionItem", "payload": {"session_id": "child", "command": "rg secret .", "aggregated_output": "must-not-count"}},
+        {"type": "session_meta", "payload": {"session_id": "root", "id": "root", "parent_thread_id": None, "thread_source": "user", "cli_version": "0.155.1"}},
+        {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "root-turn", "item": {"type": "CommandExecution", "id": "cmd", "command": ["rg", "-n", "target", "src"], "aggregated_output": "abcdef"}}},
+        {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "root-turn", "item": {"type": "CollabAgentToolCall", "id": "spawn", "tool": "spawn_agent", "receiver_thread_ids": ["child"]}}},
+        {"type": "session_meta", "payload": {"session_id": "child-session", "id": "child", "parent_thread_id": "root", "agent_role": "implementer", "cli_version": "0.155.1", "source": {"subagent": {}}}},
     ]
     records = d11_collector.normalize_codex_v0155_rollout_records(raw)
-    assert records[1]["derived_root_turn_id"] == "turn-linux"
+    assert records[1]["native_turn_id"] == "root-turn"
     assert records[1]["_codex_raw_provenance"]["normalization"] == d11_collector.CODEX_V0155_NORMALIZATION
-    assert d11_collector.collect_delegation_rollout_metrics(records) == {
-        "FIRST_CHILD_SPAWN_ROOT_TURN": "turn-linux",
-        "PRE_DELEGATION_REPO_READ_CALLS": 1,
-        "PRE_DELEGATION_REPO_OUTPUT_BYTES": 6,
-    }
+    assert set(d11_collector.collect_delegation_rollout_metrics(records).values()) == {"UNAVAILABLE"}
+
+
+def test_codex_v0155_frozen_capture_emits_native_metrics_without_root_role(tmp_path: Path) -> None:
+    stream = tmp_path / "captured.jsonl"
+    raw = [
+        {"type": "session_meta", "payload": {"session_id": "root", "id": "root", "parent_thread_id": None, "thread_source": "user", "cli_version": "0.155.1"}},
+        {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "turn-1", "item": {"type": "CommandExecution", "id": "cmd", "command": ["rg", "needle", "src"], "aggregated_output": "bytes"}}},
+        {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "turn-1", "item": {"type": "CollabAgentToolCall", "id": "spawn", "tool": "spawn_agent", "receiver_thread_ids": ["child"]}}},
+        {"type": "session_meta", "payload": {"session_id": "child-session", "id": "child", "parent_thread_id": "root", "agent_role": "implementer", "source": {"subagent": {}}, "cli_version": "0.155.1"}},
+    ]
+    stream.write_text("".join(json.dumps(item) + "\n" for item in raw), encoding="utf-8")
+    registry = d11_sources.create_source_registry([{"kind": "codex_rollout", "path": stream}], run_id="fixture", test_only=True)
+    metrics = d11_collector.collect_delegation_rollout_metrics(d11_collector.load_trusted_codex_v0155_rollout(registry))
+    assert metrics == {"FIRST_CHILD_SPAWN_ROOT_TURN": "turn-1", "PRE_DELEGATION_REPO_READ_CALLS": 1, "PRE_DELEGATION_REPO_OUTPUT_BYTES": 5}
 
 
 def test_codex_v0155_normalization_accepts_windows_commands_and_base64_delta_bytes() -> None:
@@ -275,10 +281,7 @@ def test_codex_v0155_normalization_accepts_windows_commands_and_base64_delta_byt
         {"type": "function_call", "payload": {"session_id": "r", "name": "collaboration.spawn_agent", "arguments": {"agent_id": "c"}}},
         {"type": "SubagentStart", "payload": {"session_id": "c", "parent_session_id": "r"}},
     ]
-    assert d11_collector.collect_delegation_rollout_metrics(d11_collector.normalize_codex_v0155_rollout_records(raw)) == {
-        "FIRST_CHILD_SPAWN_ROOT_TURN": "turn-win", "PRE_DELEGATION_REPO_READ_CALLS": 1,
-        "PRE_DELEGATION_REPO_OUTPUT_BYTES": 4,
-    }
+    assert set(d11_collector.collect_delegation_rollout_metrics(d11_collector.normalize_codex_v0155_rollout_records(raw)).values()) == {"UNAVAILABLE"}
 
 
 @pytest.mark.parametrize("mutation", ("missing-session", "missing-turn", "unbound-start", "cross-session"))

@@ -469,7 +469,8 @@ def _codex_v0155_collection(events: list[dict[str, Any]]) -> tuple[dict[str, Any
                 or line != min(lines) or len(set(lines)) != len(lines)):
             return None
     bindings = {(event.get("_source_run_id"), event.get("_registry_identity"),
-                 tuple(event.get("_capture_binding", {}).get(key) for key in ("task_id", "task_revision", "reservation_id")))
+                 tuple(event.get("_capture_binding", {}).get(key) for key in
+                       ("task_id", "task_revision", "reservation_id", "session_id")))
                 for event in metas}
     if len(bindings) != 1 or any(not _is_codex_v0155(event.get("cli_version")) for event in metas):
         return None
@@ -480,12 +481,19 @@ def _codex_v0155_collection(events: list[dict[str, Any]]) -> tuple[dict[str, Any
         return None
     root = roots[0]
     root_thread = root["thread_id"]
+    # Frozen capture receipts bind every member of this collection to the
+    # controller/root session recorded by SessionMeta.  A foreign receipt is
+    # not repaired from the native child metadata.
+    if any(isinstance(event.get("_capture_authority"), dict)
+           and event.get("_capture_binding", {}).get("session_id") != root_thread
+           for event in metas):
+        return None
     children = [event for event in metas if event is not root]
     child_ids = [event.get("thread_id") for event in children]
     if (not children or any(not isinstance(child, str) or not child or child == root_thread for child in child_ids)
             or len(set(child_ids)) != len(child_ids)
             or any(event.get("session_id") != root_thread for event in children)
-            or any(event.get("parent_thread_id") not in (None, "", root_thread) for event in children)):
+            or any(event.get("parent_thread_id") != root_thread for event in children)):
         return None
     return root, children
 
@@ -536,8 +544,9 @@ def _collect_codex_v0155_delegation_metrics(events: list[dict[str, Any]]) -> dic
             or len(set(call_ids)) != len(call_ids) or set(call_ids) != children):
         return _unavailable_rollout_metrics()
     first = calls[0]
-    # Native root turns are task_started.turn_id. This is an opaque native ID,
-    # not an ordinal; root TurnContextItem.root_turn_id is correctly absent.
+    # Native root turns are the opaque turn_id from the event_msg/item_completed
+    # envelope payload.  It is not an ordinal; legacy
+    # TurnContextItem.root_turn_id is correctly absent.
     turn = first.get("native_turn_id")
     if not isinstance(turn, str) or not turn:
         return _unavailable_rollout_metrics()

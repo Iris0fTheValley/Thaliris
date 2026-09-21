@@ -282,7 +282,7 @@ def test_codex_v0155_frozen_capture_emits_native_metrics_without_root_role(tmp_p
     assert metrics == {"FIRST_CHILD_SPAWN_ROOT_TURN": "turn-1", "PRE_DELEGATION_REPO_READ_CALLS": 1, "PRE_DELEGATION_REPO_OUTPUT_BYTES": 5}
 
 
-@pytest.mark.parametrize("mutation", ("missing-child", "mismatched-session", "duplicate-child", "ambiguous-root", "version-mismatch"))
+@pytest.mark.parametrize("mutation", ("missing-child", "mismatched-session", "missing-parent", "duplicate-child", "ambiguous-root", "version-mismatch"))
 def test_codex_v0155_multifile_collection_fails_closed(tmp_path: Path, mutation: str) -> None:
     root_stream, child_stream, extra_stream = (tmp_path / name for name in ("root.jsonl", "child.jsonl", "extra.jsonl"))
     root = {"type": "session_meta", "payload": {"session_id": "root", "id": "root", "parent_thread_id": None, "thread_source": "user", "cli_version": "0.155.1"}}
@@ -294,6 +294,8 @@ def test_codex_v0155_multifile_collection_fails_closed(tmp_path: Path, mutation:
     else:
         if mutation == "mismatched-session":
             child["payload"]["session_id"] = "wrong-root"
+        if mutation == "missing-parent":
+            child["payload"].pop("parent_thread_id")
         if mutation == "version-mismatch":
             child["payload"]["cli_version"] = "0.155.2"
         root_stream.write_text(json.dumps(root) + "\n" + json.dumps(spawn) + "\n", encoding="utf-8")
@@ -309,6 +311,31 @@ def test_codex_v0155_multifile_collection_fails_closed(tmp_path: Path, mutation:
             registry_entries.append({"kind": "codex_rollout", "path": extra_stream})
     registry = d11_sources.create_source_registry(registry_entries, run_id="fixture", test_only=True)
     metrics = d11_collector.collect_delegation_rollout_metrics(d11_collector.load_trusted_codex_v0155_rollout(registry))
+    assert set(metrics.values()) == {"UNAVAILABLE"}
+
+
+def test_codex_v0155_formal_collection_rejects_foreign_child_receipt_session(tmp_path: Path, monkeypatch) -> None:
+    root_stream, child_stream = tmp_path / "root.jsonl", tmp_path / "child.jsonl"
+    root_stream.write_text("\n".join(json.dumps(item) for item in [
+        {"type": "session_meta", "payload": {"session_id": "root", "id": "root", "parent_thread_id": None, "cli_version": "0.155.1"}},
+        {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "turn-1", "item": {"type": "CollabAgentToolCall", "tool": "spawn_agent", "receiver_thread_ids": ["child"]}}},
+    ]) + "\n", encoding="utf-8")
+    child_stream.write_text(json.dumps({"type": "session_meta", "payload": {
+        "session_id": "root", "id": "child", "parent_thread_id": "root", "source": {"subagent": {}}, "cli_version": "0.155.1",
+    }}) + "\n", encoding="utf-8")
+    authority = d11_authority.capture_authority(d11_sources)
+    root_receipt = d11_authority.issue_capture(authority, authority_ref="root-capture", task_id="formal", task_revision=1,
+                                                reservation_id="reservation", session_id="root", path=root_stream)
+    child_receipt = d11_authority.issue_capture(authority, authority_ref="child-capture", task_id="formal", task_revision=1,
+                                                 reservation_id="reservation", session_id="foreign-root", path=child_stream)
+    registry = d11_sources.create_source_registry([
+        {"kind": "codex_rollout", "path": root_stream, "capture_authority": root_receipt,
+         "task_id": "formal", "task_revision": 1, "reservation_id": "reservation", "session_id": "root"},
+        {"kind": "codex_rollout", "path": child_stream, "capture_authority": child_receipt,
+         "task_id": "formal", "task_revision": 1, "reservation_id": "reservation", "session_id": "foreign-root"},
+    ], run_id="formal", authority_registry=d11_authority.inject_formal_registry(monkeypatch, d11_sources, authority))
+    metrics = d11_collector.collect_delegation_rollout_metrics(
+        d11_collector.load_trusted_codex_v0155_rollout(registry, authority_registry=authority.registry))
     assert set(metrics.values()) == {"UNAVAILABLE"}
 
 

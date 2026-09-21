@@ -1,0 +1,84 @@
+{
+  "description": "Thaliris managed intent-audit hooks",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "thaliris audit-hook SessionStart",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "thaliris audit-hook UserPromptSubmit",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "thaliris audit-hook PreToolUse",
+            "timeout": 60
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "thaliris audit-hook PostToolUse",
+            "timeout": 60
+          }
+        ],
+        "matcher": "^(?:(?:spawn_agent|Agent|followup_task|send_input|send_message|list_agents|wait_agent|interrupt_agent)|(?:[A-Za-z0-9_]+\\.)+(?:spawn_agent|Agent|followup_task|send_input|send_message|list_agents|wait_agent|interrupt_agent)|collaboration(?:spawn_agent|Agent|followup_task|send_input|send_message|list_agents|wait_agent|interrupt_agent)|(?:Bash|Shell|exec|exec_command|command_execution|functions\\.exec_command))$"
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "thaliris audit-hook SubagentStart",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "thaliris audit-hook SubagentStop",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "thaliris audit-hook Stop",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

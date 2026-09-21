@@ -26,6 +26,9 @@ Issues = "https://github.com/Iris0fTheValley/Thaliris/issues"
 test = ["pytest>=8.0"]
 
 [project.scripts]
+thaliris = "thaliris.cli:main"
+# Retained as an interactive compatibility alias. Managed hook recognition is
+# intentionally canonicalized to the thaliris executable.
 context = "thaliris.cli:main"
 
 [tool.pytest.ini_options]

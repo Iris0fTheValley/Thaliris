@@ -8,13 +8,14 @@ from pathlib import Path
 import re
 import secrets
 import shlex
+import shutil
 import subprocess
 import time
 from typing import Any
 
 from . import core
 
-HOOK_COMMAND_PREFIX = "context audit-hook"
+HOOK_COMMAND_PREFIX = "thaliris audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
 CODEX_ADAPTER_PROTOCOL_VERSION = 7
 # Private adapter lifecycle state. This is deliberately separate from Core
@@ -22,6 +23,9 @@ CODEX_ADAPTER_PROTOCOL_VERSION = 7
 LIFECYCLE_STATE_VERSION = 11
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed lifecycle hooks"
 MAX_RAW_RECORDS = 64
+THALIRIS_EXECUTABLE_ENV = "THALIRIS_EXECUTABLE"
+THALIRIS_EXECUTABLE_SHA256_ENV = "THALIRIS_EXECUTABLE_SHA256"
+# Older pin names remain readable only as a configuration compatibility aid.
 CONTEXT_EXECUTABLE_ENV = "THALIRIS_CONTEXT_EXECUTABLE"
 CONTEXT_EXECUTABLE_SHA256_ENV = "THALIRIS_CONTEXT_EXECUTABLE_SHA256"
 _COLLABORATION_TOOL_NAMES = (
@@ -139,17 +143,7 @@ def _managed_handler(event: str) -> dict[str, Any]:
 
 
 def _hook_command_prefix() -> str:
-    """Resolve the hook executable, allowing audited runs to pin a checkout."""
-    configured = _trusted_context_executable()
-    if configured is not None:
-        # Keep the exact pinned executable identity while avoiding a leading
-        # quote for the common Windows console-script path.  Codex's native
-        # hook runner accepts the unquoted absolute form reliably; quote only
-        # when whitespace makes the argument boundary ambiguous.
-        executable = str(configured)
-        if any(char.isspace() for char in executable):
-            executable = f'"{executable}"'
-        return f'{executable} audit-hook'
+    """Return the portable, canonical installed-hook command."""
     return HOOK_COMMAND_PREFIX
 
 
@@ -161,20 +155,20 @@ def _digest_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _trusted_context_executable() -> Path | None:
+def _trusted_thaliris_executable() -> Path | None:
     """Return a host-pinned executable only when its bytes match the pin.
 
     A configured path by itself is not trust.  The canonical PATH-relative
-    ``context`` invocation remains valid; an absolute/local wrapper requires
+    ``thaliris`` invocation remains valid; an absolute/local executable requires
     both an explicit path and an exact host-provided SHA-256 pin.
     """
-    configured = os.environ.get(CONTEXT_EXECUTABLE_ENV)
-    expected = os.environ.get(CONTEXT_EXECUTABLE_SHA256_ENV, "").lower()
+    configured = os.environ.get(THALIRIS_EXECUTABLE_ENV) or os.environ.get(CONTEXT_EXECUTABLE_ENV)
+    expected = (os.environ.get(THALIRIS_EXECUTABLE_SHA256_ENV) or os.environ.get(CONTEXT_EXECUTABLE_SHA256_ENV, "")).lower()
     if not configured or not re.fullmatch(r"[0-9a-f]{64}", expected):
         return None
     path = Path(configured)
     try:
-        if not path.is_file() or path.is_symlink():
+        if not path.is_absolute() or not path.is_file() or path.is_symlink():
             return None
         resolved = path.resolve(strict=True)
         return resolved if _digest_file(resolved) == expected else None
@@ -184,33 +178,57 @@ def _trusted_context_executable() -> Path | None:
 
 def managed_context_executable_pinned() -> bool:
     """Whether managed control-plane trust has an explicit path+byte pin."""
-    return _trusted_context_executable() is not None
+    return _trusted_thaliris_executable() is not None
+
+
+def managed_executable_health() -> dict[str, str]:
+    """Report command availability separately from a byte-pinned identity."""
+    pinned = _trusted_thaliris_executable()
+    if pinned is not None:
+        return {"canonical_executable_available": "YES", "canonical_executable_identity": "SHA256_PINNED"}
+    return {
+        "canonical_executable_available": "YES" if shutil.which("thaliris") else "NO",
+        "canonical_executable_identity": "PATH_UNPINNED" if shutil.which("thaliris") else "UNAVAILABLE",
+    }
 
 
 def _context_arguments(command: str) -> str | None:
-    """Extract arguments only from canonical or byte-pinned context invocations."""
+    """Extract arguments only from direct thaliris or a byte-pinned executable."""
     match = re.match(r"^\s*(\"[^\"]+\"|'[^']+'|[^\s]+)(?:\s+(.*?))?\s*$", command)
     if not match:
         return None
     token = match.group(1)
     executable = token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in {'\"', "'"} else token
     lowered = executable.lower()
-    canonical = lowered in {"context", "context.exe", "context.cmd"} and not any(char in executable for char in "\\/")
+    canonical = lowered in {"thaliris", "thaliris.exe", "thaliris.cmd"} and not any(char in executable for char in "\\/")
     pinned = False
-    trusted = _trusted_context_executable()
+    trusted = _trusted_thaliris_executable()
     if trusted is not None:
         try:
             pinned = Path(executable).resolve(strict=True) == trusted
         except (OSError, RuntimeError):
             pinned = False
-    pin_requested = bool(os.environ.get(CONTEXT_EXECUTABLE_ENV) or os.environ.get(CONTEXT_EXECUTABLE_SHA256_ENV))
-    if not ((pinned if pin_requested else canonical) or (pinned and not pin_requested)):
+    if not (canonical or pinned):
         return None
     return match.group(2) or ""
 
 
 def is_managed_handler(value: object, event: str) -> bool:
     return value == _managed_handler(event)
+
+
+def _legacy_managed_handler(value: object, event: str) -> bool:
+    """Recognize only the exact legacy handler we generated, never wrappers."""
+    expected = {"type": "command", "command": f"context audit-hook {event}", "timeout": 60}
+    if value == expected:
+        return True
+    # Historical generated SubagentStart entries carried this no-injection
+    # marker. It is also recognized only as the exact generated shape.
+    return event == "SubagentStart" and value == {**expected, "additionalContextLimit": 0}
+
+
+def _owned_managed_handler(value: object, event: str) -> bool:
+    return is_managed_handler(value, event) or _legacy_managed_handler(value, event)
 
 
 def merge_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -230,43 +248,22 @@ def merge_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
                 normalized_entries.append(entry)
                 continue
-            managed = [item for item in entry["hooks"] if is_managed_handler(item, event)]
+            managed = [item for item in entry["hooks"] if _owned_managed_handler(item, event)]
             if not managed:
                 normalized_entries.append(entry)
                 continue
-            present = True
-            if event in {"PostToolUse", "PreToolUse"}:
-                user_handlers = [item for item in entry["hooks"] if not is_managed_handler(item, event)]
-                if user_handlers:
-                    # A matcher applies to every handler in one entry. Split
-                    # an upgraded managed handler away instead of changing a
-                    # user's matcher semantics.
-                    copied = dict(entry)
-                    copied["hooks"] = user_handlers
-                    normalized_entries.append(copied)
-                    normalized_entries.append(wanted_entries[0])
-                    changed = True
-                else:
-                    copied = dict(entry)
-                    if copied.get("matcher") != wanted_entries[0].get("matcher"):
-                        copied["matcher"] = wanted_entries[0].get("matcher")
-                        changed = True
-                    normalized_entries.append(copied)
-            else:
-                if event == "SubagentStart":
-                    user_handlers = [item for item in entry["hooks"] if not is_managed_handler(item, event)]
-                    if user_handlers:
-                        copied = dict(entry)
-                        copied["hooks"] = user_handlers
-                        normalized_entries.append(copied)
-                        normalized_entries.append(wanted_entries[0])
-                    elif entry != wanted_entries[0]:
-                        normalized_entries.append(wanted_entries[0])
-                    else:
-                        normalized_entries.append(entry)
-                    changed = changed or entry != wanted_entries[0]
-                else:
-                    normalized_entries.append(entry)
+            if entry == wanted_entries[0]:
+                present = True
+                normalized_entries.append(entry)
+                continue
+            # A matcher applies to every handler in an entry. Preserve user
+            # handlers unchanged, and isolate the canonical generated entry.
+            user_handlers = [item for item in entry["hooks"] if not _owned_managed_handler(item, event)]
+            if user_handlers:
+                copied = dict(entry)
+                copied["hooks"] = user_handlers
+                normalized_entries.append(copied)
+            changed = True
         if not present:
             normalized_entries.append(wanted_entries[0])
             changed = True
@@ -290,7 +287,7 @@ def remove_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
                 kept_entries.append(entry)
                 continue
-            handlers = [handler for handler in entry["hooks"] if not is_managed_handler(handler, event)]
+            handlers = [handler for handler in entry["hooks"] if not _owned_managed_handler(handler, event)]
             if len(handlers) != len(entry["hooks"]):
                 changed = True
             if handlers:
@@ -325,10 +322,12 @@ def hooks_health(root: Path) -> dict[str, str]:
     return {
         "status": status,
         "hooks_configured": configured,
+        "installed_hook_spec": "CURRENT" if configured == "YES" else ("STALE" if configured == "NO" else "UNKNOWN"),
         "runtime_observed": observed["runtime_observed"],
         "current_hook_hash_observed": observed["current_hook_hash_observed"],
         "pretool_child_identity_corroborated": child_identity_corroboration(root),
         "hook_trust_runtime_status": "UNKNOWN",
+        **managed_executable_health(),
     }
 
 
@@ -1471,11 +1470,11 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
         return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: a managed Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer session may not delegate to another session.")
     operation, context_targets = _context_call(payload)
     if operation in _CHILD_CONTEXT_MUTATIONS:
-        target = f"context {operation}"
+        target = f"thaliris {operation}"
         _best_effort_record(_record_protocol_deviation, root, payload, operation=operation, target=target, blocked=True)
         return _permission_deny("THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer session may not modify Controller-owned control state.")
     if operation in _CHILD_CONTEXT_READS:
-        for target in context_targets or [f"context {operation}"]:
+        for target in context_targets or [f"thaliris {operation}"]:
             _best_effort_record(
                 _record_protocol_deviation,
                 root,

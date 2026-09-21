@@ -81,7 +81,7 @@ When a promotion changes durable navigation, the Controller should provide its
 own optional `index_update` in the same `task-promote` call. Core does not
 generate INDEX content; it validates CAS, references, and the atomic commit.
 If Codex explicitly reports a native spawn failure before `SubagentStart`, the
-Controller may call `context recover-pending-spawn HANDOFF_ID` for that exact
+Controller may call `thaliris recover-pending-spawn HANDOFF_ID` for that exact
 handoff; Core never infers failure from a missing event, timeout, or retry.
 
 Freshness reports only `FRESH`, `CHANGED`, `MISSING`, or `UNKNOWN` file facts.
@@ -92,17 +92,17 @@ Neither verification nor surface attribution determines semantic completion.
 ## Commands
 
 ```text
-context init
-context task-start "goal"
-context task-status
-context task-update --role controller --base-revision N --input update.json
-context task-artifact --base-revision N --id A-001 --path path/to/file.md --summary "..."
-context task-promote --role controller --base-revision N --input promotion.json
-context task-close --base-revision N
-context recover-pending-spawn HANDOFF_ID
-context stale
-context rollback BACKUP_ID
-context doctor
+thaliris init
+thaliris task-start "goal"
+thaliris task-status
+thaliris task-update --role controller --base-revision N --input update.json
+thaliris task-artifact --base-revision N --id A-001 --path path/to/file.md --summary "..."
+thaliris task-promote --role controller --base-revision N --input promotion.json
+thaliris task-close --base-revision N
+thaliris recover-pending-spawn HANDOFF_ID
+thaliris stale
+thaliris rollback BACKUP_ID
+thaliris doctor
 ```
 
 ## Benchmark boundary

@@ -44,7 +44,7 @@ generate INDEX content; it validates the CAS, references, and atomic commit.
 With NO_TASK, Thaliris leaves ordinary Codex tool use and spawn behavior
 transparent. During an ACTIVE managed task the persistent Controller uses only
 native spawn/wait/list/interrupt operations and an explicit allow-set of
-trusted direct `context` runtime commands. `init`, `uninstall`, `rollback`, a
+trusted direct `thaliris` runtime commands. `init`, `uninstall`, `rollback`, a
 second `task-start`, and `task-show` are blocked for ACTIVE Root. `task-status`
 is bounded; `task-get`, `artifact-get`, `catalog`, and `document-get`
 retrieve explicitly selected objects.
@@ -58,7 +58,7 @@ distilled returns, and a fresh Reviewer; the Controller must not take over
 repository investigation, implementation, or testing merely because NO_TASK
 applies. The final report must not claim managed enforcement was verified.
 If Codex reports a native spawn failure before `SubagentStart`, the Controller
-may explicitly run `context recover-pending-spawn <handoff-id>` for that exact
+may explicitly run `thaliris recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.
 Repository investigation belongs to fresh Investigator sessions; execution,
 mutation, and testing belong to fresh Implementer sessions. Existing native Codex child sessions are never resumed with follow-up/send tools.

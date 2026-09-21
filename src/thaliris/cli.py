@@ -29,7 +29,7 @@ def _task_status(root: Path, *, suppress_protocol_notice: bool) -> dict[str, obj
 
 def _parser() -> argparse.ArgumentParser:
     p = _Parser(
-        prog="context",
+        prog="thaliris",
         description=(
             "Thaliris: durable records, identities, provenance, explicit retrieval, "
             "and lifecycle binding for Codex workflows"

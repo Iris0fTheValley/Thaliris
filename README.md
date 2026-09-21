@@ -93,7 +93,7 @@ Controller 明确选择的记录；Core 不裁决其 epistemic legitimacy。
 `task-promote` 中提供自己写好的 optional `index_update`。Core 不生成 INDEX
 内容，只验证 CAS、引用和原子提交。
 若 Codex 在 `SubagentStart` 前明确返回 native spawn failure，Controller 可针对
-该 handoff 调用 `context recover-pending-spawn HANDOFF_ID`；Core 不从缺失事件、超时或重试推测失败。
+该 handoff 调用 `thaliris recover-pending-spawn HANDOFF_ID`；Core 不从缺失事件、超时或重试推测失败。
 
 ## Verification 与 task surface
 
@@ -104,20 +104,20 @@ state 与 delta。两者都只提供事实，不成为 correctness、ownership �
 ## 命令
 
 ```text
-context init
-context task-start "goal"
-context task-status
-context task-get OBJECT_ID
-context task-update --role controller --base-revision N --input update.json
-context task-artifact --base-revision N --id A-001 --path path/to/file.md --summary "..."
-context catalog
-context document-get .agent-memory/model-chosen/a.md .milestones/current/status.md
-context task-promote --role controller --base-revision N --input promotion.json
-context task-close --base-revision N
-context recover-pending-spawn HANDOFF_ID
-context stale
-context rollback BACKUP_ID
-context doctor
+thaliris init
+thaliris task-start "goal"
+thaliris task-status
+thaliris task-get OBJECT_ID
+thaliris task-update --role controller --base-revision N --input update.json
+thaliris task-artifact --base-revision N --id A-001 --path path/to/file.md --summary "..."
+thaliris catalog
+thaliris document-get .agent-memory/model-chosen/a.md .milestones/current/status.md
+thaliris task-promote --role controller --base-revision N --input promotion.json
+thaliris task-close --base-revision N
+thaliris recover-pending-spawn HANDOFF_ID
+thaliris stale
+thaliris rollback BACKUP_ID
+thaliris doctor
 ```
 
 `task-promote` 输入中的每条记录必须由 Controller 明确给出 `.agent-memory/**.md`

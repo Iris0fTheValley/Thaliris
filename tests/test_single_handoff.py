@@ -303,25 +303,25 @@ def test_active_controller_uses_only_the_mechanical_tool_allowlist(tmp_path: Pat
         assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     assert handle_hook(root, "PreToolUse", hook_payload(
-        tool_name="Bash", tool_input={"command": "context task-status"},
+        tool_name="Bash", tool_input={"command": "thaliris task-status"},
     )) == ""
     denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(
-        tool_name="Bash", tool_input={"command": "context task-show"},
+        tool_name="Bash", tool_input={"command": "thaliris task-show"},
     )))
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert handle_hook(root, "PreToolUse", hook_payload(
-        tool_name="Bash", tool_input={"command": "context task-get R1"},
+        tool_name="Bash", tool_input={"command": "thaliris task-get R1"},
     )) == ""
     denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(
-        tool_name="Bash", tool_input={"command": r"C:\untrusted\context.exe task-status"},
+        tool_name="Bash", tool_input={"command": r"C:\untrusted\thaliris.exe task-status"},
     )))
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
     for command in (
-        "context init",
-        "context uninstall",
-        "context rollback backup-id",
-        "context task-start another-task",
-        "context stale",
+        "thaliris init",
+        "thaliris uninstall",
+        "thaliris rollback backup-id",
+        "thaliris task-start another-task",
+        "thaliris stale",
     ):
         denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(
             tool_name="Bash", tool_input={"command": command},
@@ -337,6 +337,45 @@ def test_active_controller_uses_only_the_mechanical_tool_allowlist(tmp_path: Pat
         tool_name="spawn_agent",
         tool_input={"fork_turns": "none", "agent_type": "worker", "message": "fresh handoff"},
     )) == ""
+
+
+@pytest.mark.parametrize("command", ["thaliris task-status", "thaliris.exe task-status", "thaliris.cmd task-status"])
+def test_managed_control_accepts_only_direct_canonical_thaliris(tmp_path: Path, command: str) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "canonical executable", None, None)
+    assert handle_hook(root, "PreToolUse", hook_payload(tool_name="Bash", tool_input={"command": command})) == ""
+    for rejected in (
+        "context task-status", "uv run thaliris task-status", "python -m thaliris task-status",
+        "cmd /c thaliris task-status", "powershell thaliris task-status", "my-thaliris task-status",
+        r"C:\untrusted\thaliris.exe task-status",
+    ):
+        denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(tool_name="Bash", tool_input={"command": rejected})))
+        assert denied["hookSpecificOutput"]["permissionDecision"] == "deny", rejected
+
+
+def test_pinned_absolute_thaliris_is_accepted_but_legacy_handlers_only_migrate(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    executable = tmp_path / "trusted-thaliris.exe"
+    executable.write_bytes(b"trusted executable bytes")
+    digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+    monkeypatch.setenv("THALIRIS_EXECUTABLE", str(executable))
+    monkeypatch.setenv("THALIRIS_EXECUTABLE_SHA256", digest)
+    core.task_start(root, "pinned executable", None, None)
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        tool_name="Bash", tool_input={"command": f'"{executable}" task-status'},
+    )) == ""
+    legacy = {"hooks": {"SessionStart": [{"hooks": [
+        {"type": "command", "command": "context audit-hook SessionStart", "timeout": 60},
+        {"type": "command", "command": "context audit-hook SessionStart --user-wrapper", "timeout": 60},
+    ]}]}}
+    merged, changed = lifecycle_module.merge_hooks(legacy)
+    assert changed
+    handlers = merged["hooks"]["SessionStart"]
+    assert any(item == lifecycle_module.hook_spec()["hooks"]["SessionStart"][0] for item in handlers)
+    assert any(item["hooks"][0]["command"].endswith("--user-wrapper") for item in handlers if item.get("hooks"))
+    cleaned, removed = lifecycle_module.remove_hooks(legacy)
+    assert removed
+    assert cleaned["hooks"]["SessionStart"][0]["hooks"][0]["command"].endswith("--user-wrapper")
 
 
 def test_session_start_does_not_inject_large_root_map_or_document_body(tmp_path: Path) -> None:
@@ -498,7 +537,7 @@ def test_execution_role_extra_context_reads_are_telemetry_only(tmp_path: Path, a
         agent_id="reader-3",
         agent_type=agent_type,
         tool_name="Bash",
-        tool_input={"command": "context task-show"},
+        tool_input={"command": "thaliris task-show"},
     )
     assert handle_hook(root, "PreToolUse", child_read) == ""
     deviation = lifecycle(root)["protocol_deviations"][0]
@@ -509,7 +548,7 @@ def test_execution_role_extra_context_reads_are_telemetry_only(tmp_path: Path, a
 
     assert "Protocol deviation" not in core.task_status(root)
 
-    child_status = {**child_read, "tool_input": {"command": "context task-status"}}
+    child_status = {**child_read, "tool_input": {"command": "thaliris task-status"}}
     rewrite = json.loads(handle_hook(root, "PreToolUse", child_status))
     assert rewrite["hookSpecificOutput"]["permissionDecision"] == "allow"
     assert rewrite["hookSpecificOutput"]["updatedInput"]["command"].endswith("--suppress-protocol-notice")
@@ -523,7 +562,7 @@ def test_task_status_keeps_core_ledger_only_and_cli_consumes_one_shot_notice(tmp
     spawn_start(root, "reader", "thaliris-reviewer")
     assert handle_hook(root, "PreToolUse", hook_payload(
         agent_id="reader", agent_type="thaliris-reviewer", tool_name="Bash",
-        tool_input={"command": "context task-show"},
+        tool_input={"command": "thaliris task-show"},
     )) == ""
     assert "Protocol deviation" not in core.task_status(root)
     assert "lifecycle" not in Path(core.__file__).read_text(encoding="utf-8")
@@ -547,7 +586,7 @@ def test_selected_roles_receive_one_bounded_aggregate_deviation_notice(
             agent_id="reader-1",
             agent_type=agent_type,
             tool_name="Bash",
-            tool_input={"command": f"context {operation} .agent-memory/INDEX.md"},
+            tool_input={"command": f"thaliris {operation} .agent-memory/INDEX.md"},
         )) == ""
     notice = cli._task_status(root, suppress_protocol_notice=False)["Protocol deviation"]
     assert "Protocol deviations (batched)" in notice
@@ -565,7 +604,7 @@ def test_selected_role_records_actual_context_and_obvious_shell_durable_targets(
         agent_id="reviewer-reader",
         agent_type="thaliris-reviewer",
         tool_name="Bash",
-        tool_input={"command": "context document-get .agent-memory/a.md .milestones/b.md"},
+        tool_input={"command": "thaliris document-get .agent-memory/a.md .milestones/b.md"},
     )) == ""
     assert handle_hook(root, "PreToolUse", hook_payload(
         agent_id="reviewer-reader",
@@ -662,7 +701,7 @@ def test_protocol_deviation_ring_keeps_late_events_in_one_aggregate(tmp_path: Pa
             agent_id="reader",
             agent_type="thaliris-reviewer",
             tool_name="Bash",
-            tool_input={"command": f"context task-show --marker {index}"},
+        tool_input={"command": f"thaliris task-show --marker {index}"},
         )) == ""
     state = lifecycle(root)
     assert len(state["protocol_deviations"]) == 32
@@ -682,13 +721,13 @@ def test_child_control_state_mutation_is_blocked_and_recorded(tmp_path: Path) ->
         agent_id="worker-1",
         agent_type="worker",
         tool_name="Bash",
-        tool_input={"command": "context task-update --role controller --base-revision 1 --input update.json"},
+        tool_input={"command": "thaliris task-update --role controller --base-revision 1 --input update.json"},
     )
     denied = json.loads(handle_hook(root, "PreToolUse", mutation))
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
     deviation = lifecycle(root)["protocol_deviations"][0]
     assert deviation["operation"] == "task-update"
-    assert deviation["target"] == "context task-update"
+    assert deviation["target"] == "thaliris task-update"
     assert deviation["blocked"] is True
 
     direct_write = hook_payload(
@@ -755,7 +794,7 @@ def test_task_start_requires_current_one_shot_hook_attestation(tmp_path: Path, m
     with pytest.raises(ValueError, match="MANAGED_CURRENT_SESSION_NOT_ATTESTED"):
         codex_adapter.task_start(root, "missing attestation", None, None)
 
-    pre = hook_payload(tool_name="Bash", tool_input={"command": "context task-start goal"})
+    pre = hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-start goal"})
     rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre))
     command = rewritten["hookSpecificOutput"]["updatedInput"]["command"]
     token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", command).group(1)
@@ -764,6 +803,40 @@ def test_task_start_requires_current_one_shot_hook_attestation(tmp_path: Path, m
     assert started["status"] == "ACTIVE"
     with pytest.raises(ValueError, match="MANAGED_CURRENT_SESSION_NOT_ATTESTED"):
         codex_adapter.task_start(root, "reused", None, None, token)
+
+
+def test_unsupported_prerelease_after_valid_attestation_is_continuation_unavailable(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = repo(tmp_path)
+
+    class Version:
+        returncode = 0
+        stdout = "codex-cli 0.155.0-alpha.9.2\n"
+        stderr = ""
+
+    codex_adapter._host_wait_mode_cached.cache_clear()
+    with monkeypatch.context() as isolated:
+        isolated.setattr(codex_adapter.subprocess, "run", lambda *args, **kwargs: Version())
+        assert codex_adapter.selected_continuation_mode(root) == "UNAVAILABLE"
+    codex_adapter._host_wait_mode_cached.cache_clear()
+    monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "UNAVAILABLE")
+    pre = hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-start goal"})
+    command = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre))["hookSpecificOutput"]["updatedInput"]["command"]
+    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", command).group(1)
+    assert cli.main(["--root", str(root), "task-start", "attested", "--hook-attestation", token]) == 3
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "MANAGED_CONTINUATION_UNAVAILABLE"
+    codex_adapter._host_wait_mode_cached.cache_clear()
+
+
+def test_doctor_separates_hook_spec_executable_and_attestation_facts(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    report = codex_adapter.doctor(root)
+    host = report["host_capability"]
+    assert host["installed_hook_spec"] == "CURRENT"
+    assert host["canonical_executable_available"] in {"YES", "NO"}
+    assert host["canonical_executable_identity"] in {"SHA256_PINNED", "PATH_UNPINNED", "UNAVAILABLE"}
+    assert report["verification_attestation"]["current_session_observed"] == "UNKNOWN"
+    assert report["verification_attestation"]["task_start_attestation"] == "CURRENT_SESSION_REQUIRED"
 
 
 def test_invalid_task_state_fails_closed_for_managed_root_control(tmp_path: Path) -> None:
@@ -778,13 +851,13 @@ def test_invalid_task_state_fails_closed_for_managed_root_control(tmp_path: Path
     for payload in (
         hook_payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker", "message": "work"}),
         hook_payload(tool_name="list_agents", tool_input={}),
-        hook_payload(tool_name="Bash", tool_input={"command": "context task-close --base-revision 1"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-close --base-revision 1"}),
     ):
         denied = json.loads(handle_hook(root, "PreToolUse", payload))
         assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "INVALID_STATE" in denied["hookSpecificOutput"]["permissionDecisionReason"]
     assert handle_hook(root, "PreToolUse", hook_payload(
-        tool_name="Bash", tool_input={"command": "context doctor"},
+        tool_name="Bash", tool_input={"command": "thaliris doctor"},
     )) == ""
 
 

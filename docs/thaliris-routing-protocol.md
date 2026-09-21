@@ -14,6 +14,18 @@ The Controller is the sole task-specific semantic router. It chooses the Investi
 task, facts, constraints, decisions, unknowns, and pointers to send. A missing
 fact is a Controller/model error; Core must not infer or append it.
 
+The Controller selects the minimum necessary fresh role sessions, serially. A
+straightforward, bounded, low-risk task with confirmed facts may take the
+Controller -> fresh Implementer -> done path: the Implementer may do necessary
+bounded local reading, implementation, and deterministic verification. An
+Investigator is warranted when missing facts could change how to implement. A
+Reviewer is conditional, not a mechanical post-implementation gate; it is
+preferred when independent review adds value for architecture or cross-module
+changes, lifecycle, Host, identity, or authority boundaries, compatibility
+invariants, multiple plausible implementations, complex semantic repairs, or
+remaining correctness uncertainty. Curator and Reasoning Specialist are
+optional and selected only when they add actual value.
+
 `SubagentStart` is lifecycle-only. It validates the authorized native Codex child and binds
 identity, role, session, start time, provenance, handoff ID, and payload hash.
 It does not construct a role packet or inject task state.

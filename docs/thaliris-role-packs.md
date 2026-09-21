@@ -60,8 +60,9 @@ reinvention or recursive scanning.
 
 ## Reasoning Specialist
 
-Resolve the decision described in the handoff from the selected information.
-If a decision-changing fact is missing, say what is missing. Do not reconstruct
+Use only when resolving the decision in the handoff adds actual value beyond
+the selected roles' work. Resolve it from the selected information. If a
+decision-changing fact is missing, say what is missing. Do not reconstruct
 unselected task history.
 
 ## Implementer
@@ -73,12 +74,17 @@ invariants, and acceptance are binding; recommendations/advice are not
 contract. Do not silently drop, guess, or freeze an unknown that changes
 direction. Before implementation, prove Host protocol, serialization, identity,
 or native schema through an Investigator, source, or real-shaped fixture.
-Preserve stated constraints and report verification as observations. Do not
-infer additional task state from Core.
+For a straightforward, bounded task with confirmed facts, perform necessary
+bounded local reading, implementation, and deterministic verification in this
+fresh session; an Investigator is needed only when missing facts could change
+how to implement. Preserve stated constraints and report verification as
+observations. Do not infer additional task state from Core.
 
 ## Reviewer
 
-Independently inspect the candidate identified in the handoff. Return findings
+Use when the Controller selects independent review because it adds value; it is
+not a mechanical post-implementation gate. Independently inspect the candidate
+identified in the handoff. Return findings
 and a distilled verdict. After finding a real problem, understand its invariant
 and inspect adjacent legal states enough to return independent related blockers
 in one pass. Finding classifications are model-authored labels; the Controller

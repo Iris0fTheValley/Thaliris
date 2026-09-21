@@ -302,10 +302,20 @@ rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
 Codex version, host capability, task schema, git/worktree identity,
 hook/profile presence, and the `task-start` error are allowed reads. Once the
 cause is known, do not read user-task repository source, tests, docs, or search
-results. If work continues, use fresh serial Investigator, Implementer, and Reviewer sessions (`fork_turns="none"`),
-distilled returns, and a fresh Reviewer; the Controller must not take over
-repository investigation, implementation, or testing merely because NO_TASK
-applies. The final report must not claim managed enforcement was verified.
+results. If work continues, the Controller selects the minimum necessary fresh
+role sessions serially (`fork_turns="none"`). A straightforward, bounded,
+low-risk task with confirmed facts may follow Controller -> fresh Implementer
+-> done: that Implementer may perform necessary bounded local reading,
+implementation, and deterministic verification. Select an Investigator when
+missing facts could change how to implement. Select a Reviewer when independent
+review adds value, especially for architecture or cross-module changes,
+lifecycle, Host, identity, or authority boundaries, compatibility invariants,
+multiple plausible implementations, complex semantic repairs, or remaining
+correctness uncertainty; review is not a mechanical post-implementation gate.
+Curator and Reasoning Specialist remain optional and are selected only when
+they add actual value. The Controller must not take over repository
+investigation, implementation, or testing merely because NO_TASK applies. The
+final report must not claim managed enforcement was verified.
 If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `thaliris recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.
@@ -395,8 +405,9 @@ reinvention or recursive scanning.
 
 ## Reasoning Specialist
 
-Resolve the decision described in the handoff from the selected information.
-If a decision-changing fact is missing, say what is missing. Do not reconstruct
+Use only when resolving the decision in the handoff adds actual value beyond
+the selected roles' work. Resolve it from the selected information. If a
+decision-changing fact is missing, say what is missing. Do not reconstruct
 unselected task history.
 
 ## Implementer
@@ -408,12 +419,17 @@ invariants, and acceptance are binding; recommendations/advice are not
 contract. Do not silently drop, guess, or freeze an unknown that changes
 direction. Before implementation, prove Host protocol, serialization, identity,
 or native schema through an Investigator, source, or real-shaped fixture.
-Preserve stated constraints and report verification as observations. Do not
-infer additional task state from Core.
+For a straightforward, bounded task with confirmed facts, perform necessary
+bounded local reading, implementation, and deterministic verification in this
+fresh session; an Investigator is needed only when missing facts could change
+how to implement. Preserve stated constraints and report verification as
+observations. Do not infer additional task state from Core.
 
 ## Reviewer
 
-Independently inspect the candidate identified in the handoff. Return findings
+Use when the Controller selects independent review because it adds value; it is
+not a mechanical post-implementation gate. Independently inspect the candidate
+identified in the handoff. Return findings
 and a distilled verdict. After finding a real problem, understand its invariant
 and inspect adjacent legal states enough to return independent related blockers
 in one pass. Finding classifications are model-authored labels; the Controller

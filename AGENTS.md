@@ -65,10 +65,20 @@ rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
 Codex version, host capability, task schema, git/worktree identity,
 hook/profile presence, and the `task-start` error are allowed reads. Once the
 cause is known, do not read user-task repository source, tests, docs, or search
-results. If work continues, use fresh serial Investigator, Implementer, and Reviewer sessions (`fork_turns="none"`),
-distilled returns, and a fresh Reviewer; the Controller must not take over
-repository investigation, implementation, or testing merely because NO_TASK
-applies. The final report must not claim managed enforcement was verified.
+results. If work continues, the Controller selects the minimum necessary fresh
+role sessions serially (`fork_turns="none"`). A straightforward, bounded,
+low-risk task with confirmed facts may follow Controller -> fresh Implementer
+-> done: that Implementer may perform necessary bounded local reading,
+implementation, and deterministic verification. Select an Investigator when
+missing facts could change how to implement. Select a Reviewer when independent
+review adds value, especially for architecture or cross-module changes,
+lifecycle, Host, identity, or authority boundaries, compatibility invariants,
+multiple plausible implementations, complex semantic repairs, or remaining
+correctness uncertainty; review is not a mechanical post-implementation gate.
+Curator and Reasoning Specialist remain optional and are selected only when
+they add actual value. The Controller must not take over repository
+investigation, implementation, or testing merely because NO_TASK applies. The
+final report must not claim managed enforcement was verified.
 If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `thaliris recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.

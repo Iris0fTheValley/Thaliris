@@ -553,8 +553,14 @@ def _bootstrap_restart_path(root: Path) -> Path:
 
 def record_bootstrap_restart_required(root: Path) -> None:
     """Record that this session cannot task-start after a bootstrap change."""
+    with core._lock(root):
+        _record_bootstrap_restart_required_locked(root)
+
+
+def _record_bootstrap_restart_required_locked(root: Path) -> None:
+    """Snapshot pre-init identities and persist the fence while holding the lock."""
     audit = root / ".context" / "audit"
-    live_sessions: list[dict[str, Any]] = []
+    pre_init_identities: set[str] = set()
     for runtime_path in audit.glob("*/runtime.json"):
         try:
             runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
@@ -566,23 +572,16 @@ def record_bootstrap_restart_required(root: Path) -> None:
             and runtime.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
             and runtime.get("session_start_observed") is True
         ):
-            live_sessions.append(runtime)
-    # A fence is required even before the first native SessionStart has been
-    # observed.  With no identity available, the first real startup binds the
-    # fence and remains blocked; only a later distinct startup may clear it.
-    bound = max(
-        (item for item in live_sessions if isinstance(item.get("session_start_at_ns"), int)),
-        key=lambda item: item["session_start_at_ns"],
-        default=None,
-    )
-    with core._lock(root):
-        _write_capture(_bootstrap_restart_path(root), {
-            "version": 2,
-            "required_at_ns": time.time_ns(),
-            "managed_hook_spec_hash": managed_hook_spec_hash(),
-            "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
-            "required_session_id_hash": bound.get("session_id_hash") if bound else None,
-        })
+            identity_hash = runtime.get("session_id_hash")
+            if isinstance(identity_hash, str) and identity_hash:
+                pre_init_identities.add(identity_hash)
+    _write_capture(_bootstrap_restart_path(root), {
+        "version": 3,
+        "required_at_ns": time.time_ns(),
+        "managed_hook_spec_hash": managed_hook_spec_hash(),
+        "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
+        "pre_init_session_id_hashes": sorted(pre_init_identities),
+    })
 
 
 def bootstrap_restart_blocks_task_start(root: Path, token: str | None) -> bool:
@@ -617,11 +616,19 @@ def _advance_bootstrap_restart_fence(root: Path, payload: dict[str, Any]) -> Non
         fence = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return
-    if not isinstance(fence, dict) or fence.get("version") != 2:
+    if not isinstance(fence, dict) or fence.get("version") not in {2, 3}:
         return
     identity = payload.get("session_id")
     identity_hash = _identity_hash(identity) if isinstance(identity, str) and identity else None
     if identity_hash is None:
+        return
+    if fence.get("version") == 3:
+        pre_init = fence.get("pre_init_session_id_hashes")
+        if isinstance(pre_init, list) and identity_hash not in pre_init:
+            try:
+                path.unlink()
+            except OSError:
+                pass
         return
     required = fence.get("required_session_id_hash")
     if required is None:

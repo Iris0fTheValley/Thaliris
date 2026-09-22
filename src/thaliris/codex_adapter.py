@@ -157,12 +157,19 @@ def _project_definition_facts(root: Path) -> dict[str, str]:
             instruction_present = "NO"
     hooks = lifecycle.hooks_health(root)
     profiles = _profile_definition_present(root)
-    initialized = "YES" if instruction_present == "YES" and hooks["hooks_configured"] == "YES" and profiles == "YES" else "NO"
+    if hooks["hooks_configured"] == "YES" and hooks["legacy_managed_handler_cleanup"] == "NO":
+        hook_definition = "YES"
+    elif hooks["hooks_configured"] == "YES":
+        hook_definition = "NO"
+    else:
+        hook_definition = hooks["hooks_configured"]
+    initialized = "YES" if instruction_present == "YES" and hook_definition == "YES" and profiles == "YES" else "NO"
     return {
         "project_definition_present": initialized,
         "instruction_definition_present": instruction_present,
-        "hook_definition_present": hooks["hooks_configured"],
+        "hook_definition_present": hook_definition,
         "profile_definition_present": profiles,
+        "legacy_managed_handler_cleanup": hooks["legacy_managed_handler_cleanup"],
     }
 
 
@@ -665,33 +672,29 @@ def init(root: Path) -> dict[str, object]:
         adapter_files[".gitignore"] = _audit_ignore(generic_files[".gitignore"].decode("utf-8")).encode("utf-8")
     files = generic_files | adapter_files
     manual = sorted(set(generic_manual) | set(adapter_manual))
-    with core._lock(root):
-        backup = core._apply_with_backup(root, files, [], "init") if files else None
     hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
-    hooks = lifecycle.hooks_health(root)
-    stale_runtime_hook_spec = (
-        hooks["installed_hook_spec"] == "CURRENT"
-        and hooks["current_hook_hash_observed"] == "STALE"
-    )
-    executable_unavailable = hooks["canonical_executable_available"] == "NO"
-    if stale_runtime_hook_spec:
-        # The installed definition is current, but this host's observed runtime
-        # hook identity is stale.  Init cannot re-attest an already-running
-        # session, so require an explicit restart and re-attestation.
-        manual = sorted(set(manual) | {"stale_runtime_hook_re_attestation_required"})
-    if executable_unavailable:
-        # The installed portable hook invokes the canonical PATH command. Init
-        # cannot make that command available to Codex's already-running host,
-        # so make the required host repair and subsequent re-attestation
-        # explicit even when the hook definition itself is unchanged.
-        manual = sorted(set(manual) | {"canonical_executable_unavailable"})
-    if hooks["legacy_managed_handler_cleanup"] == "MANUAL_CLEANUP_REQUIRED":
-        manual = sorted(set(manual) | {"legacy_managed_handler_manual_cleanup_required"})
-    restart_required = instruction_changed or hook_changed or profile_changed or stale_runtime_hook_spec or executable_unavailable
-    if restart_required:
-        lifecycle.record_bootstrap_restart_required(root)
+    backup = None
+    # Keep the mutation, qualifying-fact observation, and pre-init identity
+    # snapshot in one lock so a concurrent SessionStart cannot be lost.
+    with core._lock(root):
+        backup = core._apply_with_backup(root, files, [], "init") if files else None
+        hooks = lifecycle.hooks_health(root)
+        stale_runtime_hook_spec = (
+            hooks["installed_hook_spec"] == "CURRENT"
+            and hooks["current_hook_hash_observed"] == "STALE"
+        )
+        executable_unavailable = hooks["canonical_executable_available"] == "NO"
+        if stale_runtime_hook_spec:
+            manual = sorted(set(manual) | {"stale_runtime_hook_re_attestation_required"})
+        if executable_unavailable:
+            manual = sorted(set(manual) | {"canonical_executable_unavailable"})
+        if hooks["legacy_managed_handler_cleanup"] == "MANUAL_CLEANUP_REQUIRED":
+            manual = sorted(set(manual) | {"legacy_managed_handler_manual_cleanup_required"})
+        restart_required = instruction_changed or hook_changed or profile_changed or stale_runtime_hook_spec or executable_unavailable
+        if restart_required:
+            lifecycle._record_bootstrap_restart_required_locked(root)
     return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": restart_required, "hook_trust_required": hook_changed or stale_runtime_hook_spec or executable_unavailable, "host_wait_mode": host_wait_mode(), **_project_definition_facts(root), **_activation_fields(root)}
 
 
@@ -780,33 +783,23 @@ def task_start(
     root = core._repo_root(root)
     definition = _project_definition_facts(root)
     if definition["project_definition_present"] != "YES":
+        bootstrap = {
+            **definition,
+            "init_required": True,
+            "session_restart_required": "UNKNOWN",
+            "same_session_task_start": "PROHIBITED",
+            "managed_runtime_after_restart": "UNVERIFIED",
+        }
+        if definition.get("legacy_managed_handler_cleanup") == "MANUAL_CLEANUP_REQUIRED":
+            bootstrap["manual_action_required"] = "legacy_managed_handler_manual_cleanup_required"
         return {
             "ok": False,
             "status": "BOOTSTRAP_REQUIRED",
-            "bootstrap": {
-                **definition,
-                "init_required": True,
-                "session_restart_required": "UNKNOWN",
-                "same_session_task_start": "PROHIBITED",
-                "managed_runtime_after_restart": "UNVERIFIED",
-            },
-        }
-    if hook_attestation is not None and lifecycle.bootstrap_restart_blocks_task_start(root, hook_attestation):
-        return {
-            "ok": False,
-            "status": "BOOTSTRAP_RESTART_REQUIRED",
-            "bootstrap": {
-                **definition,
-                "init_required": False,
-                "session_restart_required": True,
-                "same_session_task_start": "PROHIBITED",
-                "managed_runtime_after_restart": "UNVERIFIED",
-            },
+            "bootstrap": bootstrap,
         }
     executable = lifecycle.managed_executable_health()
-    # Direct Python callers retain the historical local API; the native hook
-    # attestation path is the startup boundary whose trusted executable must
-    # be explicit.
+    # A missing trusted executable is an independent fail-closed bootstrap
+    # fact and must not be hidden behind a stale restart fence.
     if hook_attestation is not None and executable["canonical_executable_available"] != "YES":
         return {
             "ok": False,
@@ -821,6 +814,21 @@ def task_start(
                 "manual_action_required": "canonical_executable_unavailable",
             },
         }
+    if hook_attestation is not None and lifecycle.bootstrap_restart_blocks_task_start(root, hook_attestation):
+        return {
+            "ok": False,
+            "status": "BOOTSTRAP_RESTART_REQUIRED",
+            "bootstrap": {
+                **definition,
+                "init_required": False,
+                "session_restart_required": True,
+                "same_session_task_start": "PROHIBITED",
+                "managed_runtime_after_restart": "UNVERIFIED",
+            },
+        }
+    # Direct Python callers retain the historical local API; the native hook
+    # attestation path is the startup boundary whose trusted executable must
+    # be explicit.
     lifecycle.consume_task_start_attestation(root, hook_attestation)
     mode = selected_continuation_mode(root)
     readiness = {

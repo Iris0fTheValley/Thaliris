@@ -1467,18 +1467,23 @@ def test_exact_role_keyed_historical_profiles_migrate_without_claiming_edits(tmp
         assert hashes
         # State recognition is hash-only and role-keyed: an unknown edit stays user-owned.
         assert codex_adapter._agent_profile_state(b"generated-looking but edited", name) == "user"
-    legacy = agents / "thaliris-implementer.toml"
     # Recover the exact pre-Luna generator from immutable repository history.
     source = subprocess.check_output(
-        ["git", "show", "8189ed45:src/thaliris/codex_adapter.py"], text=True,
+        ["git", "show", "78fca60^:src/thaliris/codex_adapter.py"], text=True,
     )
     module = ast.parse(source)
     historic_fn = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "_agent_profile")
     namespace: dict[str, object] = {}
     exec(compile(ast.Module([historic_fn], []), "historic", "exec"), namespace)
-    legacy.write_bytes(namespace["_agent_profile"]("thaliris-implementer", "implementer", "gpt-5.6-terra", "medium"))
-    assert codex_adapter._agent_profile_state(legacy.read_bytes(), legacy.name) == "legacy"
+    for role in ("investigator", "curator", "implementer"):
+        name = f"thaliris-{role}.toml"
+        legacy = agents / name
+        legacy.write_bytes(namespace["_agent_profile"](name.removesuffix(".toml"), role, "gpt-5.6-luna", "medium"))
+        assert codex_adapter._agent_profile_state(legacy.read_bytes(), name) == "legacy"
     first = codex_adapter.init(root)
     assert first["agent_profile_changed"] is True
-    assert legacy.read_bytes() == codex_adapter._agent_profile("thaliris-implementer", "implementer", "gpt-5.6-luna", "xhigh")
+    assert first["manual_action_required"] == []
+    for role in ("investigator", "curator", "implementer"):
+        name = f"thaliris-{role}.toml"
+        assert (agents / name).read_bytes() == codex_adapter._agent_profile(name.removesuffix(".toml"), role, "gpt-5.6-luna", "xhigh")
     assert codex_adapter.init(root)["changed"] is False

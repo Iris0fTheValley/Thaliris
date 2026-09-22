@@ -117,9 +117,9 @@ def test_adapter_retains_controller_authorization() -> None:
         codex_adapter.controller_actor("implementer")
 
 
-def test_public_role_ingress_is_exactly_the_six_thaliris_roles(capsys: pytest.CaptureFixture[str]) -> None:
+def test_public_role_ingress_is_exactly_the_seven_thaliris_roles(capsys: pytest.CaptureFixture[str]) -> None:
     expected = (
-        "controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer",
+        "controller", "investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer",
     )
     assert codex_adapter.ROLE_CHOICES == expected
     help_text = cli._parser()._subparsers._group_actions[0].choices["task-update"].format_help()

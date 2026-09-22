@@ -1160,11 +1160,13 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
         "curator": ("gpt-5.6-luna", "xhigh"),
         "reasoning-specialist": ("gpt-5.6-sol", "xhigh"),
         "implementer": ("gpt-5.6-luna", "xhigh"),
+        "verifier": ("gpt-5.6-luna", "xhigh"),
         "reviewer": ("gpt-5.6-terra", "high"),
     }
     assert set(codex_adapter._AGENT_PROFILES) == {
         "thaliris-investigator.toml", "thaliris-curator.toml",
         "thaliris-reasoning-specialist.toml", "thaliris-implementer.toml",
+        "thaliris-verifier.toml",
         "thaliris-reviewer.toml",
     }
     assert "Persistent root Controller model default: `gpt-5.6-sol`. Reasoning effort is" in codex_adapter.MANAGED
@@ -1198,7 +1200,7 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "decision-changing unknown to the Controller" in implementer
     agents = Path("AGENTS.md").read_text(encoding="utf-8")
     assert codex_adapter.MANAGED in agents
-    assert "The five child profiles are Investigator" in codex_adapter.ROLE_PACKS
+    assert "The six child profiles are Investigator" in codex_adapter.ROLE_PACKS
     assert "Controller-decided boundaries/contracts" in codex_adapter.ROLE_PACKS
     assert "recommendations/advice are not\ncontract" in codex_adapter.ROLE_PACKS
     assert "Do not silently drop, guess, or freeze an unknown" in codex_adapter.ROLE_PACKS
@@ -1482,7 +1484,12 @@ def test_exact_role_keyed_historical_profiles_migrate_without_claiming_edits(tmp
         assert codex_adapter._agent_profile_state(legacy.read_bytes(), name) == "legacy"
     first = codex_adapter.init(root)
     assert first["agent_profile_changed"] is True
-    assert first["manual_action_required"] == []
+    expected_manual = (
+        ["canonical_executable_unavailable"]
+        if first["canonical_executable_available"] == "NO"
+        else []
+    )
+    assert first["manual_action_required"] == expected_manual
     for role in ("investigator", "curator", "implementer"):
         name = f"thaliris-{role}.toml"
         assert (agents / name).read_bytes() == codex_adapter._agent_profile(name.removesuffix(".toml"), role, "gpt-5.6-luna", "xhigh")

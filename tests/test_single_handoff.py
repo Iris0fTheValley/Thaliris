@@ -1156,10 +1156,10 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "never calls Core" in codex_adapter.MANAGED
     assert codex_adapter._ROLE_MODEL_DEFAULTS == {
         "controller": ("gpt-5.6-sol", None),
-        "investigator": ("gpt-5.6-luna", "medium"),
-        "curator": ("gpt-5.6-luna", "medium"),
+        "investigator": ("gpt-5.6-luna", "xhigh"),
+        "curator": ("gpt-5.6-luna", "xhigh"),
         "reasoning-specialist": ("gpt-5.6-sol", "xhigh"),
-        "implementer": ("gpt-5.6-luna", "medium"),
+        "implementer": ("gpt-5.6-luna", "xhigh"),
         "reviewer": ("gpt-5.6-terra", "high"),
     }
     assert set(codex_adapter._AGENT_PROFILES) == {
@@ -1190,7 +1190,7 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "difficulty alone is\ninsufficient when the Controller can decide confidently from established facts" in codex_adapter.MANAGED
     assert "Do not use counters, thresholds, risk scores, classifiers, or a state machine" in codex_adapter.MANAGED
     implementer = codex_adapter._agent_profile(
-        "thaliris-implementer", "implementer", "gpt-5.6-luna", "medium"
+        "thaliris-implementer", "implementer", "gpt-5.6-luna", "xhigh"
     ).decode()
     assert "If an assigned correction cannot" in implementer
     assert "unverified external fact, an invalidating accepted invariant" in implementer
@@ -1480,5 +1480,5 @@ def test_exact_role_keyed_historical_profiles_migrate_without_claiming_edits(tmp
     assert codex_adapter._agent_profile_state(legacy.read_bytes(), legacy.name) == "legacy"
     first = codex_adapter.init(root)
     assert first["agent_profile_changed"] is True
-    assert legacy.read_bytes() == codex_adapter._agent_profile("thaliris-implementer", "implementer", "gpt-5.6-luna", "medium")
+    assert legacy.read_bytes() == codex_adapter._agent_profile("thaliris-implementer", "implementer", "gpt-5.6-luna", "xhigh")
     assert codex_adapter.init(root)["changed"] is False

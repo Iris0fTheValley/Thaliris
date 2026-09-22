@@ -33,10 +33,10 @@ ROLE_CHOICES = (
 # profile; its default is emitted in the generated root instructions below.
 _ROLE_MODEL_DEFAULTS = {
     "controller": ("gpt-5.6-sol", None),
-    "investigator": ("gpt-5.6-luna", "medium"),
-    "curator": ("gpt-5.6-luna", "medium"),
+    "investigator": ("gpt-5.6-luna", "xhigh"),
+    "curator": ("gpt-5.6-luna", "xhigh"),
     "reasoning-specialist": ("gpt-5.6-sol", "xhigh"),
-    "implementer": ("gpt-5.6-luna", "medium"),
+    "implementer": ("gpt-5.6-luna", "xhigh"),
     "reviewer": ("gpt-5.6-terra", "high"),
 }
 _AGENT_PROFILES = {
@@ -447,8 +447,8 @@ The persistent root Controller model default is `gpt-5.6-sol`; its reasoning
 effort is selected by Host, task, or user policy and is not forced by Thaliris.
 It is root instruction metadata, not a native Codex child profile and does not
 mutate a current task model. The five child profiles are Investigator (`gpt-5.6-luna`,
-`medium`), Curator (`gpt-5.6-luna`, `medium`), Reasoning Specialist
-(`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `medium`), and Reviewer
+`xhigh`), Curator (`gpt-5.6-luna`, `xhigh`), Reasoning Specialist
+(`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `xhigh`), and Reviewer
 (`gpt-5.6-terra`, `high`).
 
 ## Shared Role Result

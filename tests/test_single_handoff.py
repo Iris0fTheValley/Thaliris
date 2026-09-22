@@ -94,6 +94,44 @@ def test_init_change_fences_same_session_until_fresh_startup(tmp_path: Path) -> 
     assert codex_adapter.task_start(tmp_path, "x", None, None, token("s2"))["status"] != "BOOTSTRAP_RESTART_REQUIRED"
 
 
+def test_first_bootstrap_fence_blocks_same_session_and_repeated_startup(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    result = codex_adapter.init(tmp_path)
+    assert result["session_restart_required"] is True
+    # No runtime SessionStart existed when init created the fence.  The first
+    # startup binds it, and repeating that startup identity cannot clear it.
+    codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "fresh-s1", "source": "startup", "cwd": str(tmp_path)})
+
+    payload = {"session_id": "fresh-s1", "turn_id": "t", "tool_name": "Bash", "tool_input": {"command": "thaliris task-start x"}}
+    rewritten = json.loads(codex_adapter.audit_hook(tmp_path, "PreToolUse", payload))
+    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten["hookSpecificOutput"]["updatedInput"]["command"]).group(1)
+    assert codex_adapter.task_start(tmp_path, "x", None, None, token)["status"] == "BOOTSTRAP_RESTART_REQUIRED"
+
+    codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "fresh-s1", "source": "startup", "cwd": str(tmp_path)})
+    rewritten = json.loads(codex_adapter.audit_hook(tmp_path, "PreToolUse", {**payload, "turn_id": "t2"}))
+    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten["hookSpecificOutput"]["updatedInput"]["command"]).group(1)
+    assert codex_adapter.task_start(tmp_path, "x", None, None, token)["status"] == "BOOTSTRAP_RESTART_REQUIRED"
+
+    codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "fresh-s2", "source": "startup", "cwd": str(tmp_path)})
+    assert not (tmp_path / ".context" / "audit" / "bootstrap-restart.json").exists()
+
+
+def test_initialized_task_start_reports_unavailable_trusted_executable(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    for name in ("THALIRIS_EXECUTABLE", "THALIRIS_EXECUTABLE_SHA256", "THALIRIS_CONTEXT_EXECUTABLE", "THALIRIS_CONTEXT_EXECUTABLE_SHA256"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(lifecycle_module.shutil, "which", lambda command: None)
+    # Clear the bootstrap fence using two distinct native startup identities.
+    lifecycle_module.handle_hook(root, "SessionStart", {"session_id": "exec-s1", "source": "startup", "cwd": str(root)})
+    lifecycle_module.handle_hook(root, "SessionStart", {"session_id": "exec-s2", "source": "startup", "cwd": str(root)})
+    payload = {"session_id": "exec-s2", "turn_id": "exec-turn", "tool_name": "Bash", "tool_input": {"command": "thaliris task-start x"}}
+    rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", payload))
+    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten["hookSpecificOutput"]["updatedInput"]["command"]).group(1)
+    result = codex_adapter.task_start(root, "x", None, None, token)
+    assert result["status"] == "BOOTSTRAP_REQUIRED"
+    assert result["bootstrap"]["canonical_executable_available"] == "NO"
+
+
 def test_user_profile_is_preserved_and_not_a_definition(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     codex_adapter.init(tmp_path)

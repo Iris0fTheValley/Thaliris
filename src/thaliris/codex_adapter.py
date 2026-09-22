@@ -803,6 +803,24 @@ def task_start(
                 "managed_runtime_after_restart": "UNVERIFIED",
             },
         }
+    executable = lifecycle.managed_executable_health()
+    # Direct Python callers retain the historical local API; the native hook
+    # attestation path is the startup boundary whose trusted executable must
+    # be explicit.
+    if hook_attestation is not None and executable["canonical_executable_available"] != "YES":
+        return {
+            "ok": False,
+            "status": "BOOTSTRAP_REQUIRED",
+            "bootstrap": {
+                **definition,
+                **executable,
+                "init_required": False,
+                "session_restart_required": True,
+                "same_session_task_start": "PROHIBITED",
+                "managed_runtime_after_restart": "UNVERIFIED",
+                "manual_action_required": "canonical_executable_unavailable",
+            },
+        }
     lifecycle.consume_task_start_attestation(root, hook_attestation)
     mode = selected_continuation_mode(root)
     readiness = {

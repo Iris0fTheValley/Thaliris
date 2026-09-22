@@ -553,10 +553,8 @@ def _bootstrap_restart_path(root: Path) -> Path:
 
 def record_bootstrap_restart_required(root: Path) -> None:
     """Record that this session cannot task-start after a bootstrap change."""
-    # A CLI init outside a live Codex hook session has no session to fence.
-    # In that case the next native SessionStart is the session boundary itself.
     audit = root / ".context" / "audit"
-    live_session = False
+    live_sessions: list[dict[str, Any]] = []
     for runtime_path in audit.glob("*/runtime.json"):
         try:
             runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
@@ -568,16 +566,22 @@ def record_bootstrap_restart_required(root: Path) -> None:
             and runtime.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
             and runtime.get("session_start_observed") is True
         ):
-            live_session = True
-            break
-    if not live_session:
-        return
+            live_sessions.append(runtime)
+    # A fence is required even before the first native SessionStart has been
+    # observed.  With no identity available, the first real startup binds the
+    # fence and remains blocked; only a later distinct startup may clear it.
+    bound = max(
+        (item for item in live_sessions if isinstance(item.get("session_start_at_ns"), int)),
+        key=lambda item: item["session_start_at_ns"],
+        default=None,
+    )
     with core._lock(root):
         _write_capture(_bootstrap_restart_path(root), {
-            "version": 1,
+            "version": 2,
             "required_at_ns": time.time_ns(),
             "managed_hook_spec_hash": managed_hook_spec_hash(),
             "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
+            "required_session_id_hash": bound.get("session_id_hash") if bound else None,
         })
 
 
@@ -596,13 +600,38 @@ def bootstrap_restart_blocks_task_start(root: Path, token: str | None) -> bool:
         runtime = json.loads((root / ".context" / "audit" / match.group(1)[:24] / "runtime.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return True
-    return not (
-        isinstance(fence, dict)
-        and type(fence.get("required_at_ns")) is int
-        and isinstance(runtime, dict)
-        and type(runtime.get("session_start_at_ns")) is int
-        and runtime["session_start_at_ns"] > fence["required_at_ns"]
-    )
+    # The fence is cleared mechanically by _record_session_start only after a
+    # distinct native startup identity.  Do not use timestamps: a repeated
+    # SessionStart in the same host session must remain fenced.
+    return True
+
+
+def _advance_bootstrap_restart_fence(root: Path, payload: dict[str, Any]) -> None:
+    """Bind/clear the init fence using native startup identity, never time."""
+    if payload.get("source") != "startup":
+        return
+    path = _bootstrap_restart_path(root)
+    if not path.is_file():
+        return
+    try:
+        fence = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return
+    if not isinstance(fence, dict) or fence.get("version") != 2:
+        return
+    identity = payload.get("session_id")
+    identity_hash = _identity_hash(identity) if isinstance(identity, str) and identity else None
+    if identity_hash is None:
+        return
+    required = fence.get("required_session_id_hash")
+    if required is None:
+        fence["required_session_id_hash"] = identity_hash
+        _write_capture(path, fence)
+    elif isinstance(required, str) and required != identity_hash:
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
@@ -616,6 +645,7 @@ def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
         if payload.get("source") == "startup":
             state["session_start_at_ns"] = time.time_ns()
         _write_capture(path, state)
+        _advance_bootstrap_restart_fence(root, payload)
 
 
 def _session_start_output(root: Path, payload: dict[str, Any]) -> str:

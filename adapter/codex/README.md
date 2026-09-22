@@ -41,6 +41,11 @@ verified. When that maximum is unavailable, the requested timeout is preserved;
 there is no automatic expansion. Thaliris provides no scheduler or polling
 loop.
 
+The project-external `bootstrap.py` entrypoint is the zero-state boundary. It
+uses a read-only definition probe, then at most one trusted direct `thaliris
+init` call. Manual action or a restart requirement is terminal for that
+Controller session; it never task-starts or retries initialization.
+
 ## Role results
 
 Role profiles ask each Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer to keep its working set private and return a distilled

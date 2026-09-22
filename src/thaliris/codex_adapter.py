@@ -70,6 +70,10 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
         "set. Return a distilled result with Conclusion, Key findings, Decision-changing "
         "unknowns, Contradictions if any, Verification performed, and Artifact refs if detailed "
         "reusable material was retained. Do not delegate to another authorized native Codex role session. "
+        "Facts unknown route to Investigator; facts known but the decision is difficult, the decision "
+        "basis is invalidated, or a hard boundary must be revised route to Reasoning Specialist; a "
+        "decided packet routes to Implementer; an independent challenge routes to Reviewer. Difficulty "
+        "alone is not a Reasoning Specialist trigger. "
     )
     role_instruction = {
         "investigator": (
@@ -97,8 +101,12 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
         "reviewer": (
             "Act as an independent non-writing checker of the candidate named in the handoff. "
             "After a real problem, understand its invariant and inspect adjacent legal states "
-            "enough to return independent related blockers in one pass. Return findings and a "
-            "distilled verdict; the Controller decides what follows."
+            "enough to return independent related blockers in one pass. A finding that overturns an "
+            "accepted invariant, depends on an unproved external capability, makes feasibility uncertain, "
+            "or changes a Controller boundary is a decision-basis failure: route it back to the Controller "
+            "for a decision reopen, not directly to correction. Only a local implementation defect with "
+            "the accepted design unchanged may go to a fresh Implementer. Return findings and a distilled "
+            "verdict; the Controller decides what follows."
         ),
     }[role]
     instructions = shared + role_instruction
@@ -854,6 +862,17 @@ def task_start(
     result = core.task_start(root, goal, milestone, input_file, actor="controller")
     result["managed_readiness"] = {**readiness, **_activation_fields(root)}
     return result
+
+
+def bootstrap_check(root: Path) -> dict[str, object]:
+    """Return the read-only facts needed by the external Codex bootstrap.
+
+    This deliberately performs no initialization and creates no durable state;
+    the host entrypoint uses it to decide whether one direct ``init`` call is
+    necessary before handing control back to the Controller.
+    """
+    root = core._repo_root(root)
+    return {"ok": True, **_project_definition_facts(root)}
 
 
 def task_close(root: Path, base_revision: int) -> dict[str, object]:

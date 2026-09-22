@@ -68,3 +68,13 @@ CAS, atomicity, hashes, provenance, addressing, and explicit retrieval.
 
 No hidden auditor, role projection, semantic dependency graph, correction state
 machine, or benchmark authority participates in this production path.
+
+Correction routing is semantic and Controller-owned. A Reviewer finding that
+overturns an accepted invariant, depends on an unproved external capability,
+makes feasibility uncertain, or changes a Controller boundary/contract first
+reopens the decision; the Controller then chooses Investigator for missing
+facts or Reasoning Specialist for a difficult decision from known facts. Only
+a local implementation defect with the accepted design unchanged may go
+directly to a fresh Implementer. An Implementer that encounters an unverified
+external fact, an invalidated invariant, or a changed decision basis returns it
+as a decision-changing unknown without expanding scope.

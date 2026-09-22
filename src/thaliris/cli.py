@@ -38,7 +38,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--pretty", action="store_true")
     p.add_argument("--root", type=Path, default=Path.cwd())
     sub = p.add_subparsers(dest="command", required=True)
-    for name in ("init", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
+    for name in ("init", "bootstrap-check", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
         sub.add_parser(name)
     q = sub.add_parser("catalog", help="discover bounded durable document metadata")
     q.add_argument("path", nargs="?")
@@ -114,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
                 sys.stdout.write(response)
             return 0
         if args.command == "init": out = codex_adapter.init(root)
+        elif args.command == "bootstrap-check": out = codex_adapter.bootstrap_check(root)
         elif args.command == "doctor": out = codex_adapter.doctor(root)
         elif args.command == "stale": out = stale(root)
         elif args.command == "memory-status":

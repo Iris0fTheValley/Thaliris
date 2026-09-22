@@ -242,8 +242,18 @@ Codex is the runtime. Thaliris provides durable records, identities, revisions,
 hashes, provenance, objective freshness observations, explicit retrieval, and
 native lifecycle binding. It is not a semantic decision engine.
 
-The Controller is the sole task-specific semantic router. Fresh Investigator,
-Curator, Reasoning Specialist, Implementer, and Reviewer sessions use `fork_turns="none"`
+The Controller is the sole task-specific semantic router. For every task,
+whether ACTIVE or degraded, it selects the minimum necessary fresh roles.
+Roles are capabilities, not mandatory workflow stages. A straightforward,
+bounded, low-risk task with confirmed facts may follow Controller -> fresh
+Implementer -> done. That Implementer may perform the bounded local reading,
+implementation, and deterministic verification needed to complete the task.
+Use an Investigator only when missing facts could change the implementation
+direction. Use a Reviewer only when independent semantic review adds real
+value; it is not a default gate. Curator and Reasoning Specialist remain
+optional and are selected only when they add actual value.
+
+Fresh Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer sessions use `fork_turns="none"`
 and receive their tasks plus selected information in
 the Controller's native spawn message. `SubagentStart` validates authorization,
 identity, role, and session and binds lifecycle metadata; it never calls Core to
@@ -306,25 +316,17 @@ explicit exact SHA-256 pin; never recommend or use a shell-wrapper fallback.
 If neither trusted direct route is available, check canonical availability, the
 explicit executable SHA-256 pin, and hook/install state, then report bootstrap
 unavailable. Once the cause is known, do not read user-task repository source,
-tests, docs, or search results. If work continues, the Controller selects the minimum necessary fresh
-role sessions serially (`fork_turns="none"`). A straightforward, bounded,
-low-risk task with confirmed facts may follow Controller -> fresh Implementer
--> done: that Implementer may perform necessary bounded local reading,
-implementation, and deterministic verification. Select an Investigator when
-missing facts could change how to implement. Select a Reviewer when independent
-review adds value, especially for architecture or cross-module changes,
-lifecycle, Host, identity, or authority boundaries, compatibility invariants,
-multiple plausible implementations, complex semantic repairs, or remaining
-correctness uncertainty; review is not a mechanical post-implementation gate.
-Curator and Reasoning Specialist remain optional and are selected only when
-they add actual value. The Controller must not take over repository
+tests, docs, or search results. If work continues, apply the same minimum-role
+routing policy defined above; degraded mode does not define a separate role
+sequence. The Controller must not take over repository
 investigation, implementation, or testing merely because NO_TASK applies. The
 final report must not claim managed enforcement was verified.
 If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `thaliris recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.
-Repository investigation belongs to fresh Investigator sessions; execution,
-mutation, and testing belong to fresh Implementer sessions. Existing native Codex child sessions are never resumed with follow-up/send tools.
+Decision-changing investigation belongs to Investigator. Bounded local reading
+needed for implementation may stay inside Implementer. Execution, mutation,
+and testing belong to fresh Implementer sessions. Existing native Codex child sessions are never resumed with follow-up/send tools.
 An Investigator's or Implementer's obvious direct control-context retrieval is allowed and recorded.
 Investigator and Implementer reads remain telemetry-only; Curator, Reasoning
 Specialist, and Reviewer extra reads produce at most one bounded aggregate

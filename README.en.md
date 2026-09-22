@@ -33,7 +33,14 @@ role session, and no hidden model auditor that corrects or blocks the Controller
 ## Responsibilities
 
 The Controller owns routing, context selection, interpretation, acceptance,
-and completion. An Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer keeps repository reads, searches, logs, tests, and
+and completion. For ACTIVE and degraded work, it selects the minimum necessary
+fresh roles; roles are capabilities, not mandatory stages. A straightforward,
+bounded, low-risk task may use only a fresh Implementer, including bounded local
+reading, implementation, and deterministic verification. Decision-changing
+investigation belongs to Investigator. Reviewer, Curator, and Reasoning
+Specialist are optional, and Reviewer is not a default gate.
+
+An Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer keeps repository reads, searches, logs, tests, and
 intermediate work private and normally returns only a distilled conclusion,
 key findings, decision-changing unknowns, contradictions, verification, and
 optional Artifact pointers.

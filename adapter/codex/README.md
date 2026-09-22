@@ -21,10 +21,18 @@ profile, and an explicit non-empty message. Reservations and started managed nat
 timestamps; bounded native terminal reconciliation handles missing stop
 observations without treating reconciliation as successful work.
 
+For ACTIVE and degraded work alike, the Controller selects only the minimum
+necessary fresh roles. Roles are capabilities rather than mandatory workflow
+stages, so a straightforward bounded task may go directly from Controller to a
+fresh Implementer and then finish. Decision-changing investigation belongs to
+Investigator; bounded local reading needed for implementation may stay inside
+Implementer. Reviewer is an optional independent semantic check, not a default
+gate. Curator and Reasoning Specialist are likewise used only when valuable.
+
 The ACTIVE root Controller uses only bounded control-plane commands and
-explicit retrieval. Repository investigation, edits, and tests belong to fresh
-Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer sessions. Read-only inspection is prompt policy, not a shell-regex semantic
-classifier.
+explicit retrieval. Execution, mutation, and testing belong to fresh
+Implementer sessions. Read-only inspection is prompt policy, not a shell-regex
+semantic classifier.
 
 When native event-driven continuation is unavailable, `wait_agent` is
 automatically normalized to a long wait only when an actual pending reservation

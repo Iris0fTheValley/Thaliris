@@ -1082,6 +1082,10 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "direct canonical `thaliris` command or an absolute executable with an" in codex_adapter.MANAGED
     assert "never recommend or use a shell-wrapper fallback" in codex_adapter.MANAGED
     assert "explicit executable SHA-256 pin, and hook/install state, then report bootstrap\nunavailable" in codex_adapter.MANAGED
+    assert "whether ACTIVE or degraded, it selects the minimum necessary fresh roles" in codex_adapter.MANAGED
+    assert "Roles are capabilities, not mandatory workflow stages" in codex_adapter.MANAGED
+    assert "Controller -> fresh\nImplementer -> done" in codex_adapter.MANAGED
+    assert "degraded mode does not define a separate role\nsequence" in codex_adapter.MANAGED
     agents = Path("AGENTS.md").read_text(encoding="utf-8")
     assert codex_adapter.MANAGED in agents
     assert "The five child profiles are Investigator" in codex_adapter.ROLE_PACKS

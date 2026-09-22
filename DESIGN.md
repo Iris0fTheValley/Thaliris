@@ -43,9 +43,18 @@ blocks the Controller.
 
 ### Controller
 
-The Controller selects the next Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer, writes the native handoff, chooses the
-information in that handoff, interprets results and observations, accepts or
-rejects conclusions, and decides when the task is complete.
+For every task, whether ACTIVE or degraded, the Controller selects the minimum
+necessary fresh roles. Roles are capabilities, not mandatory workflow stages.
+A straightforward, bounded, low-risk task with confirmed facts may go from the
+Controller directly to a fresh Implementer and then finish. The Implementer may
+perform bounded local reading, implementation, and deterministic verification.
+Decision-changing investigation belongs to Investigator; Reviewer, Curator,
+and Reasoning Specialist are selected only when they add real value, and
+Reviewer is not a default gate.
+
+The Controller writes each native handoff, chooses the information in that
+handoff, interprets results and observations, accepts or rejects conclusions,
+and decides when the task is complete.
 
 Routing, categorizing, and status labels in task records are model-authored.
 Core does not attach behavior to them.

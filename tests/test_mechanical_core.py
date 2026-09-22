@@ -169,13 +169,18 @@ def test_authoritative_prose_uses_role_names_or_explicit_native_child_context() 
     assert "another native Codex child session" not in generated
     assert "another authorized native Codex role session" in generated
     assert "Shared Child Result" not in generated
-    assert "selects the minimum necessary fresh\nrole sessions serially" in generated
-    assert "Controller -> fresh Implementer\n-> done" in generated
-    assert "Investigator when\nmissing facts could change how to implement" in generated
-    assert "review is not a mechanical post-implementation gate" in generated
+    assert "For every task,\nwhether ACTIVE or degraded, it selects the minimum necessary fresh roles." in generated
+    assert "Roles are capabilities, not mandatory workflow stages." in generated
+    assert "Controller -> fresh\nImplementer -> done" in generated
+    assert "Use an Investigator only when missing facts could change the implementation\ndirection." in generated
+    assert "Use a Reviewer only when independent semantic review adds real\nvalue; it is not a default gate." in generated
+    assert "apply the same minimum-role\nrouting policy defined above" in generated
+    assert "degraded mode does not define a separate role\nsequence" in generated
+    assert "Decision-changing investigation belongs to Investigator. Bounded local reading\nneeded for implementation may stay inside Implementer." in generated
+    assert "Repository investigation belongs to fresh Investigator sessions" not in generated
     assert "fresh serial Investigator, Implementer, and Reviewer sessions" not in generated
     assert "belong to fresh\nthose roles" not in generated
-    assert "Fresh Investigator,\nCurator, Reasoning Specialist, Implementer, and Reviewer sessions use" in generated
+    assert "Fresh Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer sessions use" in generated
     assert "and receive their tasks plus selected information" in generated
 
 
@@ -183,9 +188,14 @@ def test_routing_guidance_permits_the_bounded_implementer_only_path() -> None:
     root = Path(__file__).resolve().parents[1]
     protocol = (root / "docs" / "thaliris-routing-protocol.md").read_text(encoding="utf-8")
     role_packs = (root / "docs" / "thaliris-role-packs.md").read_text(encoding="utf-8")
+    assert "For every task, the Controller selects the minimum necessary fresh role" in protocol
+    assert "Roles are capabilities, not mandatory workflow stages." in protocol
+    assert "policy is identical for ACTIVE and degraded work" in protocol
     assert "Controller -> fresh Implementer -> done" in protocol
     assert "Reviewer is conditional, not a mechanical post-implementation gate" in protocol
-    assert "Curator and Reasoning Specialist are\noptional" in protocol
+    assert "Curator and Reasoning Specialist are optional" in protocol
+    assert "Decision-changing investigation belongs to\nInvestigator" in protocol
+    assert "Bounded local reading needed for implementation may stay inside\nImplementer" in protocol
     assert "bounded local reading, implementation, and deterministic verification" in role_packs
     assert "an Investigator is needed only when missing facts could change" in role_packs
     assert "not a mechanical post-implementation gate" in role_packs

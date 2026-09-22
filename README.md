@@ -34,7 +34,13 @@ hidden model auditor -> Controller correction/block
 
 ## 职责
 
-Controller 负责路由、上下文选择、解释、接受与完成判断。Investigator、Curator、Reasoning Specialist、Implementer 与 Reviewer 在私有 working
+Controller 负责路由、上下文选择、解释、接受与完成判断。无论 ACTIVE 还是 degraded，
+Controller 都只选择完成任务所需的最少 fresh roles；role 是 capability，不是必经的
+workflow stage。简单、明确、低风险的任务可以只经过 fresh Implementer，由它完成有界
+本地阅读、实现和确定性验证。只有会改变实现方向的调查才交给 Investigator；Reviewer、
+Curator 和 Reasoning Specialist 均按需使用，Reviewer 不是默认 gate。
+
+Investigator、Curator、Reasoning Specialist、Implementer 与 Reviewer 在私有 working
 set 中调查、实现或审查，默认只返回精炼结论、关键发现、会改变决策的未知、
 矛盾、验证与 Artifact pointer。
 

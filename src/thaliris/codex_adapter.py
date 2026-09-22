@@ -152,7 +152,13 @@ def _project_definition_facts(root: Path) -> dict[str, str]:
     instruction_present = "NO"
     if instruction.is_file():
         try:
-            instruction_present = "YES" if _managed_span(_read_text(instruction), instruction.name) is not None else "NO"
+            current = _read_text(instruction)
+            span = _managed_span(current, instruction.name)
+            if span is not None:
+                start, end = span
+                newline = "\r\n" if "\r\n" in current else "\n"
+                expected = MANAGED.replace("\n", newline).removesuffix(newline)
+                instruction_present = "YES" if current[start:end] == expected else "NO"
         except (OSError, UnicodeError, ValueError):
             instruction_present = "NO"
     hooks = lifecycle.hooks_health(root)
@@ -679,8 +685,7 @@ def init(root: Path) -> dict[str, object]:
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
     backup = None
-    # Keep the mutation, qualifying-fact observation, and pre-init identity
-    # snapshot in one lock so a concurrent SessionStart cannot be lost.
+    # Apply the generated files under one lock so the mutation is atomic.
     with core._lock(root):
         backup = core._apply_with_backup(root, files, [], "init") if files else None
         hooks = lifecycle.hooks_health(root)

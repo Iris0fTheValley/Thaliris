@@ -112,6 +112,29 @@ def test_user_profile_is_preserved_and_not_a_definition(tmp_path: Path) -> None:
     assert result["project_definition_present"] == "NO"
 
 
+def test_mutated_managed_instruction_requires_regeneration(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    instruction = root / "AGENTS.md"
+    original = instruction.read_bytes()
+    marker = codex_adapter.MANAGED_START.encode("utf-8")
+    offset = original.index(marker) + len(marker)
+    instruction.write_bytes(original[:offset] + b"\n# mutated\n" + original[offset:])
+
+    facts = codex_adapter._project_definition_facts(root)
+    assert facts["instruction_definition_present"] == "NO"
+    assert facts["project_definition_present"] == "NO"
+    assert codex_adapter.task_start(root, "bootstrap", None, None)["status"] == "BOOTSTRAP_REQUIRED"
+
+    repaired = codex_adapter.init(root)
+    assert repaired["instruction_definition_present"] == "YES"
+    assert repaired["project_definition_present"] == "YES"
+    assert repaired["session_restart_required"] is True
+
+    second = codex_adapter.init(root)
+    assert second["changed"] is False
+    assert second["session_restart_required"] is False
+
+
 def hook_payload(**values: object) -> dict[str, object]:
     # Managed lifecycle tests exercise the concrete named profile.  Ordinary
     # worker remains covered separately in the NO_TASK transparency test.

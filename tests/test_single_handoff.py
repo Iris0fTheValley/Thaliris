@@ -1178,6 +1178,24 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "Controller -> fresh\nImplementer -> done" in codex_adapter.MANAGED
     assert "degraded mode does not define a separate role\nsequence" in codex_adapter.MANAGED
     assert "not cryptographically enforced by the\ncurrent audit-hook ingress" in codex_adapter.MANAGED
+    assert "Before another correction packet, distinguish a local implementation defect" in codex_adapter.MANAGED
+    assert "overturns an accepted invariant" in codex_adapter.MANAGED
+    assert "depends on an unverified external capability" in codex_adapter.MANAGED
+    assert "makes feasibility uncertain" in codex_adapter.MANAGED
+    assert "changes a Controller boundary or contract" in codex_adapter.MANAGED
+    assert "facts are missing, route to a fresh Investigator" in codex_adapter.MANAGED
+    assert "relevant facts are known\nbut design or boundary revision is difficult, route to a fresh Reasoning\nSpecialist" in codex_adapter.MANAGED
+    assert "accepted design is unchanged and the defect is local, route\nto a fresh Implementer correction" in codex_adapter.MANAGED
+    assert "Reasoning Specialist is not for fact\ngathering, implementation, or routine review" in codex_adapter.MANAGED
+    assert "difficulty alone is\ninsufficient when the Controller can decide confidently from established facts" in codex_adapter.MANAGED
+    assert "Do not use counters, thresholds, risk scores, classifiers, or a state machine" in codex_adapter.MANAGED
+    implementer = codex_adapter._agent_profile(
+        "thaliris-implementer", "implementer", "gpt-5.6-luna", "medium"
+    ).decode()
+    assert "If an assigned correction cannot" in implementer
+    assert "unverified external fact, an invalidating accepted invariant" in implementer
+    assert "do not expand scope" in implementer
+    assert "decision-changing unknown to the Controller" in implementer
     agents = Path("AGENTS.md").read_text(encoding="utf-8")
     assert codex_adapter.MANAGED in agents
     assert "The five child profiles are Investigator" in codex_adapter.ROLE_PACKS

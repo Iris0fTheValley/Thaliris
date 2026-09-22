@@ -35,6 +35,19 @@ acceptance are contract; recommendations/advice are not. An unknown that can
 change direction cannot be silently dropped, guessed, or frozen: prove Host
 protocol, serialization, identity, and native-schema contracts first.
 
+Before another correction packet, distinguish a local implementation defect
+from a decision-basis failure. If review overturns an accepted invariant,
+depends on an unverified external capability, makes feasibility uncertain, or
+changes a Controller boundary or contract, reopen the Controller decision. If
+facts are missing, route to a fresh Investigator; if relevant facts are known
+but design or boundary revision is difficult, route to a fresh Reasoning
+Specialist; if the accepted design is unchanged and the defect is local, route
+to a fresh Implementer correction. Reasoning Specialist is not for fact
+gathering, implementation, or routine review, and difficulty alone is
+insufficient when the Controller can decide confidently from established facts.
+Do not use counters, thresholds, risk scores, classifiers, or a state machine
+for this routing.
+
 Each Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer keeps
 its private working set private. By default it returns a distilled conclusion, key findings,
 decision-changing unknowns or contradictions, verification performed, and

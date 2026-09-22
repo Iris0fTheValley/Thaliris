@@ -96,7 +96,10 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
             "Do not silently drop, guess, or freeze an unknown that changes direction. Prove Host "
             "protocol, serialization, identity, or native schema through an Investigator, source, "
             "or real-shaped fixture before implementation. Report verification as observations; "
-            "Core does not supply semantic completion authority."
+            "Core does not supply semantic completion authority. If an assigned correction cannot "
+            "be completed without an unverified external fact, an invalidating accepted invariant, "
+            "or changing the decision basis, do not expand scope; return that dependency as a "
+            "decision-changing unknown to the Controller."
         ),
         "reviewer": (
             "Act as an independent non-writing checker of the candidate named in the handoff. "
@@ -326,6 +329,19 @@ acceptance are contract; recommendations/advice are not. An unknown that can
 change direction cannot be silently dropped, guessed, or frozen: prove Host
 protocol, serialization, identity, and native-schema contracts first.
 
+Before another correction packet, distinguish a local implementation defect
+from a decision-basis failure. If review overturns an accepted invariant,
+depends on an unverified external capability, makes feasibility uncertain, or
+changes a Controller boundary or contract, reopen the Controller decision. If
+facts are missing, route to a fresh Investigator; if relevant facts are known
+but design or boundary revision is difficult, route to a fresh Reasoning
+Specialist; if the accepted design is unchanged and the defect is local, route
+to a fresh Implementer correction. Reasoning Specialist is not for fact
+gathering, implementation, or routine review, and difficulty alone is
+insufficient when the Controller can decide confidently from established facts.
+Do not use counters, thresholds, risk scores, classifiers, or a state machine
+for this routing.
+
 Each Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer keeps
 its private working set private. By default it returns a distilled conclusion, key findings,
 decision-changing unknowns or contradictions, verification performed, and
@@ -498,7 +514,11 @@ For a straightforward, bounded task with confirmed facts, perform necessary
 bounded local reading, implementation, and deterministic verification in this
 fresh session; an Investigator is needed only when missing facts could change
 how to implement. Preserve stated constraints and report verification as
-observations. Do not infer additional task state from Core.
+observations. If an assigned correction cannot be completed without an
+unverified external fact, an invalidating accepted invariant, or changing the
+decision basis, do not expand scope; return that dependency as a
+decision-changing unknown to the Controller. Do not infer additional task
+state from Core.
 
 ## Reviewer
 

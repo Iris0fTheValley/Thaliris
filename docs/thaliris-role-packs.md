@@ -78,7 +78,11 @@ For a straightforward, bounded task with confirmed facts, perform necessary
 bounded local reading, implementation, and deterministic verification in this
 fresh session; an Investigator is needed only when missing facts could change
 how to implement. Preserve stated constraints and report verification as
-observations. Do not infer additional task state from Core.
+observations. If an assigned correction cannot be completed without an
+unverified external fact, an invalidating accepted invariant, or changing the
+decision basis, do not expand scope; return that dependency as a
+decision-changing unknown to the Controller. Do not infer additional task
+state from Core.
 
 ## Reviewer
 

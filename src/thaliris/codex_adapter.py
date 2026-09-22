@@ -384,8 +384,11 @@ facts: a managed Thaliris block in the effective root instruction, a current
 managed `.codex/hooks.json`, and all five Thaliris role-profile files. If any
 fact is absent, invoke `thaliris --root <repo> init` directly, or invoke the
 absolute executable named by the host's exact SHA-256 pin. Read its JSON result.
-If `session_restart_required` is true, stop this session and require a fresh
-session; do not invoke `task-start` in the same session. If neither trusted
+If `session_restart_required` is true, stop this Controller session and require
+a fresh Codex session; never invoke `task-start` in the same session. This is a
+Controller/Host lifecycle contract, not cryptographically enforced by the
+current audit-hook ingress: its stdin JSON and local state are caller-controlled,
+so current-session activation is UNKNOWN/not applicable. If neither trusted
 direct route is available, report bootstrap unavailable and do not continue.
 If all facts are present, read `.agent-memory/INDEX.md` and
 `.milestones/INDEX.md` (creating only a minimal missing map as instructed),
@@ -692,9 +695,10 @@ def init(root: Path) -> dict[str, object]:
             manual = sorted(set(manual) | {"canonical_executable_unavailable"})
         if hooks["legacy_managed_handler_cleanup"] == "MANUAL_CLEANUP_REQUIRED":
             manual = sorted(set(manual) | {"legacy_managed_handler_manual_cleanup_required"})
-        restart_required = instruction_changed or hook_changed or profile_changed or stale_runtime_hook_spec or executable_unavailable
-        if restart_required:
-            lifecycle._record_bootstrap_restart_required_locked(root)
+        # Restart is a result of an actual generated definition change.  The
+        # executable and stale-runtime observations remain explicit diagnostics,
+        # but do not create durable restart state or make idempotent init repeat.
+        restart_required = bool(files)
     return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": restart_required, "hook_trust_required": hook_changed or stale_runtime_hook_spec or executable_unavailable, "host_wait_mode": host_wait_mode(), **_project_definition_facts(root), **_activation_fields(root)}
 
 
@@ -787,7 +791,7 @@ def task_start(
             **definition,
             "init_required": True,
             "session_restart_required": "UNKNOWN",
-            "same_session_task_start": "PROHIBITED",
+            "same_session_task_start": "UNKNOWN",
             "managed_runtime_after_restart": "UNVERIFIED",
         }
         if definition.get("legacy_managed_handler_cleanup") == "MANUAL_CLEANUP_REQUIRED":
@@ -799,7 +803,7 @@ def task_start(
         }
     executable = lifecycle.managed_executable_health()
     # A missing trusted executable is an independent fail-closed bootstrap
-    # fact and must not be hidden behind a stale restart fence.
+    # fact. It is not represented by durable restart state.
     if hook_attestation is not None and executable["canonical_executable_available"] != "YES":
         return {
             "ok": False,
@@ -809,21 +813,9 @@ def task_start(
                 **executable,
                 "init_required": False,
                 "session_restart_required": True,
-                "same_session_task_start": "PROHIBITED",
+                "same_session_task_start": "UNKNOWN",
                 "managed_runtime_after_restart": "UNVERIFIED",
                 "manual_action_required": "canonical_executable_unavailable",
-            },
-        }
-    if hook_attestation is not None and lifecycle.bootstrap_restart_blocks_task_start(root, hook_attestation):
-        return {
-            "ok": False,
-            "status": "BOOTSTRAP_RESTART_REQUIRED",
-            "bootstrap": {
-                **definition,
-                "init_required": False,
-                "session_restart_required": True,
-                "same_session_task_start": "PROHIBITED",
-                "managed_runtime_after_restart": "UNVERIFIED",
             },
         }
     # Direct Python callers retain the historical local API; the native hook

@@ -546,101 +546,6 @@ def _session_dir(root: Path, payload: dict[str, Any]) -> Path:
     return root / ".context" / "audit" / directory
 
 
-def _bootstrap_restart_path(root: Path) -> Path:
-    """Adapter-owned fence for init changes that require a new host session."""
-    return root / ".context" / "audit" / "bootstrap-restart.json"
-
-
-def record_bootstrap_restart_required(root: Path) -> None:
-    """Record that this session cannot task-start after a bootstrap change."""
-    with core._lock(root):
-        _record_bootstrap_restart_required_locked(root)
-
-
-def _record_bootstrap_restart_required_locked(root: Path) -> None:
-    """Snapshot pre-init identities and persist the fence while holding the lock."""
-    audit = root / ".context" / "audit"
-    pre_init_identities: set[str] = set()
-    for runtime_path in audit.glob("*/runtime.json"):
-        try:
-            runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
-            continue
-        if (
-            isinstance(runtime, dict)
-            and runtime.get("managed_hook_spec_hash") == managed_hook_spec_hash()
-            and runtime.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
-            and runtime.get("session_start_observed") is True
-        ):
-            identity_hash = runtime.get("session_id_hash")
-            if isinstance(identity_hash, str) and identity_hash:
-                pre_init_identities.add(identity_hash)
-    _write_capture(_bootstrap_restart_path(root), {
-        "version": 3,
-        "required_at_ns": time.time_ns(),
-        "managed_hook_spec_hash": managed_hook_spec_hash(),
-        "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
-        "pre_init_session_id_hashes": sorted(pre_init_identities),
-    })
-
-
-def bootstrap_restart_blocks_task_start(root: Path, token: str | None) -> bool:
-    """Return whether an init fence lacks a later fresh native session startup."""
-    fence_path = _bootstrap_restart_path(root)
-    if not fence_path.is_file():
-        return False
-    if not isinstance(token, str):
-        return True
-    match = re.fullmatch(r"v1\.([0-9a-f]{64})\.[A-Za-z0-9_-]{16,128}", token)
-    if match is None:
-        return True
-    try:
-        fence = json.loads(fence_path.read_text(encoding="utf-8"))
-        runtime = json.loads((root / ".context" / "audit" / match.group(1)[:24] / "runtime.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return True
-    # The fence is cleared mechanically by _record_session_start only after a
-    # distinct native startup identity.  Do not use timestamps: a repeated
-    # SessionStart in the same host session must remain fenced.
-    return True
-
-
-def _advance_bootstrap_restart_fence(root: Path, payload: dict[str, Any]) -> None:
-    """Bind/clear the init fence using native startup identity, never time."""
-    if payload.get("source") != "startup":
-        return
-    path = _bootstrap_restart_path(root)
-    if not path.is_file():
-        return
-    try:
-        fence = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return
-    if not isinstance(fence, dict) or fence.get("version") not in {2, 3}:
-        return
-    identity = payload.get("session_id")
-    identity_hash = _identity_hash(identity) if isinstance(identity, str) and identity else None
-    if identity_hash is None:
-        return
-    if fence.get("version") == 3:
-        pre_init = fence.get("pre_init_session_id_hashes")
-        if isinstance(pre_init, list) and identity_hash not in pre_init:
-            try:
-                path.unlink()
-            except OSError:
-                pass
-        return
-    required = fence.get("required_session_id_hash")
-    if required is None:
-        fence["required_session_id_hash"] = identity_hash
-        _write_capture(path, fence)
-    elif isinstance(required, str) and required != identity_hash:
-        try:
-            path.unlink()
-        except OSError:
-            pass
-
-
 def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
     with core._lock(root):
         path = _session_dir(root, payload) / "runtime.json"
@@ -652,7 +557,6 @@ def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
         if payload.get("source") == "startup":
             state["session_start_at_ns"] = time.time_ns()
         _write_capture(path, state)
-        _advance_bootstrap_restart_fence(root, payload)
 
 
 def _session_start_output(root: Path, payload: dict[str, Any]) -> str:

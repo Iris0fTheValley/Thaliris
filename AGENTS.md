@@ -115,8 +115,11 @@ facts: a managed Thaliris block in the effective root instruction, a current
 managed `.codex/hooks.json`, and all five Thaliris role-profile files. If any
 fact is absent, invoke `thaliris --root <repo> init` directly, or invoke the
 absolute executable named by the host's exact SHA-256 pin. Read its JSON result.
-If `session_restart_required` is true, stop this session and require a fresh
-session; do not invoke `task-start` in the same session. If neither trusted
+If `session_restart_required` is true, stop this Controller session and require
+a fresh Codex session; never invoke `task-start` in the same session. This is a
+Controller/Host lifecycle contract, not cryptographically enforced by the
+current audit-hook ingress: its stdin JSON and local state are caller-controlled,
+so current-session activation is UNKNOWN/not applicable. If neither trusted
 direct route is available, report bootstrap unavailable and do not continue.
 If all facts are present, read `.agent-memory/INDEX.md` and
 `.milestones/INDEX.md` (creating only a minimal missing map as instructed),

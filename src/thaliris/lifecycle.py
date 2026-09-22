@@ -48,13 +48,14 @@ _TRUSTED_CODEX_SHELL_TOOL_NAMES = ("Bash",)
 _CONTROLLER_EXECUTION_TOOL_NAMES = _OBSERVED_EXECUTION_TOOL_NAMES
 _CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _OBSERVED_EXECUTION_TOOL_NAMES) + ")"
 _NATIVE_AGENT_ROLES = {
-    # Only the five concrete Thaliris Codex profiles may cross the managed
+    # Only the six concrete Thaliris Codex profiles may cross the managed
     # spawn boundary.  Ordinary Codex worker/explorer remains transparent
     # outside an ACTIVE managed task.
     "thaliris-investigator": "investigator",
     "thaliris-curator": "curator",
     "thaliris-reasoning-specialist": "reasoning-specialist",
     "thaliris-implementer": "implementer",
+    "thaliris-verifier": "verifier",
     "thaliris-reviewer": "reviewer",
 }
 _CONTROLLER_MUTATION_TOOL_NAMES = ("apply_patch", "file_change", "functions.apply_patch", "functions.file_change")
@@ -1570,12 +1571,12 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
     native_agent_type = _native_spawn_agent_type({"tool_input": payload})
     role = _NATIVE_AGENT_ROLES.get(native_agent_type, "unknown")
     if normalized in _DELEGATION_TOOL_NAMES:
-        return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: a managed Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer session may not delegate to another session.")
+        return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: a managed Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer session may not delegate to another session.")
     operation, context_targets = _context_call(payload)
     if operation in _CHILD_CONTEXT_MUTATIONS:
         target = f"thaliris {operation}"
         _best_effort_record(_record_protocol_deviation, root, payload, operation=operation, target=target, blocked=True)
-        return _permission_deny("THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer session may not modify Controller-owned control state.")
+        return _permission_deny("THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: an Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer session may not modify Controller-owned control state.")
     if operation in _CHILD_CONTEXT_READS:
         for target in context_targets or [f"thaliris {operation}"]:
             _best_effort_record(
@@ -1585,7 +1586,7 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
                 operation=operation,
                 target=target,
                 blocked=False,
-                notify_controller=role in {"reviewer", "reasoning-specialist", "curator"},
+                notify_controller=role in {"reviewer", "verifier", "reasoning-specialist", "curator"},
             )
         if operation == "task-status":
             return _updated_command_output(payload, "--suppress-protocol-notice")
@@ -1600,10 +1601,10 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
             operation="control-state-write" if mutation else "control-state-read",
             target=target,
             blocked=mutation,
-            notify_controller=mutation or role in {"reviewer", "reasoning-specialist", "curator"},
+            notify_controller=mutation or role in {"reviewer", "verifier", "reasoning-specialist", "curator"},
         )
         if mutation:
-            return _permission_deny("THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer session may not modify Controller-owned control state.")
+            return _permission_deny("THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: an Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer session may not modify Controller-owned control state.")
     for durable_target in _visible_durable_paths(payload):
         _best_effort_record(
             _record_protocol_deviation,
@@ -1612,17 +1613,19 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
             operation="durable-path-read",
             target=durable_target,
             blocked=False,
-            notify_controller=role in {"reviewer", "reasoning-specialist", "curator"},
+            notify_controller=role in {"reviewer", "verifier", "reasoning-specialist", "curator"},
         )
-    if role == "reviewer" and _obvious_write_attempt(payload):
+    if role in {"reviewer", "verifier"} and _obvious_write_attempt(payload):
         _best_effort_record(
             _record_protocol_deviation,
             root,
             payload,
-            operation="reviewer-write-attempt",
+            operation="verifier-write-attempt" if role == "verifier" else "reviewer-write-attempt",
             target=normalized,
             blocked=True,
         )
+        if role == "verifier":
+            return _permission_deny("THALIRIS_VERIFIER_WRITE_BLOCKED: Verifier must remain an independent non-writing checker.")
         return _permission_deny("THALIRIS_REVIEWER_WRITE_BLOCKED: Reviewer must remain an independent non-writing checker.")
     return ""
 

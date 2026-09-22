@@ -17,6 +17,7 @@ _NATIVE_CODEX_ROLE_MAP = {
     "luna": "investigator", "luna-investigator": "investigator",
     "luna-curator": "curator", "sol-high": "reasoning-specialist",
     "terra-implementer": "implementer", "terra-reviewer": "reviewer",
+    "thaliris-verifier": "verifier",
     "thaliris-investigator": "investigator", "thaliris-curator": "curator",
     "thaliris-reasoning-specialist": "reasoning-specialist",
     "thaliris-implementer": "implementer", "thaliris-reviewer": "reviewer",
@@ -26,7 +27,7 @@ _NATIVE_CODEX_ROLE_MAP = {
 # This is the complete public CLI ingress vocabulary. Native identifiers are
 # translated only at the native adapter boundary and never accepted as roles.
 ROLE_CHOICES = (
-    "controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer",
+    "controller", "investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer",
 )
 
 # Authoritative defaults. Controller is the persistent root, not a sixth child
@@ -37,11 +38,12 @@ _ROLE_MODEL_DEFAULTS = {
     "curator": ("gpt-5.6-luna", "xhigh"),
     "reasoning-specialist": ("gpt-5.6-sol", "xhigh"),
     "implementer": ("gpt-5.6-luna", "xhigh"),
+    "verifier": ("gpt-5.6-luna", "xhigh"),
     "reviewer": ("gpt-5.6-terra", "high"),
 }
 _AGENT_PROFILES = {
     f"thaliris-{role}.toml": (*_ROLE_MODEL_DEFAULTS[role], role)
-    for role in ("investigator", "curator", "reasoning-specialist", "implementer", "reviewer")
+    for role in ("investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer")
 }
 _NATIVE_PROFILE_NAMES = frozenset(name.removesuffix(".toml") for name in _AGENT_PROFILES)
 # Exact SHA-256 identities of bytes emitted by earlier Thaliris adapters.
@@ -100,6 +102,17 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
             "be completed without an unverified external fact, an invalidating accepted invariant, "
             "or changing the decision basis, do not expand scope; return that dependency as a "
             "decision-changing unknown to the Controller."
+        ),
+        "verifier": (
+            "Act as an optional read-only implementation-readiness filter after a fresh Implementer. "
+            "Check acceptance coverage; the diff against the Controller-decided Modification Boundary; "
+            "source/generated/docs synchronization; call sites and residual references; actual focused "
+            "and deterministic test results; migration and compatibility fixtures; generated versus "
+            "user-owned files; obvious lifecycle or protocol inconsistencies; contradictions; and "
+            "decision-changing unknowns. Express READY, LOCAL_DEFECTS, or DECISION_REOPEN only as "
+            "model prose. A locally clean result may be worth an independent Terra Reviewer only when "
+            "deep semantic or architectural review adds real value. Do not write, route, or treat this "
+            "filter as mandatory."
         ),
         "reviewer": (
             "Act as an independent non-writing checker of the candidate named in the handoff. "
@@ -434,22 +447,22 @@ then proceed to normal managed startup.
 {MANAGED_END}
 """
 
-ROLE_PACKS = """<!-- thaliris-role-packs:v4 -->
+ROLE_PACKS = """<!-- thaliris-role-packs:v5 -->
 # Thaliris Role Profiles
 
 These profiles are working-style defaults, not routing rules or semantic
 permissions. The Controller's explicit native spawn message is the sole
-task-specific input to every Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer.
+task-specific input to every Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer.
 
 ## Role Defaults
 
 The persistent root Controller model default is `gpt-5.6-sol`; its reasoning
 effort is selected by Host, task, or user policy and is not forced by Thaliris.
 It is root instruction metadata, not a native Codex child profile and does not
-mutate a current task model. The five child profiles are Investigator (`gpt-5.6-luna`,
+mutate a current task model. The six child profiles are Investigator (`gpt-5.6-luna`,
 `xhigh`), Curator (`gpt-5.6-luna`, `xhigh`), Reasoning Specialist
-(`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `xhigh`), and Reviewer
-(`gpt-5.6-terra`, `high`).
+(`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `xhigh`), Verifier
+(`gpt-5.6-luna`, `xhigh`), and Reviewer (`gpt-5.6-terra`, `high`).
 
 ## Shared Role Result
 
@@ -529,6 +542,20 @@ and a distilled verdict. After finding a real problem, understand its invariant
 and inspect adjacent legal states enough to return independent related blockers
 in one pass. Finding classifications are model-authored labels; the Controller
 decides what workflow, if any, follows.
+
+## Verifier
+
+The Verifier is an optional, fresh, read-only implementation-readiness filter;
+it is not a small Reviewer and is never mandatory. After an Implementer, check
+acceptance coverage, the Controller-decided Modification Boundary,
+source/generated/docs synchronization, call sites and residual references,
+actual deterministic or focused test results, migration and compatibility
+fixtures, generated versus user-owned ownership, lifecycle or protocol
+inconsistencies, contradictions, and decision-changing unknowns. A clean,
+low-risk task may finish without Terra. Model prose may describe READY,
+LOCAL_DEFECTS, or DECISION_REOPEN; the Controller owns routing. LOCAL_DEFECTS
+return through a fresh Implementer and Verifier. DECISION_REOPEN returns to the
+Controller, then to Investigator or Reasoning Specialist as appropriate.
 """
 
 def _codex_config() -> dict[str, object]:

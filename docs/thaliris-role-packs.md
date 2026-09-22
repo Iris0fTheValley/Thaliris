@@ -1,19 +1,19 @@
-<!-- thaliris-role-packs:v4 -->
+<!-- thaliris-role-packs:v5 -->
 # Thaliris Role Profiles
 
 These profiles are working-style defaults, not routing rules or semantic
 permissions. The Controller's explicit native spawn message is the sole
-task-specific input to every Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer.
+task-specific input to every Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer.
 
 ## Role Defaults
 
 The persistent root Controller model default is `gpt-5.6-sol`; its reasoning
 effort is selected by Host, task, or user policy and is not forced by Thaliris.
 It is root instruction metadata, not a native Codex child profile and does not
-mutate a current task model. The five child profiles are Investigator (`gpt-5.6-luna`,
+mutate a current task model. The six child profiles are Investigator (`gpt-5.6-luna`,
 `xhigh`), Curator (`gpt-5.6-luna`, `xhigh`), Reasoning Specialist
-(`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `xhigh`), and Reviewer
-(`gpt-5.6-terra`, `high`).
+(`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `xhigh`), Verifier
+(`gpt-5.6-luna`, `xhigh`), and Reviewer (`gpt-5.6-terra`, `high`).
 
 ## Shared Role Result
 
@@ -93,3 +93,17 @@ and a distilled verdict. After finding a real problem, understand its invariant
 and inspect adjacent legal states enough to return independent related blockers
 in one pass. Finding classifications are model-authored labels; the Controller
 decides what workflow, if any, follows.
+
+## Verifier
+
+The Verifier is an optional, fresh, read-only implementation-readiness filter;
+it is not a small Reviewer and is never mandatory. After an Implementer, check
+acceptance coverage, the Controller-decided Modification Boundary,
+source/generated/docs synchronization, call sites and residual references,
+actual deterministic or focused test results, migration and compatibility
+fixtures, generated versus user-owned ownership, lifecycle or protocol
+inconsistencies, contradictions, and decision-changing unknowns. A clean,
+low-risk task may finish without Terra. Model prose may describe READY,
+LOCAL_DEFECTS, or DECISION_REOPEN; the Controller owns routing. LOCAL_DEFECTS
+return through a fresh Implementer and Verifier. DECISION_REOPEN returns to the
+Controller, then to Investigator or Reasoning Specialist as appropriate.

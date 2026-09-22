@@ -180,7 +180,7 @@ def test_authoritative_prose_uses_role_names_or_explicit_native_child_context() 
     assert "Repository investigation belongs to fresh Investigator sessions" not in generated
     assert "fresh serial Investigator, Implementer, and Reviewer sessions" not in generated
     assert "belong to fresh\nthose roles" not in generated
-    assert "Fresh Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer sessions use" in generated
+    assert "Fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer sessions use" in generated
     assert "and receive their tasks plus selected information" in generated
 
 

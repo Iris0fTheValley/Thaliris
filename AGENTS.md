@@ -16,12 +16,12 @@ direction. Use a Reviewer only when independent semantic review adds real
 value; it is not a default gate. Curator and Reasoning Specialist remain
 optional and are selected only when they add actual value.
 
-Fresh Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer sessions use `fork_turns="none"`
+Fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer sessions use `fork_turns="none"`
 and receive their tasks plus selected information in
 the Controller's native spawn message. `SubagentStart` validates authorization,
 identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
-and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer automatically.
+and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer automatically.
 
 Persistent root Controller model default: `gpt-5.6-sol`. Reasoning effort is
 selected by Host, task, or user policy and is not forced by Thaliris. This is
@@ -48,7 +48,7 @@ insufficient when the Controller can decide confidently from established facts.
 Do not use counters, thresholds, risk scores, classifiers, or a state machine
 for this routing.
 
-Each Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer keeps
+Each Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer keeps
 its private working set private. By default it returns a distilled conclusion, key findings,
 decision-changing unknowns or contradictions, verification performed, and
 optional Artifact pointers. Detailed reusable material may be saved in a
@@ -119,13 +119,13 @@ mechanical. SubagentStop alone is not success; only an explicitly observed
 native Completed status can satisfy lifecycle completion. A short native wait
 is normalized only while an authorized reservation or managed native Codex child is pending
 and the current-session effective maximum is mechanically verified; otherwise
-no automatic long-wait normalization occurs. The Controller interprets Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer results,
+no automatic long-wait normalization occurs. The Controller interprets Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 
 Startup contract: determine initialization only from these explicit project
 facts: a managed Thaliris block in the effective root instruction, a current
-managed `.codex/hooks.json`, and all five Thaliris role-profile files. If any
+managed `.codex/hooks.json`, and all six Thaliris role-profile files. If any
 fact is absent, invoke `thaliris --root <repo> init` directly, or invoke the
 absolute executable named by the host's exact SHA-256 pin. Read its JSON result.
 If `session_restart_required` is true, stop this Controller session and require
@@ -147,6 +147,6 @@ projection, automatic Artifact or memory propagation, semantic state
 transitions, verification sufficiency gates, hidden model auditors, or
 benchmark authority to the production package.
 
-Detailed Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer work stays private unless explicitly saved as an Artifact.
+Detailed Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer work stays private unless explicitly saved as an Artifact.
 Controller handoffs and retrieval are explicit. Runtime-specific lifecycle and
 role-profile instructions belong in the adapter.

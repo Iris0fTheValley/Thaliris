@@ -5,12 +5,12 @@
 ## Single semantic path
 
 ```text
-Controller --explicit native handoff--> Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
+Controller --explicit native handoff--> Investigator / Curator / Reasoning Specialist / Implementer / Verifier / Reviewer
 Role session --distilled result + optional Artifact pointer--> Controller
 Controller --next explicit handoff--> next selected role session
 ```
 
-The Controller is the sole task-specific semantic router. It chooses the Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer,
+The Controller is the sole task-specific semantic router. It chooses the Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer,
 task, facts, constraints, decisions, unknowns, and pointers to send. A missing
 fact is a Controller/model error; Core must not infer or append it.
 
@@ -36,7 +36,7 @@ It does not construct a role packet or inject task state.
 
 ## Private work and return
 
-An Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer may use a large private working set. The default result is a concise
+An Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer may use a large private working set. The default result is a concise
 conclusion, key findings, decision-changing unknowns, contradictions,
 verification performed, and optional Artifact references. The detailed working
 set does not automatically re-enter the Controller.

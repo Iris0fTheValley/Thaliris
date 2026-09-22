@@ -1840,7 +1840,7 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
         if normalized == "spawn_agent":
             tool_input = _delegation_input(payload)
             if tool_input.get("fork_turns") != "none":
-                return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer session explicitly with fork_turns=\"none\".")
+                return _permission_deny("THALIRIS_ISOLATION_REQUIRED: spawn a fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer session explicitly with fork_turns=\"none\".")
             return _reserve_managed_spawn(root, payload)
         if normalized in _ROOT_MANAGED_TOOL_NAMES:
             _best_effort_record(_record_controller_guard_event, root, payload, normalized, "allowed")

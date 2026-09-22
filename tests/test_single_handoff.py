@@ -750,7 +750,7 @@ def test_active_unbound_native_children_are_rejected_before_tool_rules(
 
 @pytest.mark.parametrize("agent_type", (
     "thaliris-investigator", "thaliris-implementer", "thaliris-reviewer",
-    "thaliris-curator", "thaliris-reasoning-specialist",
+    "thaliris-curator", "thaliris-reasoning-specialist", "thaliris-verifier",
 ))
 def test_all_exact_bound_roles_pass_active_child_lifecycle(tmp_path: Path, agent_type: str) -> None:
     root = repo(tmp_path)
@@ -785,7 +785,7 @@ def test_adapter_task_start_records_controller_actor(tmp_path: Path, monkeypatch
 
 @pytest.mark.parametrize("agent_type", (
     "thaliris-investigator", "thaliris-curator", "thaliris-reasoning-specialist",
-    "thaliris-implementer", "thaliris-reviewer",
+    "thaliris-implementer", "thaliris-verifier", "thaliris-reviewer",
 ))
 def test_execution_role_extra_context_reads_are_telemetry_only(tmp_path: Path, agent_type: str) -> None:
     root = repo(tmp_path)
@@ -832,6 +832,7 @@ def test_task_status_keeps_core_ledger_only_and_cli_consumes_one_shot_notice(tmp
     ("thaliris-reviewer", "reviewer"),
     ("thaliris-reasoning-specialist", "reasoning-specialist"),
     ("thaliris-curator", "curator"),
+    ("thaliris-verifier", "verifier"),
 ))
 def test_selected_roles_receive_one_bounded_aggregate_deviation_notice(
     tmp_path: Path, agent_type: str, expected_role: str,
@@ -1028,18 +1029,32 @@ def test_non_bash_control_state_mutation_tools_are_blocked_but_reads_and_repo_wr
     )) == ""
 
 
-def test_reviewer_profile_makes_no_native_sandbox_claim_and_obvious_writes_are_blocked(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("agent_type", "role", "model", "effort"), (
+    ("thaliris-reviewer", "reviewer", "gpt-5.6-terra", "high"),
+    ("thaliris-verifier", "verifier", "gpt-5.6-luna", "xhigh"),
+))
+def test_read_only_roles_make_no_native_sandbox_claim_and_obvious_writes_are_blocked(
+    tmp_path: Path, agent_type: str, role: str, model: str, effort: str,
+) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "review guard", None, None)
-    spawn_start(root, "reviewer-1", "thaliris-reviewer")
+    core.task_start(root, "read-only role guard", None, None)
+    spawn_start(root, "read-only-1", agent_type)
     denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(
-        agent_id="reviewer-1",
-        agent_type="thaliris-reviewer",
+        agent_id="read-only-1",
+        agent_type=agent_type,
         tool_name="apply_patch",
         tool_input={"patch": "*** Begin Patch\n*** Update File: src/a.py\n*** End Patch"},
     )))
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
-    profile = codex_adapter._agent_profile("thaliris-reviewer", "reviewer", "gpt-5.6-terra", "high").decode()
+    if role == "verifier":
+        assert "THALIRIS_VERIFIER_WRITE_BLOCKED" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        agent_id="read-only-1",
+        agent_type=agent_type,
+        tool_name="mcp__files__read",
+        tool_input={"path": ".agent-memory/read-only.md"},
+    )) == ""
+    profile = codex_adapter._agent_profile(agent_type, role, model, effort).decode()
     assert "sandbox_mode" not in profile
 
 

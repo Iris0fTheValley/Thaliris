@@ -50,7 +50,7 @@ or claimed by this command.
 
 ## Role results
 
-Role profiles ask each Investigator, Curator, Reasoning Specialist, Implementer, and Reviewer to keep its working set private and return a distilled
+Role profiles ask each Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer to keep its working set private and return a distilled
 result plus optional Artifact pointers. This is a prompt convention, not a Core
 result schema. Artifact bodies, memory, milestone text, task history, and prior
 reviews are never automatically added to another role session.

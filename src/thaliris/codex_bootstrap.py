@@ -11,8 +11,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
+
+
+# Process-local reminder for this Controller session.  It is intentionally
+# not persisted: a fresh Codex session starts with a fresh module state.
+_SESSION_RESTART_ROOTS: set[Path] = set()
 
 
 def _repo_root(path: Path) -> Path:
@@ -42,15 +48,21 @@ def _trusted_executable() -> list[str] | None:
         if not configured or not expected:
             return None
         path = Path(configured).expanduser()
-        if not path.is_absolute() or not path.is_file() or len(expected) != 64:
+        if (
+            not path.is_absolute()
+            or not path.is_file()
+            or path.is_symlink()
+            or not re.fullmatch(r"[0-9a-f]{64}", expected)
+        ):
             return None
         try:
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError:
+            resolved = path.resolve(strict=True)
+            digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
+        except (OSError, RuntimeError):
             return None
         if digest != expected:
             return None
-        return [str(path.resolve())]
+        return [str(resolved)]
     # The unpinned route is the canonical command resolved by PATH.  An
     # arbitrary configured alias or wrapper is never accepted as this route.
     if shutil.which("thaliris"):
@@ -100,6 +112,16 @@ def bootstrap(root: Path) -> dict[str, object]:
             "manual_action_required": ["canonical_executable_unavailable"],
         }
 
+    if workspace in _SESSION_RESTART_ROOTS:
+        return {
+            "ok": False,
+            "status": "SESSION_RESTART_REQUIRED",
+            "init_invoked": True,
+            "session_restart_required": True,
+            "project_definition_present": "YES",
+            "message": "Stop this Controller session and start a fresh Codex session; do not task-start here.",
+        }
+
     facts = _invoke(executable, workspace, "bootstrap-check")
     if facts.get("ok") is not True:
         return {"ok": False, "status": "BOOTSTRAP_UNAVAILABLE", "probe": facts}
@@ -139,6 +161,9 @@ def bootstrap(root: Path) -> dict[str, object]:
     if not isinstance(manual, list):
         manual = [manual]
     if initialized.get("project_definition_present") != "YES" or manual:
+        restart_required = initialized.get("session_restart_required") is True
+        if restart_required:
+            _SESSION_RESTART_ROOTS.add(workspace)
         return {
             "ok": False,
             "status": "MANUAL_ACTION_REQUIRED",
@@ -147,8 +172,10 @@ def bootstrap(root: Path) -> dict[str, object]:
             "project_definition_present": initialized.get(
                 "project_definition_present", "UNKNOWN"
             ),
+            "session_restart_required": restart_required,
         }
     if initialized.get("session_restart_required") is True:
+        _SESSION_RESTART_ROOTS.add(workspace)
         return {
             "ok": False,
             "status": "SESSION_RESTART_REQUIRED",

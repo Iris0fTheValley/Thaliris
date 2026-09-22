@@ -30,8 +30,8 @@ ROLE_CHOICES = (
     "controller", "investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer",
 )
 
-# Authoritative defaults. Controller is the persistent root, not a sixth child
-# profile; its default is emitted in the generated root instructions below.
+# Authoritative defaults. Controller is the persistent root; its default is
+# emitted in the generated root instructions below.
 _ROLE_MODEL_DEFAULTS = {
     "controller": ("gpt-5.6-sol", None),
     "investigator": ("gpt-5.6-luna", "xhigh"),
@@ -55,6 +55,18 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = {
     "thaliris-implementer.toml": frozenset("a91e41c67930071db4d6eb45342526cbbf67af6d4fda13d1c847d18f28816a35 a1c7a46981512c7e8067dd5e40e193a0b54e34384aefc2b28950d5c6ccb5af9a d24ee0de8a22409bd5a3c9f1359079c4d6c7ccfbb14f65842e84f21ab0a5aa96 360d49c46afe280f85d6857575a12a9eeeff93d1f9aedb4b00ef2a2aa7c8b078 4028038b2153e56881140dabdc9165d2d1866fa737635e33599dc4d3cef0342f a463ea49f2cc308b6457ab63612a5f6b257f7462470118537961315b8e757ed1 fd0e28d2f1cce4f639a34b123bd647c9cd64d8b90fd5fb54a1e8353ecde924ad 7f85c22eb8ca508622b39bb8708e6bd617de3139f9de012ee29d166d4a3aad1e 3fcfcf2a04a8ef9e3a5c52f7414664b3a0d0fbc7f036c2558da1cb8baf955d95 0780f180cd71a9b6a73fef0eb61ca42f32fd048ccd12b0564f2afd68e7ed6143".split()),
     "thaliris-reviewer.toml": frozenset("ae56701985a1d27a2daea326819fa0e93b4350eb6e65d1a299daf198126a7a9a c43274a3f9cb3f93cd662b6477f1dfd07c170c24324c1364df5f59205851b17b d0f488e226888c6a8f6e39ab1deeb1125d3c0e9474dba47af47ec3eab2da45c2 ae51394874f0b35dc2b39577d471bf2f07533962363cdb7ad56e6e08a3860887 322534fb6f2b2abc312bd04a76e477e3e128cf6a194da5817ecaabd0678aa397 b038486edb2c381631e458adac2bff12fbcdc09233b5b1b8f59aeee9dc0e9774 720ef66c9f6023d961ddc1a3329ec4ae3fdf7fe2f6b1252034a7117f5990a125 4cec33fef9151d2ba60483a72b49ccd7dadd0b5c044a69f00f468e71c489fe07 8999980daf617644a36da7579626f122b6c279ad54e055bbaf8242daedbd36c2 b9b3b50f89b1dd7c5f5eaf2ee558b6881b014d66f6b30bc20244f361ebc721d7 e281f8c25451cbccb1509fa07814e4cfeaa8ae113402fc2db9a6c63a165bc1e6 96257cc1ed5c88b37de73e2c355c17c6b1ab26620210effe5b3283c776d0e4b9 357e9364404a2ab249c27ad3a2c93305f38db5afbbec1b56b58ee5e0817d5602 82b410c617589d410deb33f1ff4163d49b22d329ee517442a004965115a46124 fe082be2c5d05675b3ab9a69234851d505db3a3deddb509794b817f5b59a8ab8".split()),
 }
+_KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
+    "b6dba8d5d5e855face02667993601f84c4a54e77d7c33012d542a6b91483ec6c",
+    "c019c41505c8bc000a5d00151fe837d4d1e9000f242bdb9f98bb7add905104bc",
+    "844a2278b311c253c2da3a06133b503edb822a2929eeb082b50ecd2925e4cd30",
+    "e14a01cfb3444ed553e43472581b6bf59b5858d6bdc279f61fda17823b4670b0",
+    "e3473113697a9343d0ca108468434b26a53b8d8175a4f344e86067e93bf2c853",
+    "ea1f1c8386b41a0138bcdf3691cae95cc9c816db47bfa14dcdcbf36d2e87f0d9",
+    "cc609291e31edb07d89784a1fe6f6d933dc8351229c1e66f5eb909da2db99e34",
+    "2636a41ddd2f5cc3c9ee4efc522acc891b36068b67c1839593a1336c155497e8",
+    "5d798d5a45e522db623a4d22b618e1e674905aa46da95acba6733a51f9d63a9d",
+    "df6daef7e33c0032179c462f25afdc9af8883d2677c3d34c98b735039c0ad3e0",
+})
 _KNOWN_HOST_WAIT_CAPABILITIES = {
     # These are release-pinned observations, not a cross-version assumption.
     "0.153.4": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
@@ -432,7 +444,7 @@ the next handoff and when work is complete.
 
 Startup contract: determine initialization only from these explicit project
 facts: a managed Thaliris block in the effective root instruction, a current
-managed `.codex/hooks.json`, and all six Thaliris role-profile files. If any
+managed `.codex/hooks.json`, and all Thaliris role-profile files. If any
 fact is absent, invoke `thaliris --root <repo> init` directly, or invoke the
 absolute executable named by the host's exact SHA-256 pin. Read its JSON result.
 If `session_restart_required` is true, stop this Controller session and require
@@ -459,7 +471,7 @@ task-specific input to every Investigator, Curator, Reasoning Specialist, Implem
 The persistent root Controller model default is `gpt-5.6-sol`; its reasoning
 effort is selected by Host, task, or user policy and is not forced by Thaliris.
 It is root instruction metadata, not a native Codex child profile and does not
-mutate a current task model. The six child profiles are Investigator (`gpt-5.6-luna`,
+mutate a current task model. The native child profiles are Investigator (`gpt-5.6-luna`,
 `xhigh`), Curator (`gpt-5.6-luna`, `xhigh`), Reasoning Specialist
 (`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `xhigh`), Verifier
 (`gpt-5.6-luna`, `xhigh`), and Reviewer (`gpt-5.6-terra`, `high`).
@@ -643,7 +655,9 @@ def _managed_agents(current: str) -> str:
 
 
 def _role_pack_state(value: bytes) -> str:
-    return "current" if value == ROLE_PACKS.encode("utf-8") else "user"
+    if value == ROLE_PACKS.encode("utf-8"):
+        return "current"
+    return "legacy" if hashlib.sha256(value).hexdigest() in _KNOWN_GENERATED_ROLE_PACK_HASHES else "user"
 
 
 def _audit_ignore(current: str, *, remove: bool = False) -> str:
@@ -698,6 +712,8 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
             writes[instruction.relative_to(root).as_posix()] = stripped.encode("utf-8")
     role_packs = core._safe(root, "docs/thaliris-role-packs.md")
     if not role_packs.exists():
+        writes["docs/thaliris-role-packs.md"] = ROLE_PACKS.encode("utf-8")
+    elif _role_pack_state(role_packs.read_bytes()) == "legacy":
         writes["docs/thaliris-role-packs.md"] = ROLE_PACKS.encode("utf-8")
     elif _role_pack_state(role_packs.read_bytes()) == "user":
         manual.append("docs/thaliris-role-packs.md")

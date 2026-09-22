@@ -125,7 +125,7 @@ the next handoff and when work is complete.
 
 Startup contract: determine initialization only from these explicit project
 facts: a managed Thaliris block in the effective root instruction, a current
-managed `.codex/hooks.json`, and all six Thaliris role-profile files. If any
+managed `.codex/hooks.json`, and all Thaliris role-profile files. If any
 fact is absent, invoke `thaliris --root <repo> init` directly, or invoke the
 absolute executable named by the host's exact SHA-256 pin. Read its JSON result.
 If `session_restart_required` is true, stop this Controller session and require

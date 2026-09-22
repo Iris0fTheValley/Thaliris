@@ -1215,7 +1215,7 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "decision-changing unknown to the Controller" in implementer
     agents = Path("AGENTS.md").read_text(encoding="utf-8")
     assert codex_adapter.MANAGED in agents
-    assert "The six child profiles are Investigator" in codex_adapter.ROLE_PACKS
+    assert "The native child profiles are Investigator" in codex_adapter.ROLE_PACKS
     assert "Controller-decided boundaries/contracts" in codex_adapter.ROLE_PACKS
     assert "recommendations/advice are not\ncontract" in codex_adapter.ROLE_PACKS
     assert "Do not silently drop, guess, or freeze an unknown" in codex_adapter.ROLE_PACKS
@@ -1509,3 +1509,24 @@ def test_exact_role_keyed_historical_profiles_migrate_without_claiming_edits(tmp
         name = f"thaliris-{role}.toml"
         assert (agents / name).read_bytes() == codex_adapter._agent_profile(name.removesuffix(".toml"), role, "gpt-5.6-luna", "xhigh")
     assert codex_adapter.init(root)["changed"] is False
+
+
+def test_exact_historical_role_pack_migrates_and_unknown_bytes_are_preserved(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    packs = root / "docs" / "thaliris-role-packs.md"
+    assert codex_adapter._role_pack_state(codex_adapter.ROLE_PACKS.encode("utf-8")) == "current"
+    legacy = subprocess.check_output(
+        ["git", "show", "HEAD:docs/thaliris-role-packs.md"]
+    )
+    assert hashlib.sha256(legacy).hexdigest() == "b6dba8d5d5e855face02667993601f84c4a54e77d7c33012d542a6b91483ec6c"
+    assert codex_adapter._role_pack_state(legacy) == "legacy"
+    packs.write_bytes(legacy)
+    first = codex_adapter.init(root)
+    assert packs.read_bytes() == codex_adapter.ROLE_PACKS.encode("utf-8")
+    assert "docs/thaliris-role-packs.md" in first["files"]
+    assert codex_adapter.init(root)["changed"] is False
+
+    packs.write_bytes(legacy + b"\nuser edit\n")
+    assert codex_adapter._role_pack_state(packs.read_bytes()) == "user"
+    codex_adapter.init(root)
+    assert packs.read_bytes() == legacy + b"\nuser edit\n"

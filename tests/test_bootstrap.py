@@ -39,6 +39,39 @@ def test_manual_action_is_terminal_without_retry(monkeypatch, tmp_path: Path):
     assert calls == ["bootstrap-check", "init"]
 
 
+def test_manual_action_preserves_restart_and_latches_old_session(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
+    monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])
+    calls = []
+
+    def invoke(executable, root, command):
+        calls.append(command)
+        if command == "bootstrap-check":
+            return {"ok": True, "project_definition_present": "NO"}
+        return {
+            "ok": True,
+            "project_definition_present": "YES",
+            "session_restart_required": True,
+            "manual_action_required": ["docs/thaliris-role-packs.md"],
+        }
+
+    monkeypatch.setattr(bootstrap, "_invoke", invoke)
+    result = bootstrap.bootstrap(tmp_path)
+    assert result["status"] == "MANUAL_ACTION_REQUIRED"
+    assert result["session_restart_required"] is True
+
+    # A later disk probe cannot make this old Controller session READY.
+    monkeypatch.setattr(
+        bootstrap,
+        "_invoke",
+        lambda executable, root, command: {"ok": True, "project_definition_present": "YES"},
+    )
+    later = bootstrap.bootstrap(tmp_path)
+    assert later["status"] == "SESSION_RESTART_REQUIRED"
+    assert later["session_restart_required"] is True
+    assert calls == ["bootstrap-check", "init"]
+
+
 def test_initialized_workspace_does_not_init(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
     monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])

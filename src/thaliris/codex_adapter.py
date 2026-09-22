@@ -122,7 +122,11 @@ def _agent_profile_state(value: bytes, name: str) -> str:
 
 
 def _profile_definition_present(root: Path) -> str:
-    return "YES" if all((root / ".codex" / "agents" / name).is_file() for name in _AGENT_PROFILES) else "NO"
+    return "YES" if all(
+        (root / ".codex" / "agents" / name).is_file()
+        and _agent_profile_state((root / ".codex" / "agents" / name).read_bytes(), name) == "current"
+        for name in _AGENT_PROFILES
+    ) else "NO"
 
 
 def _activation_fields(
@@ -685,7 +689,10 @@ def init(root: Path) -> dict[str, object]:
         manual = sorted(set(manual) | {"canonical_executable_unavailable"})
     if hooks["legacy_managed_handler_cleanup"] == "MANUAL_CLEANUP_REQUIRED":
         manual = sorted(set(manual) | {"legacy_managed_handler_manual_cleanup_required"})
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": instruction_changed or hook_changed or profile_changed or stale_runtime_hook_spec or executable_unavailable, "hook_trust_required": hook_changed or stale_runtime_hook_spec or executable_unavailable, "host_wait_mode": host_wait_mode(), **_project_definition_facts(root), **_activation_fields(root)}
+    restart_required = instruction_changed or hook_changed or profile_changed or stale_runtime_hook_spec or executable_unavailable
+    if restart_required:
+        lifecycle.record_bootstrap_restart_required(root)
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": restart_required, "hook_trust_required": hook_changed or stale_runtime_hook_spec or executable_unavailable, "host_wait_mode": host_wait_mode(), **_project_definition_facts(root), **_activation_fields(root)}
 
 
 def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str], list[str]]:
@@ -779,7 +786,19 @@ def task_start(
             "bootstrap": {
                 **definition,
                 "init_required": True,
-                "session_restart_required": False,
+                "session_restart_required": "UNKNOWN",
+                "same_session_task_start": "PROHIBITED",
+                "managed_runtime_after_restart": "UNVERIFIED",
+            },
+        }
+    if hook_attestation is not None and lifecycle.bootstrap_restart_blocks_task_start(root, hook_attestation):
+        return {
+            "ok": False,
+            "status": "BOOTSTRAP_RESTART_REQUIRED",
+            "bootstrap": {
+                **definition,
+                "init_required": False,
+                "session_restart_required": True,
                 "same_session_task_start": "PROHIBITED",
                 "managed_runtime_after_restart": "UNVERIFIED",
             },

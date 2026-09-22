@@ -546,6 +546,65 @@ def _session_dir(root: Path, payload: dict[str, Any]) -> Path:
     return root / ".context" / "audit" / directory
 
 
+def _bootstrap_restart_path(root: Path) -> Path:
+    """Adapter-owned fence for init changes that require a new host session."""
+    return root / ".context" / "audit" / "bootstrap-restart.json"
+
+
+def record_bootstrap_restart_required(root: Path) -> None:
+    """Record that this session cannot task-start after a bootstrap change."""
+    # A CLI init outside a live Codex hook session has no session to fence.
+    # In that case the next native SessionStart is the session boundary itself.
+    audit = root / ".context" / "audit"
+    live_session = False
+    for runtime_path in audit.glob("*/runtime.json"):
+        try:
+            runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(runtime, dict)
+            and runtime.get("managed_hook_spec_hash") == managed_hook_spec_hash()
+            and runtime.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
+            and runtime.get("session_start_observed") is True
+        ):
+            live_session = True
+            break
+    if not live_session:
+        return
+    with core._lock(root):
+        _write_capture(_bootstrap_restart_path(root), {
+            "version": 1,
+            "required_at_ns": time.time_ns(),
+            "managed_hook_spec_hash": managed_hook_spec_hash(),
+            "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
+        })
+
+
+def bootstrap_restart_blocks_task_start(root: Path, token: str | None) -> bool:
+    """Return whether an init fence lacks a later fresh native session startup."""
+    fence_path = _bootstrap_restart_path(root)
+    if not fence_path.is_file():
+        return False
+    if not isinstance(token, str):
+        return True
+    match = re.fullmatch(r"v1\.([0-9a-f]{64})\.[A-Za-z0-9_-]{16,128}", token)
+    if match is None:
+        return True
+    try:
+        fence = json.loads(fence_path.read_text(encoding="utf-8"))
+        runtime = json.loads((root / ".context" / "audit" / match.group(1)[:24] / "runtime.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return True
+    return not (
+        isinstance(fence, dict)
+        and type(fence.get("required_at_ns")) is int
+        and isinstance(runtime, dict)
+        and type(runtime.get("session_start_at_ns")) is int
+        and runtime["session_start_at_ns"] > fence["required_at_ns"]
+    )
+
+
 def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
     with core._lock(root):
         path = _session_dir(root, payload) / "runtime.json"
@@ -554,6 +613,8 @@ def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
             state.pop("expected_continuation_sha256", None)
         _runtime_metadata(state, payload)
         state.update({"version": 4, "session_start_observed": True, "root_classification": "UNKNOWN"})
+        if payload.get("source") == "startup":
+            state["session_start_at_ns"] = time.time_ns()
         _write_capture(path, state)
 
 

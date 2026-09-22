@@ -68,6 +68,43 @@ def test_repeated_init_reports_unavailable_canonical_executable_as_manual_action
     assert result["hook_trust_required"] is True
 
 
+def test_uninitialized_task_start_reports_bootstrap_unknown_restart(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    result = codex_adapter.task_start(tmp_path, "bootstrap", None, None)
+    assert result["status"] == "BOOTSTRAP_REQUIRED"
+    assert result["bootstrap"]["session_restart_required"] == "UNKNOWN"
+
+
+def test_init_change_fences_same_session_until_fresh_startup(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    codex_adapter.init(tmp_path)
+    profile = tmp_path / ".codex" / "agents" / "thaliris-implementer.toml"
+    profile.unlink()
+    codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "s1", "source": "startup", "cwd": str(tmp_path)})
+    result = codex_adapter.init(tmp_path)
+    assert result["session_restart_required"] is True
+
+    def token(session_id: str) -> str:
+        payload = {"session_id": session_id, "turn_id": "t", "tool_name": "Bash", "tool_input": {"command": "thaliris task-start x"}}
+        rewritten = json.loads(codex_adapter.audit_hook(tmp_path, "PreToolUse", payload))
+        return re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten["hookSpecificOutput"]["updatedInput"]["command"]).group(1)
+
+    assert codex_adapter.task_start(tmp_path, "x", None, None, token("s1"))["status"] == "BOOTSTRAP_RESTART_REQUIRED"
+    codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "s2", "source": "startup", "cwd": str(tmp_path)})
+    assert codex_adapter.task_start(tmp_path, "x", None, None, token("s2"))["status"] != "BOOTSTRAP_RESTART_REQUIRED"
+
+
+def test_user_profile_is_preserved_and_not_a_definition(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    codex_adapter.init(tmp_path)
+    profile = tmp_path / ".codex" / "agents" / "thaliris-implementer.toml"
+    profile.write_text("user-owned = true\n", encoding="utf-8")
+    result = codex_adapter.init(tmp_path)
+    assert profile.read_text(encoding="utf-8") == "user-owned = true\n"
+    assert result["profile_definition_present"] == "NO"
+    assert result["project_definition_present"] == "NO"
+
+
 def hook_payload(**values: object) -> dict[str, object]:
     # Managed lifecycle tests exercise the concrete named profile.  Ordinary
     # worker remains covered separately in the NO_TASK transparency test.

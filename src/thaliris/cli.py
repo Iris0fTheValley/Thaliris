@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 from . import __version__
@@ -116,7 +117,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "init": out = codex_adapter.init(root)
         elif args.command == "bootstrap-check": out = codex_adapter.bootstrap_check(root)
-        elif args.command == "codex-bootstrap": out = codex_bootstrap.bootstrap(root)
+        elif args.command == "codex-bootstrap":
+            try:
+                out = codex_bootstrap.bootstrap(root)
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                out = {"ok": False, "status": "BOOTSTRAP_UNAVAILABLE", "error": str(exc)}
         elif args.command == "doctor": out = codex_adapter.doctor(root)
         elif args.command == "stale": out = stale(root)
         elif args.command == "memory-status":

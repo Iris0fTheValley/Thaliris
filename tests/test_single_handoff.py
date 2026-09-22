@@ -135,6 +135,26 @@ def test_mutated_managed_instruction_requires_regeneration(tmp_path: Path) -> No
     assert second["session_restart_required"] is False
 
 
+def test_mixed_user_line_endings_do_not_invalidate_unchanged_managed_instruction(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    instruction = root / "AGENTS.md"
+    managed = instruction.read_text(encoding="utf-8")
+    start = managed.index(codex_adapter.MANAGED_START)
+    end = managed.index(codex_adapter.MANAGED_END) + len(codex_adapter.MANAGED_END)
+    instruction.write_bytes(
+        b"user-owned header\r\n"
+        + managed[start:end].encode("utf-8")
+        + b"\r\nuser-owned footer\r\n"
+    )
+
+    facts = codex_adapter._project_definition_facts(root)
+    assert facts["instruction_definition_present"] == "YES"
+    assert facts["project_definition_present"] == "YES"
+    result = codex_adapter.init(root)
+    assert result["changed"] is False
+    assert result["session_restart_required"] is False
+
+
 def hook_payload(**values: object) -> dict[str, object]:
     # Managed lifecycle tests exercise the concrete named profile.  Ordinary
     # worker remains covered separately in the NO_TASK transparency test.

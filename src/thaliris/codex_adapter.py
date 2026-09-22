@@ -156,9 +156,12 @@ def _project_definition_facts(root: Path) -> dict[str, str]:
             span = _managed_span(current, instruction.name)
             if span is not None:
                 start, end = span
-                newline = "\r\n" if "\r\n" in current else "\n"
-                expected = MANAGED.replace("\n", newline).removesuffix(newline)
-                instruction_present = "YES" if current[start:end] == expected else "NO"
+                # Only the adapter-owned span participates in definition
+                # validity. User-owned text may use different line endings;
+                # normalize the owned block before comparing it to the
+                # canonical LF-rendered definition.
+                expected = _normalize_line_endings(MANAGED).removesuffix("\n")
+                instruction_present = "YES" if _normalize_line_endings(current[start:end]) == expected else "NO"
         except (OSError, UnicodeError, ValueError):
             instruction_present = "NO"
     hooks = lifecycle.hooks_health(root)
@@ -266,6 +269,11 @@ def selected_continuation_mode(root: Path, executable: str | None = None) -> str
 
 def _read_text(path: Path) -> str:
     return path.read_bytes().decode("utf-8")
+
+
+def _normalize_line_endings(value: str) -> str:
+    """Normalize all newline spellings for owned-block comparisons."""
+    return value.replace("\r\n", "\n").replace("\r", "\n")
 
 MANAGED_START = "<!-- thaliris:begin -->"
 MANAGED_END = "<!-- thaliris:end -->"
@@ -566,6 +574,13 @@ def _managed_span(current: str, label: str) -> tuple[int, int] | None:
 
 def _managed_agents(current: str) -> str:
     span = _managed_span(current, "AGENTS.md")
+    if span is not None:
+        start, end = span
+        expected = _normalize_line_endings(MANAGED).removesuffix("\n")
+        if _normalize_line_endings(current[start:end]) == expected:
+            # Preserve the complete document when only user-owned content
+            # differs (including its line-ending convention).
+            return current
     newline = "\r\n" if "\r\n" in current else "\n"
     block = MANAGED.replace("\n", newline)
     user_text = _strip_managed_agents(current) if span is not None else current

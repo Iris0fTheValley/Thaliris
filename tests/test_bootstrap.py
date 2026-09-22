@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from adapter.codex import bootstrap
+from thaliris import codex_bootstrap as bootstrap
 
 
 def test_zero_state_invokes_init_once_and_requires_fresh_session(monkeypatch, tmp_path: Path):

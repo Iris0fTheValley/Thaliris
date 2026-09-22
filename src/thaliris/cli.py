@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from . import codex_adapter, lifecycle
+from . import codex_adapter, codex_bootstrap, lifecycle
 from .core import artifact_get, catalog, document_get, milestone_check, rollback, stale, task_artifact, task_get, task_promote, task_show, task_status, task_update
 
 
@@ -40,6 +40,7 @@ def _parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
     for name in ("init", "bootstrap-check", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
         sub.add_parser(name)
+    sub.add_parser("codex-bootstrap", help="perform one-shot project-external Codex bootstrap")
     q = sub.add_parser("catalog", help="discover bounded durable document metadata")
     q.add_argument("path", nargs="?")
     q = sub.add_parser("document-get", help="retrieve 1 to 8 explicitly selected durable documents")
@@ -115,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "init": out = codex_adapter.init(root)
         elif args.command == "bootstrap-check": out = codex_adapter.bootstrap_check(root)
+        elif args.command == "codex-bootstrap": out = codex_bootstrap.bootstrap(root)
         elif args.command == "doctor": out = codex_adapter.doctor(root)
         elif args.command == "stale": out = stale(root)
         elif args.command == "memory-status":

@@ -41,10 +41,12 @@ verified. When that maximum is unavailable, the requested timeout is preserved;
 there is no automatic expansion. Thaliris provides no scheduler or polling
 loop.
 
-The project-external `bootstrap.py` entrypoint is the zero-state boundary. It
-uses a read-only definition probe, then at most one trusted direct `thaliris
-init` call. Manual action or a restart requirement is terminal for that
-Controller session; it never task-starts or retries initialization.
+The installed `thaliris --root <repo> codex-bootstrap` command is the
+project-external zero-state boundary. It uses a read-only definition probe,
+then at most one trusted direct `thaliris init` call. Manual action or a
+restart requirement is terminal for that Controller session; it never
+task-starts or retries initialization. No automatic Codex Host hook is assumed
+or claimed by this command.
 
 ## Role results
 

@@ -153,15 +153,11 @@ Thaliris 由 Thalamus（丘脑） 与 Iris（虹膜） 组合而来。
 ```text
 大型调查工作集
             ↓
-结构化原始 findings
+压缩后的 findings + evidence refs
             ↓
-有界的 curated snapshot
+被选中的 Controller / Executor / Reviewer 上下文
             ↓
-Controller 选择
-            ↓
-小型 Decision Context
-            ↓
-高推理代理
+聚焦推理、实现或审核
 ```
 
 原始探索内容仍可用于追溯，但它不会自动获得进入每个下游上下文的权限。
@@ -217,7 +213,7 @@ Core 只定义语义角色；具体 runtime 和模型选择属于 adapter。
 * 集成；
 * 最终验收。
 
-只有 Controller 可以委派工作。
+Controller 拥有顶层任务路由和任务所有权。具体 adapter 可以显式允许执行或审核角色把有界的大规模调查委派给 Investigator；这种子委派只返回压缩事实与证据，不转移任务所有权。
 
 Controller 应基于有界任务视图工作，而不是读取原始调查 transcript。
 
@@ -227,7 +223,7 @@ Controller 应基于有界任务视图工作，而不是读取原始调查 trans
 
 具体 runtime 和模型选择属于 adapter。
 
-用于聚焦调查和机械式证据收集：
+用于大 working set 调查、仓库扫描和机械式证据收集：
 
 * 仓库搜索；
 * 符号发现；
@@ -238,7 +234,7 @@ Controller 应基于有界任务视图工作，而不是读取原始调查 trans
 * 测试执行；
 * 残留引用检查。
 
-Investigator 可以拥有较大的工作集。
+Investigator 可以拥有很大的工作集，并负责把搜索、调用点、测试和中间探索压缩成事实、位置、证据与未知项。
 
 其输出是 task-local 的结构化 findings 和 evidence refs，而不是 transcript。只有 Controller 作出显式 retention 决定并运行 `task-promote` 后，内容才可能进入 `.agent-memory/` 或 `.milestones/`。
 
@@ -248,19 +244,11 @@ Investigator 可以拥有较大的工作集。
 
 具体 runtime 和模型选择属于 adapter。
 
-Curator 按需调用：单个 Investigator 已返回有界、结构化且无明显重复、冲突或过时问题的 findings 时，直接交给 Controller。只有 findings 过大、重复、冲突、过时，或高推理确实需要压缩 working set 时，才调用 fresh Curator。
+Curator 是按需的知识增强角色，而不是调查流水线中的压缩工位。只有当 Controller 已经明确选出值得复用的材料时，才让 Curator 对这些材料做去任务化、压缩、去重或重组，使其适合进入长期项目知识。
 
-它可以：
+Curator 不负责决定什么重要、选择下一角色或替 Controller 路由；它也不能凭空制造比来源材料更强的确定性。
 
-* 合并重复项；
-* 从活跃 snapshot 中移除已解决的 unknown；
-* 整合相关证据；
-* 替换过时的 snapshot 条目；
-* 让当前调查状态保持有界。
-
-它不能凭空制造比来源 findings 更强的确定性。
-
-Curation 改变的是表达形式，而不是证据。
+Curation 改变的是表达和可复用性，而不是证据。
 
 ---
 
@@ -268,24 +256,16 @@ Curation 改变的是表达形式，而不是证据。
 
 具体 runtime 和模型选择属于 adapter。
 
-仅用于真正受益于更强推理上下文的问题：
+Reasoning Specialist 是按需的元认知角色。它不因为“实现很难”就自动介入；复杂的具体实现仍应由合适的执行角色自己完成推理和修改。
 
-* 架构；
-* 生命周期行为；
-* 并发；
-* 跨模块语义；
-* 模糊的根因；
-* 困难的 migration 语义；
-* provenance 或安全推理；
-* 艰难的取舍。
+仅当问题定义、抽象层级、目标或前提本身不清楚时使用它，例如：
 
-Reasoning Specialist 不维护任务状态，也不执行常规的证据 bookkeeping。
+* 当前方案始终别扭，怀疑问题被错误建模；
+* 多个候选方案其实在解决不同的问题；
+* 用户或 Controller 还不清楚真正需要决定什么；
+* 需要显式挑战隐藏假设或重新表述核心矛盾。
 
-它的理想轨迹是：
-
-```text
-事实 → 推理 → 决策 → 退出
-```
+它不维护任务状态，也不执行大规模仓库调查或常规证据 bookkeeping。它的输出应帮助 Controller 重新定义问题、决策依据和仍需确认的未知项。
 
 ---
 
@@ -295,9 +275,11 @@ Reasoning Specialist 不维护任务状态，也不执行常规的证据 bookkee
 
 接收明确的实现边界，以及完成修改所必需的事实。
 
-它的职责是实现，而不是扩大架构范围。
+它的职责是理解、实现和验证，而不是扩大任务所有权。复杂实现可以由 adapter 选择更聚焦、更高能力的执行绑定，让推理与修改留在同一个 working set 中。
 
-当假设不成立或所需范围发生实质性扩大时，控制权返回 Controller。
+Implementer 可以直接读取少量关键文件；当需要大范围仓库搜索、调用点枚举或其他巨大机械 working set 时，支持该能力的 adapter 可以让它把这部分调查委派给 Investigator，再基于压缩后的事实继续实现。
+
+当关键假设失效、问题定义需要重开或所需范围发生实质性扩大时，控制权返回 Controller。
 
 ---
 
@@ -317,7 +299,7 @@ Reviewer 会被刻意隔离于：
 * 评分 rubric；
 * 不必要的调试历史。
 
-它返回包含影响和证据的结构化问题。
+它返回包含影响和证据的结构化问题。需要大范围机械核查时，支持该能力的 adapter 可以让 Reviewer 委派 Investigator 做扫描，而 Reviewer 保留独立判断。
 
 Controller 决定这些 findings 是否应影响 Decision Context。
 
@@ -364,12 +346,12 @@ Controller
     ↓
 Investigator
     ↓
-需要压缩时才由 Curator 生成 snapshot
+压缩后的 findings + evidence
     ↓
 Controller
 
-        ├─ 解决方案明确 → Implementer
-        └─ 推理困难 → Reasoning Specialist
+        ├─ 问题和边界明确 → Implementer
+        └─ 问题定义/抽象本身不清楚 → Reasoning Specialist
 ```
 
 ---
@@ -377,17 +359,17 @@ Controller
 ### 复杂修改
 
 ```text
-按需 Investigator 调查
+Controller
         ↓
-有界证据
+适合该复杂度的执行角色
+        ├─ 直接读取少量关键文件
+        └─ 需要时 → Investigator 大规模扫描
+                       ↓
+                 压缩事实与证据
+                       ↓
+             返回同一执行 working set
         ↓
-需要时 Reasoning Specialist 推理
-        ↓
-Implementer 实现
-        ↓
-确定性检查
-        ↓
-需要时 Investigator 验证
+推理 + 实现 + 确定性检查
 ```
 
 对于风险足够高的修改：
@@ -834,21 +816,17 @@ Sol：
 ```text
 工作流 B
 
-Luna：
-调查
-→ 结构化证据
+Investigator：
+大规模扫描
+→ 压缩事实与证据
 
-Sol：
-聚焦推理
-→ 决策
+Focused Executor：
+读取少量关键材料
+→ 聚焦推理
+→ 实现
+→ 验证
 
-Terra：
-实现
-
-Luna：
-验证
-
-Terra：
+Independent Reviewer：
 需要时进行 fresh review
 ```
 

@@ -149,15 +149,11 @@ The intended flow is:
 ```text
 large investigation working set
             ↓
-structured raw findings
+compressed findings + evidence refs
             ↓
-bounded curated snapshot
+selected Controller / Executor / Reviewer context
             ↓
-Controller selection
-            ↓
-small Decision Context
-            ↓
-high-reasoning agent
+focused reasoning, implementation, or review
 ```
 
 Raw exploration remains available for traceability, but it does not automatically gain the right to enter every downstream context.
@@ -213,7 +209,7 @@ The parent Controller owns:
 * integration;
 * final acceptance.
 
-Only the Controller delegates work.
+The Controller owns top-level routing and task ownership. An adapter may explicitly allow an execution or review role to delegate bounded large-scale investigation to Investigator; that subordinate delegation returns compressed facts and evidence without transferring task ownership.
 
 The Controller should operate on bounded task views rather than raw investigation transcripts.
 
@@ -223,7 +219,7 @@ The Controller should operate on bounded task views rather than raw investigatio
 
 Runtime and model selection belong to an adapter.
 
-Used for focused investigation and mechanical evidence gathering:
+Used for large-working-set investigation, repository scanning, and mechanical evidence gathering:
 
 * repository search;
 * symbol discovery;
@@ -234,7 +230,7 @@ Used for focused investigation and mechanical evidence gathering:
 * test execution;
 * residual-reference checks.
 
-An Investigator may have a large working set.
+An Investigator may have a very large working set and compress searches, call sites, tests, and intermediate exploration into facts, locations, evidence, and unknowns.
 
 Its output is a task-local structured handoff of findings and evidence references, not its transcript. Only an explicit Controller retention decision followed by `task-promote` can write `.agent-memory/` or `.milestones/`.
 
@@ -244,19 +240,11 @@ Its output is a task-local structured handoff of findings and evidence reference
 
 Runtime and model selection belong to an adapter.
 
-Curator is invoked only when needed: bounded, structured findings from one Investigator with no evident duplication, conflict, or staleness go directly to the Controller. Use a fresh Curator only for oversized, repetitive, conflicting, or stale findings, or when high reasoning genuinely needs working-set compression.
+Curator is an optional knowledge-enhancement role, not a compression stage in the investigation pipeline. It is used only after the Controller has explicitly selected material worth preserving, to de-task, compress, deduplicate, or reorganize that material into reusable project knowledge.
 
-It can:
+Curator does not decide what is important, choose the next role, or route work for the Controller. It also cannot manufacture stronger certainty than its source material supports.
 
-* merge duplicates;
-* remove resolved unknowns from the active snapshot;
-* consolidate related evidence;
-* replace obsolete snapshot entries;
-* keep the current investigation state bounded.
-
-It cannot manufacture stronger certainty than its source findings support.
-
-Curation changes representation, not evidence.
+Curation changes representation and reusability, not evidence.
 
 ---
 
@@ -264,24 +252,16 @@ Curation changes representation, not evidence.
 
 Runtime and model selection belong to an adapter.
 
-Reserved for reasoning that genuinely benefits from a stronger reasoning context:
+Reasoning Specialist is an optional meta-reasoning role. It is not selected merely because implementation is difficult; complex concrete implementation should still be reasoned through and performed by the appropriate executor.
 
-* architecture;
-* lifecycle behavior;
-* concurrency;
-* cross-module semantics;
-* ambiguous root causes;
-* difficult migration semantics;
-* provenance or security reasoning;
-* hard trade-offs.
+Use it when the problem definition, abstraction level, objective, or assumptions are themselves unclear, for example when:
 
-The Reasoning Specialist does not maintain task state and does not perform routine evidence bookkeeping.
+* every proposed solution feels structurally wrong;
+* competing solutions are actually solving different problems;
+* the user or Controller is not yet sure what must be decided;
+* hidden assumptions or the core tension need to be surfaced and reframed.
 
-Its ideal trajectory is:
-
-```text
-facts → reasoning → decision → exit
-```
+It does not maintain task state, perform large-scale repository investigation, or do routine evidence bookkeeping. Its output should help the Controller reframe the problem, decision basis, and remaining decision-changing unknowns.
 
 ---
 
@@ -291,9 +271,11 @@ Runtime and model selection belong to an adapter.
 
 Receives an explicit implementation boundary and the facts necessary to perform the change.
 
-Its job is implementation, not architectural scope expansion.
+Its job is to understand, implement, and verify within that boundary, not to expand task ownership. For complex implementation, an adapter may choose a more focused, higher-capability execution binding so reasoning and modification remain in the same working set.
 
-When assumptions fail or the required scope expands materially, control returns to the Controller.
+An Implementer may read the small number of key files it needs directly. When broad repository search, exhaustive call-site enumeration, or another large mechanical working set is required, an adapter that supports it may let the Implementer delegate that investigation to Investigator and continue from the compressed facts.
+
+When key assumptions fail, the problem definition must be reopened, or the required scope expands materially, control returns to the Controller.
 
 ---
 
@@ -313,7 +295,7 @@ The reviewer is deliberately isolated from:
 * scoring rubrics;
 * unnecessary debugging history.
 
-It returns structured issues with impact and evidence.
+It returns structured issues with impact and evidence. When broad mechanical checking is needed, an adapter that supports it may let Reviewer delegate scanning to Investigator while Reviewer retains the independent judgment.
 
 The Controller decides whether those findings should affect Decision Context.
 
@@ -360,12 +342,12 @@ Controller
     ↓
 Investigator
     ↓
-curated findings when needed
+compressed findings + evidence
     ↓
 Controller
 
-        ├─ obvious solution → Implementer
-        └─ difficult reasoning → Reasoning Specialist
+        ├─ problem and boundary are clear → Implementer
+        └─ problem framing / abstraction is unclear → Reasoning Specialist
 ```
 
 ---
@@ -373,17 +355,17 @@ Controller
 ### Complex change
 
 ```text
-Investigator investigation when needed
+Controller
         ↓
-bounded evidence
+executor appropriate to the task complexity
+        ├─ reads a small number of key files directly
+        └─ when needed → Investigator large-scale scan
+                              ↓
+                        compressed facts + evidence
+                              ↓
+                    return to the same executor working set
         ↓
-Reasoning Specialist reasoning when needed
-        ↓
-Implementer implementation
-        ↓
-deterministic checks
-        ↓
-Investigator verification when needed
+reasoning + implementation + deterministic checks
 ```
 
 For sufficiently risky changes:
@@ -811,21 +793,17 @@ versus:
 ```text
 Workflow B
 
-Luna:
-investigate
-→ structured evidence
+Investigator:
+large-scale scan
+→ compressed facts and evidence
 
-Sol:
-focused reasoning
-→ decision
+Focused Executor:
+read a small number of key materials
+→ focused reasoning
+→ implementation
+→ verification
 
-Terra:
-implementation
-
-Luna:
-verification
-
-Terra:
+Independent Reviewer:
 fresh review when required
 ```
 

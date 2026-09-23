@@ -506,16 +506,15 @@ on that Host; fixture verification is not live managed activation proof.
 Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
 mechanical. SubagentStop alone is not success; only an explicitly observed
-native Completed status can satisfy lifecycle completion. A short native wait
-is normalized only while an authorized reservation or managed native Codex
-child is pending and the current-session effective maximum is mechanically
-verified; otherwise the submitted native wait arguments remain unchanged.
-The current Codex hook does not expose that maximum, so release-pinned
-capability data alone cannot enable normalization. When a current-session
-effective maximum is mechanically available, prefer one blocking wait within
-that bound over repeated short polling. Do not periodically wake the Controller
-only to decide to wait again. Do not infer the bound from release defaults or
-hard ceilings.
+native Completed status can satisfy lifecycle completion. When blocked on an
+authorized managed child, use one blocking `wait_agent` call with `timeout_ms`
+equal to the maximum advertised in the current turn's `wait_agent` tool
+definition. The current turn's tool definition is the authority; never infer a
+maximum from release defaults, configuration, history, or capability tables.
+Early return on mailbox activity is expected; if the child remains pending,
+inspect the relevant new state and wait again using the current turn's
+advertised maximum. Do not use short periodic polling. If no usable current
+maximum is advertised, do not invent one.
 Task closure requires the last
 Controller-direct handoff's completed lifecycle and no pending or active
 descendants; a later Scanner does not replace that top-level completion.

@@ -14,7 +14,7 @@ import subprocess
 import time
 from typing import Any
 
-from . import core
+from . import core, roles
 
 HOOK_COMMAND_PREFIX = "thaliris audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
@@ -47,17 +47,23 @@ _OBSERVED_EXECUTION_TOOL_NAMES = ("Bash", "Shell", "exec", "exec_command", "comm
 _TRUSTED_CODEX_SHELL_TOOL_NAMES = ("Bash",)
 _CONTROLLER_EXECUTION_TOOL_NAMES = _OBSERVED_EXECUTION_TOOL_NAMES
 _CONTROLLER_EXECUTION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _OBSERVED_EXECUTION_TOOL_NAMES) + ")"
-_NATIVE_AGENT_ROLES = {
-    # Only the six concrete Thaliris Codex profiles may cross the managed
-    # spawn boundary.  Ordinary Codex worker/explorer remains transparent
-    # outside an ACTIVE managed task.
-    "thaliris-investigator": "investigator",
-    "thaliris-curator": "curator",
-    "thaliris-reasoning-specialist": "reasoning-specialist",
-    "thaliris-implementer": "implementer",
-    "thaliris-verifier": "verifier",
-    "thaliris-reviewer": "reviewer",
-}
+
+def _native_agent_roles() -> dict[str, str]:
+    """Return exact generated native identities from the role registry."""
+    return roles.native_agent_roles()
+
+
+def _native_role_names() -> str:
+    """Return registry-derived names for mechanical denial diagnostics."""
+    names = [definition.id.replace("-", " ").title() for definition in roles.native_role_definitions()]
+    if len(names) <= 1:
+        return " and ".join(names)
+    return ", ".join(names[:-1]) + ", and " + names[-1]
+
+
+# Compatibility alias for existing adapter callers. Runtime checks use the
+# accessor so registry additions do not require lifecycle edits.
+_NATIVE_AGENT_ROLES = _native_agent_roles()
 _CONTROLLER_MUTATION_TOOL_NAMES = ("apply_patch", "file_change", "functions.apply_patch", "functions.file_change")
 _CONTROLLER_MUTATION_TOOL_PATTERN = "(?:" + "|".join(re.escape(name) for name in _CONTROLLER_MUTATION_TOOL_NAMES) + ")"
 _CHILD_CONTROL_MUTATION_ACTIONS = frozenset({
@@ -746,7 +752,7 @@ def _record_protocol_deviation(
     tool = payload.get("tool_name") or payload.get("tool")
     if task_id is None or not isinstance(agent_id, str) or not agent_id or not isinstance(tool, str):
         return
-    role = _NATIVE_AGENT_ROLES.get(str(agent_type), "unknown")
+    role = _native_agent_roles().get(str(agent_type), "unknown")
     item = {
         "agent_id": agent_id[:128],
         "agent_type": agent_type[:128] if isinstance(agent_type, str) else "unknown",
@@ -842,8 +848,8 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     if pending is not None and (
         not isinstance(pending, dict)
         or set(pending) != {"role", "expected_agent_type", "session_id_hash", "authorized_sequence", "task_name_hash", "handoff_id", "task_revision", "producer", "payload_hash", "created_at_ns"}
-        or pending.get("role") not in set(_NATIVE_AGENT_ROLES.values())
-        or pending.get("expected_agent_type") not in _NATIVE_AGENT_ROLES
+        or pending.get("role") not in set(_native_agent_roles().values())
+        or pending.get("expected_agent_type") not in _native_agent_roles()
         or not isinstance(pending.get("session_id_hash"), str)
         or not isinstance(pending.get("authorized_sequence"), int)
         or not isinstance(pending.get("handoff_id"), str)
@@ -859,14 +865,14 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
 def _managed_spawn_role(payload: dict[str, Any]) -> str | None:
     """Map only an explicitly supported native agent_type to a semantic role."""
     native_agent_type = _native_spawn_agent_type(payload)
-    return _NATIVE_AGENT_ROLES.get(native_agent_type) if native_agent_type is not None else None
+    return _native_agent_roles().get(native_agent_type) if native_agent_type is not None else None
 
 
 def _native_spawn_agent_type(payload: dict[str, Any]) -> str | None:
     """Accept one exact supported native profile, never a first-match alias."""
     tool_input = _delegation_input(payload)
     supplied = [tool_input[key] for key in ("agent_type", "agentType") if key in tool_input]
-    if not supplied or any(not isinstance(value, str) or value not in _NATIVE_AGENT_ROLES for value in supplied):
+    if not supplied or any(not isinstance(value, str) or value not in _native_agent_roles() for value in supplied):
         return None
     return supplied[0] if all(value == supplied[0] for value in supplied) else None
 
@@ -887,7 +893,7 @@ def _bound_managed_child(root: Path, payload: dict[str, Any]) -> bool:
         or turn_id_hash is None
     ):
         return False
-    role = _NATIVE_AGENT_ROLES[native_agent_type]
+    role = _native_agent_roles()[native_agent_type]
     try:
         with core._lock(root):
             state = _load_lifecycle(_lifecycle_path(root, task_id), task_id)
@@ -924,7 +930,7 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
     if task_id is None:
         return ""
     expected_agent_type = _native_spawn_agent_type(payload)
-    role = _NATIVE_AGENT_ROLES.get(expected_agent_type) if expected_agent_type is not None else None
+    role = _native_agent_roles().get(expected_agent_type) if expected_agent_type is not None else None
     if role is None:
         return _permission_deny("THALIRIS_MANAGED_AGENT_REQUIRED: managed tasks may spawn only a supported Thaliris agent profile.")
     session_id_hash = _session_id_hash(payload)
@@ -1028,7 +1034,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
     agent_id = payload.get("agent_id")
     agent_type = payload.get("agent_type")
     native_agent_type = _native_spawn_agent_type({"tool_input": {"agent_type": agent_type}})
-    role = _NATIVE_AGENT_ROLES.get(native_agent_type) if native_agent_type is not None else None
+    role = _native_agent_roles().get(native_agent_type) if native_agent_type is not None else None
     session_id_hash = _session_id_hash(payload)
     turn_id_hash = _turn_id_hash(payload)
     if task_id is None or not isinstance(agent_id, str) or not agent_id or role is None:
@@ -1569,14 +1575,16 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
         return ""
     normalized = _tool_basename(tool)
     native_agent_type = _native_spawn_agent_type({"tool_input": payload})
-    role = _NATIVE_AGENT_ROLES.get(native_agent_type, "unknown")
-    if normalized in _DELEGATION_TOOL_NAMES:
-        return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: a managed Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer session may not delegate to another session.")
+    role = _native_agent_roles().get(native_agent_type, "unknown")
+    definition = roles.role_definition(role)
+    role_names = _native_role_names()
+    if normalized in _DELEGATION_TOOL_NAMES and definition is not None and not definition.delegation_allowed:
+        return _permission_deny(f"THALIRIS_ROLE_SESSION_DELEGATION: a managed {role_names} session may not delegate to another session.")
     operation, context_targets = _context_call(payload)
-    if operation in _CHILD_CONTEXT_MUTATIONS:
+    if operation in _CHILD_CONTEXT_MUTATIONS and definition is not None and not definition.controller_control_state_modification_allowed:
         target = f"thaliris {operation}"
         _best_effort_record(_record_protocol_deviation, root, payload, operation=operation, target=target, blocked=True)
-        return _permission_deny("THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: an Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer session may not modify Controller-owned control state.")
+        return _permission_deny(f"THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: a {role_names} session may not modify Controller-owned control state.")
     if operation in _CHILD_CONTEXT_READS:
         for target in context_targets or [f"thaliris {operation}"]:
             _best_effort_record(
@@ -1586,7 +1594,7 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
                 operation=operation,
                 target=target,
                 blocked=False,
-                notify_controller=role in {"reviewer", "verifier", "reasoning-specialist", "curator"},
+                notify_controller=role in roles.notice_roles(),
             )
         if operation == "task-status":
             return _updated_command_output(payload, "--suppress-protocol-notice")
@@ -1601,10 +1609,10 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
             operation="control-state-write" if mutation else "control-state-read",
             target=target,
             blocked=mutation,
-            notify_controller=mutation or role in {"reviewer", "verifier", "reasoning-specialist", "curator"},
+            notify_controller=mutation or role in roles.notice_roles(),
         )
         if mutation:
-            return _permission_deny("THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: an Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer session may not modify Controller-owned control state.")
+            return _permission_deny(f"THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: a {role_names} session may not modify Controller-owned control state.")
     for durable_target in _visible_durable_paths(payload):
         _best_effort_record(
             _record_protocol_deviation,
@@ -1613,20 +1621,20 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
             operation="durable-path-read",
             target=durable_target,
             blocked=False,
-            notify_controller=role in {"reviewer", "verifier", "reasoning-specialist", "curator"},
+            notify_controller=role in roles.notice_roles(),
         )
-    if role in {"reviewer", "verifier"} and _obvious_write_attempt(payload):
+    if definition is not None and not definition.repo_write_allowed and _obvious_write_attempt(payload):
         _best_effort_record(
             _record_protocol_deviation,
             root,
             payload,
-            operation="verifier-write-attempt" if role == "verifier" else "reviewer-write-attempt",
+            operation=f"{role}-write-attempt",
             target=normalized,
             blocked=True,
         )
-        if role == "verifier":
-            return _permission_deny("THALIRIS_VERIFIER_WRITE_BLOCKED: Verifier must remain an independent non-writing checker.")
-        return _permission_deny("THALIRIS_REVIEWER_WRITE_BLOCKED: Reviewer must remain an independent non-writing checker.")
+        code = definition.write_denial_code or "THALIRIS_ROLE_SESSION_WRITE_BLOCKED"
+        reason = definition.write_denial_reason or "this role may not write repository files."
+        return _permission_deny(f"{code}: {reason}")
     return ""
 
 
@@ -1738,15 +1746,7 @@ def _normalized_agent_role(tool_input: dict[str, Any], payload: dict[str, Any]) 
     if not isinstance(value, str) or not value.strip():
         return "unknown"
     normalized = "-".join(value.strip().lower().replace("_", "-").split())
-    aliases = {
-        "luna-investigator": "investigator",
-        "luna-curator": "curator",
-        "terra-reviewer": "reviewer",
-        "terra-implementer": "implementer",
-        "reasoning-specialist": "reasoning-specialist",
-        "reasoning-specialist-sol": "reasoning-specialist",
-        "sol-high": "reasoning-specialist",
-    }
+    aliases = roles.role_aliases()
     return aliases.get(normalized, normalized[:64])
 
 

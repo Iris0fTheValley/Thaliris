@@ -12,7 +12,7 @@ finish a task.
 Controller
     │ explicit task + selected information
     ▼
-Investigator / Curator / Reasoning Specialist / Implementer / Focused Implementer / Reviewer
+selected role session
     ├── private working set
     ├── optional detailed Artifact
     └── distilled result
@@ -24,8 +24,8 @@ Investigator / Curator / Reasoning Specialist / Implementer / Focused Implemente
 
 The authorized parent's native spawn message is each role session's only task-specific
 semantic input. `SubagentStart` validates authorization, identity, role, and
-session and binds lifecycle and handoff metadata. It does not construct a context packet
-nor returns task-specific `additionalContext`.
+session and binds lifecycle and handoff metadata. It does not construct a context
+packet or return task-specific `additionalContext`.
 
 There is no production path from task state through a role projection into a
 role session, and no hidden model auditor that corrects or blocks the Controller.
@@ -34,20 +34,23 @@ role session, and no hidden model auditor that corrects or blocks the Controller
 
 The Controller owns routing, context selection, interpretation, acceptance,
 and completion. For ACTIVE and degraded work, it selects the minimum necessary
-fresh roles; roles are capabilities, not mandatory stages. A straightforward,
-bounded, low-risk task may use only a fresh Implementer, including bounded local
-reading, implementation, and deterministic verification. Decision-changing
-investigation belongs to Investigator. Reviewer, Curator, and Reasoning
-Specialist are optional, and Reviewer is not a default gate.
+fresh roles; roles divide cognitive load rather than define mandatory stages.
+The current design separates the main loads: the Controller preserves the goal
+and selects context; Investigator carries large working sets, repository scans,
+and fact compression; Implementer owns implementation; Reviewer independently
+challenges the result. Complex implementation may use a more focused,
+higher-capability execution binding, while implementation decisions stay with
+the executor. Reasoning Specialist is reserved for reframing the problem when
+the problem definition, abstraction, or assumptions are themselves unclear.
+Curator turns explicitly selected material into reusable knowledge. Compatibility
+or specialized profiles may exist without becoming mandatory workflow stages.
 
 Both Implementer and Focused Implementer execute implementation work. Keep the
-working set focused. Delegate broad repository scanning, exhaustive call-site
-search, residual-reference checks, and other large mechanical investigation to
-the Scanner. Use Scanner output as evidence; retain responsibility for
-implementation decisions. Investigator/Scanner compresses facts without making
-architecture decisions. Reasoning Specialist reframes ill-defined problems,
-not ordinary design or implementation. Verifier is a read-only compatibility
-role and is not recommended as a workflow stage.
+working set focused. Investigator may carry a large private working set and
+compress broad scans, call sites, and residual references into facts, locations,
+evidence, and unknowns. Executors use that evidence while retaining implementation
+decisions. Reasoning Specialist reframes ill-defined problems. Verifier is a
+read-only compatibility role and is not recommended as a workflow stage.
 
 Controller has no fixed model, effort, or native profile; Host/user selection
 applies. Investigator, Curator, and standard Implementer default to
@@ -57,10 +60,9 @@ Only Controller may select static Astra medium or xhigh profiles before spawn
 for exceptional reasoning. Those profiles map to the same stable role IDs. Per-spawn
 model/effort overrides are denied.
 
-An Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer keeps repository reads, searches, logs, tests, and
-intermediate work private and normally returns only a distilled conclusion,
-key findings, decision-changing unknowns, contradictions, verification, and
-optional Artifact pointers.
+Role sessions keep intermediate work private and normally return only a
+distilled conclusion, key findings, decision-changing unknowns, contradictions,
+verification, and optional Artifact pointers.
 
 Core provides identities, revisions and compare-and-swap, locking, atomic
 writes and rollback, hashes, provenance, supersession history, objective file
@@ -76,6 +78,8 @@ bounded missing-stop reconciliation, and native blocking waits. An automatic
 long-wait normalization occurs only when a pending reservation or managed native Codex child
 exists and a current-session effective maximum is mechanically verified;
 otherwise the requested timeout is preserved without automatic expansion.
+The Controller is carried by the Host/user-selected root session; child-profile
+model and effort choices belong to adapter role bindings.
 
 Only Implementer, Focused Implementer, and Reviewer may delegate one fresh
 Investigator/Scanner. There is one active top-level role session and at most
@@ -107,9 +111,9 @@ root navigation and creates a minimal thin INDEX first if one is missing.
 Navigation is not reread automatically during the task unless the map changed,
 is insufficient, freshness is invalid, or resume/compact requires recovery.
 
-Milestones are ordinary documents. Curator is an optional role session.
-`task-promote` stores what the Controller explicitly selected without an
-epistemic qualification gate.
+Milestones are ordinary documents. Curator is an optional knowledge-enhancement
+role, not a mandatory task stage. `task-promote` stores what the Controller
+explicitly selected without an epistemic qualification gate.
 When a promotion changes durable navigation, the Controller should provide its
 own optional `index_update` in the same `task-promote` call. Core does not
 generate INDEX content; it validates CAS, references, and the atomic commit.

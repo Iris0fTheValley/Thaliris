@@ -55,7 +55,13 @@ def _native_agent_roles() -> dict[str, str]:
 
 def _native_role_names() -> str:
     """Return registry-derived names for mechanical denial diagnostics."""
-    names = [definition.id.replace("-", " ").title() for definition in roles.native_role_definitions()]
+    names = [
+        spec.id.replace("-", " ").title()
+        for role in roles.role_choices()
+        for spec in (roles.get_role(role),)
+        for binding in (roles.get_codex_binding(role),)
+        if spec is not None and binding is not None and binding.native_profile is not None
+    ]
     if len(names) <= 1:
         return " and ".join(names)
     return ", ".join(names[:-1]) + ", and " + names[-1]
@@ -1576,12 +1582,12 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
     normalized = _tool_basename(tool)
     native_agent_type = _native_spawn_agent_type({"tool_input": payload})
     role = _native_agent_roles().get(native_agent_type, "unknown")
-    definition = roles.role_definition(role)
+    binding = roles.get_codex_binding(role)
     role_names = _native_role_names()
-    if normalized in _DELEGATION_TOOL_NAMES and definition is not None and not definition.delegation_allowed:
+    if normalized in _DELEGATION_TOOL_NAMES and binding is not None and not binding.delegation_allowed:
         return _permission_deny(f"THALIRIS_ROLE_SESSION_DELEGATION: a managed {role_names} session may not delegate to another session.")
     operation, context_targets = _context_call(payload)
-    if operation in _CHILD_CONTEXT_MUTATIONS and definition is not None and not definition.controller_control_state_modification_allowed:
+    if operation in _CHILD_CONTEXT_MUTATIONS and binding is not None and not binding.controller_control_state_modification_allowed:
         target = f"thaliris {operation}"
         _best_effort_record(_record_protocol_deviation, root, payload, operation=operation, target=target, blocked=True)
         return _permission_deny(f"THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: a {role_names} session may not modify Controller-owned control state.")
@@ -1623,7 +1629,7 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
             blocked=False,
             notify_controller=role in roles.notice_roles(),
         )
-    if definition is not None and not definition.repo_write_allowed and _obvious_write_attempt(payload):
+    if binding is not None and not binding.repo_write_allowed and _obvious_write_attempt(payload):
         _best_effort_record(
             _record_protocol_deviation,
             root,
@@ -1632,8 +1638,8 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
             target=normalized,
             blocked=True,
         )
-        code = definition.write_denial_code or "THALIRIS_ROLE_SESSION_WRITE_BLOCKED"
-        reason = definition.write_denial_reason or "this role may not write repository files."
+        code = binding.write_denial_code or "THALIRIS_ROLE_SESSION_WRITE_BLOCKED"
+        reason = binding.write_denial_reason or "this role may not write repository files."
         return _permission_deny(f"{code}: {reason}")
     return ""
 

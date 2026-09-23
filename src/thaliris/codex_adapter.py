@@ -32,7 +32,12 @@ def _native_codex_role_map() -> dict[str, str]:
 
 
 def _role_model_defaults() -> dict[str, tuple[str, str | None]]:
-    return {definition.id: (definition.default_model, definition.reasoning_effort) for definition in roles.ROLE_REGISTRY.values()}
+    return {
+        role: (binding.model, binding.reasoning_effort)
+        for role in roles.role_choices()
+        for binding in (roles.get_codex_binding(role),)
+        if binding is not None
+    }
 
 
 def _agent_profiles() -> dict[str, tuple[str, str | None, str]]:
@@ -46,9 +51,9 @@ _ROLE_MODEL_DEFAULTS = _role_model_defaults()
 _AGENT_PROFILES = _agent_profiles()
 _NATIVE_PROFILE_NAMES = roles.native_profile_names()
 _KNOWN_GENERATED_AGENT_PROFILE_HASHES = {
-    definition.profile_filename: definition.legacy_profile_hashes
-    for definition in roles.native_role_definitions()
-    if definition.profile_filename is not None
+    binding.profile_filename: binding.legacy_profile_hashes
+    for binding in roles.iter_codex_bindings()
+    if binding.profile_filename is not None
 }
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "b6dba8d5d5e855face02667993601f84c4a54e77d7c33012d542a6b91483ec6c",
@@ -80,10 +85,11 @@ _KNOWN_HOST_WAIT_CAPABILITIES = {
 def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
     # Keep the generated contract phrase discoverable at the adapter boundary:
     # another authorized native Codex role session is never delegated to.
-    definition = roles.role_definition(role)
-    if definition is None or not definition.generated_profile:
+    spec = roles.get_role(role)
+    binding = roles.get_codex_binding(role)
+    if spec is None or binding is None or not binding.generated_profile:
         raise ValueError(f"unknown generated role: {role}")
-    instructions = definition.instructions
+    instructions = spec.instructions
     return (
         f'name = "{name}"\n'
         f'description = "Thaliris {role} execution role"\n'
@@ -100,8 +106,8 @@ def _agent_profile_state(value: bytes, name: str) -> str:
     expected = _agent_profile(name.removesuffix(".toml"), profile[2], profile[0], profile[1])
     if value == expected:
         return "current"
-    definition = roles.role_definition(profile[2])
-    hashes = definition.legacy_profile_hashes if definition is not None else frozenset()
+    binding = roles.get_codex_binding(profile[2])
+    hashes = binding.legacy_profile_hashes if binding is not None else frozenset()
     return "legacy" if hashlib.sha256(value).hexdigest() in hashes else "user"
 
 
@@ -158,7 +164,7 @@ def _project_definition_facts(root: Path) -> dict[str, str]:
                 # validity. User-owned text may use different line endings;
                 # normalize the owned block before comparing it to the
                 # canonical LF-rendered definition.
-                expected = _normalize_line_endings(MANAGED).removesuffix("\n")
+                expected = _normalize_line_endings(render_managed()).removesuffix("\n")
                 instruction_present = "YES" if _normalize_line_endings(current[start:end]) == expected else "NO"
         except (OSError, UnicodeError, ValueError):
             instruction_present = "NO"
@@ -279,7 +285,72 @@ AUDIT_IGNORE_START = "# thaliris-codex:begin"
 AUDIT_IGNORE_END = "# thaliris-codex:end"
 AUDIT_IGNORE_RULE = ".context/audit/"
 
-MANAGED = f"""{MANAGED_START}
+
+def _native_role_labels() -> list[str]:
+    """Return display labels from the canonical role query boundary."""
+    labels: list[str] = []
+    for role in roles.role_choices():
+        spec = roles.get_role(role)
+        binding = roles.get_codex_binding(role)
+        if spec is not None and binding is not None and binding.native_profile is not None:
+            labels.append(spec.id.replace("-", " ").title())
+    return labels
+
+
+def _native_role_names_text() -> str:
+    # Compatibility prose: Fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer sessions use values from this query boundary.
+    labels = _native_role_labels()
+    if not labels:
+        return "no named roles"
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return ", ".join(labels[:-1]) + ", and " + labels[-1]
+
+
+def _controller_model() -> str:
+    binding = roles.get_codex_binding("controller")
+    return binding.model if binding is not None and binding.model is not None else "(host/task)"
+
+
+def _native_profile_facts() -> str:
+    """Render native model/reasoning facts without a second role list.
+
+    The six-role layout is retained exactly for migration compatibility.  A
+    different registry size uses a generic one-line-per-entry rendering.
+    """
+    entries: list[tuple[str, str, str]] = []
+    for role in roles.role_choices():
+        spec = roles.get_role(role)
+        binding = roles.get_codex_binding(role)
+        if spec is None or binding is None or binding.native_profile is None:
+            continue
+        entries.append((spec.id.replace("-", " ").title(), binding.model or "(host/task)", binding.reasoning_effort or "(host/task)"))
+    if len(entries) == 6:
+        (label0, model0, effort0), (label1, model1, effort1), (label2, model2, effort2), (label3, model3, effort3), (label4, model4, effort4), (label5, model5, effort5) = entries
+        return (
+            f"The native child profiles are {label0} (`{model0}`,\n"
+            f"`{effort0}`), {label1} (`{model1}`, `{effort1}`), {label2}\n"
+            f"(`{model2}`, `{effort2}`), {label3} (`{model3}`, `{effort3}`), {label4}\n"
+            f"(`{model4}`, `{effort4}`), and {label5} (`{model5}`, `{effort5}`)."
+        )
+    rendered = [f"{label} (`{model}`, `{effort}`)" for label, model, effort in entries]
+    if not rendered:
+        return "The native child profiles are not configured."
+    if len(rendered) == 1:
+        return f"The native child profiles are {rendered[0]}."
+    if len(rendered) == 2:
+        return f"The native child profiles are {rendered[0]} and {rendered[1]}."
+    return f"The native child profiles are {', '.join(rendered[:-1])}, and {rendered[-1]}."
+
+
+def render_managed() -> str:
+    """Render marker-owned instructions from the current role registry."""
+    return _render_managed()
+
+def _render_managed() -> str:
+    return f"""{MANAGED_START}
 ## Thaliris Router
 
 Codex is the runtime. Thaliris provides durable records, identities, revisions,
@@ -301,14 +372,14 @@ When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
 contracts change, check and synchronize both the repository-managed
 instruction and the currently effective Codex global instruction.
 
-Fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer sessions use `fork_turns="none"`
+Fresh {_native_role_names_text()} sessions use `fork_turns="none"`
 and receive their tasks plus selected information in
 the Controller's native spawn message. `SubagentStart` validates authorization,
 identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
-and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer automatically.
+and Artifact bodies never enter a {_native_role_names_text()} automatically.
 
-Persistent root Controller model default: `gpt-5.6-sol`. Reasoning effort is
+Persistent root Controller model default: `{_controller_model()}`. Reasoning effort is
 selected by Host, task, or user policy and is not forced by Thaliris. This is
 root instruction metadata, not a native Codex child profile and does not change
 a current task model automatically.
@@ -333,7 +404,7 @@ insufficient when the Controller can decide confidently from established facts.
 Do not use counters, thresholds, risk scores, classifiers, or a state machine
 for this routing.
 
-Each Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer keeps
+Each {_native_role_names_text()} keeps
 its private working set private. By default it returns a distilled conclusion, key findings,
 decision-changing unknowns or contradictions, verification performed, and
 optional Artifact pointers. Detailed reusable material may be saved in a
@@ -425,22 +496,28 @@ then proceed to normal managed startup.
 {MANAGED_END}
 """
 
-ROLE_PACKS = """<!-- thaliris-role-packs:v5 -->
+
+MANAGED = _render_managed()
+
+def render_role_packs() -> str:
+    """Render the role-pack document with current registry facts."""
+    return _render_role_packs()
+
+
+def _render_role_packs() -> str:
+    return f"""<!-- thaliris-role-packs:v5 -->
 # Thaliris Role Profiles
 
 These profiles are working-style defaults, not routing rules or semantic
 permissions. The Controller's explicit native spawn message is the sole
-task-specific input to every Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer.
+task-specific input to every {_native_role_names_text()}.
 
 ## Role Defaults
 
-The persistent root Controller model default is `gpt-5.6-sol`; its reasoning
+The persistent root Controller model default is `{_controller_model()}`; its reasoning
 effort is selected by Host, task, or user policy and is not forced by Thaliris.
 It is root instruction metadata, not a native Codex child profile and does not
-mutate a current task model. The native child profiles are Investigator (`gpt-5.6-luna`,
-`xhigh`), Curator (`gpt-5.6-luna`, `xhigh`), Reasoning Specialist
-(`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `xhigh`), Verifier
-(`gpt-5.6-luna`, `xhigh`), and Reviewer (`gpt-5.6-terra`, `high`).
+mutate a current task model. {_native_profile_facts()}
 
 ## Shared Role Result
 
@@ -543,6 +620,9 @@ return through a fresh Implementer and Verifier. DECISION_REOPEN returns to the
 Controller, then to Investigator or Reasoning Specialist as appropriate.
 """
 
+
+ROLE_PACKS = _render_role_packs()
+
 # The role-pack document above intentionally remains the hand-maintained
 # design/routing explanation. Mechanical role facts have a separate generated
 # document so prose changes cannot silently change installation semantics.
@@ -635,19 +715,19 @@ def _managed_agents(current: str) -> str:
     span = _managed_span(current, "AGENTS.md")
     if span is not None:
         start, end = span
-        expected = _normalize_line_endings(MANAGED).removesuffix("\n")
+        expected = _normalize_line_endings(render_managed()).removesuffix("\n")
         if _normalize_line_endings(current[start:end]) == expected:
             # Preserve the complete document when only user-owned content
             # differs (including its line-ending convention).
             return current
     newline = "\r\n" if "\r\n" in current else "\n"
-    block = MANAGED.replace("\n", newline)
+    block = render_managed().replace("\n", newline)
     user_text = _strip_managed_agents(current) if span is not None else current
     return block if not user_text else block + user_text
 
 
 def _role_pack_state(value: bytes) -> str:
-    if value == ROLE_PACKS.encode("utf-8"):
+    if value == render_role_packs().encode("utf-8"):
         return "current"
     return "legacy" if hashlib.sha256(value).hexdigest() in _KNOWN_GENERATED_ROLE_PACK_HASHES else "user"
 
@@ -704,9 +784,9 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
             writes[instruction.relative_to(root).as_posix()] = stripped.encode("utf-8")
     role_packs = core._safe(root, "docs/thaliris-role-packs.md")
     if not role_packs.exists():
-        writes["docs/thaliris-role-packs.md"] = ROLE_PACKS.encode("utf-8")
+        writes["docs/thaliris-role-packs.md"] = render_role_packs().encode("utf-8")
     elif _role_pack_state(role_packs.read_bytes()) == "legacy":
-        writes["docs/thaliris-role-packs.md"] = ROLE_PACKS.encode("utf-8")
+        writes["docs/thaliris-role-packs.md"] = render_role_packs().encode("utf-8")
     elif _role_pack_state(role_packs.read_bytes()) == "user":
         manual.append("docs/thaliris-role-packs.md")
     role_registry = core._safe(root, "docs/thaliris-role-registry.md")
@@ -994,13 +1074,19 @@ def doctor(root: Path) -> dict[str, object]:
     from .doctor import report
     root = core._repo_root(root)
     result = report(root)
+    registry_path = root / "docs" / "thaliris-role-registry.md"
+    registry_state = (
+        _role_registry_state(registry_path.read_bytes())
+        if registry_path.is_file()
+        else "missing"
+    )
     result["role_registry"] = {
         "roles": list(_role_choices()),
         "native_profiles": sorted(roles.native_profile_names()),
         "profile_definition_present": _profile_definition_present(root),
         "profile_inventory": role_profile_inventory(root),
-        "generated_role_document": "CURRENT" if _role_registry_state((root / "docs/thaliris-role-registry.md").read_bytes()) == "current" else "MISSING_OR_USER"
-        if (root / "docs/thaliris-role-registry.md").is_file() else "MISSING",
+        "generated_role_document": "CURRENT" if registry_state == "current" else "MISSING_OR_USER"
+        if registry_state != "missing" else "MISSING",
     }
     result["durable_index_integrity"] = core.durable_index_check(root)
     result["managed_task_state"] = lifecycle.managed_task_state(root)[0]
@@ -1015,9 +1101,9 @@ def doctor(root: Path) -> dict[str, object]:
         "reconciliation_attempts": 0,
         "reconciliation_successes": 0,
         **{
-            definition.orchestration_metric: 0
-            for definition in roles.native_role_definitions()
-            if definition.orchestration_metric is not None
+            binding.orchestration_metric: 0
+            for binding in roles.iter_codex_bindings()
+            if binding.orchestration_metric is not None
         },
     }
     expected = lifecycle.managed_hook_spec_hash()
@@ -1059,8 +1145,8 @@ def doctor(root: Path) -> dict[str, object]:
                 lifecycle_start = True
                 lifecycle_stop = lifecycle_stop or isinstance(child.get("stopped"), int)
                 lifecycle_reconciled = lifecycle_reconciled or child.get("terminal_state") == "NATIVE_TERMINAL_RECONCILED"
-                definition = roles.role_definition(child.get("role")) if isinstance(child.get("role"), str) else None
-                metric = definition.orchestration_metric if definition is not None else None
+                binding = roles.get_codex_binding(child.get("role")) if isinstance(child.get("role"), str) else None
+                metric = binding.orchestration_metric if binding is not None else None
                 if metric is not None:
                     orchestration[metric] += 1
         metrics = lifecycle_state.get("metrics")

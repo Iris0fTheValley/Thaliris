@@ -23,6 +23,30 @@ def _sentinel_definition() -> roles.RoleDefinition:
     )
 
 
+def _formal_sentinel_registration() -> tuple[roles.RoleSpec, roles.CodexExecutionBinding]:
+    return (
+        roles.RoleSpec(
+            id="formal-sentinel",
+            purpose="A seventh role used to prove registry propagation.",
+            instructions="formal sentinel instructions",
+        ),
+        roles.CodexExecutionBinding(
+            model="gpt-5.6-luna",
+            reasoning_effort="high",
+            native_profile="thaliris-formal-sentinel",
+            native_aliases=("formal-sentinel-alias",),
+            generated_profile=True,
+            profile_filename="thaliris-formal-sentinel.toml",
+            repo_write_allowed=False,
+            delegation_allowed=False,
+            controller_control_state_modification_allowed=False,
+            telemetry_notice=True,
+            write_denial_code="THALIRIS_FORMAL_SENTINEL_WRITE_BLOCKED",
+            write_denial_reason="Formal sentinel must remain read-only.",
+        ),
+    )
+
+
 def test_registry_is_authoritative_for_native_profiles_and_mechanical_facts() -> None:
     native = roles.native_role_definitions()
     assert [definition.id for definition in native] == [
@@ -147,3 +171,54 @@ def test_generated_registry_document_matches_tracked_artifact() -> None:
 
     assert Path("docs/thaliris-role-registry.md").read_bytes() == roles.render_registry_document()
     assert codex_adapter.ROLE_REGISTRY_DOC.encode("utf-8") == roles.render_registry_document()
+
+
+def test_doctor_reports_missing_registry_document(tmp_path: Path) -> None:
+    root = _initialized_repo(tmp_path)
+    registry_document = root / "docs" / "thaliris-role-registry.md"
+    registry_document.unlink()
+
+    result = codex_adapter.doctor(root)
+
+    assert result["role_registry"]["generated_role_document"] == "MISSING"
+
+
+def test_formal_seventh_role_requires_only_spec_and_binding(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setitem(roles.ROLE_REGISTRY, "formal-sentinel", _formal_sentinel_registration())
+    root = _initialized_repo(tmp_path)
+
+    profile = root / ".codex" / "agents" / "thaliris-formal-sentinel.toml"
+    assert profile.is_file()
+    assert 'model_reasoning_effort = "high"' in profile.read_text(encoding="utf-8")
+    assert codex_adapter.bootstrap_check(root)["project_definition_present"] == "YES"
+    assert lifecycle._native_agent_roles()["thaliris-formal-sentinel"] == "formal-sentinel"
+    role_action = next(
+        action
+        for action in cli._parser()._subparsers._group_actions[0].choices["task-update"]._actions
+        if action.dest == "role"
+    )
+    assert "formal-sentinel" in role_action.choices
+    assert "formal-sentinel" in codex_adapter.doctor(root)["role_registry"]["roles"]
+    assert "Formal Sentinel" in codex_adapter.render_managed()
+    assert "Formal Sentinel" in codex_adapter.render_role_packs()
+    assert "| `formal-sentinel` |" in roles.render_registry_document().decode()
+    assert roles.get_codex_binding("formal-sentinel").legacy_profile_hashes == frozenset()
+
+    delegation = lifecycle._child_pre_tool_output(root, {
+        "agent_type": "thaliris-formal-sentinel",
+        "tool_name": "spawn_agent",
+        "tool_input": {},
+    })
+    write = lifecycle._child_pre_tool_output(root, {
+        "agent_type": "thaliris-formal-sentinel",
+        "tool_name": "Bash",
+        "tool_input": {"command": "echo output > generated.txt"},
+    })
+    control = lifecycle._child_pre_tool_output(root, {
+        "agent_type": "thaliris-formal-sentinel",
+        "tool_name": "Bash",
+        "tool_input": {"command": "thaliris task-update --role formal-sentinel"},
+    })
+    assert "THALIRIS_ROLE_SESSION_DELEGATION" in delegation
+    assert "THALIRIS_FORMAL_SENTINEL_WRITE_BLOCKED" in write
+    assert "THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION" in control

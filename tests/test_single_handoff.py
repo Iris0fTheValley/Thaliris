@@ -1196,6 +1196,11 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "Roles are capabilities, not mandatory workflow stages" in codex_adapter.MANAGED
     assert "Controller -> fresh\nImplementer -> done" in codex_adapter.MANAGED
     assert "degraded mode does not define a separate role\nsequence" in codex_adapter.MANAGED
+    assert "For divisible work, the Controller chooses bounded semantic slices" in codex_adapter.MANAGED
+    assert "not by token, file, or task-count\nthresholds" in codex_adapter.MANAGED
+    assert "low-difficulty, high-certainty slices to standard Implementer on Luna" in codex_adapter.MANAGED
+    assert "Reasoning Specialist\non Sol only when problem framing or slice decomposition is unclear; it does not\nimplement." in codex_adapter.MANAGED
+    assert "already small, unusually demanding\nslice or an evidenced Sol failure" in codex_adapter.MANAGED
     assert "not cryptographically enforced by the\ncurrent audit-hook ingress" in codex_adapter.MANAGED
     assert "Before another correction packet, distinguish a local implementation defect" in codex_adapter.MANAGED
     assert "overturns an accepted invariant" in codex_adapter.MANAGED

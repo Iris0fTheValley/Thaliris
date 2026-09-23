@@ -34,6 +34,15 @@ implementations, complex semantic repairs, or remaining correctness
 uncertainty. Curator and Reasoning Specialist are optional and selected only
 when they add actual value.
 
+For divisible work, the Controller chooses bounded semantic slices instead of
+handing an entire multi-slice stage to a higher-capability Executor. Define
+slice boundaries by semantic dependencies, decision coupling, implementation
+uncertainty, and independent closure, not by token, file, or task-count
+thresholds. Prefer slices that can each be independently understood,
+implemented, verified, committed, and closed. A completed slice returns
+distilled state, its commit reference, and verification evidence; discard its
+working set when closed.
+
 Controller has no fixed model, effort, or native profile. The Host/user selects
 its model. Investigator, Curator, and standard Implementer use
 `gpt-6-luna/xhigh`; Focused Implementer, Reasoning Specialist, and Reviewer use
@@ -44,13 +53,22 @@ These profiles map to the same stable IDs; defaults remain Luna or Sol. Per-spaw
 model/effort overrides are denied. Role sessions cannot choose their own
 model/effort. Reasoning Specialist reframes ill-defined
 problems; normal design and implementation belong to the Executors.
+Route low-difficulty, high-certainty slices to standard Implementer on Luna,
+even within a large project. Use Focused Implementer on Sol for complex,
+creative lifecycle, ownership, or compatibility work. Use Reasoning Specialist
+on Sol only when problem framing or slice decomposition is unclear; it does not
+implement. Astra is an escalation for an already small, unusually demanding
+slice or an evidenced Sol failure. Astra medium is the default escalation;
+xhigh requires a clear reason.
 
 Keep the working set focused. Delegate broad repository scanning, exhaustive
 call-site search, residual-reference checks, and other large mechanical
 investigation to the Scanner. Use Scanner output as evidence; retain
 responsibility for implementation decisions. Only Implementer, Focused
 Implementer, and Reviewer may delegate Investigator. The remaining child roles
-cannot delegate. Fresh children always use `fork_turns="none"`.
+cannot delegate. Fresh children always use `fork_turns="none"`. Executors work
+only within their assigned semantic slice, preserve Controller decisions and
+invariants, and return a decision-changing unknown rather than changing them.
 
 When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
 contracts change, check and synchronize both the repository-managed instruction

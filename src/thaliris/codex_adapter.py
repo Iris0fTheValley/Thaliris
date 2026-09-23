@@ -358,6 +358,14 @@ Roles are capabilities, not mandatory workflow stages. A straightforward,
 bounded, low-risk task with confirmed facts may follow Controller -> fresh
 Implementer -> done. That Implementer may perform the bounded local reading,
 implementation, and deterministic verification needed to complete the task.
+For divisible work, the Controller chooses bounded semantic slices instead of
+handing an entire multi-slice stage to a higher-capability Executor. Define
+slice boundaries by semantic dependencies, decision coupling, implementation
+uncertainty, and independent closure, not by token, file, or task-count
+thresholds. Prefer slices that can each be independently understood,
+implemented, verified, committed, and closed. A completed slice returns
+distilled state, its commit reference, and verification evidence; discard its
+working set when closed.
 Use Investigator/Scanner for missing facts, large working sets, broad scans,
 and factual compression, without transferring architecture decisions. Use a Reviewer only when independent semantic review adds real
 value; it is not a default gate. Curator and Reasoning Specialist remain
@@ -381,6 +389,13 @@ Focused Implementer or Reasoning Specialist before spawn for exceptional reasoni
 These fixed profiles retain the same stable role IDs; default profiles remain
 on Luna or Sol. Per-spawn model/effort overrides are denied;
 role sessions never select their own model or effort.
+Route low-difficulty, high-certainty slices to standard Implementer on Luna,
+even within a large project. Use Focused Implementer on Sol for complex,
+creative lifecycle, ownership, or compatibility work. Use Reasoning Specialist
+on Sol only when problem framing or slice decomposition is unclear; it does not
+implement. Astra is an escalation for an already small, unusually demanding
+slice or an evidenced Sol failure. Astra medium is the default escalation;
+xhigh requires a clear reason.
 Implementer and Focused Implementer both execute implementation work. Reasoning
 Specialist reframes ill-defined problems; ordinary design and implementation
 remain with the Executors. Verifier is retained read-only for compatibility
@@ -390,6 +405,8 @@ Keep the working set focused. Delegate broad repository scanning, exhaustive
 call-site search, residual-reference checks, and other large mechanical
 investigation to the Scanner. Use Scanner output as evidence; retain
 responsibility for implementation decisions.
+Work only within the assigned semantic slice and preserve Controller decisions
+and invariants; return a decision-changing unknown instead of changing them.
 Controller may spawn registered roles. Implementer, Focused Implementer, and
 Reviewer may each spawn only a fresh Investigator/Scanner. Investigator,
 Reasoning Specialist, Curator, and Verifier cannot delegate. Maximum managed
@@ -602,7 +619,19 @@ Implementer handles concentrated reasoning and implementation with a focused
 working set. Keep the working set focused. Delegate broad repository scanning,
 exhaustive call-site search, residual-reference checks, and other large mechanical
 investigation to the Scanner. Use Scanner output as evidence; retain responsibility
-for implementation decisions. Delegate only to Investigator with `fork_turns="none"`.
+for implementation decisions. Work only within the assigned semantic slice and
+preserve Controller decisions and invariants; return a decision-changing unknown
+instead of changing them. Delegate only to Investigator with `fork_turns="none"`.
+
+The Controller routes low-difficulty, high-certainty slices to standard
+Implementer on Luna, including slices inside a large project. Focused Implementer
+on Sol handles complex, creative lifecycle, ownership, or compatibility work.
+Reasoning Specialist on Sol is for unclear problem framing or slice decomposition
+and does not implement. Astra is an escalation for an already small, unusually
+demanding slice or an evidenced Sol failure; medium is the default escalation,
+and xhigh requires a clear reason. After implementation, close the slice with
+distilled state, its commit reference, and verification evidence, then discard
+its detailed working set.
 
 An implementation task packet contains Goal, confirmed facts, hard invariants,
 Controller-decided boundaries/contracts, decision-changing unknowns,
@@ -615,7 +644,9 @@ For a straightforward, bounded task with confirmed facts, perform necessary
 bounded local reading, implementation, and deterministic verification in this
 fresh session; an Investigator is needed only when missing facts could change
 how to implement. Preserve stated constraints and report verification as
-observations. If an assigned correction cannot be completed without an
+observations. Close the assigned slice with distilled state, its commit
+reference, and verification evidence, then discard its detailed working set.
+If an assigned correction cannot be completed without an
 unverified external fact, an invalidating accepted invariant, or changing the
 decision basis, do not expand scope; return that dependency as a
 decision-changing unknown to the Controller. Do not infer additional task

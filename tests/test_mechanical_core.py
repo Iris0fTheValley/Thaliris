@@ -184,16 +184,23 @@ def test_routing_guidance_permits_the_bounded_implementer_only_path() -> None:
     root = Path(__file__).resolve().parents[1]
     protocol = (root / "docs" / "thaliris-routing-protocol.md").read_text(encoding="utf-8")
     role_packs = (root / "docs" / "thaliris-role-packs.md").read_text(encoding="utf-8")
+    normalized_protocol = " ".join(protocol.split())
     assert "For every task, the Controller selects the minimum necessary fresh role" in protocol
     assert "Roles are capabilities, not mandatory workflow stages." in protocol
     assert "policy is identical for ACTIVE and degraded work" in protocol
     assert "Controller -> fresh Implementer -> done" in protocol
     assert "Reviewer is conditional, not a mechanical post-implementation gate" in protocol
     assert "Curator and Reasoning Specialist are optional" in protocol
+    assert "For divisible work, the Controller chooses bounded semantic slices" in protocol
+    assert "not by token, file, or task-count thresholds" in normalized_protocol
+    assert "low-difficulty, high-certainty slices to standard Implementer on Luna" in normalized_protocol
+    assert "already small, unusually demanding" in normalized_protocol
     assert "Decision-changing investigation belongs to\nInvestigator" in protocol
     assert "Bounded local reading\nneeded for implementation may stay inside either Executor" in protocol
     assert "bounded local reading, implementation, and deterministic verification" in role_packs.replace("\n", " ")
     assert "an Investigator is needed only when missing facts could change" in role_packs
+    assert "Work only within the assigned semantic slice" in role_packs
+    assert "distilled state, its commit reference, and verification evidence" in role_packs
     assert "not a mechanical post-implementation gate" in role_packs
 
 

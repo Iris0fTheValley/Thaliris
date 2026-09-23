@@ -97,6 +97,10 @@ def test_profile_defaults_and_static_astra_selection_are_fixed() -> None:
         assert (value["name"], value["model"], value["model_reasoning_effort"]) == (name.removesuffix(".toml"), model, effort)
         assert roles.resolve_native_profile(value["name"]).id == role
         assert "Never select your own model or reasoning effort" in value["developer_instructions"]
+        if role in {"implementer", "focused-implementer"}:
+            assert "Work only within the assigned semantic slice" in value["developer_instructions"]
+            assert "return a decision-changing unknown instead of changing them" in value["developer_instructions"]
+            assert "its commit reference, and verification evidence" in value["developer_instructions"]
     for role in ("focused-implementer", "reasoning-specialist"):
         for effort, suffix in (("medium", "astra-medium"), ("xhigh", "xhigh")):
             name = f"thaliris-{role}-{suffix}.toml"

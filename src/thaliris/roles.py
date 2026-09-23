@@ -142,6 +142,9 @@ _EXECUTOR_INSTRUCTIONS = (
     " Keep the working set focused. Delegate broad repository scanning, exhaustive call-site "
     "search, residual-reference checks, and other large mechanical investigation to the Scanner. "
     "Use Scanner output as evidence; retain responsibility for implementation decisions. "
+    "Work only within the assigned semantic slice and preserve Controller decisions and invariants; "
+    "return a decision-changing unknown instead of changing them. Close the slice with distilled "
+    "state, its commit reference, and verification evidence, then discard its detailed working set. "
     "The Scanner uses the investigator role. Only a fresh Investigator may be delegated to, "
     "with fork_turns=\"none\" and no model or effort override."
 )

@@ -365,13 +365,13 @@ def test_codex_01551_wait_capability_is_version_pinned(monkeypatch) -> None:
     assert capability == {
         "status": "PASS", "version": "0.155.1", "min_wait_timeout_ms": 10_000,
         "default_wait_timeout_ms": 30_000, "release_hard_max_wait_timeout_ms": 3_600_000,
-        "effective_max_wait_timeout_ms": 3_600_000, "explicit_timeout_supported": True,
+        "effective_max_wait_timeout_ms": "UNAVAILABLE", "explicit_timeout_supported": True,
     }
     assert codex_adapter.native_child_completion_reenters_root("codex-0.155-test") == "UNSUPPORTED"
     codex_adapter._host_wait_mode_cached.cache_clear()
 
 
-def test_release_pinned_host_normalizes_pending_controller_wait(tmp_path: Path, monkeypatch) -> None:
+def test_release_pinned_host_does_not_normalize_with_unknown_turn_cap(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     core.task_start(root, "pinned blocking wait", None, None)
 
@@ -388,10 +388,7 @@ def test_release_pinned_host_normalizes_pending_controller_wait(tmp_path: Path, 
     original_input = {"timeout_ms": 60_000, "future_argument": {"keep": True}}
     wait = hook_payload(tool_name="wait_agent", tool_input=original_input)
 
-    rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", wait))
-    assert rewritten["hookSpecificOutput"]["updatedInput"] == {
-        **original_input, "timeout_ms": 3_600_000,
-    }
+    assert codex_adapter.audit_hook(root, "PreToolUse", wait) == ""
     assert wait["tool_input"] == original_input
 
 
@@ -407,7 +404,7 @@ def test_historical_codex_wait_capabilities_remain_exactly_pinned(monkeypatch, v
     capability = codex_adapter.host_explicit_blocking_wait("codex-pinned-test")
     assert capability["version"] == version
     assert capability["release_hard_max_wait_timeout_ms"] == 3_600_000
-    assert capability["effective_max_wait_timeout_ms"] == 3_600_000
+    assert capability["effective_max_wait_timeout_ms"] == "UNAVAILABLE"
     codex_adapter._host_wait_mode_cached.cache_clear()
 
 

@@ -233,9 +233,9 @@ def host_wait_mode(executable: str | None = None) -> dict[str, object]:
 def host_explicit_blocking_wait(executable: str | None = None) -> dict[str, object]:
     """Return version-pinned support for an explicit, bounded native wait.
 
-    This is a Host tool contract, not project configuration.  An explicit
-    ``timeout_ms`` reaches the native wait primitive in the current tool call,
-    so it neither relies on a default nor requires a session reload.
+    Release defaults and hard ceilings do not prove the active turn's
+    effective maximum. The Host does not currently expose that maximum bound
+    to the current session, so report it as unavailable until it does.
     """
     host = host_wait_mode(executable)
     if host.get("status") != "PASS":
@@ -248,10 +248,10 @@ def host_explicit_blocking_wait(executable: str | None = None) -> dict[str, obje
         "version": host["version"],
         "min_wait_timeout_ms": host["min"],
         "default_wait_timeout_ms": host["default"],
-        # The exact release pin supplies the explicit wait's supported upper
-        # bound.  Unknown or prerelease builds never reach this result.
+        # The exact release pin supplies a hard ceiling only. A configurable
+        # per-turn effective maximum is not exposed by the current Host hook.
         "release_hard_max_wait_timeout_ms": host["max"],
-        "effective_max_wait_timeout_ms": host["max"],
+        "effective_max_wait_timeout_ms": "UNAVAILABLE",
         "explicit_timeout_supported": True,
     }
 
@@ -507,14 +507,18 @@ Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
 mechanical. SubagentStop alone is not success; only an explicitly observed
 native Completed status can satisfy lifecycle completion. A short native wait
-is normalized only while an authorized reservation or managed native Codex child is pending
-and the current-session effective maximum is mechanically verified; otherwise
-no automatic long-wait normalization occurs. Task closure requires the last
+is normalized only while an authorized reservation or managed native Codex
+child is pending and the current-session effective maximum is mechanically
+verified; otherwise the submitted native wait arguments remain unchanged.
+The current Codex hook does not expose that maximum, so release-pinned
+capability data alone cannot enable normalization. When a current-session
+effective maximum is mechanically available, prefer one blocking wait within
+that bound over repeated short polling. Do not periodically wake the Controller
+only to decide to wait again. Do not infer the bound from release defaults or
+hard ceilings.
+Task closure requires the last
 Controller-direct handoff's completed lifecycle and no pending or active
 descendants; a later Scanner does not replace that top-level completion.
-When waiting on an authorized managed dependency, prefer one blocking wait over
-repeated short polling. Do not periodically wake the Controller only to decide
-to wait again. Use the mechanically known Host blocking-wait bound.
 The Controller interprets {_native_role_names_text()} results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
@@ -906,8 +910,9 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
     else:
         merged, _ = merge_hooks({"description": MANAGED_HOOKS_DESCRIPTION})
         writes[".codex/hooks.json"] = (json.dumps(merged, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    # Explicit timeout_ms normalization controls managed waits in the current
-    # native call. Do not create or depend on project config defaults.
+    # The current Host hook does not expose the active turn's effective cap.
+    # Preserve native wait arguments unless a future trusted Host contract
+    # supplies that session-bound value.
     return writes, manual
 
 

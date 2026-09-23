@@ -161,14 +161,18 @@ Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
 mechanical. SubagentStop alone is not success; only an explicitly observed
 native Completed status can satisfy lifecycle completion. A short native wait
-is normalized only while an authorized reservation or managed native Codex child is pending
-and the current-session effective maximum is mechanically verified; otherwise
-no automatic long-wait normalization occurs. Task closure requires the last
+is normalized only while an authorized reservation or managed native Codex
+child is pending and the current-session effective maximum is mechanically
+verified; otherwise the submitted native wait arguments remain unchanged.
+The current Codex hook does not expose that maximum, so release-pinned
+capability data alone cannot enable normalization. When a current-session
+effective maximum is mechanically available, prefer one blocking wait within
+that bound over repeated short polling. Do not periodically wake the Controller
+only to decide to wait again. Do not infer the bound from release defaults or
+hard ceilings.
+Task closure requires the last
 Controller-direct handoff's completed lifecycle and no pending or active
 descendants; a later Scanner does not replace that top-level completion.
-When waiting on an authorized managed dependency, prefer one blocking wait over
-repeated short polling. Do not periodically wake the Controller only to decide
-to wait again. Use the mechanically known Host blocking-wait bound.
 The Controller interprets Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, and Reviewer results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.

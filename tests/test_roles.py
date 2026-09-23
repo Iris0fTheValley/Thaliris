@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import subprocess
 
-from thaliris import cli, codex_adapter, lifecycle, roles
+from thaliris import cli, codex_adapter, core, lifecycle, roles
 
 
 def _sentinel_definition() -> roles.RoleDefinition:
@@ -60,6 +61,21 @@ def test_new_registry_role_flows_through_adapter_inventories_and_cli(monkeypatch
     choices = parser._subparsers._group_actions[0].choices["task-update"]._actions
     role_action = next(action for action in choices if action.dest == "role")
     assert "sentinel" in role_action.choices
+
+
+def test_new_registry_role_appears_in_active_spawn_isolation_diagnostic(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setitem(roles.ROLE_REGISTRY, "sentinel", _sentinel_definition())
+    root = _initialized_repo(tmp_path)
+    core.task_start(root, "registry diagnostic", None, None)
+
+    denied = lifecycle._pre_tool_output(root=root, payload={
+        "tool_name": "spawn_agent",
+        "tool_input": {"fork_turns": "all"},
+    })
+
+    reason = json.loads(denied)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert reason.startswith("THALIRIS_ISOLATION_REQUIRED:")
+    assert reason.endswith('and Sentinel session explicitly with fork_turns="none".')
 
 
 def _initialized_repo(tmp_path: Path) -> Path:

@@ -11,7 +11,7 @@ Thaliris 是一个 Git-native 的机械上下文与生命周期层。它不运�
 Controller
     │ explicit task + selected information
     ▼
-Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
+selected role session
     ├── private working set
     ├── optional detailed Artifact
     └── distilled result
@@ -21,7 +21,7 @@ Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
             └── decides next handoff
 ```
 
-Controller 的原生 spawn message 是 Investigator、Curator、Reasoning Specialist、Implementer 与 Reviewer 唯一的 task-specific 语义输入。
+Controller 的原生 spawn message 是任何被选中 role session 唯一的 task-specific 语义输入。
 `SubagentStart` 只验证授权、身份、角色与 session，绑定 lifecycle 和 handoff
 metadata；它不构建 task-specific `additionalContext`。
 
@@ -35,14 +35,17 @@ hidden model auditor -> Controller correction/block
 ## 职责
 
 Controller 负责路由、上下文选择、解释、接受与完成判断。无论 ACTIVE 还是 degraded，
-Controller 都只选择完成任务所需的最少 fresh roles；role 是 capability，不是必经的
-workflow stage。简单、明确、低风险的任务可以只经过 fresh Implementer，由它完成有界
-本地阅读、实现和确定性验证。只有会改变实现方向的调查才交给 Investigator；Reviewer、
-Curator 和 Reasoning Specialist 均按需使用，Reviewer 不是默认 gate。
+Controller 都只选择完成任务所需的最少 fresh roles；role 是认知分工，不是必经的
+workflow stage。当前设计把主要认知负载分开：Controller 维持目标并选择上下文；
+Investigator 承担大 working set、仓库扫描和事实压缩；Implementer 承担实现；
+Reviewer 独立挑战结果。复杂实现可以使用更聚焦、更高能力的执行绑定，但实现决策仍由
+执行角色负责。Reasoning Specialist 只在问题定义、抽象或前提本身不清楚时用于元认知
+重构；Curator 用于把已选择材料压缩成可复用知识。兼容或专用 profile 可以存在，但
+不构成 mandatory workflow。
 
-Investigator、Curator、Reasoning Specialist、Implementer 与 Reviewer 在私有 working
-set 中调查、实现或审查，默认只返回精炼结论、关键发现、会改变决策的未知、
-矛盾、验证与 Artifact pointer。
+Investigator 可以拥有巨大 working set，并把搜索结果压成事实、位置、证据与未知项；
+执行和审核角色则尽量保持 working set focused，只读取必要的关键材料。所有 role session
+默认只返回精炼结论、关键发现、会改变决策的未知、矛盾、验证与 Artifact pointer。
 
 Core 只提供：
 
@@ -59,10 +62,11 @@ completion，也不根据 stale evidence 自动改写 decision、constraint 或 
 
 Codex adapter 只负责 fresh spawn、`fork_turns="none"`、授权的串行 native Codex child lifecycle、
 handoff hash、SubagentStart/Stop identity、missing-stop reconciliation 和 native
-wait。只有确实存在 pending reservation 或 managed native Codex child、且当前 session effective
-maximum 已被机械验证时，短 wait 才会被规范化为长 blocking wait；否则不会自动规范化。
-`SubagentStop` 本身不是成功；只有明确观测到
-native `Completed` 才满足 lifecycle completion。
+wait。Controller 本身由 Host/user 当前选择的根 session 承载；child profile 的模型与
+reasoning effort 由 adapter 的 role binding 管理。只有确实存在 pending reservation 或
+managed native Codex child、且当前 session effective maximum 已被机械验证时，短 wait
+才会被规范化为长 blocking wait；否则不会自动规范化。`SubagentStop` 本身不是成功；
+只有明确观测到 native `Completed` 才满足 lifecycle completion。
 
 ## Task ledger
 
@@ -77,7 +81,7 @@ lifecycle。它不判断测试是否充分，也不裁决任务语义上是否�
 
 Artifact 正文位于显式路径中；账本只保存 ID、producer、path、content hash、
 created revision、source refs 与 optional supersedes。Artifact 不会被自动读取或
-传播。Controller 显式取回正文，并自行选择是否交给下一个 Investigator、Curator、Reasoning Specialist、Implementer 或 Reviewer。
+传播。Controller 显式取回正文，并自行选择是否交给后续被选中的 role session。
 
 Memory 默认不注入。模型自行维护 `.agent-memory/INDEX.md` 和
 `.milestones/INDEX.md` 里的薄全局树状地图，并自行决定目录、层级、移动、合并与
@@ -93,8 +97,8 @@ Memory 默认不注入。模型自行维护 `.agent-memory/INDEX.md` 和
 `Status` 是有界的记录标签。旧文档中的其它 metadata 仍可读取，但只作为不透明兼容字段，
 不是传播权限。
 
-Milestone 是普通长期文档。Curator 是普通可选角色。`task-promote` 保存
-Controller 明确选择的记录；Core 不裁决其 epistemic legitimacy。
+Milestone 是普通长期文档。Curator 是按需的知识增强角色，不是任务必经阶段。
+`task-promote` 保存 Controller 明确选择的记录；Core 不裁决其 epistemic legitimacy。
 当一次 promotion 会改变 durable navigation 时，Controller 应在同一次
 `task-promote` 中提供自己写好的 optional `index_update`。Core 不生成 INDEX
 内容，只验证 CAS、引用和原子提交。
@@ -128,7 +132,7 @@ thaliris doctor
 
 `task-promote` 输入中的每条记录必须由 Controller 明确给出 `.agent-memory/**.md`
 目标 path；Core 不按文档 metadata 自动分类。Controller 的 native handoff 是
-Investigator、Curator、Reasoning Specialist、Implementer 与 Reviewer 的唯一工作输入。
+被选中 role session 的唯一 task-specific 工作输入。
 
 ## Benchmark 边界
 

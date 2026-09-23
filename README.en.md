@@ -12,7 +12,7 @@ finish a task.
 Controller
     │ explicit task + selected information
     ▼
-Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
+selected role session
     ├── private working set
     ├── optional detailed Artifact
     └── distilled result
@@ -22,10 +22,10 @@ Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
             └── decides the next handoff
 ```
 
-The Controller's native spawn message is each Investigator's, Curator's, Reasoning Specialist's, Implementer's, or Reviewer's only task-specific
-semantic input. `SubagentStart` validates authorization, identity, role, and
-session and binds lifecycle and handoff metadata. It does not construct a context packet
-nor returns task-specific `additionalContext`.
+The Controller's native spawn message is the selected role session's only
+task-specific semantic input. `SubagentStart` validates authorization, identity,
+role, and session and binds lifecycle and handoff metadata. It does not construct
+a context packet or return task-specific `additionalContext`.
 
 There is no production path from task state through a role projection into a
 role session, and no hidden model auditor that corrects or blocks the Controller.
@@ -34,16 +34,23 @@ role session, and no hidden model auditor that corrects or blocks the Controller
 
 The Controller owns routing, context selection, interpretation, acceptance,
 and completion. For ACTIVE and degraded work, it selects the minimum necessary
-fresh roles; roles are capabilities, not mandatory stages. A straightforward,
-bounded, low-risk task may use only a fresh Implementer, including bounded local
-reading, implementation, and deterministic verification. Decision-changing
-investigation belongs to Investigator. Reviewer, Curator, and Reasoning
-Specialist are optional, and Reviewer is not a default gate.
+fresh roles; roles divide cognitive load rather than define mandatory stages.
+The current design separates the main loads: the Controller preserves the goal
+and selects context; Investigator carries large working sets, repository scans,
+and fact compression; Implementer owns implementation; Reviewer independently
+challenges the result. Complex implementation may use a more focused,
+higher-capability execution binding, while implementation decisions stay with
+the executor. Reasoning Specialist is reserved for reframing the problem when
+the problem definition, abstraction, or assumptions are themselves unclear.
+Curator turns explicitly selected material into reusable knowledge. Compatibility
+or specialized profiles may exist without becoming mandatory workflow stages.
 
-An Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer keeps repository reads, searches, logs, tests, and
-intermediate work private and normally returns only a distilled conclusion,
-key findings, decision-changing unknowns, contradictions, verification, and
-optional Artifact pointers.
+Investigator may keep a very large private working set and compress it into
+facts, locations, evidence, and unknowns. Execution and review roles should keep
+their working sets focused and read only the key material they need. Role
+sessions normally return only a distilled conclusion, key findings,
+decision-changing unknowns, contradictions, verification, and optional Artifact
+pointers.
 
 Core provides identities, revisions and compare-and-swap, locking, atomic
 writes and rollback, hashes, provenance, supersession history, objective file
@@ -54,11 +61,14 @@ Core does not decide relevance, importance, correctness, role applicability,
 task completion, or whether changed evidence invalidates a model conclusion.
 
 The Codex adapter provides fresh spawn isolation, `fork_turns="none"`, an
-authorized serial native Codex child lifecycle, handoff hashes, SubagentStart/Stop identity,
-bounded missing-stop reconciliation, and native blocking waits. An automatic
-long-wait normalization occurs only when a pending reservation or managed native Codex child
-exists and a current-session effective maximum is mechanically verified;
-otherwise the requested timeout is preserved without automatic expansion.
+authorized serial native Codex child lifecycle, handoff hashes,
+SubagentStart/Stop identity, bounded missing-stop reconciliation, and native
+blocking waits. The Controller itself is carried by the Host/user-selected root
+session; child-profile model and reasoning-effort choices belong to adapter role
+bindings. Automatic long-wait normalization occurs only when a pending
+reservation or managed native Codex child exists and a current-session effective
+maximum is mechanically verified; otherwise the requested timeout is preserved
+without automatic expansion.
 
 ## Mechanical stores
 
@@ -81,9 +91,9 @@ root navigation and creates a minimal thin INDEX first if one is missing.
 Navigation is not reread automatically during the task unless the map changed,
 is insufficient, freshness is invalid, or resume/compact requires recovery.
 
-Milestones are ordinary documents. Curator is an optional role session.
-`task-promote` stores what the Controller explicitly selected without an
-epistemic qualification gate.
+Milestones are ordinary documents. Curator is an optional knowledge-enhancement
+role, not a mandatory task stage. `task-promote` stores what the Controller
+explicitly selected without an epistemic qualification gate.
 When a promotion changes durable navigation, the Controller should provide its
 own optional `index_update` in the same `task-promote` call. Core does not
 generate INDEX content; it validates CAS, references, and the atomic commit.

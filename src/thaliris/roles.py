@@ -31,11 +31,13 @@ class CodexExecutionBinding:
     model: str | None = None
     reasoning_effort: str | None = None
     native_profile: str | None = None
+    astra_medium_native_profile: str | None = None
+    exceptional_native_profile: str | None = None
     native_aliases: tuple[str, ...] = ()
     generated_profile: bool = False
     profile_filename: str | None = None
     repo_write_allowed: bool = False
-    delegation_allowed: bool = False
+    allowed_delegation_targets: frozenset[str] = frozenset()
     controller_control_state_modification_allowed: bool = False
     legacy_profile_hashes: frozenset[str] = frozenset()
     telemetry_notice: bool = False
@@ -78,12 +80,12 @@ class RoleDefinition:
     """
 
     id: str
-    default_model: str
+    default_model: str | None
     reasoning_effort: str | None
     native_profile: str | None
     instructions: str
     repo_write_allowed: bool
-    delegation_allowed: bool
+    allowed_delegation_targets: frozenset[str]
     controller_control_state_modification_allowed: bool
     generated_profile: bool
     profile_filename: str | None
@@ -93,6 +95,8 @@ class RoleDefinition:
     write_denial_code: str | None = None
     write_denial_reason: str | None = None
     orchestration_metric: str | None = None
+    exceptional_native_profile: str | None = None
+    astra_medium_native_profile: str | None = None
 
     @property
     def spec(self) -> RoleSpec:
@@ -104,11 +108,13 @@ class RoleDefinition:
             model=self.default_model,
             reasoning_effort=self.reasoning_effort,
             native_profile=self.native_profile,
+            astra_medium_native_profile=self.astra_medium_native_profile,
+            exceptional_native_profile=self.exceptional_native_profile,
             native_aliases=self.native_aliases,
             generated_profile=self.generated_profile,
             profile_filename=self.profile_filename,
             repo_write_allowed=self.repo_write_allowed,
-            delegation_allowed=self.delegation_allowed,
+            allowed_delegation_targets=self.allowed_delegation_targets,
             controller_control_state_modification_allowed=self.controller_control_state_modification_allowed,
             legacy_profile_hashes=self.legacy_profile_hashes,
             telemetry_notice=self.telemetry_notice,
@@ -119,32 +125,44 @@ class RoleDefinition:
 
 
 _SHARED_INSTRUCTIONS = (
-    "The Controller's explicit native spawn message is your sole task-specific input. "
+    "Your authorized parent's explicit native spawn message is your sole task-specific input. "
     "Do not reconstruct task state from unselected durable material, and do not infer unselected "
     "memory, milestone, Artifact, finding, decision, or review content. Keep repository "
     "reads, tool output, test logs, and intermediate exploration in your private working "
     "set. Return a distilled result with Conclusion, Key findings, Decision-changing "
     "unknowns, Contradictions if any, Verification performed, and Artifact refs if detailed "
-    "reusable material was retained. Do not delegate to another authorized native Codex role session. "
-    "Facts unknown route to Investigator; facts known but the decision is difficult, the decision "
-    "basis is invalidated, or a hard boundary must be revised route to Reasoning Specialist; a "
+    "reusable material was retained. Never select your own model or reasoning effort. "
+    "Facts unknown route to Investigator; an ill-defined problem needing reframing routes to "
+    "Reasoning Specialist; invalidated decisions return to Controller; a "
     "decided packet routes to Implementer; an independent challenge routes to Reviewer. Difficulty "
     "alone is not a Reasoning Specialist trigger. "
+)
+
+_EXECUTOR_INSTRUCTIONS = (
+    " Keep the working set focused. Delegate broad repository scanning, exhaustive call-site "
+    "search, residual-reference checks, and other large mechanical investigation to the Scanner. "
+    "Use Scanner output as evidence; retain responsibility for implementation decisions. "
+    "The Scanner uses the investigator role. Only a fresh Investigator may be delegated to, "
+    "with fork_turns=\"none\" and no model or effort override."
 )
 
 
 def _instructions(role: str) -> str:
     role_instruction = {
         "investigator": (
-            "Investigate the bounded handoff. You may save detailed reusable material as a "
+            "Act as the Investigator/Scanner: investigate facts, scan large working sets, and "
+            "compress evidence, without making architecture decisions. Do not delegate. "
+            "You may save detailed reusable material as a "
             "repo-relative Artifact; return only its pointer and the distilled result by default."
         ),
         "curator": (
             "Compress or reconcile only the material explicitly supplied in the handoff. "
+            "Preserve reusable long-term knowledge. Do not delegate. "
             "Your output is an ordinary result or Artifact; there is no Curator Core state."
         ),
         "reasoning-specialist": (
-            "Resolve the selected decision from the supplied information. If a decision-changing "
+            "Reframe the selected ill-defined problem from supplied information; ordinary design "
+            "and implementation belong to the Executors. Do not delegate. If a decision-changing "
             "fact is missing, identify it without reconstructing unselected task history."
         ),
         "implementer": (
@@ -161,7 +179,8 @@ def _instructions(role: str) -> str:
             "decision-changing unknown to the Controller."
         ),
         "verifier": (
-            "Act as an optional read-only implementation-readiness filter after a fresh Implementer. "
+            "Retained for compatibility only, not recommended as a workflow stage. Do not delegate. "
+            "Act as a read-only implementation-readiness filter after a fresh Executor. "
             "Check acceptance coverage; the diff against the Controller-decided Modification Boundary; "
             "source/generated/docs synchronization; call sites and residual references; actual focused "
             "and deterministic test results; migration and compatibility fixtures; generated versus "
@@ -171,9 +190,9 @@ def _instructions(role: str) -> str:
             "acceptance requires changing them. Historical/generated ownership must come from exact "
             "independent historical evidence; current HEAD must not establish its own historical "
             "authority. Express READY, LOCAL_DEFECTS, or DECISION_REOPEN only as "
-            "model prose. A locally clean result may be worth an independent Terra Reviewer only when "
-            "deep semantic or architectural review adds real value; Luna Verifier does not replace "
-            "deep Terra review when authority, provenance, Host lifecycle, identity, trust, migration, "
+            "model prose. A locally clean result may be worth an independent Reviewer only when "
+            "deep semantic or architectural review adds real value; Verifier does not replace "
+            "independent review when authority, provenance, Host lifecycle, identity, trust, migration, "
             "or bootstrap semantics still warrant independent challenge. Do not write, route, or treat "
             "this filter as mandatory."
         ),
@@ -188,7 +207,17 @@ def _instructions(role: str) -> str:
             "verdict; the Controller decides what follows."
         ),
     }
-    return _SHARED_INSTRUCTIONS + role_instruction[role]
+    base_role = "implementer" if role == "focused-implementer" else role
+    result = _SHARED_INSTRUCTIONS + role_instruction[base_role]
+    if role in {"implementer", "focused-implementer"}:
+        result += _EXECUTOR_INSTRUCTIONS
+    elif role == "reviewer":
+        result += (
+            " Keep the working set focused. Delegate broad mechanical scanning only to a fresh "
+            "Investigator/Scanner with fork_turns=\"none\" and no model or effort override. "
+            "Use its evidence while retaining independent responsibility for review decisions."
+        )
+    return result
 
 
 # Exact SHA-256 identities of bytes emitted by earlier Thaliris adapters.
@@ -202,6 +231,21 @@ _LEGACY_PROFILE_HASHES = {
     "verifier": frozenset("df6b0e82979329f15318356d060c2321095a2de7941539dfa0e007f08f2c2ff4 fa1585e8df2c9136eed055f22e85594805c62a0cec0d6387700dd4959fe9dc19".split()),
     "reviewer": frozenset("ae56701985a1d27a2daea326819fa0e93b4350eb6e65d1a299daf198126a7a9a c43274a3f9cb3f93cd662b6477f1dfd07c170c24324c1364df5f59205851b17b d0f488e226888c6a8f6e39ab1deeb1125d3c0e9474dba47af47ec3eab2da45c2 ae51394874f0b35dc2b39577d471bf2f07533962363cdb7ad56e6e08a3860887 322534fb6f2b2abc312bd04a76e477e3e128cf6a194da5817ecaabd0678aa397 b038486edb2c381631e458adac2bff12fbcdc09233b5b1b8f59aeee9dc0e9774 720ef66c9f6023d961ddc1a3329ec4ae3fdf7fe2f6b1252034a7117f5990a125 4cec33fef9151d2ba60483a72b49ccd7dadd0b5c044a69f00f468e71c489fe07 8999980daf617644a36da7579626f122b6c279ad54e055bbaf8242daedbd36c2 b9b3b50f89b1dd7c5f5eaf2ee558b6881b014d66f6b30bc20244f361ebc721d7 e281f8c25451cbccb1509fa07814e4cfeaa8ae113402fc2db9a6c63a165bc1e6 96257cc1ed5c88b37de73e2c355c17c6b1ab26620210effe5b3283c776d0e4b9 357e9364404a2ab249c27ad3a2c93305f38db5afbbec1b56b58ee5e0817d5602 82b410c617589d410deb33f1ff4163d49b22d329ee517442a004965115a46124 fe082be2c5d05675b3ab9a69234851d505db3a3deddb509794b817f5b59a8ab8".split()),
 }
+
+
+# Exact prior generator output from immutable 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31:
+# roles.py blob 481aba1ef66448238f1b00ff4b58eba3f28f9605 and adapter blob
+# 880d5a9753220bcf09f27bc34890e411ccee17c4. Fixed fixtures verify these bytes.
+_PHASE_TWO_PROFILE_HASHES = {
+    "investigator": "9dced30afe1b03a07b948d4c26b3de970dff9d742f46d1e1b103122fab049454",
+    "curator": "9b4f8dca546f9dce5246059bf66c07cdeb78690917be3932220a45d9a1555d17",
+    "reasoning-specialist": "99176890683a18228c36fa2d207824c44f85c3f565e874a321a7f911984ce56f",
+    "implementer": "b987e6ab3844c51fcfaf715d3bec87d2b1fe6ba26c2e22e41ecfda2ad2f946d1",
+    "verifier": "8b1d70c1979319ba6cee33ac5341afa977064b006484f8f1718ba59bc939f419",
+    "reviewer": "bbf4f45c69f169aa45e288673c9d2f37ba72d397444ca739aff66f6d9d51c1ba",
+}
+for _role, _digest in _PHASE_TWO_PROFILE_HASHES.items():
+    _LEGACY_PROFILE_HASHES[_role] |= frozenset({_digest})
 
 
 def _native_role(
@@ -222,18 +266,20 @@ def _native_role(
         id=role,
         purpose=role.replace("-", " ").capitalize(),
         instructions=_instructions(role) if role in {
-            "investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer",
+            "investigator", "curator", "reasoning-specialist", "implementer", "focused-implementer", "verifier", "reviewer",
         } else "",
     )
     binding = CodexExecutionBinding(
         model=model,
         reasoning_effort=effort,
         native_profile=f"thaliris-{role}",
+        astra_medium_native_profile=f"thaliris-{role}-astra-medium" if role in {"focused-implementer", "reasoning-specialist"} else None,
+        exceptional_native_profile=f"thaliris-{role}-xhigh" if role in {"focused-implementer", "reasoning-specialist"} else None,
         native_aliases=aliases,
         generated_profile=True,
         profile_filename=f"thaliris-{role}.toml",
         repo_write_allowed=repo_write,
-        delegation_allowed=False,
+        allowed_delegation_targets=frozenset({"investigator"}) if role in {"implementer", "focused-implementer", "reviewer"} else frozenset(),
         controller_control_state_modification_allowed=False,
         legacy_profile_hashes=_LEGACY_PROFILE_HASHES.get(role, frozenset()),
         telemetry_notice=notices,
@@ -250,22 +296,22 @@ ROLE_REGISTRY: dict[str, RoleRegistration | RoleDefinition | tuple[RoleSpec, Cod
     "controller": RoleRegistration(
         RoleSpec(id="controller", purpose="Persistent root Controller", instructions=""),
         CodexExecutionBinding(
-            model="gpt-5.6-sol",
-            delegation_allowed=True,
+            allowed_delegation_targets=frozenset({"investigator", "curator", "reasoning-specialist", "implementer", "focused-implementer", "verifier", "reviewer"}),
             controller_control_state_modification_allowed=True,
         ),
     ),
-    "investigator": _native_role("investigator", "gpt-5.6-luna", "xhigh", aliases=("luna", "luna-investigator")),
-    "curator": _native_role("curator", "gpt-5.6-luna", "xhigh", aliases=("luna-curator",), notices=True),
-    "reasoning-specialist": _native_role("reasoning-specialist", "gpt-5.6-sol", "xhigh", aliases=("sol-high", "reasoning-specialist-sol"), notices=True),
-    "implementer": _native_role("implementer", "gpt-5.6-luna", "xhigh", aliases=("terra-implementer",), orchestration_metric="implementer_rounds"),
+    "investigator": _native_role("investigator", "gpt-6-luna", "xhigh", aliases=("luna", "luna-investigator")),
+    "curator": _native_role("curator", "gpt-6-luna", "xhigh", aliases=("luna-curator",), notices=True),
+    "reasoning-specialist": _native_role("reasoning-specialist", "gpt-6-sol", "high", aliases=("sol-high", "reasoning-specialist-sol"), notices=True),
+    "implementer": _native_role("implementer", "gpt-6-luna", "xhigh", aliases=("terra-implementer",), orchestration_metric="implementer_rounds"),
+    "focused-implementer": _native_role("focused-implementer", "gpt-6-sol", "high", orchestration_metric="implementer_rounds"),
     "verifier": _native_role(
-        "verifier", "gpt-5.6-luna", "xhigh", repo_write=False, notices=True,
+        "verifier", "gpt-6-luna", "xhigh", repo_write=False, notices=True,
         write_denial_code="THALIRIS_VERIFIER_WRITE_BLOCKED",
         write_denial_reason="Verifier must remain an independent non-writing checker.",
     ),
     "reviewer": _native_role(
-        "reviewer", "gpt-5.6-terra", "high", aliases=("terra-reviewer",), repo_write=False, notices=True,
+        "reviewer", "gpt-6-sol", "high", aliases=("terra-reviewer",), repo_write=False, notices=True,
         write_denial_code="THALIRIS_REVIEWER_WRITE_BLOCKED",
         write_denial_reason="Reviewer must remain an independent non-writing checker.",
         orchestration_metric="reviewer_rounds",
@@ -326,7 +372,7 @@ def resolve_native_profile(native_profile: str) -> RoleSpec | None:
     """Resolve an exact native profile or alias to its semantic role spec."""
     for role in role_choices():
         binding = get_codex_binding(role)
-        if binding is not None and native_profile in ({binding.native_profile} | set(binding.native_aliases)):
+        if binding is not None and native_profile in ({binding.native_profile, binding.astra_medium_native_profile, binding.exceptional_native_profile} | set(binding.native_aliases)):
             return get_role(role)
     return None
 
@@ -355,9 +401,11 @@ def role_definition(role: str) -> RoleDefinition | None:
         default_model=binding.model,
         reasoning_effort=binding.reasoning_effort,
         native_profile=binding.native_profile,
+        astra_medium_native_profile=binding.astra_medium_native_profile,
+        exceptional_native_profile=binding.exceptional_native_profile,
         instructions=registration.spec.instructions,
         repo_write_allowed=binding.repo_write_allowed,
-        delegation_allowed=binding.delegation_allowed,
+        allowed_delegation_targets=binding.allowed_delegation_targets,
         controller_control_state_modification_allowed=binding.controller_control_state_modification_allowed,
         generated_profile=binding.generated_profile,
         profile_filename=binding.profile_filename,
@@ -371,8 +419,24 @@ def role_definition(role: str) -> RoleDefinition | None:
 
 
 def role_choices() -> tuple[str, ...]:
+    identities: dict[str, str] = {}
+    filenames: dict[str, str] = {}
     for role in ROLE_REGISTRY:
-        _registration(role)
+        registration = _registration(role)
+        if registration is None:
+            raise ValueError(f"invalid role registration: {role}")
+        binding = registration.binding
+        for identity in (binding.native_profile, binding.astra_medium_native_profile, binding.exceptional_native_profile, *binding.native_aliases):
+            if identity is None:
+                continue
+            if identity in identities:
+                raise ValueError(f"duplicate native profile or alias: {identity}")
+            identities[identity] = role
+        for filename in (binding.profile_filename, f"{binding.astra_medium_native_profile}.toml" if binding.astra_medium_native_profile else None, f"{binding.exceptional_native_profile}.toml" if binding.exceptional_native_profile else None):
+            if filename is not None:
+                if filename in filenames:
+                    raise ValueError(f"duplicate profile filename: {filename}")
+                filenames[filename] = role
     return tuple(ROLE_REGISTRY)
 
 
@@ -387,10 +451,12 @@ def native_role_definitions() -> tuple[RoleDefinition, ...]:
 
 def native_agent_roles() -> dict[str, str]:
     return {
-        binding.native_profile: role
+        profile: role
         for role in role_choices()
         for binding in (get_codex_binding(role),)
         if binding is not None and binding.native_profile is not None
+        for profile in (binding.native_profile, binding.astra_medium_native_profile, binding.exceptional_native_profile)
+        if profile is not None
     }
 
 
@@ -408,12 +474,18 @@ def native_profile_names() -> frozenset[str]:
 
 
 def agent_profiles() -> dict[str, tuple[str, str | None, str]]:
-    return {
+    values = {
         binding.profile_filename: (binding.model, binding.reasoning_effort, role)
         for role in role_choices()
         for binding in (get_codex_binding(role),)
         if binding is not None and binding.generated_profile and binding.profile_filename is not None
     }
+    for binding in iter_codex_bindings():
+        if binding.generated_profile and binding.astra_medium_native_profile:
+            values[f"{binding.astra_medium_native_profile}.toml"] = ("gpt-6-astra", "medium", binding.role_id)
+        if binding.generated_profile and binding.exceptional_native_profile:
+            values[f"{binding.exceptional_native_profile}.toml"] = ("gpt-6-astra", "xhigh", binding.role_id)
+    return values
 
 
 def role_aliases() -> dict[str, str]:
@@ -434,9 +506,12 @@ def repo_write_allowed(role: str) -> bool:
     return binding is not None and binding.repo_write_allowed
 
 
-def delegation_allowed(role: str) -> bool:
+def delegation_allowed(role: str, target: str) -> bool:
     binding = get_codex_binding(role)
-    return binding is not None and binding.delegation_allowed
+    return binding is not None and (
+        role == "controller" and target in native_agent_roles().values()
+        or target in binding.allowed_delegation_targets
+    )
 
 
 def control_state_modification_allowed(role: str) -> bool:
@@ -464,7 +539,13 @@ def render_registry_document() -> bytes:
         effort = binding.reasoning_effort or "(host/task)"
         install = binding.profile_filename or "(not generated)"
         writes = "YES" if binding.repo_write_allowed else "NO"
-        delegation = "YES" if binding.delegation_allowed else "NO"
+        delegation = "registered native roles" if role == "controller" else ", ".join(sorted(binding.allowed_delegation_targets)) or "NO"
         control = "YES" if binding.controller_control_state_modification_allowed else "NO"
-        lines.append(f"| `{spec.id}` | `{binding.model}` | `{effort}` | `{profile}` | {writes} | {delegation} | {control} | `{install}` |")
+        lines.append(f"| `{spec.id}` | `{binding.model or '(host/user)'}` | `{effort}` | `{profile}` | {writes} | {delegation} | {control} | `{install}` |")
+    lines.extend(["", "Controller-only exceptional native profiles (same stable role IDs; defaults above remain unchanged):", ""])
+    for binding in iter_codex_bindings():
+        if binding.astra_medium_native_profile:
+            lines.append(f"- `{binding.astra_medium_native_profile}` → `{binding.role_id}`: `gpt-6-astra`, `medium`; `{binding.astra_medium_native_profile}.toml`.")
+        if binding.exceptional_native_profile:
+            lines.append(f"- `{binding.exceptional_native_profile}` → `{binding.role_id}`: `gpt-6-astra`, `xhigh`; `{binding.exceptional_native_profile}.toml`.")
     return ("\n".join(lines) + "\n").encode("utf-8")

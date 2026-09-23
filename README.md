@@ -11,7 +11,7 @@ Thaliris 是一个 Git-native 的机械上下文与生命周期层。它不运�
 Controller
     │ explicit task + selected information
     ▼
-Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
+Investigator / Curator / Reasoning Specialist / Implementer / Focused Implementer / Reviewer
     ├── private working set
     ├── optional detailed Artifact
     └── distilled result
@@ -21,7 +21,7 @@ Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
             └── decides next handoff
 ```
 
-Controller 的原生 spawn message 是 Investigator、Curator、Reasoning Specialist、Implementer 与 Reviewer 唯一的 task-specific 语义输入。
+授权父级的原生 spawn message 是各角色唯一的 task-specific 语义输入。
 `SubagentStart` 只验证授权、身份、角色与 session，绑定 lifecycle 和 handoff
 metadata；它不构建 task-specific `additionalContext`。
 
@@ -40,6 +40,19 @@ workflow stage。简单、明确、低风险的任务可以只经过 fresh Imple
 本地阅读、实现和确定性验证。只有会改变实现方向的调查才交给 Investigator；Reviewer、
 Curator 和 Reasoning Specialist 均按需使用，Reviewer 不是默认 gate。
 
+Implementer 与 Focused Implementer 都负责实现，保持聚焦的 working set；
+广泛扫描、穷尽调用点搜索和残留引用检查交给 Investigator/Scanner。Scanner
+只收集事实和压缩证据，不承担架构决策。Reasoning Specialist 用于重构不明确的
+问题，不是普通设计或实现的默认角色。Verifier 仅保留只读兼容，不推荐作为流程阶段。
+
+Controller 的 model、effort、native profile 均无固定值，由 Host/用户选择。
+Investigator、Curator 和标准 Implementer 默认 `gpt-6-luna/xhigh`；Focused
+Implementer、Reasoning Specialist 和 Reviewer 默认 `gpt-6-sol/high`；兼容 Verifier
+为 `gpt-6-luna/xhigh`。只有 Controller 可以在 spawn 前为特殊推理明确选择固定的
+Astra medium 或 xhigh profile，子角色不能自行选择 model/effort。
+这些 profile 仍映射至相同 role ID；不允许
+通过每次 spawn 的 model/effort 参数覆盖 profile。
+
 Investigator、Curator、Reasoning Specialist、Implementer 与 Reviewer 在私有 working
 set 中调查、实现或审查，默认只返回精炼结论、关键发现、会改变决策的未知、
 矛盾、验证与 Artifact pointer。
@@ -57,12 +70,19 @@ Core 只提供：
 Core 不判断 relevance、importance、correctness、role applicability、task
 completion，也不根据 stale evidence 自动改写 decision、constraint 或 workflow。
 
-Codex adapter 只负责 fresh spawn、`fork_turns="none"`、授权的串行 native Codex child lifecycle、
+Codex adapter 只负责 fresh spawn、`fork_turns="none"`、授权的有限二层 native Codex child lifecycle、
 handoff hash、SubagentStart/Stop identity、missing-stop reconciliation 和 native
 wait。只有确实存在 pending reservation 或 managed native Codex child、且当前 session effective
 maximum 已被机械验证时，短 wait 才会被规范化为长 blocking wait；否则不会自动规范化。
 `SubagentStop` 本身不是成功；只有明确观测到
 native `Completed` 才满足 lifecycle completion。
+
+Controller 可以选择注册角色；仅 Implementer、Focused Implementer 和 Reviewer
+可以再委派一个 fresh Investigator/Scanner。最多一个顶层子角色与一个 Scanner
+同时活动，Scanner 结果归请求它的父级。嵌套授权要求父级精确的 agent、role、
+session、turn 身份，缺失或冲突即拒绝。真实 grandchild Hook 身份仍为 UNKNOWN；
+场景 fixture 不是 live managed 嵌套证明。`task-close` 仍以最后一个 Controller
+直接 handoff 的完成为准，且不允许 pending 或 active 后代。
 
 ## Task ledger
 

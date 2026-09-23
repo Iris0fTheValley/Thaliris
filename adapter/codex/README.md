@@ -5,7 +5,7 @@ and the runtime-neutral Core.
 
 ## Handoff boundary
 
-The Controller's native `spawn_agent` message is the only task-specific
+The authorized parent's native `spawn_agent` message is the only task-specific
 semantic handoff. An allowed spawn records a bounded reservation containing
 task/revision, role, producer, handoff ID, payload hash, and creation time.
 
@@ -17,7 +17,9 @@ tools, and environment remain native context and are outside this regression.
 ## Lifecycle
 
 Managed root native Codex child sessions must use `fork_turns="none"`, a supported native role
-profile, and an explicit non-empty message. Reservations and started managed native Codex child sessions are serial. Matching SubagentStart/Stop events bind identity and
+profile, and an explicit non-empty message. One top-level role session and its
+one Investigator/Scanner may be active, at maximum depth two. Only Implementer,
+Focused Implementer, and Reviewer may delegate that Scanner. Matching SubagentStart/Stop events bind identity and
 timestamps; bounded native terminal reconciliation handles missing stop
 observations without treating reconciliation as successful work.
 
@@ -31,8 +33,22 @@ gate. Curator and Reasoning Specialist are likewise used only when valuable.
 
 The ACTIVE root Controller uses only bounded control-plane commands and
 explicit retrieval. Execution, mutation, and testing belong to fresh
-Implementer sessions. Read-only inspection is prompt policy, not a shell-regex
+Implementer or Focused Implementer sessions. Read-only inspection is prompt policy, not a shell-regex
 semantic classifier.
+
+Nested PreToolUse requires the exact bound parent agent, role, session, and
+turn. Start consumes the unique reservation and binds the Scanner's own
+identity. Missing/conflicting fields deny tool execution. Grandchild Host hook
+identity remains UNKNOWN; tests use explicit contract-shaped fixtures. The
+last Controller-direct handoff supplies task-close completion proof, with no
+active or pending descendants. Scanner completion does not replace it.
+
+Controller has no fixed model or effort. Default model/profile facts are in
+the generated [role registry](../../docs/thaliris-role-registry.md). The two
+static Astra medium and xhigh profiles for Focused Implementer and Reasoning
+Specialist let only Controller explicitly escalate before spawn, retaining the
+same stable role IDs and Luna or Sol defaults. Per-spawn model/effort overrides
+are denied; no dynamic role exists.
 
 When native event-driven continuation is unavailable, `wait_agent` is
 automatically normalized to a long wait only when an actual pending reservation
@@ -50,7 +66,7 @@ or claimed by this command.
 
 ## Role results
 
-Role profiles ask each Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer to keep its working set private and return a distilled
+Role profiles ask each Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, and Reviewer to keep its working set private and return a distilled
 result plus optional Artifact pointers. This is a prompt convention, not a Core
 result schema. Artifact bodies, memory, milestone text, task history, and prior
 reviews are never automatically added to another role session.

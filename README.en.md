@@ -12,7 +12,7 @@ finish a task.
 Controller
     │ explicit task + selected information
     ▼
-Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
+Investigator / Curator / Reasoning Specialist / Implementer / Focused Implementer / Reviewer
     ├── private working set
     ├── optional detailed Artifact
     └── distilled result
@@ -22,7 +22,7 @@ Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
             └── decides the next handoff
 ```
 
-The Controller's native spawn message is each Investigator's, Curator's, Reasoning Specialist's, Implementer's, or Reviewer's only task-specific
+The authorized parent's native spawn message is each role session's only task-specific
 semantic input. `SubagentStart` validates authorization, identity, role, and
 session and binds lifecycle and handoff metadata. It does not construct a context packet
 nor returns task-specific `additionalContext`.
@@ -40,6 +40,23 @@ reading, implementation, and deterministic verification. Decision-changing
 investigation belongs to Investigator. Reviewer, Curator, and Reasoning
 Specialist are optional, and Reviewer is not a default gate.
 
+Both Implementer and Focused Implementer execute implementation work. Keep the
+working set focused. Delegate broad repository scanning, exhaustive call-site
+search, residual-reference checks, and other large mechanical investigation to
+the Scanner. Use Scanner output as evidence; retain responsibility for
+implementation decisions. Investigator/Scanner compresses facts without making
+architecture decisions. Reasoning Specialist reframes ill-defined problems,
+not ordinary design or implementation. Verifier is a read-only compatibility
+role and is not recommended as a workflow stage.
+
+Controller has no fixed model, effort, or native profile; Host/user selection
+applies. Investigator, Curator, and standard Implementer default to
+`gpt-6-luna/xhigh`; Focused Implementer, Reasoning Specialist, and Reviewer to
+`gpt-6-sol/high`; compatibility Verifier to `gpt-6-luna/xhigh`.
+Only Controller may select static Astra medium or xhigh profiles before spawn
+for exceptional reasoning. Those profiles map to the same stable role IDs. Per-spawn
+model/effort overrides are denied.
+
 An Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer keeps repository reads, searches, logs, tests, and
 intermediate work private and normally returns only a distilled conclusion,
 key findings, decision-changing unknowns, contradictions, verification, and
@@ -54,11 +71,20 @@ Core does not decide relevance, importance, correctness, role applicability,
 task completion, or whether changed evidence invalidates a model conclusion.
 
 The Codex adapter provides fresh spawn isolation, `fork_turns="none"`, an
-authorized serial native Codex child lifecycle, handoff hashes, SubagentStart/Stop identity,
+authorized bounded depth-two native Codex child lifecycle, handoff hashes, SubagentStart/Stop identity,
 bounded missing-stop reconciliation, and native blocking waits. An automatic
 long-wait normalization occurs only when a pending reservation or managed native Codex child
 exists and a current-session effective maximum is mechanically verified;
 otherwise the requested timeout is preserved without automatic expansion.
+
+Only Implementer, Focused Implementer, and Reviewer may delegate one fresh
+Investigator/Scanner. There is one active top-level role session and at most
+one nested Scanner; its result belongs to its requesting parent. Exact parent
+agent/session/turn/role identity is required, with missing/conflicting fields
+denied. Grandchild Host hook identity remains UNKNOWN; scenario fixtures do
+not prove live managed activation. Task-close still requires the latest
+Controller-direct handoff's successful lifecycle and no pending or active
+descendants.
 
 ## Mechanical stores
 

@@ -11,8 +11,8 @@ Roles are capabilities, not mandatory workflow stages. A straightforward,
 bounded, low-risk task with confirmed facts may follow Controller -> fresh
 Implementer -> done. That Implementer may perform the bounded local reading,
 implementation, and deterministic verification needed to complete the task.
-Use an Investigator only when missing facts could change the implementation
-direction. Use a Reviewer only when independent semantic review adds real
+Use Investigator/Scanner for missing facts, large working sets, broad scans,
+and factual compression, without transferring architecture decisions. Use a Reviewer only when independent semantic review adds real
 value; it is not a default gate. Curator and Reasoning Specialist remain
 optional and are selected only when they add actual value.
 
@@ -20,17 +20,34 @@ When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
 contracts change, check and synchronize both the repository-managed
 instruction and the currently effective Codex global instruction.
 
-Fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer sessions use `fork_turns="none"`
+Fresh Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, and Reviewer sessions use `fork_turns="none"`
 and receive their tasks plus selected information in
-the Controller's native spawn message. `SubagentStart` validates authorization,
+their authorized parent's native spawn message. `SubagentStart` validates authorization,
 identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
-and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, Verifier, or Reviewer automatically.
+and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, or Reviewer automatically.
 
-Persistent root Controller model default: `gpt-5.6-sol`. Reasoning effort is
-selected by Host, task, or user policy and is not forced by Thaliris. This is
-root instruction metadata, not a native Codex child profile and does not change
-a current task model automatically.
+The persistent root Controller has no fixed model, reasoning effort, or native
+profile; Host/user selection applies. The native child profiles are Investigator (`gpt-6-luna`, `xhigh`), Curator (`gpt-6-luna`, `xhigh`), Reasoning Specialist (`gpt-6-sol`, `high`), Implementer (`gpt-6-luna`, `xhigh`), Focused Implementer (`gpt-6-sol`, `high`), Verifier (`gpt-6-luna`, `xhigh`), and Reviewer (`gpt-6-sol`, `high`).
+Only Controller may explicitly select static Astra medium or xhigh profiles for
+Focused Implementer or Reasoning Specialist before spawn for exceptional reasoning.
+These fixed profiles retain the same stable role IDs; default profiles remain
+on Luna or Sol. Per-spawn model/effort overrides are denied;
+role sessions never select their own model or effort.
+Implementer and Focused Implementer both execute implementation work. Reasoning
+Specialist reframes ill-defined problems; ordinary design and implementation
+remain with the Executors. Verifier is retained read-only for compatibility
+and is not recommended as a workflow stage.
+
+Keep the working set focused. Delegate broad repository scanning, exhaustive
+call-site search, residual-reference checks, and other large mechanical
+investigation to the Scanner. Use Scanner output as evidence; retain
+responsibility for implementation decisions.
+Controller may spawn registered roles. Implementer, Focused Implementer, and
+Reviewer may each spawn only a fresh Investigator/Scanner. Investigator,
+Reasoning Specialist, Curator, and Verifier cannot delegate. Maximum managed
+depth is two: one Controller-direct child and its one Scanner, never siblings.
+Scanner results belong to their requesting Executor/Reviewer.
 
 An implementation handoff states Goal, confirmed facts, hard invariants,
 Controller-decided boundaries/contracts, decision-changing unknowns,
@@ -44,7 +61,7 @@ from a decision-basis failure. If review overturns an accepted invariant,
 depends on an unverified external capability, makes feasibility uncertain, or
 changes a Controller boundary or contract, reopen the Controller decision. If
 facts are missing, route to a fresh Investigator; if relevant facts are known
-but design or boundary revision is difficult, route to a fresh Reasoning
+but the problem needs reframing, route to a fresh Reasoning
 Specialist; if the accepted design is unchanged and the defect is local, route
 to a fresh Implementer correction. Reasoning Specialist is not for fact
 gathering, implementation, or routine review, and difficulty alone is
@@ -52,7 +69,7 @@ insufficient when the Controller can decide confidently from established facts.
 Do not use counters, thresholds, risk scores, classifiers, or a state machine
 for this routing.
 
-Each Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer keeps
+Each Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, and Reviewer keeps
 its private working set private. By default it returns a distilled conclusion, key findings,
 decision-changing unknowns or contradictions, verification performed, and
 optional Artifact pointers. Detailed reusable material may be saved in a
@@ -105,10 +122,10 @@ If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `thaliris recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.
 Decision-changing investigation belongs to Investigator. Bounded local reading
-needed for implementation may stay inside Implementer. Execution, mutation,
-and testing belong to fresh Implementer sessions. Existing native Codex child sessions are never resumed with follow-up/send tools.
-An Investigator's or Implementer's obvious direct control-context retrieval is allowed and recorded.
-Investigator and Implementer reads remain telemetry-only; Curator, Reasoning
+needed for implementation may stay inside either Executor. Execution, mutation,
+and testing belong to fresh Implementer or Focused Implementer sessions. Existing native Codex child sessions are never resumed with follow-up/send tools.
+An Investigator's or Executor's obvious direct control-context retrieval is allowed and recorded.
+Investigator and Executor reads remain telemetry-only; Curator, Reasoning
 Specialist, and Reviewer extra reads produce at most one bounded aggregate
 Controller notice per pending batch. Obvious attempts to mutate
 Controller-owned task or lifecycle state are denied, recorded, and included in
@@ -117,13 +134,22 @@ developer-instruction plus obvious-write hook guard, not a claimed native
 read-only sandbox. Starting managed mode requires a current-session,
 current-hook, one-shot PreToolUse attestation.
 
-Managed native Codex child lifecycles are serial. Spawn authorization, native identity binding,
+Managed native Codex child lifecycles permit one top-level child and one nested
+Scanner. Nested authorization requires the exact bound parent's agent, role,
+session, and turn identity; missing or conflicting identity fails closed.
+SubagentStart consumes the unique reservation and binds the Scanner's own
+identity. Grandchild Host hook identity behavior remains UNKNOWN until observed
+on that Host; fixture verification is not live managed activation proof.
+Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
 mechanical. SubagentStop alone is not success; only an explicitly observed
 native Completed status can satisfy lifecycle completion. A short native wait
 is normalized only while an authorized reservation or managed native Codex child is pending
 and the current-session effective maximum is mechanically verified; otherwise
-no automatic long-wait normalization occurs. The Controller interprets Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer results,
+no automatic long-wait normalization occurs. Task closure requires the last
+Controller-direct handoff's completed lifecycle and no pending or active
+descendants; a later Scanner does not replace that top-level completion.
+The Controller interprets Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, and Reviewer results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 

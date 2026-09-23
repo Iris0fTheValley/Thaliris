@@ -2,18 +2,18 @@
 # Thaliris Role Profiles
 
 These profiles are working-style defaults, not routing rules or semantic
-permissions. The authorized parent's explicit native spawn message is the sole
-task-specific input to every Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, and Reviewer.
+permissions. The Controller's explicit native spawn message is the sole
+task-specific input to every Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer.
 
 ## Role Defaults
 
-The persistent root Controller has no fixed model, effort, or native profile;
-Host/user selection applies. The native child profiles are Investigator (`gpt-6-luna`, `xhigh`), Curator (`gpt-6-luna`, `xhigh`), Reasoning Specialist (`gpt-6-sol`, `high`), Implementer (`gpt-6-luna`, `xhigh`), Focused Implementer (`gpt-6-sol`, `high`), Verifier (`gpt-6-luna`, `xhigh`), and Reviewer (`gpt-6-sol`, `high`).
-Only Controller may select static Astra medium or xhigh profiles for Focused
-Implementer or Reasoning Specialist before spawn for exceptional reasoning.
-These fixed profiles map to the same stable roles; defaults remain on Luna or
-Sol. Per-spawn model/effort overrides are denied. Role sessions never
-override their own model or effort.
+The persistent root Controller model default is `gpt-5.6-sol`; its reasoning
+effort is selected by Host, task, or user policy and is not forced by Thaliris.
+It is root instruction metadata, not a native Codex child profile and does not
+mutate a current task model. The native child profiles are Investigator (`gpt-5.6-luna`,
+`xhigh`), Curator (`gpt-5.6-luna`, `xhigh`), Reasoning Specialist
+(`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `xhigh`), Verifier
+(`gpt-5.6-luna`, `xhigh`), and Reviewer (`gpt-5.6-terra`, `high`).
 
 ## Shared Role Result
 
@@ -32,9 +32,7 @@ unless the Controller explicitly requested that content.
 
 ## Investigator
 
-Investigator/Scanner handles missing facts, broad scans, large working sets,
-and factual compression, not architecture decisions. It cannot delegate.
-Investigate the task in the handoff. Save detailed reusable evidence as
+Investigate the bounded task in the handoff. Save detailed reusable evidence as
 an optional repo-relative Artifact and return its pointer with a short result.
 
 ## Curator
@@ -62,19 +60,12 @@ reinvention or recursive scanning.
 
 ## Reasoning Specialist
 
-Use to reframe an ill-defined problem, not for ordinary design or implementation.
-Resolve it from the selected information. Do not delegate. If a
+Use only when resolving the decision in the handoff adds actual value beyond
+the selected roles' work. Resolve it from the selected information. If a
 decision-changing fact is missing, say what is missing. Do not reconstruct
 unselected task history.
 
-## Implementer and Focused Implementer
-
-Both are Executors. Implementer is the general implementation role; Focused
-Implementer handles concentrated reasoning and implementation with a focused
-working set. Keep the working set focused. Delegate broad repository scanning,
-exhaustive call-site search, residual-reference checks, and other large mechanical
-investigation to the Scanner. Use Scanner output as evidence; retain responsibility
-for implementation decisions. Delegate only to Investigator with `fork_turns="none"`.
+## Implementer
 
 An implementation task packet contains Goal, confirmed facts, hard invariants,
 Controller-decided boundaries/contracts, decision-changing unknowns,
@@ -98,17 +89,15 @@ state from Core.
 Use when the Controller selects independent review because it adds value; it is
 not a mechanical post-implementation gate. Independently inspect the candidate
 identified in the handoff. Return findings
-and a distilled verdict. Reviewer may delegate broad mechanical scanning to one
-fresh Investigator while retaining independent review responsibility.
-After finding a real problem, understand its invariant
+and a distilled verdict. After finding a real problem, understand its invariant
 and inspect adjacent legal states enough to return independent related blockers
 in one pass. Finding classifications are model-authored labels; the Controller
 decides what workflow, if any, follows.
 
 ## Verifier
 
-The Verifier is a read-only compatibility role, not recommended as a workflow
-stage and never mandatory. It cannot delegate. After an Executor, check
+The Verifier is an optional, fresh, read-only implementation-readiness filter;
+it is not a small Reviewer and is never mandatory. After an Implementer, check
 acceptance coverage, the Controller-decided Modification Boundary,
 source/generated/docs synchronization, call sites and residual references,
 actual deterministic or focused test results, migration and compatibility
@@ -118,22 +107,10 @@ anomalies. Treat a workspace anomaly as an observation, not a candidate defect,
 unless the candidate introduced it, the modification boundary owns it, or
 acceptance requires changing it. Historical/generated ownership must come from
 exact independent historical evidence; current HEAD must not establish its own
-historical authority. A clean, low-risk task may finish without independent review.
-Verifier does not replace independent
+historical authority. A clean, low-risk task may finish without Terra. Luna Verifier closes
+implementation-level uncertainty but does not replace deep Terra
 review when authority, provenance, Host lifecycle, identity, trust, migration,
 or bootstrap semantics still warrant independent challenge. Model prose may describe READY,
 LOCAL_DEFECTS, or DECISION_REOPEN; the Controller owns routing. LOCAL_DEFECTS
-return through a fresh Executor. DECISION_REOPEN returns to the
+return through a fresh Implementer and Verifier. DECISION_REOPEN returns to the
 Controller, then to Investigator or Reasoning Specialist as appropriate.
-
-## Bounded delegation and Host evidence
-
-Controller delegates registered roles. Only Implementer, Focused Implementer,
-and Reviewer may delegate an Investigator/Scanner, at maximum depth two.
-There is one active top-level child and at most one nested Scanner. Results
-return to the requesting parent; no automatic result or Artifact propagation
-is introduced. Exact parent agent/session/turn/role identity authorizes the
-unique reservation; the matching Start binds the Scanner's own identity.
-Missing or conflicting fields deny execution. Direct-child hook wire shapes
-have been observed on the CLI; grandchild hook identity behavior remains
-UNKNOWN. Shaped scenario fixtures do not prove live managed nesting.

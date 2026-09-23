@@ -56,6 +56,8 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = {
     if binding.profile_filename is not None
 }
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
+    # 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31, blob 7dfd7ab321c4ec1f1c32bd02b1d87f1b88d2aef7.
+    "0a51833bf936b14053c08a6502a6a1d27ecd1518263e7eea5c4e43f53fa1c5f1",
     "b6dba8d5d5e855face02667993601f84c4a54e77d7c33012d542a6b91483ec6c",
     "c019c41505c8bc000a5d00151fe837d4d1e9000f242bdb9f98bb7add905104bc",
     "844a2278b311c253c2da3a06133b503edb822a2929eeb082b50ecd2925e4cd30",
@@ -83,8 +85,8 @@ _KNOWN_HOST_WAIT_CAPABILITIES = {
 
 
 def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
-    # Keep the generated contract phrase discoverable at the adapter boundary:
-    # another authorized native Codex role session is never delegated to.
+    # JSON string escaping is compatible with TOML basic strings; native
+    # isolation instructions contain quotes that must not terminate the value.
     spec = roles.get_role(role)
     binding = roles.get_codex_binding(role)
     if spec is None or binding is None or not binding.generated_profile:
@@ -95,7 +97,7 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
         f'description = "Thaliris {role} execution role"\n'
         f'model = "{model}"\n'
         f'model_reasoning_effort = "{effort}"\n'
-        + f'developer_instructions = "{instructions}"\n'
+        + f'developer_instructions = {json.dumps(instructions, ensure_ascii=False)}\n'
     ).encode("utf-8")
 
 
@@ -107,7 +109,7 @@ def _agent_profile_state(value: bytes, name: str) -> str:
     if value == expected:
         return "current"
     binding = roles.get_codex_binding(profile[2])
-    hashes = binding.legacy_profile_hashes if binding is not None else frozenset()
+    hashes = binding.legacy_profile_hashes if binding is not None and binding.profile_filename == name else frozenset()
     return "legacy" if hashlib.sha256(value).hexdigest() in hashes else "user"
 
 
@@ -320,11 +322,7 @@ def _controller_model() -> str:
 
 
 def _native_profile_facts() -> str:
-    """Render native model/reasoning facts without a second role list.
-
-    The six-role layout is retained exactly for migration compatibility.  A
-    different registry size uses a generic one-line-per-entry rendering.
-    """
+    """Render native model/reasoning facts without a second role list."""
     entries: list[tuple[str, str, str]] = []
     for role in roles.role_choices():
         spec = roles.get_role(role)
@@ -332,14 +330,6 @@ def _native_profile_facts() -> str:
         if spec is None or binding is None or binding.native_profile is None:
             continue
         entries.append((spec.id.replace("-", " ").title(), binding.model or "(host/task)", binding.reasoning_effort or "(host/task)"))
-    if len(entries) == 6:
-        (label0, model0, effort0), (label1, model1, effort1), (label2, model2, effort2), (label3, model3, effort3), (label4, model4, effort4), (label5, model5, effort5) = entries
-        return (
-            f"The native child profiles are {label0} (`{model0}`,\n"
-            f"`{effort0}`), {label1} (`{model1}`, `{effort1}`), {label2}\n"
-            f"(`{model2}`, `{effort2}`), {label3} (`{model3}`, `{effort3}`), {label4}\n"
-            f"(`{model4}`, `{effort4}`), and {label5} (`{model5}`, `{effort5}`)."
-        )
     rendered = [f"{label} (`{model}`, `{effort}`)" for label, model, effort in entries]
     if not rendered:
         return "The native child profiles are not configured."
@@ -368,8 +358,8 @@ Roles are capabilities, not mandatory workflow stages. A straightforward,
 bounded, low-risk task with confirmed facts may follow Controller -> fresh
 Implementer -> done. That Implementer may perform the bounded local reading,
 implementation, and deterministic verification needed to complete the task.
-Use an Investigator only when missing facts could change the implementation
-direction. Use a Reviewer only when independent semantic review adds real
+Use Investigator/Scanner for missing facts, large working sets, broad scans,
+and factual compression, without transferring architecture decisions. Use a Reviewer only when independent semantic review adds real
 value; it is not a default gate. Curator and Reasoning Specialist remain
 optional and are selected only when they add actual value.
 
@@ -379,15 +369,32 @@ instruction and the currently effective Codex global instruction.
 
 Fresh {_native_role_names_text()} sessions use `fork_turns="none"`
 and receive their tasks plus selected information in
-the Controller's native spawn message. `SubagentStart` validates authorization,
+their authorized parent's native spawn message. `SubagentStart` validates authorization,
 identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
 and Artifact bodies never enter {_native_role_names_text(final_conjunction="or", with_article=True)} automatically.
 
-Persistent root Controller model default: `{_controller_model()}`. Reasoning effort is
-selected by Host, task, or user policy and is not forced by Thaliris. This is
-root instruction metadata, not a native Codex child profile and does not change
-a current task model automatically.
+The persistent root Controller has no fixed model, reasoning effort, or native
+profile; Host/user selection applies. {_native_profile_facts()}
+Only Controller may explicitly select static Astra medium or xhigh profiles for
+Focused Implementer or Reasoning Specialist before spawn for exceptional reasoning.
+These fixed profiles retain the same stable role IDs; default profiles remain
+on Luna or Sol. Per-spawn model/effort overrides are denied;
+role sessions never select their own model or effort.
+Implementer and Focused Implementer both execute implementation work. Reasoning
+Specialist reframes ill-defined problems; ordinary design and implementation
+remain with the Executors. Verifier is retained read-only for compatibility
+and is not recommended as a workflow stage.
+
+Keep the working set focused. Delegate broad repository scanning, exhaustive
+call-site search, residual-reference checks, and other large mechanical
+investigation to the Scanner. Use Scanner output as evidence; retain
+responsibility for implementation decisions.
+Controller may spawn registered roles. Implementer, Focused Implementer, and
+Reviewer may each spawn only a fresh Investigator/Scanner. Investigator,
+Reasoning Specialist, Curator, and Verifier cannot delegate. Maximum managed
+depth is two: one Controller-direct child and its one Scanner, never siblings.
+Scanner results belong to their requesting Executor/Reviewer.
 
 An implementation handoff states Goal, confirmed facts, hard invariants,
 Controller-decided boundaries/contracts, decision-changing unknowns,
@@ -401,7 +408,7 @@ from a decision-basis failure. If review overturns an accepted invariant,
 depends on an unverified external capability, makes feasibility uncertain, or
 changes a Controller boundary or contract, reopen the Controller decision. If
 facts are missing, route to a fresh Investigator; if relevant facts are known
-but design or boundary revision is difficult, route to a fresh Reasoning
+but the problem needs reframing, route to a fresh Reasoning
 Specialist; if the accepted design is unchanged and the defect is local, route
 to a fresh Implementer correction. Reasoning Specialist is not for fact
 gathering, implementation, or routine review, and difficulty alone is
@@ -462,10 +469,10 @@ If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `thaliris recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.
 Decision-changing investigation belongs to Investigator. Bounded local reading
-needed for implementation may stay inside Implementer. Execution, mutation,
-and testing belong to fresh Implementer sessions. Existing native Codex child sessions are never resumed with follow-up/send tools.
-An Investigator's or Implementer's obvious direct control-context retrieval is allowed and recorded.
-Investigator and Implementer reads remain telemetry-only; Curator, Reasoning
+needed for implementation may stay inside either Executor. Execution, mutation,
+and testing belong to fresh Implementer or Focused Implementer sessions. Existing native Codex child sessions are never resumed with follow-up/send tools.
+An Investigator's or Executor's obvious direct control-context retrieval is allowed and recorded.
+Investigator and Executor reads remain telemetry-only; Curator, Reasoning
 Specialist, and Reviewer extra reads produce at most one bounded aggregate
 Controller notice per pending batch. Obvious attempts to mutate
 Controller-owned task or lifecycle state are denied, recorded, and included in
@@ -474,13 +481,22 @@ developer-instruction plus obvious-write hook guard, not a claimed native
 read-only sandbox. Starting managed mode requires a current-session,
 current-hook, one-shot PreToolUse attestation.
 
-Managed native Codex child lifecycles are serial. Spawn authorization, native identity binding,
+Managed native Codex child lifecycles permit one top-level child and one nested
+Scanner. Nested authorization requires the exact bound parent's agent, role,
+session, and turn identity; missing or conflicting identity fails closed.
+SubagentStart consumes the unique reservation and binds the Scanner's own
+identity. Grandchild Host hook identity behavior remains UNKNOWN until observed
+on that Host; fixture verification is not live managed activation proof.
+Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
 mechanical. SubagentStop alone is not success; only an explicitly observed
 native Completed status can satisfy lifecycle completion. A short native wait
 is normalized only while an authorized reservation or managed native Codex child is pending
 and the current-session effective maximum is mechanically verified; otherwise
-no automatic long-wait normalization occurs. The Controller interprets Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer results,
+no automatic long-wait normalization occurs. Task closure requires the last
+Controller-direct handoff's completed lifecycle and no pending or active
+descendants; a later Scanner does not replace that top-level completion.
+The Controller interprets {_native_role_names_text()} results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 
@@ -514,15 +530,18 @@ def _render_role_packs() -> str:
 # Thaliris Role Profiles
 
 These profiles are working-style defaults, not routing rules or semantic
-permissions. The Controller's explicit native spawn message is the sole
+permissions. The authorized parent's explicit native spawn message is the sole
 task-specific input to every {_native_role_names_text()}.
 
 ## Role Defaults
 
-The persistent root Controller model default is `{_controller_model()}`; its reasoning
-effort is selected by Host, task, or user policy and is not forced by Thaliris.
-It is root instruction metadata, not a native Codex child profile and does not
-mutate a current task model. {_native_profile_facts()}
+The persistent root Controller has no fixed model, effort, or native profile;
+Host/user selection applies. {_native_profile_facts()}
+Only Controller may select static Astra medium or xhigh profiles for Focused
+Implementer or Reasoning Specialist before spawn for exceptional reasoning.
+These fixed profiles map to the same stable roles; defaults remain on Luna or
+Sol. Per-spawn model/effort overrides are denied. Role sessions never
+override their own model or effort.
 
 ## Shared Role Result
 
@@ -541,7 +560,9 @@ unless the Controller explicitly requested that content.
 
 ## Investigator
 
-Investigate the bounded task in the handoff. Save detailed reusable evidence as
+Investigator/Scanner handles missing facts, broad scans, large working sets,
+and factual compression, not architecture decisions. It cannot delegate.
+Investigate the task in the handoff. Save detailed reusable evidence as
 an optional repo-relative Artifact and return its pointer with a short result.
 
 ## Curator
@@ -569,12 +590,19 @@ reinvention or recursive scanning.
 
 ## Reasoning Specialist
 
-Use only when resolving the decision in the handoff adds actual value beyond
-the selected roles' work. Resolve it from the selected information. If a
+Use to reframe an ill-defined problem, not for ordinary design or implementation.
+Resolve it from the selected information. Do not delegate. If a
 decision-changing fact is missing, say what is missing. Do not reconstruct
 unselected task history.
 
-## Implementer
+## Implementer and Focused Implementer
+
+Both are Executors. Implementer is the general implementation role; Focused
+Implementer handles concentrated reasoning and implementation with a focused
+working set. Keep the working set focused. Delegate broad repository scanning,
+exhaustive call-site search, residual-reference checks, and other large mechanical
+investigation to the Scanner. Use Scanner output as evidence; retain responsibility
+for implementation decisions. Delegate only to Investigator with `fork_turns="none"`.
 
 An implementation task packet contains Goal, confirmed facts, hard invariants,
 Controller-decided boundaries/contracts, decision-changing unknowns,
@@ -598,15 +626,17 @@ state from Core.
 Use when the Controller selects independent review because it adds value; it is
 not a mechanical post-implementation gate. Independently inspect the candidate
 identified in the handoff. Return findings
-and a distilled verdict. After finding a real problem, understand its invariant
+and a distilled verdict. Reviewer may delegate broad mechanical scanning to one
+fresh Investigator while retaining independent review responsibility.
+After finding a real problem, understand its invariant
 and inspect adjacent legal states enough to return independent related blockers
 in one pass. Finding classifications are model-authored labels; the Controller
 decides what workflow, if any, follows.
 
 ## Verifier
 
-The Verifier is an optional, fresh, read-only implementation-readiness filter;
-it is not a small Reviewer and is never mandatory. After an Implementer, check
+The Verifier is a read-only compatibility role, not recommended as a workflow
+stage and never mandatory. It cannot delegate. After an Executor, check
 acceptance coverage, the Controller-decided Modification Boundary,
 source/generated/docs synchronization, call sites and residual references,
 actual deterministic or focused test results, migration and compatibility
@@ -616,13 +646,25 @@ anomalies. Treat a workspace anomaly as an observation, not a candidate defect,
 unless the candidate introduced it, the modification boundary owns it, or
 acceptance requires changing it. Historical/generated ownership must come from
 exact independent historical evidence; current HEAD must not establish its own
-historical authority. A clean, low-risk task may finish without Terra. Luna Verifier closes
-implementation-level uncertainty but does not replace deep Terra
+historical authority. A clean, low-risk task may finish without independent review.
+Verifier does not replace independent
 review when authority, provenance, Host lifecycle, identity, trust, migration,
 or bootstrap semantics still warrant independent challenge. Model prose may describe READY,
 LOCAL_DEFECTS, or DECISION_REOPEN; the Controller owns routing. LOCAL_DEFECTS
-return through a fresh Implementer and Verifier. DECISION_REOPEN returns to the
+return through a fresh Executor. DECISION_REOPEN returns to the
 Controller, then to Investigator or Reasoning Specialist as appropriate.
+
+## Bounded delegation and Host evidence
+
+Controller delegates registered roles. Only Implementer, Focused Implementer,
+and Reviewer may delegate an Investigator/Scanner, at maximum depth two.
+There is one active top-level child and at most one nested Scanner. Results
+return to the requesting parent; no automatic result or Artifact propagation
+is introduced. Exact parent agent/session/turn/role identity authorizes the
+unique reservation; the matching Start binds the Scanner's own identity.
+Missing or conflicting fields deny execution. Direct-child hook wire shapes
+have been observed on the CLI; grandchild hook identity behavior remains
+UNKNOWN. Shaped scenario fixtures do not prove live managed nesting.
 """
 
 
@@ -1042,16 +1084,17 @@ def audit_hook(root: Path, event: str, payload: object) -> str:
     result = handle_hook(root, event, payload)
     if result or event != "PreToolUse" or not isinstance(payload, dict):
         return result
-    if payload.get("agent_id") is not None:
-        return ""
     root = core._repo_root(root)
+    parent = payload if payload.get("agent_id") is not None else None
+    if parent is not None and not lifecycle._bound_managed_child(root, parent):
+        return ""
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str) or lifecycle._tool_basename(tool) != "wait_agent":
         return ""
     if (
         lifecycle._active_task_id(root) is None
         or selected_continuation_mode(root) != "BLOCKING_WAIT"
-        or not lifecycle.managed_dependency_pending(root)
+        or not lifecycle.managed_dependency_pending(root, parent)
     ):
         return ""
     capability = host_explicit_blocking_wait()

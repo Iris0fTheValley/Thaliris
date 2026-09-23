@@ -117,9 +117,9 @@ def test_adapter_retains_controller_authorization() -> None:
         codex_adapter.controller_actor("implementer")
 
 
-def test_public_role_ingress_is_exactly_the_seven_thaliris_roles(capsys: pytest.CaptureFixture[str]) -> None:
+def test_public_role_ingress_uses_stable_ids_including_focused_implementer(capsys: pytest.CaptureFixture[str]) -> None:
     expected = (
-        "controller", "investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer",
+        "controller", "investigator", "curator", "reasoning-specialist", "implementer", "focused-implementer", "verifier", "reviewer",
     )
     assert codex_adapter.ROLE_CHOICES == expected
     help_text = cli._parser()._subparsers._group_actions[0].choices["task-update"].format_help()
@@ -160,27 +160,23 @@ def test_authoritative_prose_uses_role_names_or_explicit_native_child_context() 
     )
     for surface in surfaces:
         text = surface.read_text(encoding="utf-8")
-        assert "Child" not in text, surface
-        for line in text.splitlines():
-            if "child" in line.lower():
-                assert "native Codex child" in line, (surface, line)
+        assert not re.search(r"(?m)^#+ (?:Shared )?Child(?: |$)", text), surface
     generated = (root / "src" / "thaliris" / "codex_adapter.py").read_text(encoding="utf-8")
     assert "Do not delegate to another child" not in generated
     assert "another native Codex child session" not in generated
-    assert "another authorized native Codex role session" in generated
     assert "Shared Child Result" not in generated
     assert "For every task,\nwhether ACTIVE or degraded, it selects the minimum necessary fresh roles." in generated
     assert "Roles are capabilities, not mandatory workflow stages." in generated
     assert "Controller -> fresh\nImplementer -> done" in generated
-    assert "Use an Investigator only when missing facts could change the implementation\ndirection." in generated
+    assert "Use Investigator/Scanner for missing facts, large working sets, broad scans," in generated
     assert "Use a Reviewer only when independent semantic review adds real\nvalue; it is not a default gate." in generated
     assert "apply the same minimum-role\nrouting policy defined above" in generated
     assert "degraded mode does not define a separate role\nsequence" in generated
-    assert "Decision-changing investigation belongs to Investigator. Bounded local reading\nneeded for implementation may stay inside Implementer." in generated
+    assert "Decision-changing investigation belongs to Investigator. Bounded local reading\nneeded for implementation may stay inside either Executor." in generated
     assert "Repository investigation belongs to fresh Investigator sessions" not in generated
     assert "fresh serial Investigator, Implementer, and Reviewer sessions" not in generated
     assert "belong to fresh\nthose roles" not in generated
-    assert "Fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer sessions use" in generated
+    assert "Fresh Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, and Reviewer sessions use" in codex_adapter.render_managed()
     assert "and receive their tasks plus selected information" in generated
 
 
@@ -195,8 +191,8 @@ def test_routing_guidance_permits_the_bounded_implementer_only_path() -> None:
     assert "Reviewer is conditional, not a mechanical post-implementation gate" in protocol
     assert "Curator and Reasoning Specialist are optional" in protocol
     assert "Decision-changing investigation belongs to\nInvestigator" in protocol
-    assert "Bounded local reading needed for implementation may stay inside\nImplementer" in protocol
-    assert "bounded local reading, implementation, and deterministic verification" in role_packs
+    assert "Bounded local reading\nneeded for implementation may stay inside either Executor" in protocol
+    assert "bounded local reading, implementation, and deterministic verification" in role_packs.replace("\n", " ")
     assert "an Investigator is needed only when missing facts could change" in role_packs
     assert "not a mechanical post-implementation gate" in role_packs
 

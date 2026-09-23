@@ -18,10 +18,10 @@ from . import core, roles
 
 HOOK_COMMAND_PREFIX = "thaliris audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
-CODEX_ADAPTER_PROTOCOL_VERSION = 7
+CODEX_ADAPTER_PROTOCOL_VERSION = 8
 # Private adapter lifecycle state. This is deliberately separate from Core
 # state/schema and records only bounded native child provenance.
-LIFECYCLE_STATE_VERSION = 11
+LIFECYCLE_STATE_VERSION = 12
 MANAGED_HOOKS_DESCRIPTION = "Thaliris managed lifecycle hooks"
 MAX_RAW_RECORDS = 64
 THALIRIS_EXECUTABLE_ENV = "THALIRIS_EXECUTABLE"
@@ -480,10 +480,13 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
         if event == "SubagentStop":
             _best_effort_record(_record_subagent_stop, root, payload)
             return ""
-        if payload.get("agent_id") is not None:
+        if payload.get("agent_id") is not None or payload.get("agent_type") is not None:
             if event == "PreToolUse":
                 return _child_pre_tool_output(root, payload)
             _best_effort_record(_record_child_runtime_event, root, payload, event)
+            tool = payload.get("tool_name") or payload.get("tool")
+            if event == "PostToolUse" and isinstance(tool, str) and _bound_managed_child(root, payload):
+                _best_effort_record(_reconcile_lifecycle_post_tool, root, payload, _tool_basename(tool))
             return ""
         if event == "PreToolUse":
             tool = payload.get("tool_name") or payload.get("tool")
@@ -853,7 +856,7 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     pending = value.get("pending_authorized_spawn")
     if pending is not None and (
         not isinstance(pending, dict)
-        or set(pending) != {"role", "expected_agent_type", "session_id_hash", "authorized_sequence", "task_name_hash", "handoff_id", "task_revision", "producer", "payload_hash", "created_at_ns"}
+        or set(pending) != {"role", "expected_agent_type", "session_id_hash", "authorized_sequence", "task_name_hash", "handoff_id", "task_revision", "producer", "payload_hash", "created_at_ns", "parent_agent_id_hash", "parent_role", "parent_turn_id_hash", "depth", "root_handoff_id", "spawn_tool_use_id_hash"}
         or pending.get("role") not in set(_native_agent_roles().values())
         or pending.get("expected_agent_type") not in _native_agent_roles()
         or not isinstance(pending.get("session_id_hash"), str)
@@ -863,9 +866,76 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
         or pending.get("producer") != "controller"
         or not isinstance(pending.get("payload_hash"), str)
         or type(pending.get("created_at_ns")) is not int
+        or not _valid_parent_metadata(pending)
     ):
         raise ValueError("invalid lifecycle authorized spawns")
     return value
+
+
+def _valid_parent_metadata(record: dict[str, Any]) -> bool:
+    if record.get("depth") == 1:
+        return record.get("parent_role") == "controller" and record.get("parent_agent_id_hash") is None and record.get("parent_turn_id_hash") is None and record.get("root_handoff_id") == record.get("handoff_id")
+    return (
+        record.get("depth") == 2
+        and record.get("parent_role") in {"implementer", "focused-implementer", "reviewer"}
+        and record.get("role") == "investigator"
+        and all(isinstance(record.get(key), str) and record[key] for key in ("parent_agent_id_hash", "parent_turn_id_hash", "root_handoff_id"))
+    )
+
+
+def _parent_binding_matches(state: dict[str, Any], record: dict[str, Any], *, require_live: bool) -> bool:
+    if not _valid_parent_metadata(record):
+        return False
+    if record["depth"] == 1:
+        return True
+    return any(isinstance(parent, dict)
+        and parent.get("managed") is True and parent.get("handoff_bound") is True
+        and parent.get("depth") == 1
+        and parent.get("agent_id_hash") == record["parent_agent_id_hash"]
+        and parent.get("role") == record["parent_role"]
+        and parent.get("turn_id_hash") == record["parent_turn_id_hash"]
+        and parent.get("session_id_hash") == record.get("session_id_hash")
+        and parent.get("handoff_id") == record["root_handoff_id"]
+        and (not require_live or parent.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"})
+        for parent in state["children"])
+
+
+def _pending_parent_live(state: dict[str, Any], record: dict[str, Any]) -> bool:
+    return _parent_binding_matches(state, record, require_live=True)
+
+
+def _spawn_parent_matches(record: dict[str, Any], payload: dict[str, Any]) -> bool:
+    """Correlate returned native names to the exact reserving actor, never a path."""
+    if record.get("session_id_hash") != _session_id_hash(payload):
+        return False
+    if record.get("parent_agent_id_hash") != _identity_hash(payload.get("agent_id")):
+        return False
+    if record.get("depth") == 2 and (
+        record.get("parent_turn_id_hash") != _turn_id_hash(payload)
+        or record.get("parent_role") != _managed_spawn_role({"tool_input": payload})
+    ):
+        return False
+    expected = record.get("spawn_tool_use_id_hash")
+    return expected is None or expected == _identity_hash(payload.get("tool_use_id"))
+
+
+def _bound_child_record(state: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any] | None:
+    agent_id = payload.get("agent_id")
+    native_type = _native_spawn_agent_type({"tool_input": payload})
+    session, turn = _session_id_hash(payload), _turn_id_hash(payload)
+    if not isinstance(agent_id, str) or not agent_id or native_type is None or session is None or turn is None:
+        return None
+    matches = [child for child in state["children"] if isinstance(child, dict)
+        and child.get("agent_id_hash") == _identity_hash(agent_id)
+        and child.get("agent_type") == native_type
+        and child.get("session_id_hash") == session
+        and child.get("turn_id_hash") == turn
+        and child.get("role") == _native_agent_roles()[native_type]
+        and child.get("managed") is True and child.get("handoff_bound") is True
+        and isinstance(child.get("handoff_id"), str)
+        and _parent_binding_matches(state, child, require_live=False)
+        and child.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"}]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _managed_spawn_role(payload: dict[str, Any]) -> str | None:
@@ -886,36 +956,12 @@ def _native_spawn_agent_type(payload: dict[str, Any]) -> str | None:
 def _bound_managed_child(root: Path, payload: dict[str, Any]) -> bool:
     """Match a child PreToolUse call to one live, handoff-bound role session."""
     task_id = _active_task_id(root)
-    agent_id = payload.get("agent_id")
-    native_agent_type = _native_spawn_agent_type({"tool_input": payload})
-    session_id_hash = _session_id_hash(payload)
-    turn_id_hash = _turn_id_hash(payload)
-    if (
-        task_id is None
-        or not isinstance(agent_id, str)
-        or not agent_id
-        or native_agent_type is None
-        or session_id_hash is None
-        or turn_id_hash is None
-    ):
+    if task_id is None:
         return False
-    role = _native_agent_roles()[native_agent_type]
     try:
         with core._lock(root):
             state = _load_lifecycle(_lifecycle_path(root, task_id), task_id)
-            return any(
-                isinstance(child, dict)
-                and child.get("agent_id_hash") == _identity_hash(agent_id)
-                and child.get("agent_type") == native_agent_type
-                and child.get("session_id_hash") == session_id_hash
-                and child.get("turn_id_hash") == turn_id_hash
-                and child.get("role") == role
-                and child.get("managed") is True
-                and child.get("handoff_bound") is True
-                and isinstance(child.get("handoff_id"), str)
-                and child.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"}
-                for child in state["children"]
-            )
+            return _bound_child_record(state, payload) is not None
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return False
 
@@ -939,6 +985,16 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
     role = _native_agent_roles().get(expected_agent_type) if expected_agent_type is not None else None
     if role is None:
         return _permission_deny("THALIRIS_MANAGED_AGENT_REQUIRED: managed tasks may spawn only a supported Thaliris agent profile.")
+    tool_input = _delegation_input(payload)
+    if tool_input.get("fork_turns") != "none":
+        return _permission_deny('THALIRIS_ISOLATION_REQUIRED: use fork_turns="none".')
+    nested = payload.get("agent_id") is not None or payload.get("agent_type") is not None
+    overrides = {key: tool_input[key] for key in ("model", "reasoning_effort", "thinking", "model_reasoning_effort") if tool_input.get(key) is not None}
+    if overrides:
+        return _permission_deny("THALIRIS_ROLE_MODEL_OVERRIDE: named native profiles have fixed model/effort; Controller selects an explicit exceptional xhigh profile instead.")
+    target_binding = roles.get_codex_binding(role)
+    if nested and target_binding is not None and expected_agent_type == target_binding.exceptional_native_profile:
+        return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: exceptional profiles are Controller-only.")
     session_id_hash = _session_id_hash(payload)
     if session_id_hash is None:
         return _permission_deny("THALIRIS_MANAGED_SESSION_REQUIRED: managed spawn authorization requires a current session identity.")
@@ -949,10 +1005,16 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
                 return _permission_deny("THALIRIS_MANAGED_SPAWN_UNAVAILABLE: the active task changed before authorization.")
             path = _lifecycle_path(root, task_id)
             state = _load_lifecycle(path, task_id)
+            parent = _bound_child_record(state, payload) if nested else None
+            if nested and (parent is None or parent.get("depth") != 1 or not roles.delegation_allowed(parent["role"], role)):
+                return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: exact bound depth-one Executor/Reviewer parent and Investigator target required.")
+            if not nested and not roles.delegation_allowed("controller", role):
+                return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: unsupported Controller target.")
             active = any(
                 isinstance(child, dict)
                 and child.get("managed") is True
                 and child.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"}
+                and child is not parent
                 for child in state["children"]
             )
             if active or state["pending_authorized_spawn"] is not None:
@@ -976,17 +1038,24 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
                 return _permission_deny("THALIRIS_HANDOFF_REQUIRED: managed spawn requires an explicit Controller handoff message.")
             payload_hash = hashlib.sha256(handoff_text.encode("utf-8")).hexdigest()
             handoff_material = f"{task_id}\0{task_state['revision']}\0{session_id_hash}\0{state['sequence']}\0{payload_hash}"
+            handoff_id = f"handoff-{hashlib.sha256(handoff_material.encode('utf-8')).hexdigest()[:32]}"
             state["pending_authorized_spawn"] = {
                 "role": role,
                 "expected_agent_type": expected_agent_type,
                 "session_id_hash": session_id_hash,
                 "authorized_sequence": state["sequence"],
                 "task_name_hash": None,
-                "handoff_id": f"handoff-{hashlib.sha256(handoff_material.encode('utf-8')).hexdigest()[:32]}",
+                "handoff_id": handoff_id,
                 "task_revision": task_state["revision"],
                 "producer": "controller",
                 "payload_hash": payload_hash,
                 "created_at_ns": time.time_ns(),
+                "parent_agent_id_hash": parent["agent_id_hash"] if parent else None,
+                "parent_role": parent["role"] if parent else "controller",
+                "parent_turn_id_hash": parent["turn_id_hash"] if parent else None,
+                "depth": 2 if parent else 1,
+                "root_handoff_id": parent["handoff_id"] if parent else handoff_id,
+                "spawn_tool_use_id_hash": _identity_hash(payload.get("tool_use_id")) if isinstance(payload.get("tool_use_id"), str) else None,
             }
             state["stall"] = None
             _runtime_metadata(state, payload)
@@ -1043,7 +1112,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
     role = _native_agent_roles().get(native_agent_type) if native_agent_type is not None else None
     session_id_hash = _session_id_hash(payload)
     turn_id_hash = _turn_id_hash(payload)
-    if task_id is None or not isinstance(agent_id, str) or not agent_id or role is None:
+    if task_id is None or not isinstance(agent_id, str) or not agent_id or role is None or session_id_hash is None or turn_id_hash is None:
         return False
     with core._lock(root):
         path = _lifecycle_path(root, task_id)
@@ -1057,6 +1126,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
             and pending.get("role") == role
             and pending.get("expected_agent_type") == native_agent_type
             and pending.get("session_id_hash") == session_id_hash
+            and _pending_parent_live(state, pending)
         )
         prior = next((item for item in children if item.get("agent_id_hash") == child_hash), None)
         bound = authorized and prior is None
@@ -1079,6 +1149,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
                 "terminal_state": "RUNNING",
                 "native_terminal_status": None,
                 "task_name_hash": pending.get("task_name_hash") if bound else None,
+                **{key: pending.get(key) if bound else None for key in ("parent_agent_id_hash", "parent_role", "parent_turn_id_hash", "depth", "root_handoff_id", "spawn_tool_use_id_hash")},
             })
             if bound:
                 state["pending_authorized_spawn"] = None
@@ -1229,7 +1300,7 @@ def _reconcile_lifecycle_post_tool(root: Path, payload: dict[str, Any], tool: st
             if isinstance(task_name, str) and task_name:
                 name_hash = _identity_hash(task_name)
                 pending = state.get("pending_authorized_spawn")
-                if isinstance(pending, dict) and pending.get("task_name_hash") is None:
+                if isinstance(pending, dict) and pending.get("task_name_hash") is None and _spawn_parent_matches(pending, payload):
                     pending["task_name_hash"] = name_hash
                     changed = True
                 else:
@@ -1239,6 +1310,7 @@ def _reconcile_lifecycle_post_tool(root: Path, payload: dict[str, Any], tool: st
                         and child.get("managed") is True
                         and child.get("task_name_hash") is None
                         and child.get("terminal_state", "RUNNING") == "RUNNING"
+                        and _spawn_parent_matches(child, payload)
                     ]
                     if len(candidates) == 1:
                         candidates[0]["task_name_hash"] = name_hash
@@ -1338,7 +1410,7 @@ def qualifying_child_completed(root: Path) -> bool:
         child for child in value.get("children", [])
         if isinstance(child, dict) and child.get("managed") is True
     ] if isinstance(value, dict) else []
-    latest = max(managed, key=lambda child: int(child.get("started", -1)), default=None)
+    latest = max((child for child in managed if child.get("depth") == 1 and child.get("parent_role") == "controller"), key=lambda child: int(child.get("started", -1)), default=None)
     return (
         isinstance(value, dict)
         and value.get("version") == LIFECYCLE_STATE_VERSION
@@ -1369,7 +1441,7 @@ def _managed_child_active(root: Path) -> bool:
     return isinstance(value, dict) and value.get("version") == LIFECYCLE_STATE_VERSION and value.get("managed_hook_spec_hash") == managed_hook_spec_hash() and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION and any(isinstance(child, dict) and child.get("managed") is True and child.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"} for child in value.get("children", []))
 
 
-def managed_dependency_pending(root: Path) -> bool:
+def managed_dependency_pending(root: Path, parent_payload: dict[str, Any] | None = None) -> bool:
     """Report whether a managed reservation or live child can be waited on."""
     task_id = _active_task_id(root)
     if task_id is None:
@@ -1378,15 +1450,27 @@ def managed_dependency_pending(root: Path) -> bool:
         value = json.loads(_lifecycle_path(root, task_id).read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return False
+    def selected(record: object) -> bool:
+        if not isinstance(record, dict):
+            return False
+        if parent_payload is None:
+            return True
+        return (
+            record.get("depth") == 2
+            and record.get("parent_agent_id_hash") == _identity_hash(parent_payload.get("agent_id"))
+            and record.get("parent_turn_id_hash") == _turn_id_hash(parent_payload)
+            and record.get("parent_role") == _managed_spawn_role({"tool_input": parent_payload})
+            and record.get("session_id_hash") == _session_id_hash(parent_payload)
+        )
     return (
         isinstance(value, dict)
         and value.get("version") == LIFECYCLE_STATE_VERSION
         and value.get("managed_hook_spec_hash") == managed_hook_spec_hash()
         and value.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
         and (
-            isinstance(value.get("pending_authorized_spawn"), dict)
+            selected(value.get("pending_authorized_spawn"))
             or any(
-                isinstance(child, dict)
+                selected(child)
                 and child.get("managed") is True
                 and child.get("terminal_state", "RUNNING") in {"RUNNING", "ORPHANED"}
                 for child in value.get("children", [])
@@ -1584,8 +1668,14 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
     role = _native_agent_roles().get(native_agent_type, "unknown")
     binding = roles.get_codex_binding(role)
     role_names = _native_role_names()
-    if normalized in _DELEGATION_TOOL_NAMES and binding is not None and not binding.delegation_allowed:
-        return _permission_deny(f"THALIRIS_ROLE_SESSION_DELEGATION: a managed {role_names} session may not delegate to another session.")
+    if normalized in _DELEGATION_TOOL_NAMES:
+        if normalized != "spawn_agent" or binding is None or not binding.allowed_delegation_targets:
+            return _permission_deny(f"THALIRIS_ROLE_SESSION_DELEGATION: a managed {role_names} session may only use its explicit allowed fresh delegation targets.")
+        if managed_task_state(root)[0] == "ACTIVE":
+            return _reserve_managed_spawn(root, payload)
+        target = _managed_spawn_role(payload)
+        if target not in binding.allowed_delegation_targets:
+            return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: only Investigator delegation is permitted.")
     operation, context_targets = _context_call(payload)
     if operation in _CHILD_CONTEXT_MUTATIONS and binding is not None and not binding.controller_control_state_modification_allowed:
         target = f"thaliris {operation}"
@@ -1653,8 +1743,8 @@ def _load_runtime(path: Path) -> dict[str, Any]:
     return value
 
 
-def _identity_hash(value: str | None) -> str | None:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest() if value else None
+def _identity_hash(value: object) -> str | None:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest() if isinstance(value, str) and value else None
 
 
 def managed_task_state(root: Path) -> tuple[str, str | None]:

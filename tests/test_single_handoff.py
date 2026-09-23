@@ -1163,29 +1163,31 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
         assert "sole task-specific input" in profile
         assert "distilled result" in profile
         assert "another native Codex child session" not in profile
-        assert "another authorized native Codex role session" in profile
+        assert "Never select your own model or reasoning effort" in profile
         assert "sandbox_mode" not in profile
         for removed in ("context prepare --role", "REVALIDATION_REQUIRED", "MECHANICAL or LOCAL_SEMANTIC"):
             assert removed not in profile
     assert "sole task-specific semantic router" in codex_adapter.MANAGED
     assert "never calls Core" in codex_adapter.MANAGED
     assert codex_adapter._ROLE_MODEL_DEFAULTS == {
-        "controller": ("gpt-5.6-sol", None),
-        "investigator": ("gpt-5.6-luna", "xhigh"),
-        "curator": ("gpt-5.6-luna", "xhigh"),
-        "reasoning-specialist": ("gpt-5.6-sol", "xhigh"),
-        "implementer": ("gpt-5.6-luna", "xhigh"),
-        "verifier": ("gpt-5.6-luna", "xhigh"),
-        "reviewer": ("gpt-5.6-terra", "high"),
+        "controller": (None, None),
+        "investigator": ("gpt-6-luna", "xhigh"),
+        "curator": ("gpt-6-luna", "xhigh"),
+        "reasoning-specialist": ("gpt-6-sol", "high"),
+        "implementer": ("gpt-6-luna", "xhigh"),
+        "focused-implementer": ("gpt-6-sol", "high"),
+        "verifier": ("gpt-6-luna", "xhigh"),
+        "reviewer": ("gpt-6-sol", "high"),
     }
     assert set(codex_adapter._AGENT_PROFILES) == {
         "thaliris-investigator.toml", "thaliris-curator.toml",
         "thaliris-reasoning-specialist.toml", "thaliris-implementer.toml",
-        "thaliris-verifier.toml",
-        "thaliris-reviewer.toml",
+        "thaliris-verifier.toml", "thaliris-focused-implementer.toml",
+        "thaliris-reviewer.toml", "thaliris-focused-implementer-xhigh.toml", "thaliris-reasoning-specialist-xhigh.toml",
+        "thaliris-focused-implementer-astra-medium.toml", "thaliris-reasoning-specialist-astra-medium.toml",
     }
-    assert "Persistent root Controller model default: `gpt-5.6-sol`. Reasoning effort is" in codex_adapter.MANAGED
-    assert "not forced by Thaliris" in codex_adapter.MANAGED
+    assert "Controller has no fixed model, reasoning effort, or native" in codex_adapter.MANAGED
+    assert "Host/user selection applies" in codex_adapter.MANAGED
     assert "Decisions, invariants, and\nacceptance are contract; recommendations/advice are not." in codex_adapter.MANAGED
     assert "direct canonical `thaliris` command or an absolute executable with an" in codex_adapter.MANAGED
     assert "never recommend or use a shell-wrapper fallback" in codex_adapter.MANAGED
@@ -1201,7 +1203,7 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "makes feasibility uncertain" in codex_adapter.MANAGED
     assert "changes a Controller boundary or contract" in codex_adapter.MANAGED
     assert "facts are missing, route to a fresh Investigator" in codex_adapter.MANAGED
-    assert "relevant facts are known\nbut design or boundary revision is difficult, route to a fresh Reasoning\nSpecialist" in codex_adapter.MANAGED
+    assert "relevant facts are known\nbut the problem needs reframing, route to a fresh Reasoning\nSpecialist" in codex_adapter.MANAGED
     assert "accepted design is unchanged and the defect is local, route\nto a fresh Implementer correction" in codex_adapter.MANAGED
     assert "Reasoning Specialist is not for fact\ngathering, implementation, or routine review" in codex_adapter.MANAGED
     assert "difficulty alone is\ninsufficient when the Controller can decide confidently from established facts" in codex_adapter.MANAGED
@@ -1222,14 +1224,14 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "Do not silently drop, guess, or freeze an unknown" in codex_adapter.ROLE_PACKS
     assert Path("docs/thaliris-role-packs.md").read_bytes() == codex_adapter.ROLE_PACKS.encode("utf-8")
     assert "only after Reviewer PASS" in codex_adapter.ROLE_PACKS
-    assert "Luna Verifier closes\nimplementation-level uncertainty" in codex_adapter.ROLE_PACKS
+    assert "read-only compatibility role, not recommended" in codex_adapter.ROLE_PACKS
     assert "workspace anomaly as an observation" in codex_adapter.ROLE_PACKS
     assert "exact independent historical evidence" in codex_adapter.ROLE_PACKS
     verifier = codex_adapter._agent_profile(
         "thaliris-verifier", "verifier", "gpt-5.6-luna", "xhigh"
     ).decode()
     assert "current HEAD must not establish its own historical authority" in verifier
-    assert "Luna Verifier does not replace deep Terra review" in verifier
+    assert "Verifier does not replace independent review" in verifier
 
 
 def test_host_capability_record_requires_sessionmeta_for_live_implementer_activation() -> None:
@@ -1490,7 +1492,7 @@ def test_exact_role_keyed_historical_profiles_migrate_without_claiming_edits(tmp
     root = repo(tmp_path)
     agents = root / ".codex" / "agents"
     for name, hashes in codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES.items():
-        assert hashes
+        assert hashes or name == "thaliris-focused-implementer.toml"
         # State recognition is hash-only and role-keyed: an unknown edit stays user-owned.
         assert codex_adapter._agent_profile_state(b"generated-looking but edited", name) == "user"
     # Recover the exact pre-Luna generator from immutable repository history.
@@ -1556,9 +1558,10 @@ def test_exact_role_keyed_historical_profiles_migrate_without_claiming_edits(tmp
     assert first["manual_action_required"] == expected_manual
     for role in ("investigator", "curator", "implementer"):
         name = f"thaliris-{role}.toml"
-        assert (agents / name).read_bytes() == codex_adapter._agent_profile(name.removesuffix(".toml"), role, "gpt-5.6-luna", "xhigh")
+        model, effort, _ = codex_adapter._AGENT_PROFILES[name]
+        assert (agents / name).read_bytes() == codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort)
     verifier = (agents / verifier_name).read_text(encoding="utf-8")
-    assert 'model = "gpt-5.6-luna"' in verifier
+    assert 'model = "gpt-6-luna"' in verifier
     assert 'model_reasoning_effort = "xhigh"' in verifier
     assert codex_adapter.init(root)["changed"] is False
 

@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import tomllib
 
 import pytest
 
@@ -18,7 +19,7 @@ def _sentinel_definition() -> roles.RoleDefinition:
         native_profile="thaliris-sentinel",
         instructions="sentinel instructions",
         repo_write_allowed=True,
-        delegation_allowed=False,
+        allowed_delegation_targets=frozenset(),
         controller_control_state_modification_allowed=False,
         generated_profile=True,
         profile_filename="thaliris-sentinel.toml",
@@ -40,7 +41,7 @@ def _formal_sentinel_registration() -> tuple[roles.RoleSpec, roles.CodexExecutio
             generated_profile=True,
             profile_filename="thaliris-formal-sentinel.toml",
             repo_write_allowed=False,
-            delegation_allowed=False,
+            allowed_delegation_targets=frozenset(),
             controller_control_state_modification_allowed=False,
             telemetry_notice=True,
             write_denial_code="THALIRIS_FORMAL_SENTINEL_WRITE_BLOCKED",
@@ -52,24 +53,88 @@ def _formal_sentinel_registration() -> tuple[roles.RoleSpec, roles.CodexExecutio
 def test_registry_is_authoritative_for_native_profiles_and_mechanical_facts() -> None:
     native = roles.native_role_definitions()
     assert [definition.id for definition in native] == [
-        "investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer",
+        "investigator", "curator", "reasoning-specialist", "implementer", "focused-implementer", "verifier", "reviewer",
     ]
     for definition in native:
         assert definition.native_profile == f"thaliris-{definition.id}"
         assert definition.profile_filename == f"thaliris-{definition.id}.toml"
         assert definition.instructions
         assert definition.reasoning_effort
-        assert definition.legacy_profile_hashes
+        assert definition.legacy_profile_hashes or definition.id == "focused-implementer"
     assert roles.native_agent_roles() == {
-        definition.native_profile: definition.id for definition in native
+        profile: definition.id for definition in native
+        for profile in (definition.native_profile, definition.astra_medium_native_profile, definition.exceptional_native_profile) if profile
     }
-    assert roles.agent_profiles() == {
+    expected_profiles = {
         definition.profile_filename: (
             definition.default_model, definition.reasoning_effort, definition.id
         )
         for definition in native
     }
+    for definition in native:
+        if definition.astra_medium_native_profile:
+            expected_profiles[definition.astra_medium_native_profile + ".toml"] = ("gpt-6-astra", "medium", definition.id)
+        if definition.exceptional_native_profile:
+            expected_profiles[definition.exceptional_native_profile + ".toml"] = ("gpt-6-astra", "xhigh", definition.id)
+    assert roles.agent_profiles() == expected_profiles
     assert roles.notice_roles() == {"curator", "reasoning-specialist", "verifier", "reviewer"}
+
+
+def test_profile_defaults_and_static_astra_selection_are_fixed() -> None:
+    assert codex_adapter._ROLE_MODEL_DEFAULTS == {
+        "controller": (None, None),
+        "investigator": ("gpt-6-luna", "xhigh"),
+        "curator": ("gpt-6-luna", "xhigh"),
+        "reasoning-specialist": ("gpt-6-sol", "high"),
+        "implementer": ("gpt-6-luna", "xhigh"),
+        "focused-implementer": ("gpt-6-sol", "high"),
+        "verifier": ("gpt-6-luna", "xhigh"),
+        "reviewer": ("gpt-6-sol", "high"),
+    }
+    assert len(roles.native_codex_role_map()) == len(set(roles.native_codex_role_map()))
+    for name, (model, effort, role) in roles.agent_profiles().items():
+        value = tomllib.loads(codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort).decode())
+        assert (value["name"], value["model"], value["model_reasoning_effort"]) == (name.removesuffix(".toml"), model, effort)
+        assert roles.resolve_native_profile(value["name"]).id == role
+        assert "Never select your own model or reasoning effort" in value["developer_instructions"]
+    for role in ("focused-implementer", "reasoning-specialist"):
+        for effort, suffix in (("medium", "astra-medium"), ("xhigh", "xhigh")):
+            name = f"thaliris-{role}-{suffix}.toml"
+            assert roles.agent_profiles()[name] == ("gpt-6-astra", effort, role)
+            assert codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(name, frozenset()) == frozenset()
+
+
+def test_exact_phase_two_profile_bytes_are_recognized_only_for_own_role() -> None:
+    fixture_dir = Path(__file__).parent / "fixtures"
+    for role in ("investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer"):
+        name = f"thaliris-{role}.toml"
+        value = (fixture_dir / f"phase2-{role}.toml").read_bytes()
+        assert hashlib.sha256(value).hexdigest() in roles.get_codex_binding(role).legacy_profile_hashes
+        assert codex_adapter._agent_profile_state(value, name) == "legacy"
+        assert codex_adapter._agent_profile_state(value + b"\nuser edit\n", name) == "user"
+        other_name = "thaliris-curator.toml" if role != "curator" else "thaliris-investigator.toml"
+        assert codex_adapter._agent_profile_state(value, other_name) == "user"
+
+
+def test_phase_two_profiles_migrate_while_edited_profile_is_preserved(tmp_path: Path) -> None:
+    root = _initialized_repo(tmp_path)
+    agents = root / ".codex" / "agents"
+    fixture_dir = Path(__file__).parent / "fixtures"
+    roles_to_migrate = ("investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer")
+    for role in roles_to_migrate:
+        (agents / f"thaliris-{role}.toml").write_bytes((fixture_dir / f"phase2-{role}.toml").read_bytes())
+    edited_name = "thaliris-reviewer.toml"
+    edited = (agents / edited_name).read_bytes() + b"\nuser edit\n"
+    (agents / edited_name).write_bytes(edited)
+
+    result = codex_adapter.init(root)
+
+    assert (agents / edited_name).read_bytes() == edited
+    assert f".codex/agents/{edited_name}" in result["manual_action_required"]
+    for role in roles_to_migrate[:-1]:
+        name = f"thaliris-{role}.toml"
+        assert codex_adapter._agent_profile_state((agents / name).read_bytes(), name) == "current"
+        assert f".codex/agents/{name}" in result["files"]
 
 
 def test_new_registry_role_flows_through_adapter_inventories_and_cli(monkeypatch) -> None:
@@ -243,8 +308,9 @@ def test_registry_rejects_key_that_differs_from_spec_identity(monkeypatch) -> No
         roles.role_choices()
 
 
-def test_managed_renderer_preserves_baseline_bytes_and_derives_seventh_role(monkeypatch) -> None:
-    baseline = subprocess.check_output(["git", "show", "HEAD:AGENTS.md"])
+def test_managed_renderer_matches_working_artifact_and_derives_added_role(monkeypatch) -> None:
+    # Current output consistency is not historical ownership evidence.
+    baseline = Path("AGENTS.md").read_bytes()
     marker_start = codex_adapter.MANAGED_START.encode("utf-8")
     marker_end = codex_adapter.MANAGED_END.encode("utf-8")
     start = baseline.index(marker_start)
@@ -254,10 +320,10 @@ def test_managed_renderer_preserves_baseline_bytes_and_derives_seventh_role(monk
     monkeypatch.setitem(roles.ROLE_REGISTRY, "formal-sentinel", _formal_sentinel_registration())
     rendered = codex_adapter.render_managed()
     assert (
-        "Fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, "
+        "Fresh Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, "
         "Reviewer, and Formal Sentinel sessions"
     ) in rendered
     assert (
-        "never enter an Investigator, Curator, Reasoning Specialist, Implementer, "
+        "never enter an Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, "
         "Verifier, Reviewer, or Formal Sentinel automatically."
     ) in rendered

@@ -19,7 +19,7 @@ Controller
     │
     │ explicit task + selected information
     ▼
-Investigator / Curator / Reasoning Specialist / Implementer / Reviewer
+Investigator / Curator / Reasoning Specialist / Implementer / Focused Implementer / Reviewer
     │
     ├── private working set
     ├── optional detailed Artifact
@@ -52,6 +52,13 @@ Decision-changing investigation belongs to Investigator; Reviewer, Curator,
 and Reasoning Specialist are selected only when they add real value, and
 Reviewer is not a default gate.
 
+Implementer and Focused Implementer own implementation decisions and focused
+working sets. They and Reviewer may delegate broad mechanical investigation
+to Investigator/Scanner, at maximum managed depth two with one active Scanner.
+Scanner results belong to the requesting parent; architecture decisions stay
+with the Executor/Controller. Reasoning Specialist reframes ill-defined
+problems. Verifier is read-only compatibility, not a recommended stage.
+
 The Controller writes each native handoff, chooses the information in that
 handoff, interprets results and observations, accepts or rejects conclusions,
 and decides when the task is complete.
@@ -61,7 +68,7 @@ Core does not attach behavior to them.
 
 ### Role sessions
 
-An Investigator, Curator, Reasoning Specialist, Implementer, or Reviewer receives task-specific information only from the Controller's explicit
+Each role session receives task-specific information only from its authorized parent's explicit
 native spawn message. Repository reads, search results, test output, logs, and
 intermediate exploration stay in its private working set.
 
@@ -69,6 +76,13 @@ The default return is a distilled result: conclusion, key findings,
 decision-changing unknowns, contradictions if any, verification performed, and
 optional Artifact references. These are prompt conventions, not Core schema
 authority.
+
+Exact parent agent/session/turn/role identity authorizes the unique nested
+reservation. The matching Start binds the Scanner's own identity. Missing or
+conflicting identity fails closed; live grandchild Hook behavior remains
+UNKNOWN. The flat lifecycle ledger remains bounded, not an arbitrary tree.
+Task-close selects the last Controller-direct handoff and rejects pending or
+active descendants. Stable role and historical producer IDs do not change.
 
 Curator is an optional ordinary role session. Reviewer classifications are ordinary
 model output. Neither role activates a Core workflow state machine.

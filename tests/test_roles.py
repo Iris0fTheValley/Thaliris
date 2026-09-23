@@ -222,3 +222,23 @@ def test_formal_seventh_role_requires_only_spec_and_binding(tmp_path: Path, monk
     assert "THALIRIS_ROLE_SESSION_DELEGATION" in delegation
     assert "THALIRIS_FORMAL_SENTINEL_WRITE_BLOCKED" in write
     assert "THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION" in control
+
+
+def test_managed_renderer_preserves_baseline_bytes_and_derives_seventh_role(monkeypatch) -> None:
+    baseline = subprocess.check_output(["git", "show", "HEAD:AGENTS.md"])
+    marker_start = codex_adapter.MANAGED_START.encode("utf-8")
+    marker_end = codex_adapter.MANAGED_END.encode("utf-8")
+    start = baseline.index(marker_start)
+    end = baseline.index(marker_end, start) + len(marker_end)
+    assert codex_adapter.render_managed().encode("utf-8") == baseline[start:end] + b"\n"
+
+    monkeypatch.setitem(roles.ROLE_REGISTRY, "formal-sentinel", _formal_sentinel_registration())
+    rendered = codex_adapter.render_managed()
+    assert (
+        "Fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, "
+        "Reviewer, and Formal Sentinel sessions"
+    ) in rendered
+    assert (
+        "never enter an Investigator, Curator, Reasoning Specialist, Implementer, "
+        "Verifier, Reviewer, or Formal Sentinel automatically."
+    ) in rendered

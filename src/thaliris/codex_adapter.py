@@ -297,16 +297,21 @@ def _native_role_labels() -> list[str]:
     return labels
 
 
-def _native_role_names_text() -> str:
+def _native_role_names_text(*, final_conjunction: str = "and", with_article: bool = False) -> str:
     # Compatibility prose: Fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer sessions use values from this query boundary.
     labels = _native_role_labels()
     if not labels:
         return "no named roles"
     if len(labels) == 1:
-        return labels[0]
-    if len(labels) == 2:
-        return f"{labels[0]} and {labels[1]}"
-    return ", ".join(labels[:-1]) + ", and " + labels[-1]
+        text = labels[0]
+    elif len(labels) == 2:
+        text = f"{labels[0]} {final_conjunction} {labels[1]}"
+    else:
+        text = ", ".join(labels[:-1]) + f", {final_conjunction} " + labels[-1]
+    if with_article:
+        article = "an" if labels[0][0].lower() in "aeiou" else "a"
+        return f"{article} {text}"
+    return text
 
 
 def _controller_model() -> str:
@@ -377,7 +382,7 @@ and receive their tasks plus selected information in
 the Controller's native spawn message. `SubagentStart` validates authorization,
 identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
-and Artifact bodies never enter a {_native_role_names_text()} automatically.
+and Artifact bodies never enter {_native_role_names_text(final_conjunction="or", with_article=True)} automatically.
 
 Persistent root Controller model default: `{_controller_model()}`. Reasoning effort is
 selected by Host, task, or user policy and is not forced by Thaliris. This is

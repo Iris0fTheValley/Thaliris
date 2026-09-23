@@ -208,6 +208,29 @@ def test_model_override_is_controller_only_and_exact(active):
     assert "MODEL_OVERRIDE" in lifecycle.handle_hook(active, "PreToolUse", spawn(parent, model="gpt-6-astra", reasoning_effort="xhigh"))
 
 
+@pytest.mark.parametrize("field", ["model", "reasoning_effort", "thinking", "model_reasoning_effort"])
+def test_top_level_fallback_model_override_is_denied(active, field):
+    request = event(
+        tool_name="spawn_agent",
+        agentType="thaliris-implementer",
+        fork_turns="none",
+        message="Selected facts only",
+        **{field: "gpt-6-astra" if field == "model" else "xhigh"},
+    )
+    assert "MODEL_OVERRIDE" in lifecycle.handle_hook(active, "PreToolUse", request)
+
+
+def test_top_level_fallback_spawn_without_override_remains_authorized(active):
+    request = event(
+        tool_name="spawn_agent",
+        agentType="thaliris-implementer",
+        fork_turns="none",
+        message="Selected facts only",
+    )
+    assert lifecycle.handle_hook(active, "PreToolUse", request) == ""
+    assert state(active)["pending_authorized_spawn"] is not None
+
+
 @pytest.mark.parametrize("role", ["focused-implementer", "reasoning-specialist"])
 def test_controller_selects_static_exceptional_profile(active, role):
     profile = f"thaliris-{role}-xhigh"

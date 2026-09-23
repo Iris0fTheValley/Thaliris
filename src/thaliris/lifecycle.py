@@ -1882,7 +1882,7 @@ def _delegation_input(payload: dict[str, Any]) -> dict[str, Any]:
         return value
     if isinstance(payload.get("tool_input"), dict):
         return payload["tool_input"]
-    return {key: payload[key] for key in ("message", "input", "text", "agent_type", "agentType", "role", "agent_role", "task_id", "child_id", "target", "task_name", "agent_id", "id", "fork_turns", "isolation_reason", "fork_turns_reason") if key in payload}
+    return {key: payload[key] for key in ("message", "input", "text", "agent_type", "agentType", "role", "agent_role", "task_id", "child_id", "target", "task_name", "agent_id", "id", "fork_turns", "isolation_reason", "fork_turns_reason", "model", "reasoning_effort", "thinking", "model_reasoning_effort") if key in payload}
 
 
 def _delegation_text(tool_input: dict[str, Any]) -> object:

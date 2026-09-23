@@ -283,14 +283,29 @@ def _registration(role: str) -> RoleRegistration | None:
     """
     value = ROLE_REGISTRY.get(role)
     if isinstance(value, RoleRegistration):
-        return value
-    if isinstance(value, RoleDefinition):
-        return RoleRegistration(value.spec, value.binding)
-    if isinstance(value, tuple) and len(value) == 2:
+        registration = value
+    elif isinstance(value, RoleDefinition):
+        registration = RoleRegistration(value.spec, value.binding)
+    elif isinstance(value, tuple) and len(value) == 2:
         spec, binding = value
         if isinstance(spec, RoleSpec) and isinstance(binding, CodexExecutionBinding):
-            return RoleRegistration(spec, binding)
-    return None
+            registration = RoleRegistration(spec, binding)
+        else:
+            return None
+    else:
+        return None
+
+    if registration.spec.id != role:
+        raise ValueError(
+            "ROLE_REGISTRY key "
+            f"{role!r} must match RoleSpec.id {registration.spec.id!r}"
+        )
+    if registration.binding.role_id not in ("", role):
+        raise ValueError(
+            "ROLE_REGISTRY binding role_id "
+            f"{registration.binding.role_id!r} must match key {role!r}"
+        )
+    return registration
 
 
 def get_role(role: str) -> RoleSpec | None:
@@ -304,7 +319,7 @@ def get_codex_binding(role: str) -> CodexExecutionBinding | None:
     registration = _registration(role)
     if registration is None:
         return None
-    return registration.binding if registration.binding.role_id == role else replace(registration.binding, role_id=role)
+    return registration.binding if registration.binding.role_id else replace(registration.binding, role_id=role)
 
 
 def resolve_native_profile(native_profile: str) -> RoleSpec | None:
@@ -356,6 +371,8 @@ def role_definition(role: str) -> RoleDefinition | None:
 
 
 def role_choices() -> tuple[str, ...]:
+    for role in ROLE_REGISTRY:
+        _registration(role)
     return tuple(ROLE_REGISTRY)
 
 

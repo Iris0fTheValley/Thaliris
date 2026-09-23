@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import subprocess
 
+import pytest
+
 from thaliris import cli, codex_adapter, core, lifecycle, roles
 
 
@@ -222,6 +224,23 @@ def test_formal_seventh_role_requires_only_spec_and_binding(tmp_path: Path, monk
     assert "THALIRIS_ROLE_SESSION_DELEGATION" in delegation
     assert "THALIRIS_FORMAL_SENTINEL_WRITE_BLOCKED" in write
     assert "THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION" in control
+
+
+def test_registry_rejects_key_that_differs_from_spec_identity(monkeypatch) -> None:
+    monkeypatch.setitem(
+        roles.ROLE_REGISTRY,
+        "formal-key",
+        (
+            roles.RoleSpec(id="formal-spec", instructions="formal instructions"),
+            roles.CodexExecutionBinding(native_profile="thaliris-formal-key"),
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"ROLE_REGISTRY key 'formal-key' must match RoleSpec\.id 'formal-spec'",
+    ):
+        roles.role_choices()
 
 
 def test_managed_renderer_preserves_baseline_bytes_and_derives_seventh_role(monkeypatch) -> None:

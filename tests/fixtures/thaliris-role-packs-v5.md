@@ -10,7 +10,7 @@ task-specific input to every Investigator, Curator, Reasoning Specialist, Implem
 The persistent root Controller model default is `gpt-5.6-sol`; its reasoning
 effort is selected by Host, task, or user policy and is not forced by Thaliris.
 It is root instruction metadata, not a native Codex child profile and does not
-mutate a current task model. The native child profiles are Investigator (`gpt-5.6-luna`,
+mutate a current task model. The six child profiles are Investigator (`gpt-5.6-luna`,
 `xhigh`), Curator (`gpt-5.6-luna`, `xhigh`), Reasoning Specialist
 (`gpt-5.6-sol`, `xhigh`), Implementer (`gpt-5.6-luna`, `xhigh`), Verifier
 (`gpt-5.6-luna`, `xhigh`), and Reviewer (`gpt-5.6-terra`, `high`).
@@ -102,15 +102,8 @@ acceptance coverage, the Controller-decided Modification Boundary,
 source/generated/docs synchronization, call sites and residual references,
 actual deterministic or focused test results, migration and compatibility
 fixtures, generated versus user-owned ownership, lifecycle or protocol
-inconsistencies, contradictions, decision-changing unknowns, and workspace
-anomalies. Treat a workspace anomaly as an observation, not a candidate defect,
-unless the candidate introduced it, the modification boundary owns it, or
-acceptance requires changing it. Historical/generated ownership must come from
-exact independent historical evidence; current HEAD must not establish its own
-historical authority. A clean, low-risk task may finish without Terra. Luna Verifier closes
-implementation-level uncertainty but does not replace deep Terra
-review when authority, provenance, Host lifecycle, identity, trust, migration,
-or bootstrap semantics still warrant independent challenge. Model prose may describe READY,
+inconsistencies, contradictions, and decision-changing unknowns. A clean,
+low-risk task may finish without Terra. Model prose may describe READY,
 LOCAL_DEFECTS, or DECISION_REOPEN; the Controller owns routing. LOCAL_DEFECTS
 return through a fresh Implementer and Verifier. DECISION_REOPEN returns to the
 Controller, then to Investigator or Reasoning Specialist as appropriate.

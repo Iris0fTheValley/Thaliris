@@ -52,7 +52,8 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = {
     "thaliris-investigator.toml": frozenset("0720619c1d0b85b80a2981597fcd60086a1bddc7f03f48f88cc8f75c1128d872 199d7b9cb1fb8d1a3536df07395a420b9476ee66d13a4a9ca6d6442215d9e7b8 44781edb6a654db482adafdc20b16f75cdebded2e62e8d86376aefc577a3ae55 f5623ba40d585b1760511344488d71c53e8c08a8c0ad8cbd1b76b268ae02c70f 55ef42ac18d46ed5fe2c624ed0be2c16956ab4fe91dd1e64b6ef3a07bae01cb1 307a3e90b32cf7dcde3cac3c683b3e16f5e13c147191e82e45109a75a6984ff4 188e8cc62bfd8e1f37f3068193deb37431c5ea49356adc99b8873a47e817fbdd caa08fc96fdcff0a47fa05cb8ebba32d93a3336fec64b0a9c93d5467cc3009be c917f0b601dcd689afbb443b98c6b12733d5738ed908a112a5c7948f3321edf9 4fe5345865638896c3cc042a66e1853d5d969763d64b6e9076b6d3bc25fe3091".split()),
     "thaliris-curator.toml": frozenset("8026959290edeb86d66ee86f9b5db286e7fb31c28c95ec2c42ec8be7f2cda515 f6827c30074554b809b50414bde31146354ec6898fe8bd13a43402134c8b6476 a98489c08e6af01165629b6848667700956d749bf8a676a30ac479c729d916fa 64fece15a4e47b77641039abbf9f7c9a1daab4581b9faa0c066fd7d0c7cab4d4 d11534e931c1c17b51bd846a487ac6609b56db018f5abb6b5ed6991b5b6a71b3 b902b77ca7f0f77f6305cb8bec3e7bf1c8386805a312b816e2a99e1794e9a1f7 0467fdaba8aeefb76b52d10995778e4e01a2f98c7dec05da58134abad0feccff".split()),
     "thaliris-reasoning-specialist.toml": frozenset("7e596a38e95606b684b17f25cc0eecb3163aef7d65d36110f6496b3ab7d53692 960190bb4b67b02e7616bcf6dbd71192bcc79327fb0ed72e6f23b3815819afd0 d2191d59621e2765ae7642ca1648d96b4dbfb1a82293a8a02bf8642328fb58a7 60a87a06e97602f10f7f3842061c6eba551e78f76a8fa99b17ba377f48d22117 13b3283ad629bb6d32fe3613462694be14fba3a24c547aa791e1e651c0b3106d 17616dddc351c20f5c98a30a0506253322d0cc5f6480d89690c7a08a70592557 5a22321413193d571a4a3b9189d45951ffda93cefde26f2f3999982233d17a01 813b16ca10985e8e602ee3295eb093115de4505db9cdc9cc6cbd9ef9ad192efd 708bee8d038cdd44bc8b75ee399ff8de09fa9a65e9d46f7060d75a82f04c19aa 1fa5af05b543d22efc20cc8eb7813da51e63a63c58b02bea6c2109918aa5d9d9 b7a6c8ae5655205dbb16a7d90af09a06a21daad78170cc8e55509304770d5b10".split()),
-    "thaliris-implementer.toml": frozenset("a91e41c67930071db4d6eb45342526cbbf67af6d4fda13d1c847d18f28816a35 a1c7a46981512c7e8067dd5e40e193a0b54e34384aefc2b28950d5c6ccb5af9a d24ee0de8a22409bd5a3c9f1359079c4d6c7ccfbb14f65842e84f21ab0a5aa96 360d49c46afe280f85d6857575a12a9eeeff93d1f9aedb4b00ef2a2aa7c8b078 4028038b2153e56881140dabdc9165d2d1866fa737635e33599dc4d3cef0342f a463ea49f2cc308b6457ab63612a5f6b257f7462470118537961315b8e757ed1 fd0e28d2f1cce4f639a34b123bd647c9cd64d8b90fd5fb54a1e8353ecde924ad 7f85c22eb8ca508622b39bb8708e6bd617de3139f9de012ee29d166d4a3aad1e 3fcfcf2a04a8ef9e3a5c52f7414664b3a0d0fbc7f036c2558da1cb8baf955d95 0780f180cd71a9b6a73fef0eb61ca42f32fd048ccd12b0564f2afd68e7ed6143".split()),
+    "thaliris-implementer.toml": frozenset("a91e41c67930071db4d6eb45342526cbbf67af6d4fda13d1c847d18f28816a35 a1c7a46981512c7e8067dd5e40e193a0b54e34384aefc2b28950d5c6ccb5af9a d24ee0de8a22409bd5a3c9f1359079c4d6c7ccfbb14f65842e84f21ab0a5aa96 360d49c46afe280f85d6857575a12a9eeeff93d1f9aedb4b00ef2a2aa7c8b078 4028038b2153e56881140dabdc9165d2d1866fa737635e33599dc4d3cef0342f a463ea49f2cc308b6457ab63612a5f6b257f7462470118537961315b8e757ed1 fd0e28d2f1cce4f639a34b123bd647c9cd64d8b90fd5fb54a1e8353ecde924ad 7f85c22eb8ca508622b39bb8708e6bd617de3139f9de012ee29d166d4a3aad1e 3fcfcf2a04a8ef9e3a5c52f7414664b3a0d0fbc7f036c2558da1cb8baf955d95 0780f180cd71a9b6a73fef0eb61ca42f32fd048ccd12b0564f2afd68e7ed6143 55c1ea16853dcc4f5a4617005e57a939cd4dcd773e2fd24c5e0911ea3c9e90c0".split()),
+    "thaliris-verifier.toml": frozenset("df6b0e82979329f15318356d060c2321095a2de7941539dfa0e007f08f2c2ff4 fa1585e8df2c9136eed055f22e85594805c62a0cec0d6387700dd4959fe9dc19".split()),
     "thaliris-reviewer.toml": frozenset("ae56701985a1d27a2daea326819fa0e93b4350eb6e65d1a299daf198126a7a9a c43274a3f9cb3f93cd662b6477f1dfd07c170c24324c1364df5f59205851b17b d0f488e226888c6a8f6e39ab1deeb1125d3c0e9474dba47af47ec3eab2da45c2 ae51394874f0b35dc2b39577d471bf2f07533962363cdb7ad56e6e08a3860887 322534fb6f2b2abc312bd04a76e477e3e128cf6a194da5817ecaabd0678aa397 b038486edb2c381631e458adac2bff12fbcdc09233b5b1b8f59aeee9dc0e9774 720ef66c9f6023d961ddc1a3329ec4ae3fdf7fe2f6b1252034a7117f5990a125 4cec33fef9151d2ba60483a72b49ccd7dadd0b5c044a69f00f468e71c489fe07 8999980daf617644a36da7579626f122b6c279ad54e055bbaf8242daedbd36c2 b9b3b50f89b1dd7c5f5eaf2ee558b6881b014d66f6b30bc20244f361ebc721d7 e281f8c25451cbccb1509fa07814e4cfeaa8ae113402fc2db9a6c63a165bc1e6 96257cc1ed5c88b37de73e2c355c17c6b1ab26620210effe5b3283c776d0e4b9 357e9364404a2ab249c27ad3a2c93305f38db5afbbec1b56b58ee5e0817d5602 82b410c617589d410deb33f1ff4163d49b22d329ee517442a004965115a46124 fe082be2c5d05675b3ab9a69234851d505db3a3deddb509794b817f5b59a8ab8".split()),
 }
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
@@ -121,10 +122,16 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
             "source/generated/docs synchronization; call sites and residual references; actual focused "
             "and deterministic test results; migration and compatibility fixtures; generated versus "
             "user-owned files; obvious lifecycle or protocol inconsistencies; contradictions; and "
-            "decision-changing unknowns. Express READY, LOCAL_DEFECTS, or DECISION_REOPEN only as "
+            "decision-changing unknowns. Treat workspace anomalies as observations, not candidate "
+            "defects, unless the candidate introduced them, the modification boundary owns them, or "
+            "acceptance requires changing them. Historical/generated ownership must come from exact "
+            "independent historical evidence; current HEAD must not establish its own historical "
+            "authority. Express READY, LOCAL_DEFECTS, or DECISION_REOPEN only as "
             "model prose. A locally clean result may be worth an independent Terra Reviewer only when "
-            "deep semantic or architectural review adds real value. Do not write, route, or treat this "
-            "filter as mandatory."
+            "deep semantic or architectural review adds real value; Luna Verifier does not replace "
+            "deep Terra review when authority, provenance, Host lifecycle, identity, trust, migration, "
+            "or bootstrap semantics still warrant independent challenge. Do not write, route, or treat "
+            "this filter as mandatory."
         ),
         "reviewer": (
             "Act as an independent non-writing checker of the candidate named in the handoff. "
@@ -334,6 +341,10 @@ Use an Investigator only when missing facts could change the implementation
 direction. Use a Reviewer only when independent semantic review adds real
 value; it is not a default gate. Curator and Reasoning Specialist remain
 optional and are selected only when they add actual value.
+
+When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
+contracts change, check and synchronize both the repository-managed
+instruction and the currently effective Codex global instruction.
 
 Fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer sessions use `fork_turns="none"`
 and receive their tasks plus selected information in
@@ -563,8 +574,15 @@ acceptance coverage, the Controller-decided Modification Boundary,
 source/generated/docs synchronization, call sites and residual references,
 actual deterministic or focused test results, migration and compatibility
 fixtures, generated versus user-owned ownership, lifecycle or protocol
-inconsistencies, contradictions, and decision-changing unknowns. A clean,
-low-risk task may finish without Terra. Model prose may describe READY,
+inconsistencies, contradictions, decision-changing unknowns, and workspace
+anomalies. Treat a workspace anomaly as an observation, not a candidate defect,
+unless the candidate introduced it, the modification boundary owns it, or
+acceptance requires changing it. Historical/generated ownership must come from
+exact independent historical evidence; current HEAD must not establish its own
+historical authority. A clean, low-risk task may finish without Terra. Luna Verifier closes
+implementation-level uncertainty but does not replace deep Terra
+review when authority, provenance, Host lifecycle, identity, trust, migration,
+or bootstrap semantics still warrant independent challenge. Model prose may describe READY,
 LOCAL_DEFECTS, or DECISION_REOPEN; the Controller owns routing. LOCAL_DEFECTS
 return through a fresh Implementer and Verifier. DECISION_REOPEN returns to the
 Controller, then to Investigator or Reasoning Specialist as appropriate.
@@ -935,7 +953,7 @@ def bootstrap_check(root: Path) -> dict[str, object]:
     necessary before handing control back to the Controller.
     """
     root = core._repo_root(root)
-    return {"ok": True, **_project_definition_facts(root)}
+    return {"ok": True, **_project_definition_facts(root), "session_restart_required": False}
 
 
 def task_close(root: Path, base_revision: int) -> dict[str, object]:

@@ -16,6 +16,10 @@ direction. Use a Reviewer only when independent semantic review adds real
 value; it is not a default gate. Curator and Reasoning Specialist remain
 optional and are selected only when they add actual value.
 
+When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
+contracts change, check and synchronize both the repository-managed
+instruction and the currently effective Codex global instruction.
+
 Fresh Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer sessions use `fork_turns="none"`
 and receive their tasks plus selected information in
 the Controller's native spawn message. `SubagentStart` validates authorization,

@@ -28,6 +28,18 @@ def _task_status(root: Path, *, suppress_protocol_notice: bool) -> dict[str, obj
     return out
 
 
+def _add_global_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the options accepted before a command.
+
+    The command probe below intentionally uses this same grammar.  Keeping
+    these declarations in one place prevents schema routing from drifting
+    away from the real CLI parser when a global option is added or its
+    argparse behaviour changes.
+    """
+    parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--root", type=Path, default=Path.cwd())
+
+
 def _parser() -> argparse.ArgumentParser:
     p = _Parser(
         prog="thaliris",
@@ -36,8 +48,7 @@ def _parser() -> argparse.ArgumentParser:
             "and lifecycle binding for Codex workflows"
         ),
     )
-    p.add_argument("--pretty", action="store_true")
-    p.add_argument("--root", type=Path, default=Path.cwd())
+    _add_global_arguments(p)
     sub = p.add_subparsers(dest="command", required=True)
     for name in ("init", "bootstrap-check", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
         sub.add_parser(name)
@@ -96,6 +107,34 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
+def _request_parser() -> argparse.ArgumentParser:
+    """Build a non-exiting parser for the first command positional.
+
+    Unknown command-local options belong to ``remainder``.  The parser still
+    uses the real global-option grammar, including argparse's option
+    abbreviations and end-of-options marker, so command classification stays
+    aligned with execution parsing without invoking any command behaviour.
+    """
+    p = _Parser(prog="thaliris", add_help=False)
+    # ``ArgumentParser`` normally wires these to an exiting ``help`` action.
+    # The probe must be safe to call while preparing an error response, so
+    # retain the same zero-argument arity with a non-exiting flag instead.
+    p.add_argument("-h", "--help", action="store_true", help=argparse.SUPPRESS)
+    _add_global_arguments(p)
+    p.add_argument("command", nargs="?")
+    p.add_argument("remainder", nargs=argparse.REMAINDER)
+    return p
+
+
+def _requested_command(argv: list[str]) -> str | None:
+    """Return the command resolved by the shared global-option grammar."""
+    try:
+        args, _unknown = _request_parser().parse_known_args(argv)
+    except ValueError:
+        return None
+    return args.command
+
+
 def main(argv: list[str] | None = None) -> int:
     # Let formatting be placed before or after a subcommand without changing
     # the command schema or emitting non-JSON normal output.
@@ -103,6 +142,13 @@ def main(argv: list[str] | None = None) -> int:
         argv = sys.argv[1:]
     if "--pretty" in argv:
         argv = ["--pretty", *[arg for arg in argv if arg != "--pretty"]]
+    # Preserve the bootstrap protocol field even when argparse rejects the
+    # invocation before it can construct ``args``.  This is deliberately
+    # scoped to the codex-bootstrap command; other command error schemas stay
+    # unchanged.  Classify the effective argv after the existing pretty-option
+    # normalization so the probe and real parser see identical input.
+    bootstrap_requested = _requested_command(argv) == "codex-bootstrap"
+    args = None
     try:
         args = _parser().parse_args(argv)
         root = args.root.resolve()
@@ -121,7 +167,12 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 out = codex_bootstrap.bootstrap(root)
             except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-                out = {"ok": False, "status": "BOOTSTRAP_UNAVAILABLE", "error": str(exc)}
+                out = {
+                    "ok": False,
+                    "status": "BOOTSTRAP_UNAVAILABLE",
+                    "error": str(exc),
+                    "session_restart_required": False,
+                }
         elif args.command == "doctor": out = codex_adapter.doctor(root)
         elif args.command == "stale": out = stale(root)
         elif args.command == "memory-status":
@@ -144,8 +195,11 @@ def main(argv: list[str] | None = None) -> int:
         else: out = {"ok": True, "version": __version__}
         print(json.dumps(out, sort_keys=True, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
         return 0 if out.get("ok", False) else 3
-    except (ValueError, OSError, json.JSONDecodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True, separators=(",", ":")))
+    except (ValueError, OSError, RuntimeError, json.JSONDecodeError) as exc:
+        result = {"ok": False, "error": str(exc)}
+        if bootstrap_requested or (args is not None and args.command == "codex-bootstrap"):
+            result["session_restart_required"] = False
+        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return 2
 
 

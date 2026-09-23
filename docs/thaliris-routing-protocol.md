@@ -30,6 +30,10 @@ implementations, complex semantic repairs, or remaining correctness
 uncertainty. Curator and Reasoning Specialist are optional and selected only
 when they add actual value.
 
+When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
+contracts change, check and synchronize both the repository-managed instruction
+and the currently effective Codex global instruction.
+
 `SubagentStart` is lifecycle-only. It validates the authorized native Codex child and binds
 identity, role, session, start time, provenance, handoff ID, and payload hash.
 It does not construct a role packet or inject task state.
@@ -78,3 +82,12 @@ a local implementation defect with the accepted design unchanged may go
 directly to a fresh Implementer. An Implementer that encounters an unverified
 external fact, an invalidated invariant, or a changed decision basis returns it
 as a decision-changing unknown without expanding scope.
+
+Verifier calibration is semantic: Luna Verifier closes implementation-level
+uncertainty but does not replace deep Terra review when authority, provenance,
+Host lifecycle, identity, trust, migration, or bootstrap semantics still
+warrant independent challenge. Workspace anomalies are observations, not
+candidate defects, unless the candidate introduced them, the modification
+boundary owns them, or acceptance requires changing them. Historical/generated
+ownership must come from exact independent historical evidence; current HEAD
+must not establish its own historical authority.

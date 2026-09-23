@@ -16,11 +16,6 @@ import shutil
 import subprocess
 
 
-# Process-local reminder for this Controller session.  It is intentionally
-# not persisted: a fresh Codex session starts with a fresh module state.
-_SESSION_RESTART_ROOTS: set[Path] = set()
-
-
 def _repo_root(path: Path) -> Path:
     result = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
@@ -79,7 +74,11 @@ def _invoke(executable: list[str], root: Path, command: str) -> dict[str, object
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        return {"ok": False, "error": str(exc)}
+        return {
+            "ok": False,
+            "error": str(exc),
+            "session_restart_required": False,
+        }
     try:
         payload = json.loads(result.stdout)
     except (TypeError, json.JSONDecodeError):
@@ -87,18 +86,32 @@ def _invoke(executable: list[str], root: Path, command: str) -> dict[str, object
             "ok": False,
             "error": "trusted executable returned non-JSON output",
             "stderr": result.stderr[-2000:],
+            "session_restart_required": False,
         }
     if not isinstance(payload, dict):
-        return {"ok": False, "error": "trusted executable returned a non-object JSON value"}
+        return {
+            "ok": False,
+            "error": "trusted executable returned a non-object JSON value",
+            "session_restart_required": False,
+        }
     if result.returncode != 0:
         return {
             "ok": False,
             "error": "trusted executable returned a nonzero exit status",
             "process_returncode": result.returncode,
             "response": payload,
+            # Preserve the native restart signal at this boundary as well as
+            # retaining the complete native response for diagnostics.
+            "session_restart_required": payload.get("session_restart_required") is True,
         }
+    payload["session_restart_required"] = payload.get("session_restart_required") is True
     payload["process_returncode"] = result.returncode
     return payload
+
+
+def _restart_required(payload: dict[str, object]) -> bool:
+    """Normalize the native result's restart signal to an explicit boolean."""
+    return payload.get("session_restart_required") is True
 
 
 def bootstrap(root: Path) -> dict[str, object]:
@@ -110,25 +123,26 @@ def bootstrap(root: Path) -> dict[str, object]:
             "ok": False,
             "status": "BOOTSTRAP_UNAVAILABLE",
             "manual_action_required": ["canonical_executable_unavailable"],
-        }
-
-    if workspace in _SESSION_RESTART_ROOTS:
-        return {
-            "ok": False,
-            "status": "SESSION_RESTART_REQUIRED",
-            "init_invoked": True,
-            "session_restart_required": True,
-            "project_definition_present": "YES",
-            "message": "Stop this Controller session and start a fresh Codex session; do not task-start here.",
+            "session_restart_required": False,
         }
 
     facts = _invoke(executable, workspace, "bootstrap-check")
     if facts.get("ok") is not True:
-        return {"ok": False, "status": "BOOTSTRAP_UNAVAILABLE", "probe": facts}
+        return {
+            "ok": False,
+            "status": "BOOTSTRAP_UNAVAILABLE",
+            "probe": facts,
+            "session_restart_required": _restart_required(facts),
+        }
     probe_definition = facts.get("project_definition_present")
     probe_manual = facts.get("manual_action_required") or []
     if not isinstance(probe_manual, list):
-        return {"ok": False, "status": "BOOTSTRAP_UNAVAILABLE", "probe": facts}
+        return {
+            "ok": False,
+            "status": "BOOTSTRAP_UNAVAILABLE",
+            "probe": facts,
+            "session_restart_required": _restart_required(facts),
+        }
     if probe_manual:
         return {
             "ok": False,
@@ -136,6 +150,7 @@ def bootstrap(root: Path) -> dict[str, object]:
             "init_invoked": False,
             "manual_action_required": probe_manual,
             "project_definition_present": probe_definition,
+            "session_restart_required": _restart_required(facts),
         }
     if probe_definition == "YES":
         return {
@@ -143,9 +158,15 @@ def bootstrap(root: Path) -> dict[str, object]:
             "status": "READY",
             "project_definition_present": "YES",
             "init_invoked": False,
+            "session_restart_required": _restart_required(facts),
         }
     if probe_definition != "NO":
-        return {"ok": False, "status": "BOOTSTRAP_UNAVAILABLE", "probe": facts}
+        return {
+            "ok": False,
+            "status": "BOOTSTRAP_UNAVAILABLE",
+            "probe": facts,
+            "session_restart_required": _restart_required(facts),
+        }
 
     # Exactly one init attempt.  No durable fence, retry, or task-start is
     # performed by this boundary.
@@ -156,14 +177,13 @@ def bootstrap(root: Path) -> dict[str, object]:
             "status": "BOOTSTRAP_UNAVAILABLE",
             "init_invoked": True,
             "init": initialized,
+            "session_restart_required": _restart_required(initialized),
         }
     manual = initialized.get("manual_action_required") or []
     if not isinstance(manual, list):
         manual = [manual]
     if initialized.get("project_definition_present") != "YES" or manual:
-        restart_required = initialized.get("session_restart_required") is True
-        if restart_required:
-            _SESSION_RESTART_ROOTS.add(workspace)
+        restart_required = _restart_required(initialized)
         return {
             "ok": False,
             "status": "MANUAL_ACTION_REQUIRED",
@@ -174,8 +194,7 @@ def bootstrap(root: Path) -> dict[str, object]:
             ),
             "session_restart_required": restart_required,
         }
-    if initialized.get("session_restart_required") is True:
-        _SESSION_RESTART_ROOTS.add(workspace)
+    if _restart_required(initialized):
         return {
             "ok": False,
             "status": "SESSION_RESTART_REQUIRED",
@@ -183,20 +202,36 @@ def bootstrap(root: Path) -> dict[str, object]:
             "session_restart_required": True,
             "message": "Stop this Controller session and start a fresh Codex session; do not task-start here.",
         }
-    return {"ok": True, "status": "READY", "init_invoked": True}
+    return {
+        "ok": True,
+        "status": "READY",
+        "init_invoked": True,
+        "session_restart_required": False,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
     """CLI helper retained for direct module use; canonical dispatch is cli.py."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Thaliris one-shot Codex bootstrap")
+    class _Parser(argparse.ArgumentParser):
+        # Keep direct entrypoint failures machine-readable like the canonical
+        # dispatcher, including parse failures before args exists.
+        def error(self, message: str) -> None:
+            raise ValueError(message)
+
+    parser = _Parser(description="Thaliris one-shot Codex bootstrap")
     parser.add_argument("--root", type=Path, default=Path.cwd())
-    args = parser.parse_args(argv)
     try:
+        args = parser.parse_args(argv)
         result = bootstrap(args.root)
-    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        result = {"ok": False, "status": "BOOTSTRAP_UNAVAILABLE", "error": str(exc)}
+    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        result = {
+            "ok": False,
+            "status": "BOOTSTRAP_UNAVAILABLE",
+            "error": str(exc),
+            "session_restart_required": False,
+        }
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0 if result.get("ok") else 3
 

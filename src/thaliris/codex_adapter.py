@@ -248,11 +248,10 @@ def host_explicit_blocking_wait(executable: str | None = None) -> dict[str, obje
         "version": host["version"],
         "min_wait_timeout_ms": host["min"],
         "default_wait_timeout_ms": host["default"],
-        # This release pin is a hard contract bound, not proof that the
-        # current hook session accepts that value.  No config file is an
-        # effective-session observation.
+        # The exact release pin supplies the explicit wait's supported upper
+        # bound.  Unknown or prerelease builds never reach this result.
         "release_hard_max_wait_timeout_ms": host["max"],
-        "effective_max_wait_timeout_ms": "UNAVAILABLE",
+        "effective_max_wait_timeout_ms": host["max"],
         "explicit_timeout_supported": True,
     }
 
@@ -513,6 +512,9 @@ and the current-session effective maximum is mechanically verified; otherwise
 no automatic long-wait normalization occurs. Task closure requires the last
 Controller-direct handoff's completed lifecycle and no pending or active
 descendants; a later Scanner does not replace that top-level completion.
+When waiting on an authorized managed dependency, prefer one blocking wait over
+repeated short polling. Do not periodically wake the Controller only to decide
+to wait again. Use the mechanically known Host blocking-wait bound.
 The Controller interprets {_native_role_names_text()} results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.

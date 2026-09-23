@@ -147,15 +147,20 @@ def test_spawn_return_is_correlated_to_authorized_parent(active):
     assert state(active)["children"][-1]["task_name_hash"] == lifecycle._identity_hash("/root/scanner")
 
 
-def test_parent_wait_normalizes_only_its_pending_scanner(active, monkeypatch):
+@pytest.mark.parametrize("role", ["implementer", "focused-implementer", "reviewer"])
+def test_parent_wait_normalizes_only_its_pending_scanner(active, monkeypatch, role):
     monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda root: "BLOCKING_WAIT")
     monkeypatch.setattr(codex_adapter, "host_explicit_blocking_wait", lambda: {"status": "PASS", "effective_max_wait_timeout_ms": 60000})
-    parent = start(active)
-    wait = {**parent, "tool_name": "wait_agent", "tool_input": {"timeout_ms": 1}}
+    parent = start(active, role)
+    wait_input = {"timeout_ms": 1, "future_argument": {"keep": True}}
+    wait = {**parent, "tool_name": "wait_agent", "tool_input": wait_input}
     assert codex_adapter.audit_hook(active, "PreToolUse", wait) == ""
+    assert wait["tool_input"] == wait_input
     scanner = start(active, "investigator", "scanner", parent)
     result = json.loads(codex_adapter.audit_hook(active, "PreToolUse", wait))
-    assert result["hookSpecificOutput"]["updatedInput"]["timeout_ms"] == 60000
+    assert result["hookSpecificOutput"]["updatedInput"] == {
+        **wait_input, "timeout_ms": 60000,
+    }
     finish(active, scanner, parent)
     assert codex_adapter.audit_hook(active, "PreToolUse", wait) == ""
 

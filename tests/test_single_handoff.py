@@ -296,9 +296,11 @@ def test_blocking_wait_is_normalized_only_with_a_managed_dependency(tmp_path: Pa
         "status": "PASS",
         "effective_max_wait_timeout_ms": 120_000,
     })
-    wait = hook_payload(tool_name="wait_agent", tool_input={"timeout_ms": 30_000})
+    original_input = {"timeout_ms": 30_000, "reason": "wait for child", "future": {"keep": True}}
+    wait = hook_payload(tool_name="wait_agent", tool_input=original_input)
 
     assert codex_adapter.audit_hook(root, "PreToolUse", wait) == ""
+    assert wait["tool_input"] == original_input
 
     spawn = hook_payload(
         tool_name="spawn_agent",
@@ -306,7 +308,9 @@ def test_blocking_wait_is_normalized_only_with_a_managed_dependency(tmp_path: Pa
     )
     assert handle_hook(root, "PreToolUse", spawn) == ""
     rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", wait))
-    assert rewritten["hookSpecificOutput"]["updatedInput"]["timeout_ms"] == 120_000
+    assert rewritten["hookSpecificOutput"]["updatedInput"] == {
+        **original_input, "timeout_ms": 120_000,
+    }
 
 
 def test_unavailable_effective_wait_maximum_preserves_legal_timeout(tmp_path: Path, monkeypatch) -> None:
@@ -323,6 +327,32 @@ def test_unavailable_effective_wait_maximum_preserves_legal_timeout(tmp_path: Pa
     assert codex_adapter.audit_hook(root, "PreToolUse", wait) == ""
 
 
+@pytest.mark.parametrize("host_status", ["UNKNOWN", "UNSUPPORTED"])
+def test_unknown_or_unsupported_host_does_not_normalize_pending_wait(tmp_path: Path, monkeypatch, host_status: str) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "unknown wait host", None, None)
+    monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
+    monkeypatch.setattr(codex_adapter, "host_explicit_blocking_wait", lambda: {
+        "status": host_status, "effective_max_wait_timeout_ms": "UNAVAILABLE",
+    })
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "explicit task",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    wait = hook_payload(tool_name="wait_agent", tool_input={"timeout_ms": 30_000})
+    assert codex_adapter.audit_hook(root, "PreToolUse", wait) == ""
+
+
+def test_no_task_does_not_normalize_wait_even_with_known_host(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
+    monkeypatch.setattr(codex_adapter, "host_explicit_blocking_wait", lambda: {
+        "status": "PASS", "effective_max_wait_timeout_ms": 3_600_000,
+    })
+    wait = hook_payload(tool_name="wait_agent", tool_input={"timeout_ms": 30_000})
+    assert codex_adapter.audit_hook(root, "PreToolUse", wait) == ""
+
+
 def test_codex_01551_wait_capability_is_version_pinned(monkeypatch) -> None:
     class Version:
         returncode = 0
@@ -335,10 +365,34 @@ def test_codex_01551_wait_capability_is_version_pinned(monkeypatch) -> None:
     assert capability == {
         "status": "PASS", "version": "0.155.1", "min_wait_timeout_ms": 10_000,
         "default_wait_timeout_ms": 30_000, "release_hard_max_wait_timeout_ms": 3_600_000,
-        "effective_max_wait_timeout_ms": "UNAVAILABLE", "explicit_timeout_supported": True,
+        "effective_max_wait_timeout_ms": 3_600_000, "explicit_timeout_supported": True,
     }
     assert codex_adapter.native_child_completion_reenters_root("codex-0.155-test") == "UNSUPPORTED"
     codex_adapter._host_wait_mode_cached.cache_clear()
+
+
+def test_release_pinned_host_normalizes_pending_controller_wait(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "pinned blocking wait", None, None)
+
+    monkeypatch.setattr(codex_adapter, "host_wait_mode", lambda _executable=None: {
+        "status": "PASS", "version": "0.155.1", "min": 10_000,
+        "default": 30_000, "max": 3_600_000,
+        "explicit_timeout_supported": True,
+        "native_completion_reenters_root": "UNSUPPORTED",
+    })
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "explicit task",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    original_input = {"timeout_ms": 60_000, "future_argument": {"keep": True}}
+    wait = hook_payload(tool_name="wait_agent", tool_input=original_input)
+
+    rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", wait))
+    assert rewritten["hookSpecificOutput"]["updatedInput"] == {
+        **original_input, "timeout_ms": 3_600_000,
+    }
+    assert wait["tool_input"] == original_input
 
 
 @pytest.mark.parametrize("version", ["0.153.4", "0.154.0"])
@@ -353,7 +407,7 @@ def test_historical_codex_wait_capabilities_remain_exactly_pinned(monkeypatch, v
     capability = codex_adapter.host_explicit_blocking_wait("codex-pinned-test")
     assert capability["version"] == version
     assert capability["release_hard_max_wait_timeout_ms"] == 3_600_000
-    assert capability["effective_max_wait_timeout_ms"] == "UNAVAILABLE"
+    assert capability["effective_max_wait_timeout_ms"] == 3_600_000
     codex_adapter._host_wait_mode_cached.cache_clear()
 
 

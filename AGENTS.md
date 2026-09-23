@@ -166,6 +166,9 @@ and the current-session effective maximum is mechanically verified; otherwise
 no automatic long-wait normalization occurs. Task closure requires the last
 Controller-direct handoff's completed lifecycle and no pending or active
 descendants; a later Scanner does not replace that top-level completion.
+When waiting on an authorized managed dependency, prefer one blocking wait over
+repeated short polling. Do not periodically wake the Controller only to decide
+to wait again. Use the mechanically known Host blocking-wait bound.
 The Controller interprets Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, and Reviewer results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.

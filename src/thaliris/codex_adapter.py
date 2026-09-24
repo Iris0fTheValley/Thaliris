@@ -76,6 +76,18 @@ _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
 _KNOWN_GENERATED_ROLE_REGISTRY_DOC_HASHES = frozenset({
     "b55b370ac265e4802f19d4034b234d8725437ade2e286eb52d1f0c4142a04e91",
 })
+# Exact managed spans from immutable repository revisions that carried the
+# renderer equality test. A marker alone never establishes generated ownership.
+# 3485ec4 is the predecessor release, not the candidate's generated output.
+_KNOWN_GENERATED_MANAGED_INSTRUCTION_HASHES = frozenset({
+    "d249d418ccf38ca3f159065715c3930d492682e93402025d067e99e2225b91fd",  # 3485ec4
+    "1b1cb7331dddc504a0908af91e32fba2b72cced74af1b56007099bb088b36c56",  # a33db5b
+    "c0072af2e11ee5ed315712c301a33c39a993af13d6243816b319700b432ef2ed",  # 729809f
+    "0238e56f242ca68c31d8b63c6d34ffcecc88ace6e245cad986ca3bd1c21e78d2",  # 3ae1b21
+    "66c1ac81e010fba307cb579b519142124ddca128e028890f48c7e33f8fac6a11",  # 8eb1707
+    "bc47c81d7004bc8a4095cc5d9079068af9ca3d2804a5a557d17a5abaf371f494",  # f316910
+    "943c67bb7683785403429063bec0a0174119e8c2dbbe70f6684b8c46d1434c0b",  # e02b953
+})
 _KNOWN_HOST_WAIT_CAPABILITIES = {
     # These are release-pinned observations, not a cross-version assumption.
     "0.153.4": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
@@ -343,6 +355,21 @@ def render_managed() -> str:
     """Render marker-owned instructions from the current role registry."""
     return _render_managed()
 
+
+def _controller_bridge() -> dict[str, str]:
+    """Give Controller the exact managed text to acknowledge in this session.
+
+    A CLI result cannot promote text to Host developer instruction authority.
+    The digest is an explicit Controller receipt bound to a one-shot hook
+    attestation; Host instruction activation remains unproved.
+    """
+    content = render_managed()
+    return {
+        "controller_bridge_content": content,
+        "controller_bridge_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "host_instruction_activation": "UNKNOWN",
+    }
+
 def _render_managed() -> str:
     return f"""{MANAGED_START}
 ## Thaliris Router
@@ -527,11 +554,17 @@ facts: a managed Thaliris block in the effective root instruction, a current
 managed `.codex/hooks.json`, and all Thaliris role-profile files. If any
 fact is absent, invoke `thaliris --root <repo> init` directly, or invoke the
 absolute executable named by the host's exact SHA-256 pin. Read its JSON result.
-If `session_restart_required` is true, stop this Controller session and require
-a fresh Codex session; never invoke `task-start` in the same session. This is a
-Controller/Host lifecycle contract, not cryptographically enforced by the
-current audit-hook ingress: its stdin JSON and local state are caller-controlled,
-so current-session activation is UNKNOWN/not applicable. If neither trusted
+Read the canonical managed text and SHA-256 returned by `init` or
+`bootstrap-check`. Explicitly acknowledge that digest with
+`--controller-bridge-sha256` when calling `task-start`; the loaded current-ABI
+PreToolUse hook binds that receipt to its session attestation. This is
+Controller activation only: CLI output does not become Host developer
+instruction, and Host instruction activation remains UNKNOWN. `init` reports
+`role_catalog_changed` when it creates new profile filenames. `task-start`
+then requires a current-session native startup observation containing those filenames;
+otherwise it returns `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`. Existing
+catalogued profile content can refresh on spawn.
+If neither trusted
 direct route is available, report bootstrap unavailable and do not continue.
 If all facts are present, read `.agent-memory/INDEX.md` and
 `.milestones/INDEX.md` (creating only a minimal missing map as instructed),
@@ -803,10 +836,22 @@ def _managed_agents(current: str) -> str:
             # Preserve the complete document when only user-owned content
             # differs (including its line-ending convention).
             return current
+        if _managed_agents_state(current) == "user":
+            return current
     newline = "\r\n" if "\r\n" in current else "\n"
     block = render_managed().replace("\n", newline)
     user_text = _strip_managed_agents(current) if span is not None else current
     return block if not user_text else block + user_text
+
+
+def _managed_agents_state(current: str) -> str:
+    span = _managed_span(current, "AGENTS.md")
+    if span is None:
+        return "absent"
+    owned = _normalize_line_endings(current[span[0]:span[1]])
+    if owned == _normalize_line_endings(render_managed()).removesuffix("\n"):
+        return "current"
+    return "legacy" if hashlib.sha256(owned.encode("utf-8")).hexdigest() in _KNOWN_GENERATED_MANAGED_INSTRUCTION_HASHES else "user"
 
 
 def _role_pack_state(value: bytes) -> str:
@@ -853,6 +898,8 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
     writes: dict[str, bytes] = {}
     manual: list[str] = []
     current_agents = _read_text(target_agents) if target_agents.is_file() else ""
+    if _managed_agents_state(current_agents) == "user":
+        manual.append(target_agents.relative_to(root).as_posix())
     rendered_agents = _managed_agents(current_agents)
     if current_agents != rendered_agents:
         writes[target_agents.relative_to(root).as_posix()] = rendered_agents.encode("utf-8")
@@ -862,6 +909,9 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
         if instruction == target_agents or not instruction.is_file():
             continue
         current = _read_text(instruction)
+        if _managed_agents_state(current) == "user":
+            manual.append(instruction.relative_to(root).as_posix())
+            continue
         stripped = _strip_managed_agents(current)
         if stripped != current:
             writes[instruction.relative_to(root).as_posix()] = stripped.encode("utf-8")
@@ -935,6 +985,7 @@ def init(root: Path) -> dict[str, object]:
     hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
+    new_profile_names = sorted(path for path in files if path.startswith(".codex/agents/") and not (root / path).is_file())
     backup = None
     # Apply the generated files under one lock so the mutation is atomic.
     with core._lock(root):
@@ -945,17 +996,13 @@ def init(root: Path) -> dict[str, object]:
             and hooks["current_hook_hash_observed"] == "STALE"
         )
         executable_unavailable = hooks["canonical_executable_available"] == "NO"
-        if stale_runtime_hook_spec:
-            manual = sorted(set(manual) | {"stale_runtime_hook_re_attestation_required"})
         if executable_unavailable:
             manual = sorted(set(manual) | {"canonical_executable_unavailable"})
         if hooks["legacy_managed_handler_cleanup"] == "MANUAL_CLEANUP_REQUIRED":
             manual = sorted(set(manual) | {"legacy_managed_handler_manual_cleanup_required"})
-        # Restart is a result of an actual generated definition change.  The
-        # executable and stale-runtime observations remain explicit diagnostics,
-        # but do not create durable restart state or make idempotent init repeat.
-        restart_required = bool(files)
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": restart_required, "hook_trust_required": hook_changed or stale_runtime_hook_spec or executable_unavailable, "host_wait_mode": host_wait_mode(), **_project_definition_facts(root), **_activation_fields(root)}
+        # A new filename may be absent from the current Host role catalog.
+        # Edited already-catalogued profiles reload when a child is spawned.
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "new_role_profile_files": new_profile_names, "role_catalog_changed": bool(new_profile_names), "hook_re_attestation_required": hook_changed or stale_runtime_hook_spec, "managed_hook_abi": lifecycle.MANAGED_HOOK_ABI, "executable_adapter_protocol_version": lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": False, "hook_trust_required": hook_changed or stale_runtime_hook_spec or executable_unavailable, "host_wait_mode": host_wait_mode(), **_project_definition_facts(root), **_activation_fields(root), **_controller_bridge()}
 
 
 def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str], list[str]]:
@@ -976,6 +1023,9 @@ def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], li
         current = _read_text(agents)
         span = _managed_span(current, agents.name)
         if span is not None:
+            if _managed_agents_state(current) == "user":
+                kept.append(agents.relative_to(root).as_posix())
+                continue
             stripped = _strip_managed_agents(current)
             name = agents.relative_to(root).as_posix()
             if stripped:
@@ -1045,6 +1095,7 @@ def task_start(
     milestone: str | None,
     input_file: str | None,
     hook_attestation: str | None = None,
+    controller_bridge_sha256: str | None = None,
 ) -> dict[str, object]:
     root = core._repo_root(root)
     definition = _project_definition_facts(root)
@@ -1074,7 +1125,7 @@ def task_start(
                 **definition,
                 **executable,
                 "init_required": False,
-                "session_restart_required": True,
+                "session_restart_required": False,
                 "same_session_task_start": "UNKNOWN",
                 "managed_runtime_after_restart": "UNVERIFIED",
                 "manual_action_required": "canonical_executable_unavailable",
@@ -1083,7 +1134,14 @@ def task_start(
     # Direct Python callers retain the historical local API; the native hook
     # attestation path is the startup boundary whose trusted executable must
     # be explicit.
-    lifecycle.consume_task_start_attestation(root, hook_attestation)
+    bridge = _controller_bridge()
+    if hook_attestation is not None and controller_bridge_sha256 != bridge["controller_bridge_sha256"]:
+        return {"ok": False, "status": "CONTROLLER_BRIDGE_REQUIRED", "expected_controller_bridge_sha256": bridge["controller_bridge_sha256"], "host_instruction_activation": "UNKNOWN"}
+    session_hash = lifecycle.consume_task_start_attestation(root, hook_attestation, controller_bridge_sha256)
+    if hook_attestation is not None:
+        catalog_status = lifecycle.role_catalog_session_status(root, session_hash)
+        if catalog_status == "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE":
+            return {"ok": False, "status": catalog_status, "new_role_profile_files": lifecycle.new_role_profile_files(root, session_hash), "host_instruction_activation": "UNKNOWN"}
     mode = selected_continuation_mode(root)
     readiness = {
         "status": "PASS" if mode in {"EVENT_DRIVEN", "BLOCKING_WAIT"} else "MANAGED_CONTINUATION_UNAVAILABLE",
@@ -1094,7 +1152,7 @@ def task_start(
     if mode == "UNAVAILABLE":
         return {"ok": False, "status": "MANAGED_CONTINUATION_UNAVAILABLE", "managed_readiness": readiness}
     result = core.task_start(root, goal, milestone, input_file, actor="controller")
-    result["managed_readiness"] = {**readiness, **_activation_fields(root)}
+    result["managed_readiness"] = {**readiness, **_activation_fields(root), "CONTROLLER_ACTIVATION_BRIDGE_ACTIVE": "YES" if hook_attestation is not None else "NOT_APPLICABLE", "HOST_INSTRUCTION_ACTIVE": "UNKNOWN", "controller_activation_bridge": "ACTIVE" if hook_attestation is not None else "NOT_APPLICABLE", "host_instruction_activation": "UNKNOWN", "role_catalog_session_status": catalog_status if hook_attestation is not None else "NOT_APPLICABLE"}
     return result
 
 
@@ -1106,7 +1164,7 @@ def bootstrap_check(root: Path) -> dict[str, object]:
     necessary before handing control back to the Controller.
     """
     root = core._repo_root(root)
-    return {"ok": True, **_project_definition_facts(root), "session_restart_required": False}
+    return {"ok": True, **_project_definition_facts(root), **_controller_bridge(), "managed_hook_abi": lifecycle.MANAGED_HOOK_ABI, "executable_adapter_protocol_version": lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION, "session_restart_required": False}
 
 
 def task_close(root: Path, base_revision: int) -> dict[str, object]:
@@ -1117,8 +1175,8 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
     return core.task_close(root, base_revision, expected_task_id=task_id)
 
 
-def audit_hook(root: Path, event: str, payload: object) -> str:
-    result = handle_hook(root, event, payload)
+def audit_hook(root: Path, event: str, payload: object, managed_hook_abi: str | None = None) -> str:
+    result = handle_hook(root, event, payload, managed_hook_abi)
     if result or event != "PreToolUse" or not isinstance(payload, dict):
         return result
     root = core._repo_root(root)
@@ -1265,7 +1323,9 @@ def doctor(root: Path) -> dict[str, object]:
         "subagent_start_observed": "YES" if lifecycle_start else "UNKNOWN",
         "subagent_stop_observed": "YES" if lifecycle_stop else "UNKNOWN",
         "explicit_handoff_binding_observed": "YES" if lifecycle_start else "UNKNOWN",
-        "controller_activation_bridge": "CODEX_NATIVE",
+        "CONTROLLER_ACTIVATION_BRIDGE_ACTIVE": "UNKNOWN",
+        "HOST_INSTRUCTION_ACTIVE": "UNKNOWN",
+        "controller_activation_bridge": "UNKNOWN",
         "NATIVE_CHILD_COMPLETION_REENTERS_ROOT": native_child_completion_reenters_root(),
         "HOST_EXPLICIT_BLOCKING_WAIT": host_explicit_blocking_wait().get("status"),
         "EFFECTIVE_WAIT_MAXIMUM": host_explicit_blocking_wait().get("effective_max_wait_timeout_ms", "UNAVAILABLE"),

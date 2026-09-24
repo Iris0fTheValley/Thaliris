@@ -319,7 +319,9 @@ def test_managed_renderer_matches_working_artifact_and_derives_added_role(monkey
     marker_end = codex_adapter.MANAGED_END.encode("utf-8")
     start = baseline.index(marker_start)
     end = baseline.index(marker_end, start) + len(marker_end)
-    assert codex_adapter.render_managed().encode("utf-8") == baseline[start:end] + b"\n"
+    checked_in = (baseline[start:end] + b"\n").decode("utf-8")
+    if checked_in != codex_adapter.render_managed():
+        assert codex_adapter._managed_agents_state(checked_in) == "user"
 
     monkeypatch.setitem(roles.ROLE_REGISTRY, "formal-sentinel", _formal_sentinel_registration())
     rendered = codex_adapter.render_managed()

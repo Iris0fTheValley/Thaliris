@@ -18,7 +18,10 @@ from . import core, roles
 
 HOOK_COMMAND_PREFIX = "thaliris audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
-CODEX_ADAPTER_PROTOCOL_VERSION = 8
+CODEX_ADAPTER_PROTOCOL_VERSION = 9
+# This literal travels in installed command bytes. An old Host registration
+# invoking a newer executable cannot manufacture the current hook ABI.
+MANAGED_HOOK_ABI = "thaliris-hook-abi-9"
 # Private adapter lifecycle state. This is deliberately separate from Core
 # state/schema and records only bounded native child provenance.
 LIFECYCLE_STATE_VERSION = 12
@@ -121,7 +124,7 @@ def hook_spec() -> dict[str, Any]:
     hooks: dict[str, list[dict[str, Any]]] = {}
     prefix = _hook_command_prefix()
     for event in HOOK_EVENTS:
-        handler: dict[str, Any] = {"type": "command", "command": f"{prefix} {event}", "timeout": 60}
+        handler: dict[str, Any] = {"type": "command", "command": f"{prefix} {event} --managed-hook-abi {MANAGED_HOOK_ABI}", "timeout": 60}
         entry: dict[str, Any] = {"hooks": [handler]}
         if event == "PostToolUse":
             # Codex treats a matcher made only of word characters and `|` as
@@ -147,13 +150,13 @@ def managed_hook_spec_hash() -> str:
                     continue
                 for handler in entry["hooks"]:
                     if isinstance(handler, dict) and handler.get("type") == "command":
-                        handler["command"] = f"{HOOK_COMMAND_PREFIX} {event}"
+                        handler["command"] = f"{HOOK_COMMAND_PREFIX} {event} --managed-hook-abi {MANAGED_HOOK_ABI}"
     encoded = json.dumps(logical, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
 def _managed_handler(event: str) -> dict[str, Any]:
-    return {"type": "command", "command": f"{_hook_command_prefix()} {event}", "timeout": 60}
+    return {"type": "command", "command": f"{_hook_command_prefix()} {event} --managed-hook-abi {MANAGED_HOOK_ABI}", "timeout": 60}
 
 
 def _hook_command_prefix() -> str:
@@ -309,6 +312,8 @@ def _wrapped_audit_hook_signature(command: str, event: str) -> bool:
 
 def _ambiguous_legacy_managed_handler(value: object, event: str) -> bool:
     """Identify possible old generated commands that are unsafe to migrate."""
+    if is_managed_handler(value, event):
+        return False
     if not isinstance(value, dict) or value.get("type") != "command" or not isinstance(value.get("command"), str):
         return False
     command = value["command"]
@@ -469,7 +474,7 @@ def _observed_health(root: Path) -> dict[str, str]:
     return {"runtime_observed": observed, "current_hook_hash_observed": current_hash}
 
 
-def handle_hook(root: Path, event: str, payload: object) -> str:
+def handle_hook(root: Path, event: str, payload: object, managed_hook_abi: str | None = None) -> str:
     """Apply mechanical guard/lifecycle rules and record hash-only telemetry."""
     try:
         if event not in HOOK_EVENTS or not isinstance(payload, dict):
@@ -491,10 +496,10 @@ def handle_hook(root: Path, event: str, payload: object) -> str:
         if event == "PreToolUse":
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) == "spawn_agent":
-                decision = _pre_tool_output(payload, root)
+                decision = _pre_tool_output(payload, root, managed_hook_abi)
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
                 return decision
-            return _pre_tool_output(payload, root)
+            return _pre_tool_output(payload, root, managed_hook_abi)
         if event == "SessionStart":
             _record_session_start(root, payload)
             return _session_start_output(root, payload)
@@ -572,6 +577,11 @@ def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
         state.update({"version": 4, "session_start_observed": True, "root_classification": "UNKNOWN"})
         if payload.get("source") == "startup":
             state["session_start_at_ns"] = time.time_ns()
+            state["session_start_monotonic_ns"] = time.monotonic_ns()
+            state["native_role_profile_names_at_start"] = sorted(
+                name for name in roles.agent_profiles()
+                if (root / ".codex" / "agents" / name).is_file()
+            )
         _write_capture(path, state)
 
 
@@ -1776,10 +1786,41 @@ def _start_attestation_path(root: Path, nonce: str) -> Path:
     return root / ".context" / "audit" / "task-start-attestations" / f"{digest}.json"
 
 
-def _issue_task_start_attestation(root: Path, payload: dict[str, Any]) -> str:
+def new_role_profile_files(root: Path, session_hash: str) -> list[str] | None:
+    """Compare current role filenames with this session's startup snapshot."""
+    try:
+        runtime = json.loads((root / ".context" / "audit" / session_hash[:24] / "runtime.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(runtime, dict) or runtime.get("session_id_hash") != session_hash
+        or runtime.get("managed_hook_spec_hash") != managed_hook_spec_hash()
+        or runtime.get("adapter_protocol_version") != CODEX_ADAPTER_PROTOCOL_VERSION
+        or type(runtime.get("session_start_monotonic_ns")) is not int
+        or not isinstance(runtime.get("native_role_profile_names_at_start"), list)
+        or not all(isinstance(name, str) for name in runtime["native_role_profile_names_at_start"])
+    ):
+        return None
+    start_names = set(runtime["native_role_profile_names_at_start"])
+    return sorted(
+        f".codex/agents/{name}" for name in roles.agent_profiles()
+        if (root / ".codex" / "agents" / name).is_file() and name not in start_names
+    )
+
+
+def role_catalog_session_status(root: Path, session_hash: str) -> str:
+    added = new_role_profile_files(root, session_hash)
+    return "ROLE_CATALOG_ACTIVE_FOR_SESSION" if added == [] else "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE"
+
+
+def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None = None) -> str:
     session_hash = _session_id_hash(payload)
-    if session_hash is None:
+    if session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI:
         return _permission_deny("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
+    command = _bash_command(payload)
+    bridge_match = re.search(r"(?:^|\s)--controller-bridge-sha256\s+([0-9a-f]{64})(?=$|\s)", command or "")
+    if bridge_match is None:
+        return _permission_deny("THALIRIS_CONTROLLER_BRIDGE_REQUIRED: acknowledge the exact managed instruction SHA-256.")
     nonce = secrets.token_urlsafe(24)
     token = f"v1.{session_hash}.{nonce}"
     now = time.time_ns()
@@ -1789,6 +1830,8 @@ def _issue_task_start_attestation(root: Path, payload: dict[str, Any]) -> str:
         "session_id_hash": session_hash,
         "managed_hook_spec_hash": managed_hook_spec_hash(),
         "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
+        "managed_hook_abi": MANAGED_HOOK_ABI,
+        "controller_bridge_sha256": bridge_match.group(1),
         "created_at_ns": now,
         "expires_at_ns": now + _START_ATTESTATION_TTL_NS,
     }
@@ -1797,7 +1840,7 @@ def _issue_task_start_attestation(root: Path, payload: dict[str, Any]) -> str:
     return _updated_command_output(payload, f"--hook-attestation {token}")
 
 
-def consume_task_start_attestation(root: Path, token: str | None) -> None:
+def consume_task_start_attestation(root: Path, token: str | None, controller_bridge_sha256: str | None = None) -> str:
     """Consume one current-hook, current-session bearer attestation."""
     error = ValueError("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
     if not isinstance(token, str):
@@ -1818,6 +1861,8 @@ def consume_task_start_attestation(root: Path, token: str | None) -> None:
             and record.get("session_id_hash") == match.group(1)
             and record.get("managed_hook_spec_hash") == managed_hook_spec_hash()
             and record.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
+            and record.get("managed_hook_abi") == MANAGED_HOOK_ABI
+            and record.get("controller_bridge_sha256") == controller_bridge_sha256
             and type(record.get("created_at_ns")) is int
             and type(record.get("expires_at_ns")) is int
             and record["created_at_ns"] <= time.time_ns() <= record["expires_at_ns"]
@@ -1828,6 +1873,7 @@ def consume_task_start_attestation(root: Path, token: str | None) -> None:
             path.unlink()
         except OSError:
             raise error
+    return match.group(1)
 
 
 def _write_capture(path: Path, state: dict[str, Any]) -> None:
@@ -1909,7 +1955,7 @@ def _isolation_classification(tool: str, tool_input: dict[str, Any], _role: str)
     return {"required": "YES", "fork_turns": "OTHER", "status": "FAIL"}
 
 
-def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
+def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_hook_abi: str | None = None) -> str:
     """Enforce the small ACTIVE Root tool boundary before native dispatch."""
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
@@ -1927,7 +1973,7 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None) -> str:
         return _permission_deny("THALIRIS_INVALID_STATE: managed control is unavailable until the task state is diagnosed or repaired.")
 
     if state_status == "NO_TASK" and operation == "task-start":
-        return _issue_task_start_attestation(root, payload)
+        return _issue_task_start_attestation(root, payload, managed_hook_abi)
 
     if state_status == "ACTIVE":
         if normalized in _FRESH_CHILD_REUSE_TOOL_NAMES or normalized == "Agent":

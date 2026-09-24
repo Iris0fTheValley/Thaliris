@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from thaliris import codex_adapter, codex_bootstrap as bootstrap
 from thaliris import cli, core
 
 
-def test_zero_state_invokes_init_once_and_requires_fresh_session(monkeypatch, tmp_path: Path):
+def test_zero_state_rejects_obsolete_restart_signal(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
     monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])
     calls = []
@@ -20,7 +21,8 @@ def test_zero_state_invokes_init_once_and_requires_fresh_session(monkeypatch, tm
 
     monkeypatch.setattr(bootstrap, "_invoke", invoke)
     result = bootstrap.bootstrap(tmp_path)
-    assert result["status"] == "SESSION_RESTART_REQUIRED"
+    assert result["status"] == "EXECUTABLE_PROTOCOL_SKEW"
+    assert result["session_restart_required"] is False
     assert calls == ["bootstrap-check", "init"]
 
 
@@ -41,7 +43,7 @@ def test_manual_action_is_terminal_without_retry(monkeypatch, tmp_path: Path):
     assert calls == ["bootstrap-check", "init"]
 
 
-def test_manual_action_preserves_restart_without_process_local_latch(monkeypatch, tmp_path: Path):
+def test_manual_action_does_not_hide_obsolete_restart_signal(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
     monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])
     calls = []
@@ -59,8 +61,8 @@ def test_manual_action_preserves_restart_without_process_local_latch(monkeypatch
 
     monkeypatch.setattr(bootstrap, "_invoke", invoke)
     result = bootstrap.bootstrap(tmp_path)
-    assert result["status"] == "MANUAL_ACTION_REQUIRED"
-    assert result["session_restart_required"] is True
+    assert result["status"] == "EXECUTABLE_PROTOCOL_SKEW"
+    assert result["session_restart_required"] is False
 
     # Restart is a signal for the current Controller; bootstrap does not claim
     # to fence a later CLI invocation or an old Root process.
@@ -125,7 +127,7 @@ def test_nonzero_native_response_preserves_restart_signal(monkeypatch, tmp_path:
     monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])
     outer = bootstrap.bootstrap(tmp_path)
     assert outer["status"] == "BOOTSTRAP_UNAVAILABLE"
-    assert outer["session_restart_required"] is True
+    assert outer["session_restart_required"] is False
 
 
 def test_nonzero_native_response_normalizes_false_or_missing_restart(monkeypatch, tmp_path: Path):
@@ -185,18 +187,38 @@ def test_invoke_success_normalizes_restart_to_strict_boolean(monkeypatch, tmp_pa
         returncode = 0
         stderr = ""
 
+    current = {
+        "managed_hook_abi": bootstrap.EXPECTED_MANAGED_HOOK_ABI,
+        "executable_adapter_protocol_version": bootstrap.EXPECTED_ADAPTER_PROTOCOL_VERSION,
+        "controller_bridge_content": "managed text",
+        "controller_bridge_sha256": hashlib.sha256(b"managed text").hexdigest(),
+    }
     for native in (True, False, None, "true", 1):
-        Completed.stdout = json.dumps({"ok": True, "session_restart_required": native})
+        Completed.stdout = json.dumps({"ok": True, "session_restart_required": native, **current})
         monkeypatch.setattr(bootstrap.subprocess, "run", lambda *args, **kwargs: Completed())
         result = bootstrap._invoke(["thaliris"], tmp_path, "bootstrap-check")
-        assert result["session_restart_required"] is (native is True)
+        assert result["session_restart_required"] is False
+        if native is True:
+            assert result["status"] == "EXECUTABLE_PROTOCOL_SKEW"
         assert type(result["session_restart_required"]) is bool
 
-    Completed.stdout = json.dumps({"ok": True})
+    Completed.stdout = json.dumps({"ok": True, **current})
     monkeypatch.setattr(bootstrap.subprocess, "run", lambda *args, **kwargs: Completed())
     result = bootstrap._invoke(["thaliris"], tmp_path, "bootstrap-check")
     assert result["session_restart_required"] is False
     assert type(result["session_restart_required"]) is bool
+
+
+def test_invoke_rejects_old_executable_protocol(monkeypatch, tmp_path: Path):
+    class Completed:
+        returncode = 0
+        stdout = json.dumps({"ok": True, "project_definition_present": "YES"})
+        stderr = ""
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", lambda *args, **kwargs: Completed())
+    result = bootstrap._invoke(["thaliris"], tmp_path, "bootstrap-check")
+    assert result["status"] == "EXECUTABLE_PROTOCOL_SKEW"
+    assert result["session_restart_required"] is False
 
 
 def test_malformed_probe_manual_action_preserves_native_restart(monkeypatch, tmp_path: Path):
@@ -213,8 +235,8 @@ def test_malformed_probe_manual_action_preserves_native_restart(monkeypatch, tmp
         },
     )
     result = bootstrap.bootstrap(tmp_path)
-    assert result["status"] == "BOOTSTRAP_UNAVAILABLE"
-    assert result["session_restart_required"] is True
+    assert result["status"] == "EXECUTABLE_PROTOCOL_SKEW"
+    assert result["session_restart_required"] is False
 
 
 def test_invalid_probe_definition_preserves_native_restart(monkeypatch, tmp_path: Path):
@@ -231,8 +253,8 @@ def test_invalid_probe_definition_preserves_native_restart(monkeypatch, tmp_path
         },
     )
     result = bootstrap.bootstrap(tmp_path)
-    assert result["status"] == "BOOTSTRAP_UNAVAILABLE"
-    assert result["session_restart_required"] is True
+    assert result["status"] == "EXECUTABLE_PROTOCOL_SKEW"
+    assert result["session_restart_required"] is False
 
 
 def test_no_restart_init_ready_calibrates_false(monkeypatch, tmp_path: Path):

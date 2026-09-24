@@ -15,6 +15,9 @@ import re
 import shutil
 import subprocess
 
+EXPECTED_MANAGED_HOOK_ABI = "thaliris-hook-abi-9"
+EXPECTED_ADAPTER_PROTOCOL_VERSION = 9
+
 
 def _repo_root(path: Path) -> Path:
     result = subprocess.run(
@@ -104,14 +107,43 @@ def _invoke(executable: list[str], root: Path, command: str) -> dict[str, object
             # retaining the complete native response for diagnostics.
             "session_restart_required": payload.get("session_restart_required") is True,
         }
-    payload["session_restart_required"] = payload.get("session_restart_required") is True
+    if command in {"bootstrap-check", "init"} and (
+        payload.get("managed_hook_abi") != EXPECTED_MANAGED_HOOK_ABI
+        or payload.get("executable_adapter_protocol_version") != EXPECTED_ADAPTER_PROTOCOL_VERSION
+        or not _bridge_fields(payload)
+    ):
+        return {
+            "ok": False,
+            "status": "EXECUTABLE_PROTOCOL_SKEW",
+            "error": "trusted executable does not expose the current hook ABI and Controller bridge protocol",
+            "observed_managed_hook_abi": payload.get("managed_hook_abi"),
+            "observed_adapter_protocol_version": payload.get("executable_adapter_protocol_version"),
+            "session_restart_required": False,
+        }
+    if payload.get("session_restart_required") is True:
+        return {
+            "ok": False,
+            "status": "EXECUTABLE_PROTOCOL_SKEW",
+            "error": "trusted executable emitted an obsolete restart signal",
+            "session_restart_required": False,
+        }
+    payload["session_restart_required"] = False
     payload["process_returncode"] = result.returncode
     return payload
 
 
 def _restart_required(payload: dict[str, object]) -> bool:
-    """Normalize the native result's restart signal to an explicit boolean."""
-    return payload.get("session_restart_required") is True
+    """The current bootstrap protocol has no restart prediction."""
+    return False
+
+
+def _bridge_fields(payload: dict[str, object]) -> dict[str, object]:
+    """Forward only a complete canonical instruction receipt from the CLI."""
+    content = payload.get("controller_bridge_content")
+    digest = payload.get("controller_bridge_sha256")
+    if isinstance(content, str) and isinstance(digest, str) and hashlib.sha256(content.encode("utf-8")).hexdigest() == digest:
+        return {"controller_bridge_content": content, "controller_bridge_sha256": digest, "host_instruction_activation": "UNKNOWN"}
+    return {}
 
 
 def bootstrap(root: Path) -> dict[str, object]:
@@ -133,6 +165,14 @@ def bootstrap(root: Path) -> dict[str, object]:
             "status": "BOOTSTRAP_UNAVAILABLE",
             "probe": facts,
             "session_restart_required": _restart_required(facts),
+        }
+    if facts.get("session_restart_required") is True:
+        return {
+            "ok": False,
+            "status": "EXECUTABLE_PROTOCOL_SKEW",
+            "init_invoked": False,
+            "error": "trusted executable emitted an obsolete restart signal",
+            "session_restart_required": False,
         }
     probe_definition = facts.get("project_definition_present")
     probe_manual = facts.get("manual_action_required") or []
@@ -159,6 +199,7 @@ def bootstrap(root: Path) -> dict[str, object]:
             "project_definition_present": "YES",
             "init_invoked": False,
             "session_restart_required": _restart_required(facts),
+            **_bridge_fields(facts),
         }
     if probe_definition != "NO":
         return {
@@ -179,6 +220,14 @@ def bootstrap(root: Path) -> dict[str, object]:
             "init": initialized,
             "session_restart_required": _restart_required(initialized),
         }
+    if initialized.get("session_restart_required") is True:
+        return {
+            "ok": False,
+            "status": "EXECUTABLE_PROTOCOL_SKEW",
+            "init_invoked": True,
+            "error": "trusted executable emitted an obsolete restart signal",
+            "session_restart_required": False,
+        }
     manual = initialized.get("manual_action_required") or []
     if not isinstance(manual, list):
         manual = [manual]
@@ -193,20 +242,23 @@ def bootstrap(root: Path) -> dict[str, object]:
                 "project_definition_present", "UNKNOWN"
             ),
             "session_restart_required": restart_required,
+            **_bridge_fields(initialized),
         }
-    if _restart_required(initialized):
+    if initialized.get("role_catalog_changed") is True:
         return {
             "ok": False,
-            "status": "SESSION_RESTART_REQUIRED",
+            "status": "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE",
             "init_invoked": True,
-            "session_restart_required": True,
-            "message": "Stop this Controller session and start a fresh Codex session; do not task-start here.",
+            "new_role_profile_files": initialized.get("new_role_profile_files", []),
+            "session_restart_required": False,
+            **_bridge_fields(initialized),
         }
     return {
         "ok": True,
         "status": "READY",
         "init_invoked": True,
         "session_restart_required": False,
+        **_bridge_fields(initialized),
     }
 
 

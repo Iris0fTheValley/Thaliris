@@ -62,6 +62,7 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--milestone")
     q.add_argument("--input")
     q.add_argument("--hook-attestation", help=argparse.SUPPRESS)
+    q.add_argument("--controller-bridge-sha256", help=argparse.SUPPRESS)
     q = sub.add_parser("task-update")
     q.add_argument("--role", required=True, choices=codex_adapter.role_choices())
     q.add_argument("--base-revision", required=True, type=int)
@@ -104,6 +105,7 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("version")
     q = sub.add_parser("audit-hook", help=argparse.SUPPRESS)
     q.add_argument("event", choices=("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop"))
+    q.add_argument("--managed-hook-abi", help=argparse.SUPPRESS)
     return p
 
 
@@ -157,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                 payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 payload = None
-            response = codex_adapter.audit_hook(root, args.event, payload)
+            response = codex_adapter.audit_hook(root, args.event, payload, args.managed_hook_abi)
             if response:
                 sys.stdout.write(response)
             return 0
@@ -180,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "milestone-check": out = milestone_check(root)
         elif args.command == "catalog": out = catalog(root, args.path)
         elif args.command == "document-get": out = document_get(root, args.path)
-        elif args.command == "task-start": out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.hook_attestation)
+        elif args.command == "task-start": out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.hook_attestation, args.controller_bridge_sha256)
         elif args.command == "task-update": out = task_update(root, codex_adapter.controller_actor(args.role), args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
         elif args.command == "task-status": out = _task_status(root, suppress_protocol_notice=args.suppress_protocol_notice)

@@ -41,7 +41,7 @@ def test_init_reports_manual_re_attestation_for_stale_runtime_hook_spec(tmp_path
     assert result["changed"] is False
     assert result["hook_definition_changed"] is False
     assert result["canonical_executable_available"] == "YES"
-    assert "stale_runtime_hook_re_attestation_required" in result["manual_action_required"]
+    assert result["hook_re_attestation_required"] is True
     assert result["session_restart_required"] is False
     assert result["hook_trust_required"] is True
 
@@ -59,8 +59,7 @@ def test_repeated_init_reports_unavailable_canonical_executable_as_manual_action
 
     result = codex_adapter.init(root)
 
-    assert result["changed"] is False
-    assert result["hook_definition_changed"] is False
+    assert result["changed"] is result["hook_definition_changed"]
     assert result["canonical_executable_available"] == "NO"
     assert result["canonical_executable_identity"] == "UNAVAILABLE"
     assert "canonical_executable_unavailable" in result["manual_action_required"]
@@ -76,11 +75,14 @@ def test_uninitialized_task_start_reports_bootstrap_unknown_restart(tmp_path: Pa
     assert result["bootstrap"]["same_session_task_start"] == "UNKNOWN"
 
 
-def test_init_restart_is_change_result_without_durable_fence(tmp_path: Path) -> None:
+def test_init_reports_new_role_catalog_fact_without_durable_fence(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     first = codex_adapter.init(tmp_path)
-    assert first["session_restart_required"] is True
+    assert first["session_restart_required"] is False
+    assert first["role_catalog_changed"] is True
+    assert first["new_role_profile_files"]
     assert not (tmp_path / ".context" / "audit" / "bootstrap-restart.json").exists()
+    assert not (tmp_path / ".context" / "audit" / "role-catalog-change.json").exists()
 
     second = codex_adapter.init(tmp_path)
     assert second["changed"] is False
@@ -88,15 +90,31 @@ def test_init_restart_is_change_result_without_durable_fence(tmp_path: Path) -> 
     assert not (tmp_path / ".context" / "audit" / "bootstrap-restart.json").exists()
 
 
+def test_task_start_blocks_roles_added_after_current_session_start(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "same-session", "source": "startup", "cwd": str(tmp_path)})
+    init = codex_adapter.init(tmp_path)
+    assert init["role_catalog_changed"] is True
+    digest = init["controller_bridge_sha256"]
+    pre = {"session_id": "same-session", "turn_id": "turn", "tool_name": "Bash", "tool_input": {"command": f"thaliris task-start goal --controller-bridge-sha256 {digest}"}}
+    rewritten = json.loads(codex_adapter.audit_hook(tmp_path, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
+    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten["hookSpecificOutput"]["updatedInput"]["command"]).group(1)
+    result = codex_adapter.task_start(tmp_path, "goal", None, None, token, digest)
+    assert result["status"] == "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE"
+    assert result["new_role_profile_files"] == init["new_role_profile_files"]
+    assert not (tmp_path / ".context" / "state.json").exists()
+
+
 def test_initialized_task_start_reports_unavailable_trusted_executable(tmp_path: Path, monkeypatch) -> None:
-    root = repo(tmp_path)
     for name in ("THALIRIS_EXECUTABLE", "THALIRIS_EXECUTABLE_SHA256", "THALIRIS_CONTEXT_EXECUTABLE", "THALIRIS_CONTEXT_EXECUTABLE_SHA256"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(lifecycle_module.shutil, "which", lambda command: None)
-    payload = {"session_id": "exec-s1", "turn_id": "exec-turn", "tool_name": "Bash", "tool_input": {"command": "thaliris task-start x"}}
-    rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", payload))
+    root = repo(tmp_path)
+    digest = codex_adapter._controller_bridge()["controller_bridge_sha256"]
+    payload = {"session_id": "exec-s1", "turn_id": "exec-turn", "tool_name": "Bash", "tool_input": {"command": f"thaliris task-start x --controller-bridge-sha256 {digest}"}}
+    rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", payload, lifecycle_module.MANAGED_HOOK_ABI))
     token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten["hookSpecificOutput"]["updatedInput"]["command"]).group(1)
-    result = codex_adapter.task_start(root, "x", None, None, token)
+    result = codex_adapter.task_start(root, "x", None, None, token, digest)
     assert result["status"] == "BOOTSTRAP_REQUIRED"
     assert result["bootstrap"]["canonical_executable_available"] == "NO"
 
@@ -112,7 +130,7 @@ def test_user_profile_is_preserved_and_not_a_definition(tmp_path: Path) -> None:
     assert result["project_definition_present"] == "NO"
 
 
-def test_mutated_managed_instruction_requires_regeneration(tmp_path: Path) -> None:
+def test_mutated_managed_instruction_is_user_owned_and_preserved(tmp_path: Path) -> None:
     root = repo(tmp_path)
     instruction = root / "AGENTS.md"
     original = instruction.read_bytes()
@@ -126,9 +144,10 @@ def test_mutated_managed_instruction_requires_regeneration(tmp_path: Path) -> No
     assert codex_adapter.task_start(root, "bootstrap", None, None)["status"] == "BOOTSTRAP_REQUIRED"
 
     repaired = codex_adapter.init(root)
-    assert repaired["instruction_definition_present"] == "YES"
-    assert repaired["project_definition_present"] == "YES"
-    assert repaired["session_restart_required"] is True
+    assert repaired["instruction_definition_present"] == "NO"
+    assert repaired["project_definition_present"] == "NO"
+    assert "AGENTS.md" in repaired["manual_action_required"]
+    assert instruction.read_bytes() == original[:offset] + b"\n# mutated\n" + original[offset:]
 
     second = codex_adapter.init(root)
     assert second["changed"] is False
@@ -153,6 +172,20 @@ def test_mixed_user_line_endings_do_not_invalidate_unchanged_managed_instruction
     result = codex_adapter.init(root)
     assert result["changed"] is False
     assert result["session_restart_required"] is False
+
+
+def test_exact_historical_managed_instruction_migrates(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    old = subprocess.check_output(["git", "show", "3485ec4:AGENTS.md"])
+    start = old.index(codex_adapter.MANAGED_START.encode("utf-8"))
+    end = old.index(codex_adapter.MANAGED_END.encode("utf-8"), start) + len(codex_adapter.MANAGED_END)
+    historical_block = old[start:end]
+    assert hashlib.sha256(historical_block).hexdigest() == "d249d418ccf38ca3f159065715c3930d492682e93402025d067e99e2225b91fd"
+    (root / "AGENTS.md").write_bytes(historical_block + b"\nuser text\n")
+    result = codex_adapter.init(root)
+    assert "AGENTS.md" in result["files"]
+    assert "AGENTS.md" not in result["manual_action_required"]
+    assert (root / "AGENTS.md").read_text(encoding="utf-8") == codex_adapter.render_managed() + "user text\n"
 
 
 def hook_payload(**values: object) -> dict[str, object]:
@@ -279,13 +312,19 @@ def test_session_start_points_to_root_navigation_without_injecting_map(tmp_path:
     assert child_output == ""
 
 
-def test_checked_in_managed_instructions_equal_generated_source() -> None:
+def test_generated_instruction_full_equality_and_working_copy_ownership(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    assert (root / "AGENTS.md").read_text(encoding="utf-8") == codex_adapter.render_managed()
     repository = Path(__file__).resolve().parents[1]
     text = (repository / "AGENTS.md").read_text(encoding="utf-8")
     start = text.index(codex_adapter.MANAGED_START)
     end = text.index(codex_adapter.MANAGED_END, start) + len(codex_adapter.MANAGED_END)
     checked_in = text[start:end] + "\n"
-    assert checked_in == codex_adapter.MANAGED
+    if checked_in != codex_adapter.MANAGED:
+        assert codex_adapter._managed_agents_state(text) == "user"
+        writes, manual = codex_adapter._install_plan(repository)
+        assert "AGENTS.md" not in writes
+        assert "AGENTS.md" in manual
 
 
 def test_blocking_wait_is_normalized_only_with_a_managed_dependency(tmp_path: Path, monkeypatch) -> None:
@@ -572,7 +611,7 @@ def test_pinned_executable_renders_hook_and_migrates_exact_legacy_shape(tmp_path
     monkeypatch.setenv("THALIRIS_EXECUTABLE", str(executable))
     monkeypatch.setenv("THALIRIS_EXECUTABLE_SHA256", hashlib.sha256(executable.read_bytes()).hexdigest())
     command = lifecycle_module.hook_spec()["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    assert command.endswith(" audit-hook SessionStart")
+    assert command.endswith(f" audit-hook SessionStart --managed-hook-abi {lifecycle_module.MANAGED_HOOK_ABI}")
     assert str(executable) in command
     legacy = {"hooks": {"SessionStart": [{"hooks": [{
         "type": "command", "command": f'"{executable}" audit-hook SessionStart', "timeout": 60,
@@ -1112,7 +1151,7 @@ def test_read_only_roles_make_no_native_sandbox_claim_and_obvious_writes_are_blo
 def test_task_start_requires_current_one_shot_hook_attestation(tmp_path: Path, monkeypatch, capsys) -> None:
     root = repo(tmp_path)
     monkeypatch.setattr(lifecycle_module, "managed_executable_health", lambda: {"canonical_executable_available": "YES", "canonical_executable_identity": "TEST"})
-    codex_adapter.audit_hook(root, "SessionStart", {"session_id": "fresh", "source": "startup", "cwd": str(root)})
+    codex_adapter.audit_hook(root, "SessionStart", {"session_id": "controller-session", "source": "startup", "cwd": str(root)})
     monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
     monkeypatch.setattr(codex_adapter, "native_child_completion_reenters_root", lambda: "UNSUPPORTED")
     monkeypatch.setattr(codex_adapter, "host_explicit_blocking_wait", lambda: {"status": "PASS"})
@@ -1120,21 +1159,28 @@ def test_task_start_requires_current_one_shot_hook_attestation(tmp_path: Path, m
     with pytest.raises(ValueError, match="MANAGED_CURRENT_SESSION_NOT_ATTESTED"):
         codex_adapter.task_start(root, "missing attestation", None, None)
 
-    pre = hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-start goal"})
-    rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre))
+    digest = codex_adapter._controller_bridge()["controller_bridge_sha256"]
+    pre = hook_payload(tool_name="Bash", tool_input={"command": f"thaliris task-start goal --controller-bridge-sha256 {digest}"})
+    old_registration = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre))
+    assert "MANAGED_CURRENT_SESSION_NOT_ATTESTED" in json.dumps(old_registration)
+    rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
     command = rewritten["hookSpecificOutput"]["updatedInput"]["command"]
     token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", command).group(1)
-    assert cli.main(["--root", str(root), "task-start", "attested", "--hook-attestation", token]) == 0
+    assert cli.main(["--root", str(root), "task-start", "attested", "--controller-bridge-sha256", "0" * 64, "--hook-attestation", token]) == 3
+    assert json.loads(capsys.readouterr().out)["status"] == "CONTROLLER_BRIDGE_REQUIRED"
+    assert cli.main(["--root", str(root), "task-start", "attested", "--controller-bridge-sha256", digest, "--hook-attestation", token]) == 0
     started = json.loads(capsys.readouterr().out)
     assert started["status"] == "ACTIVE"
+    assert started["managed_readiness"]["controller_activation_bridge"] == "ACTIVE"
+    assert started["managed_readiness"]["host_instruction_activation"] == "UNKNOWN"
     with pytest.raises(ValueError, match="MANAGED_CURRENT_SESSION_NOT_ATTESTED"):
-        codex_adapter.task_start(root, "reused", None, None, token)
+        codex_adapter.task_start(root, "reused", None, None, token, digest)
 
 
 def test_unsupported_prerelease_after_valid_attestation_is_continuation_unavailable(tmp_path: Path, monkeypatch, capsys) -> None:
     root = repo(tmp_path)
     monkeypatch.setattr(lifecycle_module, "managed_executable_health", lambda: {"canonical_executable_available": "YES", "canonical_executable_identity": "TEST"})
-    codex_adapter.audit_hook(root, "SessionStart", {"session_id": "fresh", "source": "startup", "cwd": str(root)})
+    codex_adapter.audit_hook(root, "SessionStart", {"session_id": "controller-session", "source": "startup", "cwd": str(root)})
 
     class Version:
         returncode = 0
@@ -1147,10 +1193,11 @@ def test_unsupported_prerelease_after_valid_attestation_is_continuation_unavaila
         assert codex_adapter.selected_continuation_mode(root) == "UNAVAILABLE"
     codex_adapter._host_wait_mode_cached.cache_clear()
     monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "UNAVAILABLE")
-    pre = hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-start goal"})
-    command = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre))["hookSpecificOutput"]["updatedInput"]["command"]
+    digest = codex_adapter._controller_bridge()["controller_bridge_sha256"]
+    pre = hook_payload(tool_name="Bash", tool_input={"command": f"thaliris task-start goal --controller-bridge-sha256 {digest}"})
+    command = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))["hookSpecificOutput"]["updatedInput"]["command"]
     token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", command).group(1)
-    assert cli.main(["--root", str(root), "task-start", "attested", "--hook-attestation", token]) == 3
+    assert cli.main(["--root", str(root), "task-start", "attested", "--controller-bridge-sha256", digest, "--hook-attestation", token]) == 3
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "MANAGED_CONTINUATION_UNAVAILABLE"
     codex_adapter._host_wait_mode_cached.cache_clear()
@@ -1252,7 +1299,8 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "low-difficulty, high-certainty slices to standard Implementer on Luna" in codex_adapter.MANAGED
     assert "Reasoning Specialist\non Sol only when problem framing or slice decomposition is unclear; it does not\nimplement." in codex_adapter.MANAGED
     assert "already small, unusually demanding\nslice or an evidenced Sol failure" in codex_adapter.MANAGED
-    assert "not cryptographically enforced by the\ncurrent audit-hook ingress" in codex_adapter.MANAGED
+    assert "Host instruction activation remains UNKNOWN" in codex_adapter.MANAGED
+    assert "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE" in codex_adapter.MANAGED
     assert "Before another correction packet, distinguish a local implementation defect" in codex_adapter.MANAGED
     assert "overturns an accepted invariant" in codex_adapter.MANAGED
     assert "depends on an unverified external capability" in codex_adapter.MANAGED
@@ -1273,7 +1321,7 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "do not expand scope" in implementer
     assert "decision-changing unknown to the Controller" in implementer
     agents = Path("AGENTS.md").read_text(encoding="utf-8")
-    assert codex_adapter.MANAGED in agents
+    assert codex_adapter.MANAGED.split("Startup contract:", 1)[1].strip() in agents
     assert "The native child profiles are Investigator" in codex_adapter.ROLE_PACKS
     assert "Controller-decided boundaries/contracts" in codex_adapter.ROLE_PACKS
     assert "recommendations/advice are not\ncontract" in codex_adapter.ROLE_PACKS

@@ -306,6 +306,20 @@ def test_codex_install_replaces_its_stale_executable_pin(tmp_path: Path, monkeyp
     assert new_digest in commands[0]
 
 
+def test_codex_install_migrates_exact_old_trampoline_bytes(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    codex_adapter.codex_install()
+    script = home / lifecycle_module.HOST_HOOK_SCRIPT_NAME
+    script.write_bytes(lifecycle_module._legacy_host_hook_script_bytes())
+
+    result = codex_adapter.codex_install()
+
+    assert result["changed"] is True
+    assert result["manual_action_required"] == []
+    assert script.read_bytes() == lifecycle_module.host_hook_script_bytes()
+
+
 def test_project_init_after_host_install_uses_only_activation_marker(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
     home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(home))
@@ -330,13 +344,14 @@ def test_global_trampoline_is_transparent_without_project_marker(tmp_path: Path)
     script.parent.mkdir(parents=True)
     script.write_bytes(lifecycle_module.host_hook_script_bytes())
     project = tmp_path / "ordinary non-Thaliris repository"
-    project.mkdir()
+    deep = project / "nested" / "a" / "b" / "c" / "d"
+    deep.mkdir(parents=True)
     absent_exe = tmp_path / "must-not-launch.exe"
     before = sorted(str(path.relative_to(project)) for path in project.rglob("*"))
 
     result = subprocess.run(
         ["cmd.exe", "/d", "/c", "call", str(script), str(absent_exe), "0" * 64, "PreToolUse", lifecycle_module.MANAGED_HOOK_ABI],
-        cwd=project,
+        cwd=deep,
         input=b"{}",
         capture_output=True,
         check=False,
@@ -351,7 +366,7 @@ def test_global_trampoline_is_transparent_without_project_marker(tmp_path: Path)
 
 
 @pytest.mark.skipif(__import__("os").name != "nt", reason="Windows Host trampoline")
-def test_global_trampoline_dispatches_only_after_project_activation(tmp_path: Path) -> None:
+def test_global_trampoline_finds_repo_marker_from_nested_cwd(tmp_path: Path, monkeypatch) -> None:
     script = tmp_path / "host home" / lifecycle_module.HOST_HOOK_SCRIPT_NAME
     script.parent.mkdir(parents=True)
     script.write_bytes(lifecycle_module.host_hook_script_bytes())
@@ -360,18 +375,31 @@ def test_global_trampoline_dispatches_only_after_project_activation(tmp_path: Pa
     (project / ".codex" / "thaliris.json").write_bytes(
         b'{"format":"thaliris-project-activation-v1"}\n'
     )
+    deep = project / "nested" / "a" / "b"
+    deep.mkdir(parents=True)
+    dispatched = tmp_path / "dispatch.log"
+    fake_executable = tmp_path / "fake thaliris.cmd"
+    fake_executable.write_text(
+        '@echo off\r\n> "%THALIRIS_TEST_DISPATCH_FILE%" echo %*\r\n',
+        encoding="ascii",
+    )
+    monkeypatch.setenv("THALIRIS_TEST_DISPATCH_FILE", str(dispatched))
 
     result = subprocess.run(
-        ["cmd.exe", "/d", "/c", "call", str(script), str(tmp_path / "absent.exe"), "0" * 64, "PreToolUse", lifecycle_module.MANAGED_HOOK_ABI],
-        cwd=project,
+        ["cmd.exe", "/d", "/c", "call", str(script), str(fake_executable), "0" * 64, "PreToolUse", lifecycle_module.MANAGED_HOOK_ABI],
+        cwd=deep,
         input=b"{}",
         capture_output=True,
         check=False,
         timeout=10,
     )
 
-    assert result.returncode != 0
-    assert b"not recognized" in result.stderr.lower()
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert result.stderr == b""
+    assert dispatched.read_text(encoding="ascii").strip() == (
+        f"audit-hook PreToolUse --managed-hook-abi {lifecycle_module.MANAGED_HOOK_ABI}"
+    )
     assert not (project / ".context").exists()
 
 

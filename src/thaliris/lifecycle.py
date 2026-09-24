@@ -175,6 +175,28 @@ def host_hook_script_bytes() -> bytes:
     return (
         "@echo off\r\n"
         "setlocal DisableDelayedExpansion\r\n"
+        "set \"_thaliris_search_dir=%CD%\"\r\n"
+        ":thaliris_find_activation_marker\r\n"
+        f"if exist \"%_thaliris_search_dir%\\{PROJECT_ACTIVATION_MARKER}\" goto thaliris_dispatch\r\n"
+        "for %%I in (\"%_thaliris_search_dir%\\..\") do set \"_thaliris_parent=%%~fI\"\r\n"
+        "if /i \"%_thaliris_parent%\"==\"%_thaliris_search_dir%\" exit /b 0\r\n"
+        "set \"_thaliris_search_dir=%_thaliris_parent%\"\r\n"
+        "goto thaliris_find_activation_marker\r\n"
+        ":thaliris_dispatch\r\n"
+        f"set \"{THALIRIS_EXECUTABLE_ENV}=%~1\"\r\n"
+        f"set \"{THALIRIS_EXECUTABLE_SHA256_ENV}=%~2\"\r\n"
+        "shift\r\n"
+        "shift\r\n"
+        f"\"%{THALIRIS_EXECUTABLE_ENV}%\" audit-hook %~1 --managed-hook-abi %~2\r\n"
+        "exit /b %ERRORLEVEL%\r\n"
+    ).encode("ascii")
+
+
+def _legacy_host_hook_script_bytes() -> bytes:
+    """Exact previous trampoline bytes, retained only for safe migration/removal."""
+    return (
+        "@echo off\r\n"
+        "setlocal DisableDelayedExpansion\r\n"
         f"if not exist \"{PROJECT_ACTIVATION_MARKER}\" exit /b 0\r\n"
         f"set \"{THALIRIS_EXECUTABLE_ENV}=%~1\"\r\n"
         f"set \"{THALIRIS_EXECUTABLE_SHA256_ENV}=%~2\"\r\n"
@@ -244,7 +266,9 @@ def _host_hook_command_is_managed(
         executable = Path(executable_path)
         if not script.is_absolute() or script.resolve(strict=True) != (codex_home / HOST_HOOK_SCRIPT_NAME).resolve(strict=True):
             return False
-        if script.is_symlink() or script.read_bytes() != host_hook_script_bytes():
+        if script.is_symlink() or script.read_bytes() not in {
+            host_hook_script_bytes(), _legacy_host_hook_script_bytes()
+        }:
             return False
         if not executable.is_absolute() or executable.is_symlink():
             return False

@@ -1206,7 +1206,8 @@ def codex_install(
         manual.append("host_hook_script_path_not_safe_for_cmd_trampoline")
     if script_safe and script_path.exists():
         try:
-            if script_path.read_bytes() != script_bytes:
+            existing_script = script_path.read_bytes()
+            if existing_script not in {script_bytes, lifecycle._legacy_host_hook_script_bytes()}:
                 manual.append(str(script_path))
                 script_safe = False
         except OSError:
@@ -1233,10 +1234,11 @@ def codex_install(
             else:
                 if hooks_changed:
                     hook_bytes = (json.dumps(merged, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-                if not script_path.exists():
+                if not script_path.exists() or script_path.read_bytes() != script_bytes:
                     _atomic_host_write(script_path, script_bytes)
                     changed = True
-                    files.append(HOST_HOOK_SCRIPT_NAME)
+                    if HOST_HOOK_SCRIPT_NAME not in files:
+                        files.append(HOST_HOOK_SCRIPT_NAME)
                 if hook_bytes is not None:
                     _atomic_host_write(hooks_path, hook_bytes)
                     changed = True
@@ -1306,7 +1308,9 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
             manual.append(str(script_path))
         else:
             try:
-                if script_path.read_bytes() == host_hook_script_bytes():
+                if script_path.read_bytes() in {
+                    host_hook_script_bytes(), lifecycle._legacy_host_hook_script_bytes()
+                }:
                     script_path.unlink()
                     removed.append(HOST_HOOK_SCRIPT_NAME)
                 else:

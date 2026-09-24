@@ -8,7 +8,7 @@ from thaliris import codex_adapter, codex_bootstrap as bootstrap
 from thaliris import cli, core
 
 
-def test_zero_state_rejects_obsolete_restart_signal(monkeypatch, tmp_path: Path):
+def test_zero_state_rejects_obsolete_executable_protocol_signal(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
     monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])
     calls = []
@@ -43,7 +43,7 @@ def test_manual_action_is_terminal_without_retry(monkeypatch, tmp_path: Path):
     assert calls == ["bootstrap-check", "init"]
 
 
-def test_manual_action_does_not_hide_obsolete_restart_signal(monkeypatch, tmp_path: Path):
+def test_manual_action_does_not_hide_executable_protocol_skew(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
     monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])
     calls = []
@@ -64,8 +64,8 @@ def test_manual_action_does_not_hide_obsolete_restart_signal(monkeypatch, tmp_pa
     assert result["status"] == "EXECUTABLE_PROTOCOL_SKEW"
     assert result["session_restart_required"] is False
 
-    # Restart is a signal for the current Controller; bootstrap does not claim
-    # to fence a later CLI invocation or an old Root process.
+    # An obsolete restart field means executable protocol skew; bootstrap does
+    # not claim to fence a later CLI invocation or an old Root process.
     monkeypatch.setattr(
         bootstrap,
         "_invoke",
@@ -221,7 +221,7 @@ def test_invoke_rejects_old_executable_protocol(monkeypatch, tmp_path: Path):
     assert result["session_restart_required"] is False
 
 
-def test_malformed_probe_manual_action_preserves_native_restart(monkeypatch, tmp_path: Path):
+def test_malformed_probe_manual_action_rejects_executable_protocol_skew(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
     monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])
     monkeypatch.setattr(
@@ -239,7 +239,7 @@ def test_malformed_probe_manual_action_preserves_native_restart(monkeypatch, tmp
     assert result["session_restart_required"] is False
 
 
-def test_invalid_probe_definition_preserves_native_restart(monkeypatch, tmp_path: Path):
+def test_invalid_probe_definition_rejects_executable_protocol_skew(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
     monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])
     monkeypatch.setattr(

@@ -285,7 +285,7 @@ def test_registry_identity_uniqueness(monkeypatch, kind):
         roles.role_choices()
 
 
-def test_independent_phase_two_profile_migration_and_user_edits(tmp_path, monkeypatch):
+def test_independent_phase_two_profile_migration_and_user_edits(tmp_path, monkeypatch, pinned_test_thaliris):
     # Exact generator at immutable 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31:
     # roles blob 481aba1ef66448238f1b00ff4b58eba3f28f9605;
     # adapter blob 880d5a9753220bcf09f27bc34890e411ccee17c4.
@@ -308,9 +308,10 @@ def test_independent_phase_two_profile_migration_and_user_edits(tmp_path, monkey
     assert codex_adapter._role_pack_state(packs) == "legacy"
     (tmp_path / "docs" / "thaliris-role-packs.md").write_bytes(packs)
     install = codex_adapter.codex_install()
-    assert install["profile_definition_present"] == "YES"
+    assert install["host_profile_definition_present"] == "YES"
+    assert install["host_role_catalog_status"] == "HOST_ROLE_CATALOG_UNKNOWN"
     migrated = {f"thaliris-{role}.toml" for role in roles._PHASE_TWO_PROFILE_HASHES}
-    assert migrated <= set(install["files"])
+    assert {f"agents/{name}" for name in migrated} <= set(install["files"])
     for name in host_agents.glob("thaliris-*.toml"):
         assert codex_adapter._agent_profile_state(name.read_bytes(), name.name) == "current"
     result = codex_adapter.init(tmp_path)

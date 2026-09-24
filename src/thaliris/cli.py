@@ -50,8 +50,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     _add_global_arguments(p)
     sub = p.add_subparsers(dest="command", required=True)
-    for name in ("init", "bootstrap-check", "codex-install", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
+    for name in ("init", "bootstrap-check", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
         sub.add_parser(name)
+    install = sub.add_parser("codex-install", help="install stable Thaliris Host identities and hook ABI")
+    install.add_argument("--executable", help="absolute Thaliris executable for Host hooks")
+    install.add_argument("--sha256", help="exact SHA-256 pin for --executable")
+    sub.add_parser("codex-uninstall", help="remove only Thaliris-owned Host integration")
     sub.add_parser("codex-bootstrap", help="perform one-shot project-external Codex bootstrap")
     q = sub.add_parser("catalog", help="discover bounded durable document metadata")
     q.add_argument("path", nargs="?")
@@ -165,7 +169,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "init": out = codex_adapter.init(root)
         elif args.command == "bootstrap-check": out = codex_adapter.bootstrap_check(root)
-        elif args.command == "codex-install": out = codex_adapter.codex_install()
+        elif args.command == "codex-install": out = codex_adapter.codex_install(executable=args.executable, executable_sha256=args.sha256)
+        elif args.command == "codex-uninstall": out = codex_adapter.codex_uninstall()
         elif args.command == "codex-bootstrap":
             try:
                 out = codex_bootstrap.bootstrap(root)

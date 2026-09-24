@@ -19,7 +19,7 @@ def repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_init_reports_manual_re_attestation_for_stale_runtime_hook_spec(tmp_path: Path, monkeypatch) -> None:
+def test_project_init_does_not_re_attest_or_restart_for_host_hook_state(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     runtime = root / ".context" / "audit" / "stale-session" / "runtime.json"
     runtime.parent.mkdir(parents=True)
@@ -41,12 +41,12 @@ def test_init_reports_manual_re_attestation_for_stale_runtime_hook_spec(tmp_path
     assert result["changed"] is False
     assert result["hook_definition_changed"] is False
     assert result["canonical_executable_available"] == "YES"
-    assert result["hook_re_attestation_required"] is True
+    assert result["hook_re_attestation_required"] is False
     assert result["session_restart_required"] is False
-    assert result["hook_trust_required"] is True
+    assert result["hook_trust_required"] is False
 
 
-def test_repeated_init_reports_unavailable_canonical_executable_as_manual_action(tmp_path: Path, monkeypatch) -> None:
+def test_project_init_does_not_require_a_host_hook_executable_refresh(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     for name in (
         "THALIRIS_EXECUTABLE",
@@ -59,12 +59,12 @@ def test_repeated_init_reports_unavailable_canonical_executable_as_manual_action
 
     result = codex_adapter.init(root)
 
-    assert result["changed"] is result["hook_definition_changed"]
+    assert result["changed"] is False
     assert result["canonical_executable_available"] == "NO"
     assert result["canonical_executable_identity"] == "UNAVAILABLE"
-    assert "canonical_executable_unavailable" in result["manual_action_required"]
+    assert "canonical_executable_unavailable" not in result["manual_action_required"]
     assert result["session_restart_required"] is False
-    assert result["hook_trust_required"] is True
+    assert result["hook_trust_required"] is False
 
 
 def test_uninitialized_task_start_reports_bootstrap_unknown_restart(tmp_path: Path) -> None:
@@ -83,6 +83,8 @@ def test_init_does_not_install_project_role_identities_or_durable_fence(tmp_path
     assert first["new_role_profile_files"] == []
     assert first["agent_profile_changed"] is False
     assert not (tmp_path / ".codex" / "agents").exists()
+    assert (tmp_path / ".codex" / "thaliris.json").read_bytes() == b'{"format":"thaliris-project-activation-v1"}\n'
+    assert not (tmp_path / ".codex" / "hooks.json").exists()
     assert not (tmp_path / ".context" / "audit" / "bootstrap-restart.json").exists()
     assert not (tmp_path / ".context" / "audit" / "role-catalog-change.json").exists()
 
@@ -146,7 +148,7 @@ def test_role_content_update_by_existing_filename_does_not_look_like_new_identit
     assert lifecycle_module.role_catalog_session_status(tmp_path, session_hash) == lifecycle_module.HOST_ROLE_CATALOG_UNKNOWN
 
 
-def test_host_profiles_added_after_session_start_are_reported(tmp_path: Path, monkeypatch) -> None:
+def test_host_profiles_added_after_session_start_are_reported(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     host_home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(host_home))
@@ -175,7 +177,7 @@ def test_missing_profile_snapshot_and_forged_catalog_field_stay_unknown(tmp_path
     assert lifecycle_module.role_catalog_session_status(tmp_path, session_hash) == lifecycle_module.HOST_ROLE_CATALOG_UNKNOWN
 
 
-def test_task_start_blocks_host_role_added_after_current_session_start(tmp_path: Path, monkeypatch) -> None:
+def test_task_start_blocks_host_role_added_after_current_session_start(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     host_home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(host_home))
@@ -192,22 +194,185 @@ def test_task_start_blocks_host_role_added_after_current_session_start(tmp_path:
     assert not (tmp_path / ".context" / "state.json").exists()
 
 
-def test_codex_install_is_idempotent_and_preserves_non_owned_collisions(tmp_path: Path, monkeypatch) -> None:
+def test_codex_install_is_idempotent_and_preserves_non_owned_collisions(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
     home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(home))
+    user_handler = {"type": "command", "command": "user-owned-handler", "timeout": 60}
+    hooks_path = home / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    hooks_path.write_text(json.dumps({"hooks": {"UserPromptSubmit": [{"hooks": [user_handler]}]}}), encoding="utf-8")
     first = codex_adapter.codex_install()
     assert first["ok"] is True
     assert first["changed"] is True
-    assert set(first["files"]) == set(codex_adapter._AGENT_PROFILES)
+    assert {f"agents/{name}" for name in codex_adapter._AGENT_PROFILES} <= set(first["files"])
+    assert {"hooks.json", lifecycle_module.HOST_HOOK_SCRIPT_NAME} <= set(first["files"])
     assert first["host_role_catalog_status"] == lifecycle_module.HOST_ROLE_CATALOG_UNKNOWN
+    assert first["host_hook_registration_present"] == "YES"
+    assert first["host_setup_requires_session_start"] is True
+    installed_hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+    assert user_handler in installed_hooks["hooks"]["UserPromptSubmit"][0]["hooks"]
+    assert codex_adapter._project_definition_facts(repo(tmp_path / "project"))["host_hook_registration_present"] == "YES"
     second = codex_adapter.codex_install()
     assert second["changed"] is False
+    assert second["host_setup_requires_session_start"] is False
     collision = home / "agents" / "thaliris-implementer.toml"
     collision.write_text("user-owned = true\n", encoding="utf-8")
     third = codex_adapter.codex_install()
     assert third["ok"] is True
     assert str(collision) in third["manual_action_required"]
     assert collision.read_text(encoding="utf-8") == "user-owned = true\n"
+
+
+def test_codex_install_migrates_exact_legacy_host_hook_and_uninstall_preserves_user_data(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    user_handler = {"type": "command", "command": "user-hook", "timeout": 60}
+    legacy_handler = {
+        "type": "command",
+        "command": "thaliris audit-hook PreToolUse --managed-hook-abi thaliris-hook-abi-9",
+        "timeout": 60,
+    }
+    hooks_path = home / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    original = {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [legacy_handler, user_handler]}]}}
+    hooks_path.write_text(json.dumps(original), encoding="utf-8")
+
+    installed = codex_adapter.codex_install()
+
+    assert installed["host_hook_registration_present"] == "YES"
+    merged = json.loads(hooks_path.read_text(encoding="utf-8"))
+    pre_handlers = [handler for group in merged["hooks"]["PreToolUse"] for handler in group["hooks"]]
+    assert legacy_handler not in pre_handlers
+    assert user_handler in pre_handlers
+    assert sum("thaliris-hook.cmd" in handler.get("command", "") for handler in pre_handlers) == 1
+
+    user_profile = home / "agents" / "thaliris-investigator.toml"
+    user_profile.write_text("user-owned = true\n", encoding="utf-8")
+    removed = codex_adapter.codex_uninstall()
+
+    assert removed["changed"] is True
+    assert removed["project_files_touched"] == []
+    assert not (home / lifecycle_module.HOST_HOOK_SCRIPT_NAME).exists()
+    assert user_profile.read_text(encoding="utf-8") == "user-owned = true\n"
+    remaining = json.loads(hooks_path.read_text(encoding="utf-8"))
+    remaining_handlers = [handler for entries in remaining["hooks"].values() for group in entries for handler in group.get("hooks", [])]
+    assert remaining_handlers == [user_handler]
+
+
+def test_codex_install_user_hook_collision_is_manual_and_untouched(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    script = home / lifecycle_module.HOST_HOOK_SCRIPT_NAME
+    script.parent.mkdir(parents=True)
+    script.write_text("user-owned script\n", encoding="utf-8")
+    hooks_path = home / "hooks.json"
+    original_hooks = {"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "keep", "timeout": 60}]}]}}
+    hooks_path.write_text(json.dumps(original_hooks), encoding="utf-8")
+
+    result = codex_adapter.codex_install()
+
+    assert result["host_hook_registration_present"] == "NO"
+    assert str(script) in result["manual_action_required"]
+    assert script.read_text(encoding="utf-8") == "user-owned script\n"
+    assert json.loads(hooks_path.read_text(encoding="utf-8")) == original_hooks
+
+
+def test_codex_install_replaces_its_stale_executable_pin(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    executable, old_digest = pinned_test_thaliris
+    home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    codex_adapter.codex_install()
+    executable.write_bytes(b"updated executable at the same path")
+    new_digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        codex_adapter,
+        "_host_install_executable",
+        lambda _home, _path, _sha: (executable, new_digest, None),
+    )
+
+    result = codex_adapter.codex_install()
+
+    assert result["changed"] is True
+    assert result["host_hook_registration_present"] == "YES"
+    registrations = json.loads((home / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    commands = [
+        handler["command"]
+        for group in registrations["PreToolUse"]
+        for handler in group.get("hooks", [])
+        if "thaliris-hook.cmd" in handler.get("command", "")
+    ]
+    assert len(commands) == 1
+    assert old_digest not in commands[0]
+    assert new_digest in commands[0]
+
+
+def test_project_init_after_host_install_uses_only_activation_marker(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    codex_adapter.codex_install()
+    root = repo(tmp_path / "zero-state-project")
+
+    facts = codex_adapter.bootstrap_check(root)
+
+    assert facts["project_definition_present"] == "YES"
+    assert facts["project_activation_marker_present"] == "YES"
+    assert facts["host_hook_registration_present"] == "YES"
+    assert facts["host_profile_definition_present"] == "YES"
+    assert facts["host_role_catalog_status"] == lifecycle_module.HOST_ROLE_CATALOG_UNKNOWN
+    assert facts["legacy_project_hook_registration_present"] == "NO"
+    assert not (root / ".codex" / "hooks.json").exists()
+    assert facts.get("host_session_load_status") is None
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows Host trampoline")
+def test_global_trampoline_is_transparent_without_project_marker(tmp_path: Path) -> None:
+    script = tmp_path / "host home" / lifecycle_module.HOST_HOOK_SCRIPT_NAME
+    script.parent.mkdir(parents=True)
+    script.write_bytes(lifecycle_module.host_hook_script_bytes())
+    project = tmp_path / "ordinary non-Thaliris repository"
+    project.mkdir()
+    absent_exe = tmp_path / "must-not-launch.exe"
+    before = sorted(str(path.relative_to(project)) for path in project.rglob("*"))
+
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/c", "call", str(script), str(absent_exe), "0" * 64, "PreToolUse", lifecycle_module.MANAGED_HOOK_ABI],
+        cwd=project,
+        input=b"{}",
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert result.stderr == b""
+    assert sorted(str(path.relative_to(project)) for path in project.rglob("*")) == before
+    assert not (project / ".context").exists()
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows Host trampoline")
+def test_global_trampoline_dispatches_only_after_project_activation(tmp_path: Path) -> None:
+    script = tmp_path / "host home" / lifecycle_module.HOST_HOOK_SCRIPT_NAME
+    script.parent.mkdir(parents=True)
+    script.write_bytes(lifecycle_module.host_hook_script_bytes())
+    project = tmp_path / "activated project"
+    (project / ".codex").mkdir(parents=True)
+    (project / ".codex" / "thaliris.json").write_bytes(
+        b'{"format":"thaliris-project-activation-v1"}\n'
+    )
+
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/c", "call", str(script), str(tmp_path / "absent.exe"), "0" * 64, "PreToolUse", lifecycle_module.MANAGED_HOOK_ABI],
+        cwd=project,
+        input=b"{}",
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode != 0
+    assert b"not recognized" in result.stderr.lower()
+    assert not (project / ".context").exists()
 
 
 def test_initialized_task_start_reports_unavailable_trusted_executable(tmp_path: Path, monkeypatch) -> None:
@@ -232,7 +397,10 @@ def test_user_profile_is_preserved_and_not_a_definition(tmp_path: Path) -> None:
     profile.write_text("user-owned = true\n", encoding="utf-8")
     result = codex_adapter.init(tmp_path)
     assert profile.read_text(encoding="utf-8") == "user-owned = true\n"
-    assert result["profile_definition_present"] == "NO"
+    assert result["project_local_profile_files_present"] == "YES"
+    assert result["host_profile_definition_present"] == "NO"
+    assert result["host_role_catalog_status"] == lifecycle_module.HOST_ROLE_CATALOG_UNKNOWN
+    assert "profile_definition_present" not in result
     assert result["project_definition_present"] == "YES"
 
 
@@ -773,7 +941,7 @@ def test_ambiguous_legacy_absolute_hook_requires_manual_cleanup(tmp_path: Path, 
     }]}]}}
     (root / ".codex" / "hooks.json").write_text(json.dumps(hooks), encoding="utf-8")
     result = codex_adapter.init(root)
-    assert "legacy_managed_handler_manual_cleanup_required" in result["manual_action_required"]
+    assert "legacy_project_hook_manual_cleanup_required" in result["manual_action_required"]
     installed = json.loads((root / ".codex" / "hooks.json").read_text(encoding="utf-8"))
     commands = [handler["command"] for entry in installed["hooks"]["SessionStart"] for handler in entry.get("hooks", [])]
     assert f'"{executable}" audit-hook SessionStart --extra' in commands
@@ -817,7 +985,7 @@ def test_wrapped_legacy_hook_requires_manual_cleanup_without_migration(tmp_path:
 
     result = codex_adapter.init(root)
 
-    assert "legacy_managed_handler_manual_cleanup_required" in result["manual_action_required"]
+    assert "legacy_project_hook_manual_cleanup_required" in result["manual_action_required"]
     installed = json.loads((root / ".codex" / "hooks.json").read_text(encoding="utf-8"))
     commands = [handler["command"] for entry in installed["hooks"]["SessionStart"] for handler in entry.get("hooks", [])]
     assert command in commands
@@ -1269,6 +1437,8 @@ def test_task_start_requires_current_one_shot_hook_attestation(tmp_path: Path, m
     pre = hook_payload(tool_name="Bash", tool_input={"command": f"thaliris task-start goal --controller-bridge-sha256 {digest}"})
     old_registration = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre))
     assert "MANAGED_CURRENT_SESSION_NOT_ATTESTED" in json.dumps(old_registration)
+    old_abi_registration = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre, "thaliris-hook-abi-9"))
+    assert "MANAGED_CURRENT_SESSION_NOT_ATTESTED" in json.dumps(old_abi_registration)
     rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
     command = rewritten["hookSpecificOutput"]["updatedInput"]["command"]
     token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", command).group(1)
@@ -1313,13 +1483,25 @@ def test_doctor_separates_hook_spec_executable_and_attestation_facts(tmp_path: P
     root = repo(tmp_path)
     report = codex_adapter.doctor(root)
     host = report["host_capability"]
-    assert host["installed_hook_spec"] == "CURRENT"
+    assert host["installed_hook_spec"] == "UNAVAILABLE"
     assert host["canonical_executable_available"] in {"YES", "NO"}
     assert host["canonical_executable_identity"] in {"SHA256_PINNED", "PATH_UNPINNED", "UNAVAILABLE"}
     assert host["diagnostic_process_executable_resolution"] in {"SHA256_PINNED", "PATH_UNPINNED", "UNAVAILABLE"}
     assert host["active_codex_host_executable_observed"] == "UNKNOWN"
     assert report["verification_attestation"]["current_session_observed"] == "UNKNOWN"
     assert report["verification_attestation"]["task_start_attestation"] == "CURRENT_SESSION_REQUIRED"
+
+
+def test_doctor_names_host_registration_separately_from_project_activation(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+
+    report = codex_adapter.doctor(root)
+
+    assert report["verification_attestation"]["host_hook_registration_present"] == "NO"
+    assert "hook_definition_present" not in report["verification_attestation"]
+    assert report["managed_readiness"]["HOST_HOOK_REGISTRATION_PRESENT"] == "NO"
+    assert "CODEX_DEFINITION_PRESENT" not in report["managed_readiness"]
+    assert report["managed_readiness"]["project_activation_marker_present"] == "YES"
 
 
 def test_doctor_keeps_valid_runtime_and_host_executable_observations_distinct(tmp_path: Path) -> None:

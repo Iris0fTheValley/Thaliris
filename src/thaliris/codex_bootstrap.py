@@ -142,7 +142,24 @@ def _bridge_fields(payload: dict[str, object]) -> dict[str, object]:
     content = payload.get("controller_bridge_content")
     digest = payload.get("controller_bridge_sha256")
     if isinstance(content, str) and isinstance(digest, str) and hashlib.sha256(content.encode("utf-8")).hexdigest() == digest:
-        return {"controller_bridge_content": content, "controller_bridge_sha256": digest, "host_instruction_activation": "UNKNOWN"}
+        result: dict[str, object] = {
+            "controller_bridge_content": content,
+            "controller_bridge_sha256": digest,
+            "host_instruction_activation": "UNKNOWN",
+        }
+        for key in (
+            "host_profile_definition_present",
+            "host_role_catalog_status",
+            "host_hook_registration_present",
+            "project_activation_marker_present",
+            "project_local_profile_files_present",
+            "legacy_project_hook_registration_present",
+        ):
+            if key in payload:
+                result[key] = payload[key]
+        if "host_hook_registration_present" in payload:
+            result["host_hook_session_activation"] = "UNKNOWN"
+        return result
     return {}
 
 

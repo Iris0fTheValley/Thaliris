@@ -7,18 +7,30 @@ from functools import lru_cache
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import tomllib
 
 from . import core, lifecycle, roles
-from .lifecycle import MANAGED_HOOKS_DESCRIPTION, handle_hook, merge_hooks, remove_hooks
+from .lifecycle import (
+    MANAGED_HOOKS_DESCRIPTION,
+    MANAGED_HOOK_ABI,
+    HOST_HOOK_SCRIPT_NAME,
+    PROJECT_ACTIVATION_MARKER,
+    handle_hook,
+    host_hook_script_bytes,
+    merge_host_hooks,
+    remove_hooks,
+    remove_host_hooks,
+)
 
 # This adapter-owned vocabulary is a CLI ingress contract. Core receives an
 # opaque actor marker after this boundary has authorized the operation.
 # This is the complete public CLI ingress vocabulary. Native identifiers are
 # translated only at the native adapter boundary and never accepted as roles.
 ROLE_CHOICES = roles.role_choices()
+_PROJECT_ACTIVATION_BYTES = b'{"format":"thaliris-project-activation-v1"}\n'
 
 def role_choices() -> tuple[str, ...]:
     return roles.role_choices()
@@ -126,22 +138,54 @@ def _agent_profile_state(value: bytes, name: str) -> str:
     return "legacy" if hashlib.sha256(value).hexdigest() in hashes else "user"
 
 
-def _profile_definition_present(root: Path) -> str:
-    profiles = _agent_profiles()
-    return "YES" if all(
-        (root / ".codex" / "agents" / name).is_file()
-        and _agent_profile_state((root / ".codex" / "agents" / name).read_bytes(), name) == "current"
-        for name in profiles
+def _host_profile_definition_present(codex_home: Path | None = None) -> str:
+    """Report exact generated role definitions in the effective Host directory."""
+    home = _codex_home(codex_home)
+    agents = home / "agents"
+    if home.is_symlink() or agents.is_symlink() or not agents.is_dir():
+        return "NO"
+    try:
+        return "YES" if all(
+            not (agents / name).is_symlink()
+            and (agents / name).is_file()
+            and _agent_profile_state((agents / name).read_bytes(), name) == "current"
+            for name in _agent_profiles()
+        ) else "NO"
+    except OSError:
+        return "UNKNOWN"
+
+
+def _project_local_profile_files_present(root: Path) -> str:
+    """Report only whether known Thaliris profile filenames exist in this project."""
+    agents = root / ".codex" / "agents"
+    if agents.is_symlink() or not agents.is_dir():
+        return "NO"
+    return "YES" if any(
+        not (agents / name).is_symlink() and (agents / name).is_file()
+        for name in _agent_profiles()
     ) else "NO"
+
+
+def _project_activation_marker_present(root: Path) -> str:
+    marker = core._safe(root, PROJECT_ACTIVATION_MARKER.replace("\\", "/"))
+    if marker.is_symlink() or not marker.is_file():
+        return "NO"
+    try:
+        return "YES" if marker.read_bytes() == _PROJECT_ACTIVATION_BYTES else "NO"
+    except OSError:
+        return "UNKNOWN"
 
 
 def role_profile_inventory(root: Path) -> dict[str, str]:
     """Report generated profile states keyed by registry-owned filenames."""
     root = core._repo_root(root)
+    agents = root / ".codex" / "agents"
+    if agents.is_symlink() or not agents.is_dir():
+        return {name: "missing" for name in _agent_profiles()}
     return {
         name: (
-            _agent_profile_state((root / ".codex" / "agents" / name).read_bytes(), name)
-            if (root / ".codex" / "agents" / name).is_file()
+            _agent_profile_state((agents / name).read_bytes(), name)
+            if (agents / name).is_file() and not (agents / name).is_symlink()
             else "missing"
         )
         for name in _agent_profiles()
@@ -153,15 +197,17 @@ def _activation_fields(
     profile_native_active: str = "UNKNOWN",
     project_layer_activation: str = "UNKNOWN",
     compatible_profile_observed: str = "UNKNOWN",
-    compatible_project_hooks_observed: str = "UNKNOWN",
+    host_hook_runtime_observed: str = "UNKNOWN",
 ) -> dict[str, str]:
     return {
-        "profile_definition_present": _profile_definition_present(root),
+        "host_profile_definition_present": _host_profile_definition_present(),
+        "project_local_profile_files_present": _project_local_profile_files_present(root),
+        "project_activation_marker_present": _project_activation_marker_present(root),
         "profile_native_active": profile_native_active,
         "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
         "project_layer_activation": project_layer_activation,
         "compatible_profile_observed": compatible_profile_observed,
-        "compatible_project_hooks_observed": compatible_project_hooks_observed,
+        "host_hook_runtime_observed": host_hook_runtime_observed,
     }
 
 
@@ -184,26 +230,21 @@ def _project_definition_facts(root: Path) -> dict[str, str]:
                 instruction_present = "YES" if _normalize_line_endings(current[start:end]) == expected else "NO"
         except (OSError, UnicodeError, ValueError):
             instruction_present = "NO"
-    hooks = lifecycle.hooks_health(root)
-    profiles = _profile_definition_present(root)
-    if hooks["hooks_configured"] == "YES" and hooks["legacy_managed_handler_cleanup"] == "NO":
-        hook_definition = "YES"
-    elif hooks["hooks_configured"] == "YES":
-        hook_definition = "NO"
-    else:
-        hook_definition = hooks["hooks_configured"]
-    # Native role identities are installed in the user's Codex role directory
-    # by ``codex-install``.  A project definition therefore consists only of
-    # this project's instruction and lifecycle hook layers; project-local
-    # profile files are reported as observations but are not required or
-    # created by ``init``.
-    initialized = "YES" if instruction_present == "YES" and hook_definition == "YES" else "NO"
+    activation = _project_activation_marker_present(root)
+    host_hooks = lifecycle.host_hooks_health(_codex_home())
+    # Host integration is installed once in CODEX_HOME before a session.
+    # Project init adds only the marker that lets its stable trampoline enter
+    # the current executable on subsequent tool events in that same session.
+    initialized = "YES" if instruction_present == "YES" and activation == "YES" else "NO"
     return {
         "project_definition_present": initialized,
         "instruction_definition_present": instruction_present,
-        "hook_definition_present": hook_definition,
-        "profile_definition_present": profiles,
-        "legacy_managed_handler_cleanup": hooks["legacy_managed_handler_cleanup"],
+        "project_activation_marker_present": activation,
+        "project_local_profile_files_present": _project_local_profile_files_present(root),
+        "host_profile_definition_present": _host_profile_definition_present(),
+        "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
+        "host_hook_registration_present": host_hooks["hooks_configured"],
+        "legacy_project_hook_registration_present": lifecycle.legacy_project_hook_registration_present(root),
     }
 
 
@@ -399,6 +440,12 @@ thresholds. Prefer slices that can each be independently understood,
 implemented, verified, committed, and closed. A completed slice returns
 distilled state, its commit reference, and verification evidence; discard its
 working set when closed.
+Make each Executor handoff decision-complete enough to close one semantic slice
+without routine Controller steering. Do not keep an Executor as a long-lived
+interactive workspace. If new decision-changing information invalidates the
+slice, let the child close with distilled state and create a fresh correction
+slice. `send_message` remains available for genuinely new decision-changing
+information.
 Use Investigator/Scanner for missing facts, large working sets, broad scans,
 and factual compression, without transferring architecture decisions. Use a Reviewer only when independent semantic review adds real
 value; it is not a default gate. Curator and Reasoning Specialist remain
@@ -465,6 +512,12 @@ gathering, implementation, or routine review, and difficulty alone is
 insufficient when the Controller can decide confidently from established facts.
 Do not use counters, thresholds, risk scores, classifiers, or a state machine
 for this routing.
+Semantic uncertainty that can change a decision routes to Investigator;
+broad grep, exhaustive residual references, and call-site scans route to a
+Scanner under an Executor or Reviewer.
+Reviewer challenges a converged implementation slice; do not start it against
+a still-mutating Executor to obtain parallel progress. Findings return to the
+Controller, which decides whether a fresh correction slice is needed.
 
 Each {_native_role_names_text()} keeps
 its private working set private. By default it returns a distilled conclusion, key findings,
@@ -545,10 +598,10 @@ authorized managed child, use one blocking `wait_agent` call with `timeout_ms`
 equal to the maximum advertised in the current turn's `wait_agent` tool
 definition. The current turn's tool definition is the authority; never infer a
 maximum from release defaults, configuration, history, or capability tables.
-Early return on mailbox activity is expected; if the child remains pending,
-inspect the relevant new state and wait again using the current turn's
-advertised maximum. Do not use short periodic polling. If no usable current
-maximum is advertised, do not invent one.
+If that blocking wait returns early, continue only when it delivered new,
+decision-changing information; otherwise resume the same wait without
+re-reasoning. Do not periodically wake the Controller to poll. If no usable
+current maximum is advertised, do not invent one.
 Task closure requires the last
 Controller-direct handoff's completed lifecycle and no pending or active
 descendants; a later Scanner does not replace that top-level completion.
@@ -556,25 +609,31 @@ The Controller interprets {_native_role_names_text()} results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 
-Startup contract: determine project initialization only from these explicit
-facts: a managed Thaliris block in the effective root instruction and a
-current managed `.codex/hooks.json`. If either fact is absent, invoke
+Startup contract: install Host integration once before sessions that use
+Thaliris roles. `thaliris codex-install` places stable role identities and the
+stable hook ABI trampoline under `CODEX_HOME`; it merges user hooks and keeps
+project data out of the user layer. A changed Host installation is a disk fact
+until a later session loads it. For each repository, project readiness
+requires the managed Thaliris block in the effective root instruction and the
+static `.codex/thaliris.json` activation marker. If either is absent, invoke
 `thaliris --root <repo> init` directly, or invoke the absolute executable
-named by the host's exact SHA-256 pin. Native Thaliris role identities belong
-to the user's Host catalog and are installed separately with
-`thaliris codex-install`; project `init` does not create or refresh them. Read
-the `init` JSON result.
+named by the host's exact SHA-256 pin. Project `init` does not install Host
+roles or Host hooks and does not require a session restart. Read the `init`
+JSON result.
 Read the canonical managed text and SHA-256 returned by `init` or
 `bootstrap-check`. Explicitly acknowledge that digest with
 `--controller-bridge-sha256` when calling `task-start`; the loaded current-ABI
 PreToolUse hook binds that receipt to its session attestation. This is
 Controller activation only: CLI output does not become Host developer
-instruction, and Host instruction activation remains UNKNOWN. SessionStart's
-role filename snapshot is disk presence evidence only. Without a Host-native
-catalog signal, catalog status remains `HOST_ROLE_CATALOG_UNKNOWN`; if a new
-role filename appears after the startup snapshot, admission fails closed with
-`NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`. Existing catalogued profile content
-updates by filename do not imply a restart.
+instruction, and Host instruction activation remains UNKNOWN. The stable Host
+trampoline checks only the activation marker before dispatching into the
+current executable; an inactive repository skips Thaliris Python and state
+access. A registration on disk does not prove the current session loaded it.
+SessionStart's role filename snapshot is disk presence evidence only. Without
+a Host-native catalog signal, catalog status remains
+`HOST_ROLE_CATALOG_UNKNOWN`; if a new role filename appears after the startup
+snapshot, admission fails closed with `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`.
+Existing catalogued profile content updates by filename do not imply a restart.
 If neither trusted
 direct route is available, report bootstrap unavailable and do not continue.
 If all facts are present, read `.agent-memory/INDEX.md` and
@@ -949,20 +1008,39 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
     rendered_ignore = _audit_ignore(current_ignore)
     if current_ignore != rendered_ignore:
         writes[".gitignore"] = rendered_ignore.encode("utf-8")
+    marker = core._safe(root, PROJECT_ACTIVATION_MARKER.replace("\\", "/"))
+    marker_name = marker.relative_to(root).as_posix()
+    if marker.is_symlink():
+        manual.append(marker_name)
+    elif not marker.exists():
+        writes[marker_name] = _PROJECT_ACTIVATION_BYTES
+    else:
+        try:
+            if not marker.is_file() or marker.read_bytes() != _PROJECT_ACTIVATION_BYTES:
+                manual.append(marker_name)
+        except OSError:
+            manual.append(marker_name)
+    # Project hooks were the old lifecycle registration surface. Remove only
+    # exact generated handlers; project init no longer installs or refreshes
+    # Host hooks, and user handlers remain byte-for-byte JSON values.
     hooks = core._safe(root, ".codex/hooks.json")
     if hooks.exists():
-        try:
-            value = json.loads(_read_text(hooks))
-            if not isinstance(value, dict):
-                raise ValueError("hooks root must be an object")
-            merged, changed = merge_hooks(value)
-            if changed:
-                writes[".codex/hooks.json"] = (json.dumps(merged, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-        except (OSError, ValueError, json.JSONDecodeError):
+        if hooks.is_symlink():
             manual.append(".codex/hooks.json")
-    else:
-        merged, _ = merge_hooks({"description": MANAGED_HOOKS_DESCRIPTION})
-        writes[".codex/hooks.json"] = (json.dumps(merged, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        else:
+            try:
+                value = json.loads(_read_text(hooks))
+                if not isinstance(value, dict):
+                    raise ValueError("hooks root must be an object")
+                if lifecycle.legacy_managed_handler_cleanup_required(value):
+                    manual.append("legacy_project_hook_manual_cleanup_required")
+                    manual.append(".codex/hooks.json")
+                    return writes, manual
+                merged, changed = remove_hooks(value)
+                if changed:
+                    writes[".codex/hooks.json"] = (json.dumps(merged, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+            except (OSError, ValueError, json.JSONDecodeError):
+                manual.append(".codex/hooks.json")
     # The current Host hook does not expose the active turn's effective cap.
     # Preserve native wait arguments unless a future trusted Host contract
     # supplies that session-bound value.
@@ -986,7 +1064,6 @@ def init(root: Path) -> dict[str, object]:
         adapter_files[".gitignore"] = _audit_ignore(generic_files[".gitignore"].decode("utf-8")).encode("utf-8")
     files = generic_files | adapter_files
     manual = sorted(set(generic_manual) | set(adapter_manual))
-    hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
     new_profile_names: list[str] = []
@@ -995,109 +1072,278 @@ def init(root: Path) -> dict[str, object]:
     with core._lock(root):
         backup = core._apply_with_backup(root, files, [], "init") if files else None
         hooks = lifecycle.hooks_health(root)
-        stale_runtime_hook_spec = (
-            hooks["installed_hook_spec"] == "CURRENT"
-            and hooks["current_hook_hash_observed"] == "STALE"
-        )
-        executable_unavailable = hooks["canonical_executable_available"] == "NO"
-        if executable_unavailable:
-            manual = sorted(set(manual) | {"canonical_executable_unavailable"})
-        if hooks["legacy_managed_handler_cleanup"] == "MANUAL_CLEANUP_REQUIRED":
-            manual = sorted(set(manual) | {"legacy_managed_handler_manual_cleanup_required"})
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "new_role_profile_files": new_profile_names, "role_catalog_changed": bool(new_profile_names), "hook_re_attestation_required": hook_changed or stale_runtime_hook_spec, "managed_hook_abi": lifecycle.MANAGED_HOOK_ABI, "executable_adapter_protocol_version": lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": False, "hook_trust_required": hook_changed or stale_runtime_hook_spec or executable_unavailable, "host_wait_mode": host_wait_mode(), **_project_definition_facts(root), **_activation_fields(root), **_controller_bridge()}
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": False, "project_activation_marker_changed": ".codex/thaliris.json" in files, "agent_profile_changed": profile_changed, "new_role_profile_files": new_profile_names, "role_catalog_changed": bool(new_profile_names), "hook_re_attestation_required": False, "managed_hook_abi": lifecycle.MANAGED_HOOK_ABI, "executable_adapter_protocol_version": lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": False, "hook_trust_required": False, "host_wait_mode": host_wait_mode(), **_project_definition_facts(root), **_activation_fields(root), **_controller_bridge()}
 
 
 def _codex_home(codex_home: Path | None = None) -> Path:
     """Resolve the user's Codex home without consulting project state."""
     if codex_home is not None:
-        return Path(codex_home).expanduser()
+        return Path(codex_home).expanduser().absolute()
     configured = os.environ.get("CODEX_HOME")
-    return (Path(configured).expanduser() if configured else Path.home() / ".codex").resolve()
+    return (Path(configured).expanduser() if configured else Path.home() / ".codex").absolute()
 
 
-def codex_install(codex_home: Path | None = None) -> dict[str, object]:
-    """Install stable Thaliris role profiles into the user's Codex home.
+def _host_install_executable(
+    codex_home: Path,
+    executable: str | Path | None,
+    executable_sha256: str | None,
+) -> tuple[Path | None, str | None, str | None]:
+    """Resolve and exercise the direct executable route before installing hooks."""
+    if (executable is None) != (executable_sha256 is None):
+        return None, None, "host_executable_path_and_sha256_must_be_paired"
+    configured = Path(executable).expanduser() if executable is not None else lifecycle._trusted_thaliris_executable()
+    if configured is None and executable is None:
+        found = shutil.which("thaliris")
+        configured = Path(found) if found else None
+    if configured is None or not configured.is_absolute() or configured.is_symlink() or not configured.is_file():
+        return None, None, "host_executable_unavailable_or_not_absolute"
+    try:
+        resolved = configured.resolve(strict=True)
+        digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    except (OSError, RuntimeError):
+        return None, None, "host_executable_unavailable_or_not_absolute"
+    expected = executable_sha256.lower() if isinstance(executable_sha256, str) else digest
+    if not re.fullmatch(r"[0-9a-f]{64}", expected) or digest != expected:
+        return None, None, "host_executable_sha256_mismatch"
+    # A process exit check prevents a stale installed launcher from being
+    # embedded in the stable Host trampoline. This exact direct invocation
+    # accepts no shell wrapper and runs from a disposable non-Thaliris repo.
+    try:
+        with tempfile.TemporaryDirectory(prefix="thaliris-host-abi-probe-") as probe_root:
+            initialized = subprocess.run(
+                ["git", "init", "-q", probe_root],
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+            if initialized.returncode != 0:
+                return None, None, "host_executable_current_hook_abi_probe_failed"
+            probe = subprocess.run(
+                [str(resolved), "audit-hook", "PreToolUse", "--managed-hook-abi", MANAGED_HOOK_ABI],
+                input=b"{}",
+                cwd=probe_root,
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+    except (OSError, subprocess.SubprocessError):
+        return None, None, "host_executable_current_hook_abi_probe_failed"
+    if probe.returncode != 0 or probe.stderr:
+        return None, None, "host_executable_current_hook_abi_probe_failed"
+    if any(character in str(resolved) for character in ('"', "%", "!", "\r", "\n")):
+        return None, None, "host_executable_path_not_safe_for_cmd_trampoline"
+    return resolved, digest, None
 
-    This command is deliberately independent of a repository.  It changes
-    only generated Thaliris role files under ``<CODEX_HOME>/agents`` and
-    preserves a same-name file unless its bytes are known generated Thaliris
-    content.  Hooks, instructions, and project-local files are out of scope.
-    """
+
+def _atomic_host_write(path: Path, contents: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", prefix=f".{path.name}.", suffix=".thaliris-install-tmp",
+            dir=path.parent, delete=False,
+        ) as temporary:
+            temporary.write(contents)
+            temporary_name = temporary.name
+        os.replace(temporary_name, path)
+    finally:
+        if temporary_name is not None:
+            try:
+                Path(temporary_name).unlink()
+            except FileNotFoundError:
+                pass
+
+
+def codex_install(
+    codex_home: Path | None = None,
+    executable: str | Path | None = None,
+    executable_sha256: str | None = None,
+) -> dict[str, object]:
+    """Install stable role identities and the stable Host hook trampoline."""
     home = _codex_home(codex_home)
     agents = home / "agents"
-    writes: list[tuple[Path, bytes]] = []
+    hooks_path = home / "hooks.json"
+    script_path = home / HOST_HOOK_SCRIPT_NAME
     manual: list[str] = []
-    installed: list[str] = []
-    if agents.is_symlink() or (agents.exists() and not agents.is_dir()):
-        return {
-            "ok": True,
-            "changed": False,
-            "target": str(agents),
-            "files": [],
-            "manual_action_required": [str(agents)],
-            "profile_definition_present": "NO",
-            "native_profile_names": sorted(roles.native_profile_names()),
-            "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
-            "project_files_touched": [],
-        }
-    for name, (model, effort, role) in _agent_profiles().items():
-        path = agents / name
-        rendered = _agent_profile(name.removesuffix(".toml"), role, model, effort)
-        display = str(path)
-        if path.is_symlink():
-            manual.append(display)
-            continue
-        if not path.exists():
-            writes.append((path, rendered))
-            installed.append(name)
-            continue
-        try:
-            current = path.read_bytes()
-        except OSError:
-            manual.append(display)
-            continue
-        state = _agent_profile_state(current, name)
-        if state == "current":
-            continue
-        if state == "legacy":
-            writes.append((path, rendered))
-            installed.append(name)
-        else:
-            manual.append(display)
+    files: list[str] = []
+    changed = False
 
-    # Apply only the planned role files.  The parent directories are created
-    # once, and each replacement is atomic so a same-name generated profile
-    # is never truncated in place.
-    for path, rendered in writes:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_name: str | None = None
+    if home.is_symlink():
+        manual.append(str(home))
+    if agents.is_symlink() or (agents.exists() and not agents.is_dir()):
+        manual.append(str(agents))
+    role_writes: list[tuple[Path, bytes]] = []
+    if str(agents) not in manual and not home.is_symlink():
+        for name, (model, effort, role) in _agent_profiles().items():
+            path = agents / name
+            rendered = _agent_profile(name.removesuffix(".toml"), role, model, effort)
+            if path.is_symlink():
+                manual.append(str(path))
+                continue
+            if not path.exists():
+                role_writes.append((path, rendered))
+                continue
+            try:
+                current = path.read_bytes()
+            except OSError:
+                manual.append(str(path))
+                continue
+            state = _agent_profile_state(current, name)
+            if state == "legacy":
+                role_writes.append((path, rendered))
+            elif state != "current":
+                manual.append(str(path))
+
+    executable_path, executable_hash, executable_problem = _host_install_executable(
+        home, executable, executable_sha256
+    )
+    if executable_problem is not None:
+        manual.append(executable_problem)
+    script_bytes = host_hook_script_bytes()
+    unsafe_script_path = any(character in str(script_path) for character in ('"', "%", "!", "\r", "\n"))
+    script_safe = not home.is_symlink() and not script_path.is_symlink() and not unsafe_script_path
+    if unsafe_script_path:
+        manual.append("host_hook_script_path_not_safe_for_cmd_trampoline")
+    if script_safe and script_path.exists():
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="wb", prefix=f".{path.name}.", suffix=".thaliris-install-tmp",
-                dir=path.parent, delete=False,
-            ) as temporary:
-                temporary.write(rendered)
-                temporary_name = temporary.name
-            os.replace(temporary_name, path)
-        finally:
-            if temporary_name is not None:
-                try:
-                    Path(temporary_name).unlink()
-                except FileNotFoundError:
-                    pass
-    host_profiles = "YES" if all(
-        (agents / name).is_file()
-        and _agent_profile_state((agents / name).read_bytes(), name) == "current"
-        for name in _agent_profiles()
-    ) else "NO"
+            if script_path.read_bytes() != script_bytes:
+                manual.append(str(script_path))
+                script_safe = False
+        except OSError:
+            manual.append(str(script_path))
+            script_safe = False
+    elif script_path.is_symlink():
+        manual.append(str(script_path))
+        script_safe = False
+
+    hook_bytes: bytes | None = None
+    if executable_path is not None and executable_hash is not None and script_safe and not hooks_path.is_symlink() and not home.is_symlink():
+        try:
+            if hooks_path.exists():
+                original = json.loads(hooks_path.read_text(encoding="utf-8"))
+                if not isinstance(original, dict):
+                    raise ValueError("Host hooks.json must contain an object")
+            else:
+                original = {}
+            merged, hooks_changed, hook_manual = merge_host_hooks(
+                original, home, executable_path, executable_hash
+            )
+            if hook_manual:
+                manual.extend(str(hooks_path) + ":" + item for item in hook_manual)
+            else:
+                if hooks_changed:
+                    hook_bytes = (json.dumps(merged, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+                if not script_path.exists():
+                    _atomic_host_write(script_path, script_bytes)
+                    changed = True
+                    files.append(HOST_HOOK_SCRIPT_NAME)
+                if hook_bytes is not None:
+                    _atomic_host_write(hooks_path, hook_bytes)
+                    changed = True
+                    files.append("hooks.json")
+        except (OSError, ValueError, json.JSONDecodeError):
+            manual.append(str(hooks_path))
+    elif hooks_path.is_symlink():
+        manual.append(str(hooks_path))
+
+    for path, rendered in role_writes:
+        try:
+            _atomic_host_write(path, rendered)
+            changed = True
+            files.append(f"agents/{path.name}")
+        except OSError:
+            manual.append(str(path))
+
+    health = lifecycle.host_hooks_health(home)
     return {
         "ok": True,
-        "changed": bool(writes),
-        "target": str(agents),
-        "files": sorted(installed),
+        "changed": changed,
+        "target": str(home),
+        "files": sorted(set(files)),
         "manual_action_required": sorted(set(manual)),
-        "profile_definition_present": host_profiles,
+        "host_profile_definition_present": _host_profile_definition_present(home),
+        "host_hook_registration_present": health["hooks_configured"],
+        "managed_hook_abi": MANAGED_HOOK_ABI,
         "native_profile_names": sorted(roles.native_profile_names()),
+        "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
+        "host_session_load_status": "UNKNOWN",
+        "host_setup_requires_session_start": changed,
+        "project_files_touched": [],
+    }
+
+
+def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
+    """Remove exact Thaliris-owned Host roles and trampoline only."""
+    home = _codex_home(codex_home)
+    manual: list[str] = []
+    removed: list[str] = []
+    hooks_path = home / "hooks.json"
+    script_path = home / HOST_HOOK_SCRIPT_NAME
+    has_hook_manual = False
+    if home.is_symlink():
+        manual.append(str(home))
+        has_hook_manual = True
+    elif hooks_path.is_symlink():
+        manual.append(str(hooks_path))
+        has_hook_manual = True
+    elif hooks_path.exists():
+        try:
+            original = json.loads(hooks_path.read_text(encoding="utf-8"))
+            if not isinstance(original, dict):
+                raise ValueError("Host hooks.json must contain an object")
+            cleaned, changed, hook_manual = remove_host_hooks(original, home)
+            if hook_manual:
+                manual.extend(str(hooks_path) + ":" + item for item in hook_manual)
+                has_hook_manual = True
+            elif changed:
+                _atomic_host_write(hooks_path, (json.dumps(cleaned, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+                removed.append("hooks.json")
+        except (OSError, ValueError, json.JSONDecodeError):
+            manual.append(str(hooks_path))
+            has_hook_manual = True
+    if not has_hook_manual and script_path.exists():
+        if script_path.is_symlink():
+            manual.append(str(script_path))
+        else:
+            try:
+                if script_path.read_bytes() == host_hook_script_bytes():
+                    script_path.unlink()
+                    removed.append(HOST_HOOK_SCRIPT_NAME)
+                else:
+                    manual.append(str(script_path))
+            except OSError:
+                manual.append(str(script_path))
+    agents = home / "agents"
+    if home.is_symlink() or agents.is_symlink() or (agents.exists() and not agents.is_dir()):
+        manual.append(str(agents))
+    elif agents.is_dir():
+        for name in _agent_profiles():
+            path = agents / name
+            if path.is_symlink():
+                manual.append(str(path))
+                continue
+            if not path.is_file():
+                continue
+            try:
+                state = _agent_profile_state(path.read_bytes(), name)
+            except OSError:
+                manual.append(str(path))
+                continue
+            if state in {"current", "legacy"}:
+                try:
+                    path.unlink()
+                    removed.append(f"agents/{name}")
+                except OSError:
+                    manual.append(str(path))
+    health = lifecycle.host_hooks_health(home)
+    return {
+        "ok": True,
+        "changed": bool(removed),
+        "target": str(home),
+        "files": sorted(removed),
+        "manual_action_required": sorted(set(manual)),
+        "host_hook_registration_present": health["hooks_configured"],
+        "host_profile_definition_present": _host_profile_definition_present(home),
         "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
         "project_files_touched": [],
     }
@@ -1136,6 +1382,17 @@ def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], li
         rendered = _audit_ignore(current, remove=True)
         if rendered != current:
             writes[".gitignore"] = rendered.encode("utf-8")
+    marker = core._safe(root, PROJECT_ACTIVATION_MARKER.replace("\\", "/"))
+    if marker.is_symlink():
+        manual.append(PROJECT_ACTIVATION_MARKER.replace("\\", "/"))
+    elif marker.exists():
+        try:
+            if marker.is_file() and marker.read_bytes() == _PROJECT_ACTIVATION_BYTES:
+                deletes.append(PROJECT_ACTIVATION_MARKER.replace("\\", "/"))
+            else:
+                kept.append(PROJECT_ACTIVATION_MARKER.replace("\\", "/"))
+        except OSError:
+            manual.append(PROJECT_ACTIVATION_MARKER.replace("\\", "/"))
     packs = core._safe(root, "docs/thaliris-role-packs.md")
     if packs.is_file():
         if _role_pack_state(packs.read_bytes()) == "current":
@@ -1148,29 +1405,22 @@ def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], li
             deletes.append("docs/thaliris-role-registry.md")
         else:
             kept.append("docs/thaliris-role-registry.md")
-    for name in _agent_profiles():
-        relative = f".codex/agents/{name}"
-        profile = core._safe(root, relative)
-        if not profile.is_file():
-            continue
-        state = _agent_profile_state(profile.read_bytes(), name)
-        if state == "current":
-            deletes.append(relative)
-        else:
-            kept.append(relative)
     hooks = core._safe(root, ".codex/hooks.json")
     if hooks.is_file():
         try:
             value = json.loads(_read_text(hooks))
             if not isinstance(value, dict):
                 raise ValueError("hooks root must be an object")
-            cleaned, changed = remove_hooks(value)
-            if changed:
-                owned_empty = value.get("description") == MANAGED_HOOKS_DESCRIPTION and set(cleaned) <= {"description", "hooks"} and cleaned.get("description") == MANAGED_HOOKS_DESCRIPTION and cleaned.get("hooks", {}) == {}
-                if owned_empty:
-                    deletes.append(".codex/hooks.json")
-                else:
-                    writes[".codex/hooks.json"] = (json.dumps(cleaned, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+            if lifecycle.legacy_managed_handler_cleanup_required(value):
+                manual.append(".codex/hooks.json")
+            else:
+                cleaned, changed = remove_hooks(value)
+                if changed:
+                    owned_empty = value.get("description") == MANAGED_HOOKS_DESCRIPTION and set(cleaned) <= {"description", "hooks"} and cleaned.get("description") == MANAGED_HOOKS_DESCRIPTION and cleaned.get("hooks", {}) == {}
+                    if owned_empty:
+                        deletes.append(".codex/hooks.json")
+                    else:
+                        writes[".codex/hooks.json"] = (json.dumps(cleaned, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         except (OSError, ValueError, json.JSONDecodeError):
             manual.append(".codex/hooks.json")
     return writes, deletes, kept, manual
@@ -1324,7 +1574,9 @@ def doctor(root: Path) -> dict[str, object]:
     result["role_registry"] = {
         "roles": list(_role_choices()),
         "native_profiles": sorted(roles.native_profile_names()),
-        "profile_definition_present": _profile_definition_present(root),
+        "host_profile_definition_present": _host_profile_definition_present(),
+        "project_local_profile_files_present": _project_local_profile_files_present(root),
+        "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
         "profile_inventory": role_profile_inventory(root),
         "generated_role_document": "CURRENT" if registry_state == "current" else "MISSING_OR_USER"
         if registry_state != "missing" else "MISSING",
@@ -1396,11 +1648,10 @@ def doctor(root: Path) -> dict[str, object]:
             reconciliation_successes += int(metrics.get("reconciliation_successes", 0))
             orchestration["blocked_spawn_calls"] += int(metrics.get("blocked_spawn_calls", 0))
     result["verification_attestation"] = {
-        "hook_definition_present": health["hooks_configured"],
-        "hook_definition_current": health["hooks_configured"],
+        "host_hook_registration_present": health["hooks_configured"],
         # Stored observations are intentionally useful diagnostics, but they
         # cannot prove that the session asking for this doctor report loaded
-        # the current project definitions.
+        # the current Host hook registration.
         "current_session_observed": "UNKNOWN",
         "task_start_attestation": "CURRENT_SESSION_REQUIRED",
         "adapter_protocol_current": "YES" if events or latest is not None else "UNKNOWN",
@@ -1412,7 +1663,7 @@ def doctor(root: Path) -> dict[str, object]:
     }
     result["managed_readiness"] = {
         "CORE_READY": "YES",
-        "CODEX_DEFINITION_PRESENT": health["hooks_configured"],
+        "HOST_HOOK_REGISTRATION_PRESENT": health["hooks_configured"],
         "CODEX_RUNTIME_OBSERVED": health["runtime_observed"],
         "CURRENT_SESSION_OBSERVED": "UNKNOWN",
         "TASK_START_ATTESTATION": "CURRENT_SESSION_REQUIRED",
@@ -1434,12 +1685,12 @@ def doctor(root: Path) -> dict[str, object]:
             profile_native_active="UNKNOWN",
             project_layer_activation="UNKNOWN",
             compatible_profile_observed="YES" if compatible_profile_observed else "UNKNOWN",
-            compatible_project_hooks_observed="YES" if events else "UNKNOWN",
+            host_hook_runtime_observed="YES" if events else "UNKNOWN",
         ),
     }
-    # Keep configuration discovery separate from live host observations.  A
-    # local hooks.json or trusted project entry cannot stand in for a native
-    # hook run, a deny, or a Reviewer sandbox observation.
+    # Keep Host registration and project marker disk facts separate from live
+    # session observations; neither can stand in for a native hook run, a deny,
+    # or a Reviewer sandbox observation.
     host = result.get("host_capability") if isinstance(result.get("host_capability"), dict) else {}
     host.update({
         "hook_runtime_observed": "YES" if events else "UNKNOWN",
@@ -1458,10 +1709,10 @@ def doctor(root: Path) -> dict[str, object]:
     result["lifecycle_reconciliation"] = {
         "subagent_stop_path": "PASS" if lifecycle_stop else "UNKNOWN",
         # The pinned source supplies these shapes, but a
-        # project hook must observe a real payload before this is a live PASS.
+        # Host hook must observe a real payload before this is a live PASS.
         "native_terminal_reconciliation": "PASS" if lifecycle_reconciled else ("LIVE_NOT_OBSERVED" if posttool_schema == "PASS" else "UNKNOWN"),
         "PostToolUse_source_schema_support": posttool_schema,
-        "PostToolUse_live_project_hook": "PASS" if events else "LIVE_NOT_OBSERVED",
+        "PostToolUse_live_host_hook": "PASS" if events else "LIVE_NOT_OBSERVED",
         "reconciliation_attempts": reconciliation_attempts,
         "reconciliation_successes": reconciliation_successes,
     }

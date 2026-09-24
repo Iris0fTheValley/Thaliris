@@ -21,7 +21,9 @@ HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", 
 CODEX_ADAPTER_PROTOCOL_VERSION = 9
 # This literal travels in installed command bytes. An old Host registration
 # invoking a newer executable cannot manufacture the current hook ABI.
-MANAGED_HOOK_ABI = "thaliris-hook-abi-9"
+MANAGED_HOOK_ABI = "thaliris-hook-abi-10"
+HOST_HOOK_SCRIPT_NAME = "thaliris-hook.cmd"
+PROJECT_ACTIVATION_MARKER = ".codex\\thaliris.json"
 # Private adapter lifecycle state. This is deliberately separate from Core
 # state/schema and records only bounded native child provenance.
 LIFECYCLE_STATE_VERSION = 12
@@ -96,7 +98,7 @@ _OBVIOUS_WRITE = re.compile(
 )
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
 _CONTEXT_OPERATIONS = frozenset({
-    "init", "codex-install", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
+    "init", "codex-install", "codex-uninstall", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
     "task-start", "task-update", "task-show",
     "task-status", "task-get", "artifact-get", "catalog", "document-get",
     "task-artifact", "task-close", "task-promote", "recover-pending-spawn", "rollback", "version",
@@ -113,7 +115,7 @@ _CHILD_CONTEXT_READS = frozenset({
 })
 _CHILD_CONTEXT_MUTATIONS = frozenset({
     "task-start", "task-update", "task-artifact", "task-close", "task-promote", "codex-install",
-    "recover-pending-spawn", "rollback", "init", "uninstall",
+    "recover-pending-spawn", "rollback", "init", "uninstall", "codex-uninstall",
 })
 _INVALID_STATE_DIAGNOSTICS = frozenset({"doctor", "task-show", "task-status", "version"})
 _CONTROL_STATE_TARGET = re.compile(r"(?i)\.context[\\/](?:state\.json|audit[\\/]lifecycle(?:[\\/][^\s\"']+)?)")
@@ -166,6 +168,198 @@ def managed_hook_spec_hash() -> str:
 
 def _managed_handler(event: str) -> dict[str, Any]:
     return {"type": "command", "command": f"{_hook_command_prefix()} {event} --managed-hook-abi {MANAGED_HOOK_ABI}", "timeout": 60}
+
+
+def host_hook_script_bytes() -> bytes:
+    """Render the stable Windows trampoline; inactive projects stop before Python."""
+    return (
+        "@echo off\r\n"
+        "setlocal DisableDelayedExpansion\r\n"
+        f"if not exist \"{PROJECT_ACTIVATION_MARKER}\" exit /b 0\r\n"
+        f"set \"{THALIRIS_EXECUTABLE_ENV}=%~1\"\r\n"
+        f"set \"{THALIRIS_EXECUTABLE_SHA256_ENV}=%~2\"\r\n"
+        "shift\r\n"
+        "shift\r\n"
+        f"\"%{THALIRIS_EXECUTABLE_ENV}%\" audit-hook %~1 --managed-hook-abi %~2\r\n"
+        "exit /b %ERRORLEVEL%\r\n"
+    ).encode("ascii")
+
+
+def host_hook_spec(
+    codex_home: Path,
+    executable: Path,
+    executable_sha256: str,
+) -> dict[str, Any]:
+    """Return Host-global registration that dispatches through the cheap marker trampoline."""
+    script = codex_home / HOST_HOOK_SCRIPT_NAME
+    hooks: dict[str, list[dict[str, Any]]] = {}
+    for event in HOOK_EVENTS:
+        command = subprocess.list2cmdline([
+            "cmd.exe", "/d", "/c", "call", str(script), str(executable),
+            executable_sha256, event, MANAGED_HOOK_ABI,
+        ])
+        entry: dict[str, Any] = {
+            "hooks": [{"type": "command", "command": command, "timeout": 60}]
+        }
+        if event == "PostToolUse":
+            entry["matcher"] = POST_TOOL_MATCHER
+        elif event == "PreToolUse":
+            entry["matcher"] = PRE_TOOL_MATCHER
+        hooks[event] = [entry]
+    return {"hooks": hooks}
+
+
+def _host_hook_command_is_managed(
+    value: object,
+    event: str,
+    codex_home: Path,
+    *,
+    require_current_pin: bool = False,
+) -> bool:
+    """Recognize only complete direct legacy or generated trampoline handlers."""
+    if event not in HOOK_EVENTS:
+        return False
+    if _owned_managed_handler(value, event):
+        return True
+    if not isinstance(value, dict) or set(value) != {"type", "command", "timeout"}:
+        return False
+    if value.get("type") != "command" or value.get("timeout") != 60:
+        return False
+    command = value.get("command")
+    if not isinstance(command, str):
+        return False
+    script_token_pattern = rf'(?P<script_token>"[^"]+"|[^\s]+)'
+    executable_token_pattern = rf'(?P<executable_token>"[^"]+"|[^\s]+)'
+    match = re.fullmatch(
+        rf"(?i)cmd\.exe /d /c call {script_token_pattern} {executable_token_pattern} (?P<sha>[0-9a-f]{{64}}) {re.escape(event)} (?P<abi>thaliris-hook-abi-[0-9]+)",
+        command,
+    )
+    if match is None:
+        return False
+    script_token, executable_token = match.group("script_token"), match.group("executable_token")
+    script_path = script_token[1:-1] if script_token.startswith('"') else script_token
+    executable_path = executable_token[1:-1] if executable_token.startswith('"') else executable_token
+    try:
+        script = Path(script_path)
+        executable = Path(executable_path)
+        if not script.is_absolute() or script.resolve(strict=True) != (codex_home / HOST_HOOK_SCRIPT_NAME).resolve(strict=True):
+            return False
+        if script.is_symlink() or script.read_bytes() != host_hook_script_bytes():
+            return False
+        if not executable.is_absolute() or executable.is_symlink():
+            return False
+        if not require_current_pin:
+            # The exact generated command remains Thaliris-owned after its
+            # executable is upgraded in place. This lets codex-install replace
+            # only that stale registration with the new byte pin.
+            return True
+        return (
+            executable.is_file()
+            and hashlib.sha256(executable.read_bytes()).hexdigest() == match.group("sha").lower()
+            and match.group("abi") == MANAGED_HOOK_ABI
+        )
+    except (OSError, RuntimeError):
+        return False
+
+
+def merge_host_hooks(
+    data: dict[str, Any],
+    codex_home: Path,
+    executable: Path,
+    executable_sha256: str,
+) -> tuple[dict[str, Any], bool, list[str]]:
+    """Merge the exact stable trampoline registrations without replacing user hooks."""
+    merged = json.loads(json.dumps(data))
+    hooks = merged.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError("Host hooks.json hooks must be an object")
+    wanted = host_hook_spec(codex_home, executable, executable_sha256)["hooks"]
+    changed = False
+    manual: list[str] = []
+    for event, wanted_entries in wanted.items():
+        entries = hooks.setdefault(event, [])
+        if not isinstance(entries, list):
+            raise ValueError(f"Host hooks.json hooks.{event} must be an array")
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                continue
+            for handler in entry["hooks"]:
+                if not isinstance(handler, dict) or handler.get("type") != "command":
+                    continue
+                command = handler.get("command")
+                if isinstance(command, str) and HOST_HOOK_SCRIPT_NAME.lower() in command.lower():
+                    if not _host_hook_command_is_managed(handler, event, codex_home):
+                        manual.append(f"hooks.{event}")
+        if manual:
+            continue
+        present = False
+        normalized: list[Any] = []
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                normalized.append(entry)
+                continue
+            managed = [item for item in entry["hooks"] if _host_hook_command_is_managed(item, event, codex_home)]
+            if not managed:
+                normalized.append(entry)
+                continue
+            user_handlers = [item for item in entry["hooks"] if not _host_hook_command_is_managed(item, event, codex_home)]
+            if entry == wanted_entries[0] and len(managed) == 1 and not user_handlers:
+                present = True
+                normalized.append(entry)
+                continue
+            if user_handlers:
+                copied = dict(entry)
+                copied["hooks"] = user_handlers
+                normalized.append(copied)
+            changed = True
+        if not present:
+            normalized.append(wanted_entries[0])
+            changed = True
+        hooks[event] = normalized
+    if manual:
+        return json.loads(json.dumps(data)), False, sorted(set(manual))
+    return merged, changed, []
+
+
+def remove_host_hooks(data: dict[str, Any], codex_home: Path) -> tuple[dict[str, Any], bool, list[str]]:
+    """Remove only exact generated Host trampoline and known direct legacy handlers."""
+    cleaned = json.loads(json.dumps(data))
+    hooks = cleaned.get("hooks")
+    if not isinstance(hooks, dict):
+        return cleaned, False, []
+    changed = False
+    manual: list[str] = []
+    for event in list(hooks):
+        entries = hooks[event]
+        if not isinstance(entries, list):
+            continue
+        kept: list[Any] = []
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                kept.append(entry)
+                continue
+            handlers = []
+            for handler in entry["hooks"]:
+                command = handler.get("command") if isinstance(handler, dict) else None
+                looks_trampoline = isinstance(command, str) and HOST_HOOK_SCRIPT_NAME.lower() in command.lower()
+                if looks_trampoline and not _host_hook_command_is_managed(handler, event, codex_home):
+                    manual.append(f"hooks.{event}")
+                    handlers.append(handler)
+                elif event in HOOK_EVENTS and _host_hook_command_is_managed(handler, event, codex_home):
+                    changed = True
+                else:
+                    handlers.append(handler)
+            if handlers:
+                copied = dict(entry)
+                copied["hooks"] = handlers
+                kept.append(copied)
+        if kept:
+            hooks[event] = kept
+        elif entries:
+            del hooks[event]
+    if manual:
+        return json.loads(json.dumps(data)), False, sorted(set(manual))
+    return cleaned, changed, []
 
 
 def _hook_command_prefix() -> str:
@@ -262,6 +456,12 @@ def _legacy_managed_handler(value: object, event: str) -> bool:
     # used the PATH-relative command.  It remains mechanically identifiable
     # by its complete generated shape and can therefore be upgraded safely.
     if value == {"type": "command", "command": f"{HOOK_COMMAND_PREFIX} {event}", "timeout": 60}:
+        return True
+    if value == {
+        "type": "command",
+        "command": f"{HOOK_COMMAND_PREFIX} {event} --managed-hook-abi thaliris-hook-abi-9",
+        "timeout": 60,
+    }:
         return True
     # A prior generated hook used the then-valid, byte-pinned absolute
     # executable.  Migrate only that exact no-wrapper command after proving the
@@ -426,35 +626,96 @@ def remove_hooks(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     return cleaned, changed
 
 
-def hooks_health(root: Path) -> dict[str, str]:
+def host_hooks_health(codex_home: Path) -> dict[str, str]:
+    """Report disk registration for the stable Host trampoline, never runtime load."""
+    path = codex_home / "hooks.json"
+    script = codex_home / HOST_HOOK_SCRIPT_NAME
+    if codex_home.is_symlink() or path.is_symlink() or script.is_symlink():
+        return {"hooks_configured": "UNKNOWN", "host_hook_manual_action_required": "YES"}
+    if not path.is_file() or not script.is_file():
+        return {"hooks_configured": "NO", "host_hook_manual_action_required": "NO"}
+    try:
+        if script.read_bytes() != host_hook_script_bytes():
+            return {"hooks_configured": "NO", "host_hook_manual_action_required": "YES"}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("hooks"), dict):
+            return {"hooks_configured": "UNKNOWN", "host_hook_manual_action_required": "YES"}
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"hooks_configured": "UNKNOWN", "host_hook_manual_action_required": "YES"}
+    present = True
+    manual = False
+    for event in HOOK_EVENTS:
+        entries = data["hooks"].get(event)
+        if not isinstance(entries, list):
+            present = False
+            continue
+        count = sum(
+            1 for entry in entries
+            if isinstance(entry, dict) and isinstance(entry.get("hooks"), list)
+            for handler in entry["hooks"]
+            if _host_hook_command_is_managed(
+                handler, event, codex_home, require_current_pin=True
+            )
+        )
+        present = present and count == 1
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                continue
+            for handler in entry["hooks"]:
+                command = handler.get("command") if isinstance(handler, dict) else None
+                if isinstance(command, str) and HOST_HOOK_SCRIPT_NAME.lower() in command.lower() and not _host_hook_command_is_managed(handler, event, codex_home):
+                    manual = True
+    return {
+        "hooks_configured": "YES" if present else "NO",
+        "host_hook_manual_action_required": "YES" if manual else "NO",
+    }
+
+
+def legacy_project_hook_registration_present(root: Path) -> str:
+    """Distinguish old project-scoped Thaliris registration from Host setup."""
     path = root / ".codex" / "hooks.json"
-    configured = "NO"
-    legacy_cleanup = "NO"
-    if path.is_file():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                merged, changed = merge_hooks(data)
-                configured = "NO" if changed else "YES"
-                legacy_cleanup = "MANUAL_CLEANUP_REQUIRED" if legacy_managed_handler_cleanup_required(data) else "NO"
-        except (OSError, ValueError, json.JSONDecodeError):
-            configured = "UNKNOWN"
+    if not path.exists():
+        return "NO"
+    if path.is_symlink():
+        return "UNKNOWN"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("hooks", {}), dict):
+            return "UNKNOWN"
+    except (OSError, ValueError, json.JSONDecodeError):
+        return "UNKNOWN"
+    hooks = data.get("hooks", {})
+    for event in HOOK_EVENTS:
+        entries = hooks.get(event)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                continue
+            for handler in entry["hooks"]:
+                if _owned_managed_handler(handler, event) or _ambiguous_legacy_managed_handler(handler, event):
+                    return "YES"
+    return "NO"
+
+
+def hooks_health(root: Path) -> dict[str, str]:
+    """Report the effective user Host hook registration and local legacy residue."""
+    host = host_hooks_health(_host_home_path())
+    configured = host["hooks_configured"]
     observed = _observed_health(root)
-    if configured == "NO":
-        status = "UNAVAILABLE"
-    elif configured == "YES" and observed["runtime_observed"] == "YES":
-        status = "HEALTHY"
-    else:
-        status = "UNKNOWN"
+    status = "UNAVAILABLE" if configured == "NO" else (
+        "HEALTHY" if configured == "YES" and observed["runtime_observed"] == "YES" else "UNKNOWN"
+    )
     return {
         "status": status,
         "hooks_configured": configured,
-        "installed_hook_spec": "CURRENT" if configured == "YES" else ("STALE" if configured == "NO" else "UNKNOWN"),
+        "installed_hook_spec": "CURRENT" if configured == "YES" else ("UNAVAILABLE" if configured == "NO" else "UNKNOWN"),
         "runtime_observed": observed["runtime_observed"],
         "current_hook_hash_observed": observed["current_hook_hash_observed"],
         "pretool_child_identity_corroborated": child_identity_corroboration(root),
         "hook_trust_runtime_status": "UNKNOWN",
-        "legacy_managed_handler_cleanup": legacy_cleanup,
+        "legacy_managed_handler_cleanup": "MANUAL_CLEANUP_REQUIRED" if host["host_hook_manual_action_required"] == "YES" else "NO",
+        "legacy_project_hook_registration_present": legacy_project_hook_registration_present(root),
         **managed_executable_health(),
     }
 
@@ -576,6 +837,11 @@ def _session_dir(root: Path, payload: dict[str, Any]) -> Path:
     return root / ".context" / "audit" / directory
 
 
+def _host_home_path() -> Path:
+    configured = os.environ.get("CODEX_HOME")
+    return (Path(configured).expanduser() if configured else Path.home() / ".codex").absolute()
+
+
 def _host_role_profile_dir() -> Path:
     """Return the effective user Host role directory.
 
@@ -585,9 +851,7 @@ def _host_role_profile_dir() -> Path:
     not a native Host catalog, because the current hook payload has no such
     observation.
     """
-    configured = os.environ.get("CODEX_HOME")
-    home = Path(configured).expanduser() if configured else Path.home() / ".codex"
-    return (home / "agents").resolve(strict=False)
+    return _host_home_path() / "agents"
 
 
 def _profile_files_present_at_session_start(root: Path) -> dict[str, dict[str, object]]:

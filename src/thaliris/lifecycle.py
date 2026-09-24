@@ -448,6 +448,15 @@ def managed_executable_health() -> dict[str, str]:
 
 def _context_arguments(command: str) -> str | None:
     """Extract arguments only from direct thaliris or a byte-pinned executable."""
+    command = command.lstrip()
+    # Codex's Windows shell tool submits native PowerShell invocations with
+    # its call operator (for example: & 'C:\\path\\thaliris.exe' ...).
+    # Accept only that leading operator; _context_call still rejects any
+    # subsequent command separator before trusting the direct invocation.
+    if command.startswith("&"):
+        if len(command) < 2 or not command[1].isspace():
+            return None
+        command = command[1:].lstrip()
     match = re.match(r"^\s*(\"[^\"]+\"|'[^']+'|[^\s]+)(?:\s+(.*?))?\s*$", command)
     if not match:
         return None
@@ -1906,7 +1915,12 @@ def _codex_bash_outcome(response: object) -> str:
 def _context_call(payload: dict[str, Any]) -> tuple[str | None, list[str]]:
     """Recognize a direct context call and its explicit bounded retrieval targets."""
     command = _bash_command(payload)
-    if command is None or _COMMAND_SEPARATOR.search(command):
+    if command is None:
+        return None, []
+    separator_check = command.lstrip()
+    if separator_check.startswith("&") and len(separator_check) > 1 and separator_check[1].isspace():
+        separator_check = separator_check[1:].lstrip()
+    if _COMMAND_SEPARATOR.search(separator_check):
         return None, []
     arguments = _context_arguments(command)
     if arguments is None:

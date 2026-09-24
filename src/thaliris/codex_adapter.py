@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import tomllib
 
-from . import core, lifecycle, roles
+from . import codex_app_server, core, lifecycle, roles
 from .lifecycle import (
     MANAGED_HOOKS_DESCRIPTION,
     MANAGED_HOOK_ABI,
@@ -106,6 +106,9 @@ _KNOWN_HOST_WAIT_CAPABILITIES = {
     "0.153.4": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
     "0.154.0": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
     "0.155.1": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNSUPPORTED"},
+    # Exact source verification confirms explicit wait_agent timeout support
+    # on this prerelease.  Its live child-completion behavior remains unknown.
+    "0.155.0-alpha.9.2": {"min": 10_000, "default": 30_000, "max": 3_600_000, "explicit_timeout_supported": True, "native_completion_reenters_root": "UNKNOWN"},
 }
 
 
@@ -269,11 +272,11 @@ def _host_wait_mode_cached(runner: str) -> dict[str, object]:
         completed = subprocess.run([runner, "--version"], capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return {"status": "UNSUPPORTED", "version": "UNKNOWN", "reason": "Codex executable is unavailable"}
-    # A release pin is useful only when the executable identifies itself as
-    # that exact release.  Do not extract a numeric prefix from prerelease or
-    # decorated output: those builds have no recorded capability contract.
+    # A capability pin is useful only when the executable identifies itself
+    # with its complete exact version, including any prerelease suffix.  The
+    # lookup below never promotes an unpinned suffix from its numeric prefix.
     match = re.fullmatch(
-        r"(?:codex(?:-cli)?\s+)?(\d+\.\d+\.\d+)",
+        r"(?:codex(?:-cli)?\s+)?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)",
         ((completed.stdout or "") + (completed.stderr or "")).strip(),
         flags=re.IGNORECASE,
     )
@@ -612,8 +615,13 @@ the next handoff and when work is complete.
 Startup contract: install Host integration once before sessions that use
 Thaliris roles. `thaliris codex-install` places stable role identities and the
 stable hook ABI trampoline under `CODEX_HOME`; it merges user hooks and keeps
-project data out of the user layer. A changed Host installation is a disk fact
-until a later session loads it. For each repository, project readiness
+project data out of the user layer. It uses the official Codex app-server
+`hooks/list` and `config/batchWrite` path to trust only the seven exact
+Thaliris handlers with Host-returned keys and current hashes; it never
+calculates those identities locally or changes existing `enabled` state.
+`host_hook_trust_status` and its counts report saved Host config, not what a
+running session loaded. A changed Host installation is a disk fact until a
+later session loads it. For each repository, project readiness
 requires the managed Thaliris block in the effective root instruction and the
 static `.codex/thaliris.json` activation marker. If either is absent, invoke
 `thaliris --root <repo> init` directly, or invoke the absolute executable
@@ -1154,6 +1162,31 @@ def _atomic_host_write(path: Path, contents: bytes) -> None:
                 pass
 
 
+def _install_host_hook_trust(home: Path, executable: Path, executable_sha256: str) -> dict[str, Any]:
+    return codex_app_server.trust_installed_host_hooks(home, executable, executable_sha256)
+
+
+def _owned_host_hook_commands(data: dict[str, Any], home: Path) -> dict[str, set[str]]:
+    commands: dict[str, set[str]] = {event: set() for event in lifecycle.HOOK_EVENTS}
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return commands
+    for event in lifecycle.HOOK_EVENTS:
+        entries = hooks.get(event)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            handlers = entry.get("hooks") if isinstance(entry, dict) else None
+            if not isinstance(handlers, list):
+                continue
+            for handler in handlers:
+                if lifecycle._host_hook_command_is_managed(handler, event, home):
+                    command = handler.get("command")
+                    if isinstance(command, str):
+                        commands[event].add(command)
+    return commands
+
+
 def codex_install(
     codex_home: Path | None = None,
     executable: str | Path | None = None,
@@ -1257,14 +1290,52 @@ def codex_install(
             manual.append(str(path))
 
     health = lifecycle.host_hooks_health(home)
+    trust_status = "NOT_REGISTERED"
+    trusted_count = 0
+    enabled_count = 0
+    expected_count = len(lifecycle.HOOK_EVENTS)
+    trust_error: str | None = None
+    if health["hooks_configured"] == "YES" and executable_path is not None and executable_hash is not None:
+        try:
+            trust = _install_host_hook_trust(home, executable_path, executable_hash)
+            trust_status = str(trust.get("status", "FAILED"))
+            trusted_count = int(trust.get("trusted_count", 0))
+            enabled_count = int(trust.get("enabled_count", 0))
+            expected_count = int(trust.get("expected_count", expected_count))
+            if trust.get("changed") is True:
+                changed = True
+                config_path = trust.get("config_path")
+                if isinstance(config_path, str) and Path(config_path).name.casefold() == "config.toml":
+                    files.append("config.toml")
+        except (codex_app_server.CodexAppServerError, OSError, ValueError, RuntimeError) as exc:
+            trust_status = "HOST_HOOK_TRUST_INSTALL_FAILED"
+            trust_error = str(exc)
+            manual.append("HOST_HOOK_TRUST_INSTALL_FAILED")
+    else:
+        trust_error = "Host hook registration is not complete"
+    host_integration_ready = (
+        health["hooks_configured"] == "YES"
+        and trust_status == "TRUSTED"
+        and trusted_count == expected_count == len(lifecycle.HOOK_EVENTS)
+        and enabled_count == expected_count
+        and _host_profile_definition_present(home) == "YES"
+    )
+    if trust_status == "TRUSTED" and enabled_count != expected_count:
+        manual.append("one_or_more_Thaliris_Host_hooks_are_disabled_by_user_state")
     return {
-        "ok": True,
+        "ok": host_integration_ready,
         "changed": changed,
         "target": str(home),
         "files": sorted(set(files)),
         "manual_action_required": sorted(set(manual)),
         "host_profile_definition_present": _host_profile_definition_present(home),
         "host_hook_registration_present": health["hooks_configured"],
+        "host_hook_trust_status": trust_status,
+        "host_hook_trusted_count": trusted_count,
+        "host_hook_enabled_count": enabled_count,
+        "host_hook_expected_count": expected_count,
+        "host_integration_ready": "YES" if host_integration_ready else "NO",
+        "host_hook_trust_error": trust_error,
         "managed_hook_abi": MANAGED_HOOK_ABI,
         "native_profile_names": sorted(roles.native_profile_names()),
         "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
@@ -1282,6 +1353,11 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
     hooks_path = home / "hooks.json"
     script_path = home / HOST_HOOK_SCRIPT_NAME
     has_hook_manual = False
+    owned_commands: dict[str, set[str]] = {event: set() for event in lifecycle.HOOK_EVENTS}
+    host_hook_keys: list[str] = []
+    trust_cleanup_status = "NOT_NEEDED"
+    trust_cleanup_error: str | None = None
+    trust_removed = 0
     if home.is_symlink():
         manual.append(str(home))
         has_hook_manual = True
@@ -1293,6 +1369,15 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
             original = json.loads(hooks_path.read_text(encoding="utf-8"))
             if not isinstance(original, dict):
                 raise ValueError("Host hooks.json must contain an object")
+            owned_commands = _owned_host_hook_commands(original, home)
+            if any(owned_commands.values()):
+                try:
+                    host_hook_keys = codex_app_server.owned_hook_keys_from_host(home, owned_commands)
+                    trust_cleanup_status = "CLEANED"
+                except (codex_app_server.CodexAppServerError, OSError, ValueError, RuntimeError) as exc:
+                    trust_cleanup_status = "FAILED"
+                    trust_cleanup_error = str(exc)
+                    manual.append("HOST_HOOK_TRUST_CLEANUP_FAILED")
             cleaned, changed, hook_manual = remove_host_hooks(original, home)
             if hook_manual:
                 manual.extend(str(hooks_path) + ":" + item for item in hook_manual)
@@ -1339,14 +1424,28 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
                     removed.append(f"agents/{name}")
                 except OSError:
                     manual.append(str(path))
+    if host_hook_keys and "hooks.json" in removed:
+        try:
+            trust_removed = codex_app_server.remove_owned_hook_trust(home, host_hook_keys)
+            if trust_removed:
+                removed.append("config.toml")
+        except (codex_app_server.CodexAppServerError, OSError, ValueError, RuntimeError) as exc:
+            trust_cleanup_status = "FAILED"
+            trust_cleanup_error = str(exc)
+            manual.append("HOST_HOOK_TRUST_CLEANUP_FAILED")
+    elif host_hook_keys and "hooks.json" not in removed:
+        trust_cleanup_status = "SKIPPED_MANUAL"
     health = lifecycle.host_hooks_health(home)
     return {
-        "ok": True,
+        "ok": trust_cleanup_status != "FAILED",
         "changed": bool(removed),
         "target": str(home),
         "files": sorted(removed),
         "manual_action_required": sorted(set(manual)),
         "host_hook_registration_present": health["hooks_configured"],
+        "host_hook_trust_cleanup_status": trust_cleanup_status,
+        "host_hook_trusted_state_removed": trust_removed,
+        "host_hook_trust_cleanup_error": trust_cleanup_error,
         "host_profile_definition_present": _host_profile_definition_present(home),
         "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
         "project_files_touched": [],

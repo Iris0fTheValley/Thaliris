@@ -218,7 +218,8 @@ def test_codex_install_is_idempotent_and_preserves_non_owned_collisions(tmp_path
     collision = home / "agents" / "thaliris-implementer.toml"
     collision.write_text("user-owned = true\n", encoding="utf-8")
     third = codex_adapter.codex_install()
-    assert third["ok"] is True
+    assert third["ok"] is False
+    assert third["host_integration_ready"] == "NO"
     assert str(collision) in third["manual_action_required"]
     assert collision.read_text(encoding="utf-8") == "user-owned = true\n"
 
@@ -417,7 +418,8 @@ def test_initialized_task_start_reports_unavailable_trusted_executable(tmp_path:
     assert result["bootstrap"]["canonical_executable_available"] == "NO"
 
 
-def test_user_profile_is_preserved_and_not_a_definition(tmp_path: Path) -> None:
+def test_user_profile_is_preserved_and_not_a_definition(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-codex-home"))
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     codex_adapter.init(tmp_path)
     profile = tmp_path / ".codex" / "agents" / "thaliris-implementer.toml"
@@ -709,6 +711,25 @@ def test_codex_01551_wait_capability_is_version_pinned(monkeypatch) -> None:
         "effective_max_wait_timeout_ms": "UNAVAILABLE", "explicit_timeout_supported": True,
     }
     assert codex_adapter.native_child_completion_reenters_root("codex-0.155-test") == "UNSUPPORTED"
+    codex_adapter._host_wait_mode_cached.cache_clear()
+
+
+def test_exact_current_codex_alpha_wait_capability_is_source_pinned(monkeypatch) -> None:
+    class Version:
+        returncode = 0
+        stdout = "codex-cli 0.155.0-alpha.9.2\n"
+        stderr = ""
+
+    codex_adapter._host_wait_mode_cached.cache_clear()
+    monkeypatch.setattr(codex_adapter.subprocess, "run", lambda *args, **kwargs: Version())
+    capability = codex_adapter.host_explicit_blocking_wait("codex-current-alpha-test")
+    assert capability == {
+        "status": "PASS", "version": "0.155.0-alpha.9.2", "min_wait_timeout_ms": 10_000,
+        "default_wait_timeout_ms": 30_000, "release_hard_max_wait_timeout_ms": 3_600_000,
+        "effective_max_wait_timeout_ms": "UNAVAILABLE", "explicit_timeout_supported": True,
+    }
+    assert codex_adapter.native_child_completion_reenters_root("codex-current-alpha-test") == "UNKNOWN"
+    assert codex_adapter.selected_continuation_mode(Path("."), "codex-current-alpha-test") == "BLOCKING_WAIT"
     codex_adapter._host_wait_mode_cached.cache_clear()
 
 
@@ -1481,6 +1502,48 @@ def test_task_start_requires_current_one_shot_hook_attestation(tmp_path: Path, m
         codex_adapter.task_start(root, "reused", None, None, token, digest)
 
 
+def test_powershell_call_operator_to_pinned_executable_mints_task_start_attestation(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = repo(tmp_path / "repo")
+    executable = tmp_path / "thaliris.exe"
+    executable.write_bytes(b"exact test executable pin")
+    executable_sha256 = hashlib.sha256(executable.read_bytes()).hexdigest()
+    monkeypatch.setenv(lifecycle_module.THALIRIS_EXECUTABLE_ENV, str(executable))
+    monkeypatch.setenv(lifecycle_module.THALIRIS_EXECUTABLE_SHA256_ENV, executable_sha256)
+    monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
+    monkeypatch.setattr(codex_adapter, "native_child_completion_reenters_root", lambda: "UNSUPPORTED")
+    monkeypatch.setattr(codex_adapter, "host_explicit_blocking_wait", lambda: {"status": "PASS"})
+    codex_adapter.audit_hook(
+        root,
+        "SessionStart",
+        {"session_id": "powershell-session", "source": "startup", "cwd": str(root)},
+    )
+
+    digest = codex_adapter._controller_bridge()["controller_bridge_sha256"]
+    command = (
+        f"& '{executable}' --root '{root}' task-start 'powershell direct route' "
+        f"--controller-bridge-sha256 {digest}"
+    )
+    pre = hook_payload(
+        session_id="powershell-session",
+        tool_name="Bash",
+        tool_input={"command": command},
+    )
+    rewritten = json.loads(
+        codex_adapter.audit_hook(root, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI)
+    )
+    updated_command = rewritten["hookSpecificOutput"]["updatedInput"]["command"]
+    assert updated_command.startswith(command)
+    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", updated_command).group(1)
+
+    assert cli.main(
+        ["--root", str(root), "task-start", "powershell direct route", "--controller-bridge-sha256", digest, "--hook-attestation", token]
+    ) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "ACTIVE"
+
+
 def test_unsupported_prerelease_after_valid_attestation_is_continuation_unavailable(tmp_path: Path, monkeypatch, capsys) -> None:
     root = repo(tmp_path)
     monkeypatch.setattr(lifecycle_module, "managed_executable_health", lambda: {"canonical_executable_available": "YES", "canonical_executable_identity": "TEST"})
@@ -1488,7 +1551,7 @@ def test_unsupported_prerelease_after_valid_attestation_is_continuation_unavaila
 
     class Version:
         returncode = 0
-        stdout = "codex-cli 0.155.0-alpha.9.2\n"
+        stdout = "codex-cli 0.155.0-alpha.9.3\n"
         stderr = ""
 
     codex_adapter._host_wait_mode_cached.cache_clear()
@@ -1507,7 +1570,8 @@ def test_unsupported_prerelease_after_valid_attestation_is_continuation_unavaila
     codex_adapter._host_wait_mode_cached.cache_clear()
 
 
-def test_doctor_separates_hook_spec_executable_and_attestation_facts(tmp_path: Path) -> None:
+def test_doctor_separates_hook_spec_executable_and_attestation_facts(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-codex-home"))
     root = repo(tmp_path)
     report = codex_adapter.doctor(root)
     host = report["host_capability"]
@@ -1520,7 +1584,8 @@ def test_doctor_separates_hook_spec_executable_and_attestation_facts(tmp_path: P
     assert report["verification_attestation"]["task_start_attestation"] == "CURRENT_SESSION_REQUIRED"
 
 
-def test_doctor_names_host_registration_separately_from_project_activation(tmp_path: Path) -> None:
+def test_doctor_names_host_registration_separately_from_project_activation(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-codex-home"))
     root = repo(tmp_path)
 
     report = codex_adapter.doctor(root)

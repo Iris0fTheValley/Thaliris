@@ -176,23 +176,30 @@ The Controller interprets Investigator, Curator, Reasoning Specialist, Implement
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 
-Startup contract: determine initialization only from these explicit project
-facts: a managed Thaliris block in the effective root instruction, a current
-managed `.codex/hooks.json`, and all Thaliris role-profile files. If any
-fact is absent, invoke `thaliris --root <repo> init` directly, or invoke the
-absolute executable named by the host's exact SHA-256 pin. Read its JSON result.
+Startup contract: determine project initialization only from these explicit
+project facts: a managed Thaliris block in the effective root instruction and
+a current managed `.codex/hooks.json`. If either fact is absent, invoke
+`thaliris --root <repo> init` directly, or invoke the absolute executable
+named by the Host's exact SHA-256 pin. Project `init` does not create native
+role identities. Stable Thaliris native role definitions are one-time Host
+integration installed with `thaliris codex-install` under the user's
+`CODEX_HOME/agents`; run it before starting a session that will use them. It
+installs only Thaliris-owned profiles and preserves user files. A profile
+filename added after SessionStart fails closed as
+`NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`. SessionStart's project and Host profile
+file snapshots are disk-presence evidence only; missing snapshot or missing
+Host-native catalog evidence remains `HOST_ROLE_CATALOG_UNKNOWN`, never PASS.
+Updating content at an already-known filename does not add a role identity.
 Read the canonical managed text and SHA-256 returned by `init` or
 `bootstrap-check`. Explicitly acknowledge that digest with
 `--controller-bridge-sha256` when calling `task-start`; the loaded current-ABI
 PreToolUse hook binds that receipt to its session attestation. This is
 Controller activation only: CLI output does not become Host developer
-instruction, and Host instruction activation remains UNKNOWN. `init` reports
-`role_catalog_changed` when it creates new profile filenames. `task-start`
-then requires a current-session native startup observation containing those filenames;
-otherwise it returns `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`. Existing
-catalogued profile content can refresh on spawn.
-If neither trusted
-direct route is available, report bootstrap unavailable and do not continue.
+instruction, and Host instruction activation remains UNKNOWN. Project hook
+activation is separate: use only a supported current-session Host refresh
+route; when unavailable, report `PROJECT_HOOK_REFRESH_UNAVAILABLE` and do not
+globalize lifecycle hooks. If neither trusted direct executable route is
+available, report bootstrap unavailable and do not continue.
 If all facts are present, read `.agent-memory/INDEX.md` and
 `.milestones/INDEX.md` (creating only a minimal missing map as instructed),
 then proceed to normal managed startup.

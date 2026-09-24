@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 import tomllib
 
 from . import core, lifecycle, roles
@@ -157,6 +158,7 @@ def _activation_fields(
     return {
         "profile_definition_present": _profile_definition_present(root),
         "profile_native_active": profile_native_active,
+        "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
         "project_layer_activation": project_layer_activation,
         "compatible_profile_observed": compatible_profile_observed,
         "compatible_project_hooks_observed": compatible_project_hooks_observed,
@@ -190,7 +192,12 @@ def _project_definition_facts(root: Path) -> dict[str, str]:
         hook_definition = "NO"
     else:
         hook_definition = hooks["hooks_configured"]
-    initialized = "YES" if instruction_present == "YES" and hook_definition == "YES" and profiles == "YES" else "NO"
+    # Native role identities are installed in the user's Codex role directory
+    # by ``codex-install``.  A project definition therefore consists only of
+    # this project's instruction and lifecycle hook layers; project-local
+    # profile files are reported as observations but are not required or
+    # created by ``init``.
+    initialized = "YES" if instruction_present == "YES" and hook_definition == "YES" else "NO"
     return {
         "project_definition_present": initialized,
         "instruction_definition_present": instruction_present,
@@ -490,7 +497,7 @@ generate INDEX content; it validates the CAS, references, and atomic commit.
 With NO_TASK, Thaliris leaves ordinary Codex tool use and spawn behavior
 transparent. During an ACTIVE managed task the persistent Controller uses only
 native spawn/wait/list/interrupt operations and an explicit allow-set of
-trusted direct `thaliris` runtime commands. `init`, `uninstall`, `rollback`, a
+trusted direct `thaliris` runtime commands. `init`, `codex-install`, `uninstall`, `rollback`, a
 second `task-start`, and `task-show` are blocked for ACTIVE Root. `task-status`
 is bounded; `task-get`, `artifact-get`, `catalog`, and `document-get`
 retrieve explicitly selected objects.
@@ -549,21 +556,25 @@ The Controller interprets {_native_role_names_text()} results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 
-Startup contract: determine initialization only from these explicit project
-facts: a managed Thaliris block in the effective root instruction, a current
-managed `.codex/hooks.json`, and all Thaliris role-profile files. If any
-fact is absent, invoke `thaliris --root <repo> init` directly, or invoke the
-absolute executable named by the host's exact SHA-256 pin. Read its JSON result.
+Startup contract: determine project initialization only from these explicit
+facts: a managed Thaliris block in the effective root instruction and a
+current managed `.codex/hooks.json`. If either fact is absent, invoke
+`thaliris --root <repo> init` directly, or invoke the absolute executable
+named by the host's exact SHA-256 pin. Native Thaliris role identities belong
+to the user's Host catalog and are installed separately with
+`thaliris codex-install`; project `init` does not create or refresh them. Read
+the `init` JSON result.
 Read the canonical managed text and SHA-256 returned by `init` or
 `bootstrap-check`. Explicitly acknowledge that digest with
 `--controller-bridge-sha256` when calling `task-start`; the loaded current-ABI
 PreToolUse hook binds that receipt to its session attestation. This is
 Controller activation only: CLI output does not become Host developer
-instruction, and Host instruction activation remains UNKNOWN. `init` reports
-`role_catalog_changed` when it creates new profile filenames. `task-start`
-then requires a current-session native startup observation containing those filenames;
-otherwise it returns `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`. Existing
-catalogued profile content can refresh on spawn.
+instruction, and Host instruction activation remains UNKNOWN. SessionStart's
+role filename snapshot is disk presence evidence only. Without a Host-native
+catalog signal, catalog status remains `HOST_ROLE_CATALOG_UNKNOWN`; if a new
+role filename appears after the startup snapshot, admission fails closed with
+`NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`. Existing catalogued profile content
+updates by filename do not imply a restart.
 If neither trusted
 direct route is available, report bootstrap unavailable and do not continue.
 If all facts are present, read `.agent-memory/INDEX.md` and
@@ -931,16 +942,9 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
             writes["docs/thaliris-role-registry.md"] = _role_registry_document()
         elif state == "user":
             manual.append("docs/thaliris-role-registry.md")
-    for name, (model, effort, role) in _agent_profiles().items():
-        relative = f".codex/agents/{name}"
-        profile = core._safe(root, relative)
-        rendered = _agent_profile(name.removesuffix(".toml"), role, model, effort)
-        if not profile.exists():
-            writes[relative] = rendered
-        elif _agent_profile_state(profile.read_bytes(), name) == "legacy":
-            writes[relative] = rendered
-        elif _agent_profile_state(profile.read_bytes(), name) == "user":
-            manual.append(relative)
+    # Native role identities belong to the Host's user role catalog.  Project
+    # init intentionally leaves any existing project-local profiles alone and
+    # never creates new identities in this workspace.
     current_ignore = _read_text(ignore) if ignore.is_file() else ""
     rendered_ignore = _audit_ignore(current_ignore)
     if current_ignore != rendered_ignore:
@@ -985,7 +989,7 @@ def init(root: Path) -> dict[str, object]:
     hook_changed = ".codex/hooks.json" in files
     instruction_changed = any(path in {"AGENTS.md", "AGENTS.override.md"} for path in files)
     profile_changed = any(path.startswith(".codex/agents/") for path in files)
-    new_profile_names = sorted(path for path in files if path.startswith(".codex/agents/") and not (root / path).is_file())
+    new_profile_names: list[str] = []
     backup = None
     # Apply the generated files under one lock so the mutation is atomic.
     with core._lock(root):
@@ -1000,9 +1004,103 @@ def init(root: Path) -> dict[str, object]:
             manual = sorted(set(manual) | {"canonical_executable_unavailable"})
         if hooks["legacy_managed_handler_cleanup"] == "MANUAL_CLEANUP_REQUIRED":
             manual = sorted(set(manual) | {"legacy_managed_handler_manual_cleanup_required"})
-        # A new filename may be absent from the current Host role catalog.
-        # Edited already-catalogued profiles reload when a child is spawned.
     return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": hook_changed, "agent_profile_changed": profile_changed, "new_role_profile_files": new_profile_names, "role_catalog_changed": bool(new_profile_names), "hook_re_attestation_required": hook_changed or stale_runtime_hook_spec, "managed_hook_abi": lifecycle.MANAGED_HOOK_ABI, "executable_adapter_protocol_version": lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": False, "hook_trust_required": hook_changed or stale_runtime_hook_spec or executable_unavailable, "host_wait_mode": host_wait_mode(), **_project_definition_facts(root), **_activation_fields(root), **_controller_bridge()}
+
+
+def _codex_home(codex_home: Path | None = None) -> Path:
+    """Resolve the user's Codex home without consulting project state."""
+    if codex_home is not None:
+        return Path(codex_home).expanduser()
+    configured = os.environ.get("CODEX_HOME")
+    return (Path(configured).expanduser() if configured else Path.home() / ".codex").resolve()
+
+
+def codex_install(codex_home: Path | None = None) -> dict[str, object]:
+    """Install stable Thaliris role profiles into the user's Codex home.
+
+    This command is deliberately independent of a repository.  It changes
+    only generated Thaliris role files under ``<CODEX_HOME>/agents`` and
+    preserves a same-name file unless its bytes are known generated Thaliris
+    content.  Hooks, instructions, and project-local files are out of scope.
+    """
+    home = _codex_home(codex_home)
+    agents = home / "agents"
+    writes: list[tuple[Path, bytes]] = []
+    manual: list[str] = []
+    installed: list[str] = []
+    if agents.is_symlink() or (agents.exists() and not agents.is_dir()):
+        return {
+            "ok": True,
+            "changed": False,
+            "target": str(agents),
+            "files": [],
+            "manual_action_required": [str(agents)],
+            "profile_definition_present": "NO",
+            "native_profile_names": sorted(roles.native_profile_names()),
+            "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
+            "project_files_touched": [],
+        }
+    for name, (model, effort, role) in _agent_profiles().items():
+        path = agents / name
+        rendered = _agent_profile(name.removesuffix(".toml"), role, model, effort)
+        display = str(path)
+        if path.is_symlink():
+            manual.append(display)
+            continue
+        if not path.exists():
+            writes.append((path, rendered))
+            installed.append(name)
+            continue
+        try:
+            current = path.read_bytes()
+        except OSError:
+            manual.append(display)
+            continue
+        state = _agent_profile_state(current, name)
+        if state == "current":
+            continue
+        if state == "legacy":
+            writes.append((path, rendered))
+            installed.append(name)
+        else:
+            manual.append(display)
+
+    # Apply only the planned role files.  The parent directories are created
+    # once, and each replacement is atomic so a same-name generated profile
+    # is never truncated in place.
+    for path, rendered in writes:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", prefix=f".{path.name}.", suffix=".thaliris-install-tmp",
+                dir=path.parent, delete=False,
+            ) as temporary:
+                temporary.write(rendered)
+                temporary_name = temporary.name
+            os.replace(temporary_name, path)
+        finally:
+            if temporary_name is not None:
+                try:
+                    Path(temporary_name).unlink()
+                except FileNotFoundError:
+                    pass
+    host_profiles = "YES" if all(
+        (agents / name).is_file()
+        and _agent_profile_state((agents / name).read_bytes(), name) == "current"
+        for name in _agent_profiles()
+    ) else "NO"
+    return {
+        "ok": True,
+        "changed": bool(writes),
+        "target": str(agents),
+        "files": sorted(installed),
+        "manual_action_required": sorted(set(manual)),
+        "profile_definition_present": host_profiles,
+        "native_profile_names": sorted(roles.native_profile_names()),
+        "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
+        "project_files_touched": [],
+    }
 
 
 def _adapter_uninstall_plan(root: Path) -> tuple[dict[str, bytes], list[str], list[str], list[str]]:

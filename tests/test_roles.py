@@ -120,9 +120,12 @@ def test_exact_phase_two_profile_bytes_are_recognized_only_for_own_role() -> Non
         assert codex_adapter._agent_profile_state(value, other_name) == "user"
 
 
-def test_phase_two_profiles_migrate_while_edited_profile_is_preserved(tmp_path: Path) -> None:
+def test_phase_two_profiles_migrate_while_edited_profile_is_preserved(tmp_path: Path, monkeypatch) -> None:
+    host_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(host_home))
     root = _initialized_repo(tmp_path)
-    agents = root / ".codex" / "agents"
+    agents = host_home / "agents"
+    agents.mkdir(parents=True)
     fixture_dir = Path(__file__).parent / "fixtures"
     roles_to_migrate = ("investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer")
     for role in roles_to_migrate:
@@ -131,14 +134,18 @@ def test_phase_two_profiles_migrate_while_edited_profile_is_preserved(tmp_path: 
     edited = (agents / edited_name).read_bytes() + b"\nuser edit\n"
     (agents / edited_name).write_bytes(edited)
 
-    result = codex_adapter.init(root)
+    result = codex_adapter.codex_install()
 
     assert (agents / edited_name).read_bytes() == edited
-    assert f".codex/agents/{edited_name}" in result["manual_action_required"]
+    assert str(agents / edited_name) in result["manual_action_required"]
     for role in roles_to_migrate[:-1]:
         name = f"thaliris-{role}.toml"
         assert codex_adapter._agent_profile_state((agents / name).read_bytes(), name) == "current"
-        assert f".codex/agents/{name}" in result["files"]
+        assert name in result["files"]
+
+    init_result = codex_adapter.init(root)
+    assert init_result["agent_profile_changed"] is False
+    assert not (root / ".codex" / "agents").exists()
 
 
 def test_new_registry_role_flows_through_adapter_inventories_and_cli(monkeypatch) -> None:
@@ -256,11 +263,16 @@ def test_doctor_reports_missing_registry_document(tmp_path: Path) -> None:
 
 def test_formal_seventh_role_requires_only_spec_and_binding(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setitem(roles.ROLE_REGISTRY, "formal-sentinel", _formal_sentinel_registration())
+    host_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(host_home))
     root = _initialized_repo(tmp_path)
+    install = codex_adapter.codex_install()
 
-    profile = root / ".codex" / "agents" / "thaliris-formal-sentinel.toml"
+    profile = host_home / "agents" / "thaliris-formal-sentinel.toml"
     assert profile.is_file()
     assert 'model_reasoning_effort = "high"' in profile.read_text(encoding="utf-8")
+    assert "thaliris-formal-sentinel.toml" in install["files"]
+    assert not (root / ".codex" / "agents").exists()
     assert codex_adapter.bootstrap_check(root)["project_definition_present"] == "YES"
     assert lifecycle._native_agent_roles()["thaliris-formal-sentinel"] == "formal-sentinel"
     role_action = next(

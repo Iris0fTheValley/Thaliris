@@ -88,6 +88,18 @@ def test_initialized_workspace_does_not_init(monkeypatch, tmp_path: Path):
     assert calls == ["bootstrap-check"]
 
 
+def test_zero_state_init_does_not_claim_or_create_host_role_catalog(tmp_path: Path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    result = codex_adapter.init(tmp_path)
+    assert result["project_definition_present"] == "YES"
+    assert result["role_catalog_changed"] is False
+    assert result["new_role_profile_files"] == []
+    assert result["host_role_catalog_status"] == "HOST_ROLE_CATALOG_UNKNOWN"
+    assert not (tmp_path / ".codex" / "agents").exists()
+
+
 def test_probe_failure_calibrates_restart_boolean(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
     monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])

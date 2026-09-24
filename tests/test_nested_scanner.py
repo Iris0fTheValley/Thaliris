@@ -285,27 +285,37 @@ def test_registry_identity_uniqueness(monkeypatch, kind):
         roles.role_choices()
 
 
-def test_independent_phase_two_profile_migration_and_user_edits(tmp_path):
+def test_independent_phase_two_profile_migration_and_user_edits(tmp_path, monkeypatch):
     # Exact generator at immutable 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31:
     # roles blob 481aba1ef66448238f1b00ff4b58eba3f28f9605;
     # adapter blob 880d5a9753220bcf09f27bc34890e411ccee17c4.
     # Fixtures are fixed UTF-8/LF bytes, never reconstructed from current HEAD.
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     codex_adapter.init(tmp_path)
+    host_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(host_home))
+    host_agents = host_home / "agents"
+    host_agents.mkdir(parents=True)
     for role, digest in roles._PHASE_TWO_PROFILE_HASHES.items():
         value = (Path(__file__).parent / "fixtures" / f"phase2-{role}.toml").read_bytes()
         assert hashlib.sha256(value).hexdigest() == digest
         name = f"thaliris-{role}.toml"
         assert codex_adapter._agent_profile_state(value, name) == "legacy"
         assert codex_adapter._agent_profile_state(value + b"\n# user edit\n", name) == "user"
-        (tmp_path / ".codex" / "agents" / name).write_bytes(value)
+        (host_agents / name).write_bytes(value)
     packs = (Path(__file__).parent / "fixtures" / "phase2-role-packs.md").read_bytes()
     assert hashlib.sha256(packs).hexdigest() == "0a51833bf936b14053c08a6502a6a1d27ecd1518263e7eea5c4e43f53fa1c5f1"
     assert codex_adapter._role_pack_state(packs) == "legacy"
     (tmp_path / "docs" / "thaliris-role-packs.md").write_bytes(packs)
+    install = codex_adapter.codex_install()
+    assert install["profile_definition_present"] == "YES"
+    migrated = {f"thaliris-{role}.toml" for role in roles._PHASE_TWO_PROFILE_HASHES}
+    assert migrated <= set(install["files"])
+    for name in host_agents.glob("thaliris-*.toml"):
+        assert codex_adapter._agent_profile_state(name.read_bytes(), name.name) == "current"
     result = codex_adapter.init(tmp_path)
-    assert result["agent_profile_changed"] is True
-    assert set(codex_adapter.role_profile_inventory(tmp_path).values()) == {"current"}
+    assert result["agent_profile_changed"] is False
+    assert not (tmp_path / ".codex" / "agents").exists()
     assert (tmp_path / "docs" / "thaliris-role-packs.md").read_text(encoding="utf-8") == codex_adapter.render_role_packs()
 
 

@@ -50,7 +50,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     _add_global_arguments(p)
     sub = p.add_subparsers(dest="command", required=True)
-    for name in ("init", "bootstrap-check", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
+    for name in ("init", "bootstrap-check", "codex-install", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
         sub.add_parser(name)
     sub.add_parser("codex-bootstrap", help="perform one-shot project-external Codex bootstrap")
     q = sub.add_parser("catalog", help="discover bounded durable document metadata")
@@ -165,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "init": out = codex_adapter.init(root)
         elif args.command == "bootstrap-check": out = codex_adapter.bootstrap_check(root)
+        elif args.command == "codex-install": out = codex_adapter.codex_install()
         elif args.command == "codex-bootstrap":
             try:
                 out = codex_bootstrap.bootstrap(root)

@@ -96,7 +96,7 @@ _OBVIOUS_WRITE = re.compile(
 )
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
 _CONTEXT_OPERATIONS = frozenset({
-    "init", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
+    "init", "codex-install", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
     "task-start", "task-update", "task-show",
     "task-status", "task-get", "artifact-get", "catalog", "document-get",
     "task-artifact", "task-close", "task-promote", "recover-pending-spawn", "rollback", "version",
@@ -112,13 +112,22 @@ _CHILD_CONTEXT_READS = frozenset({
     "document-get",
 })
 _CHILD_CONTEXT_MUTATIONS = frozenset({
-    "task-start", "task-update", "task-artifact", "task-close", "task-promote",
+    "task-start", "task-update", "task-artifact", "task-close", "task-promote", "codex-install",
     "recover-pending-spawn", "rollback", "init", "uninstall",
 })
 _INVALID_STATE_DIAGNOSTICS = frozenset({"doctor", "task-show", "task-status", "version"})
 _CONTROL_STATE_TARGET = re.compile(r"(?i)\.context[\\/](?:state\.json|audit[\\/]lifecycle(?:[\\/][^\s\"']+)?)")
 _DURABLE_PATH_TARGET = re.compile(r"(?i)(?:^|[\s\"'=])((?:\.agent-memory|\.milestones)(?:[\\/][^\s\"'|;&<>]*)?)")
 _START_ATTESTATION_TTL_NS = 120 * 1_000_000_000
+
+# Role filenames visible on disk are configuration observations only.  The
+# current Codex hook payload has no native role-catalog observation, so the
+# catalog status remains UNKNOWN unless a future Host contract supplies one.
+HOST_ROLE_CATALOG_OBSERVED = "HOST_ROLE_CATALOG_OBSERVED"
+HOST_ROLE_CATALOG_UNKNOWN = "HOST_ROLE_CATALOG_UNKNOWN"
+NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE = "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE"
+_PROFILE_FILES_PRESENT_AT_SESSION_START = "profile_files_present_at_session_start"
+_HOST_ROLE_CATALOG_STATUS = "host_role_catalog_status"
 def hook_spec() -> dict[str, Any]:
     """Return the exact managed hooks fragment; callers merge it conservatively."""
     hooks: dict[str, list[dict[str, Any]]] = {}
@@ -567,6 +576,42 @@ def _session_dir(root: Path, payload: dict[str, Any]) -> Path:
     return root / ".context" / "audit" / directory
 
 
+def _host_role_profile_dir() -> Path:
+    """Return the effective user Host role directory.
+
+    Stable Thaliris role identities are installed under the user's Codex home,
+    while project-local ``.codex/agents`` is retained as a separate file
+    observation for compatibility.  This helper deliberately reports a path,
+    not a native Host catalog, because the current hook payload has no such
+    observation.
+    """
+    configured = os.environ.get("CODEX_HOME")
+    home = Path(configured).expanduser() if configured else Path.home() / ".codex"
+    return (home / "agents").resolve(strict=False)
+
+
+def _profile_files_present_at_session_start(root: Path) -> dict[str, dict[str, object]]:
+    """Capture known Thaliris profile files in both relevant directories."""
+    project_dir = root / ".codex" / "agents"
+    host_dir = _host_role_profile_dir()
+    return {
+        "project": {
+            "directory": ".codex/agents",
+            "files": sorted(
+                name for name in roles.agent_profiles()
+                if (project_dir / name).is_file()
+            ),
+        },
+        "user_host": {
+            "directory": str(host_dir),
+            "files": sorted(
+                name for name in roles.agent_profiles()
+                if (host_dir / name).is_file()
+            ),
+        },
+    }
+
+
 def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
     with core._lock(root):
         path = _session_dir(root, payload) / "runtime.json"
@@ -578,10 +623,15 @@ def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
         if payload.get("source") == "startup":
             state["session_start_at_ns"] = time.time_ns()
             state["session_start_monotonic_ns"] = time.monotonic_ns()
-            state["native_role_profile_names_at_start"] = sorted(
-                name for name in roles.agent_profiles()
-                if (root / ".codex" / "agents" / name).is_file()
-            )
+            # This is deliberately a file-presence snapshot.  Neither the
+            # project nor user Host role directory establishes what the Host
+            # loaded into its native role catalog.
+            state.pop("native_role_profile_names_at_start", None)
+            state[_PROFILE_FILES_PRESENT_AT_SESSION_START] = _profile_files_present_at_session_start(root)
+            # No current Codex SessionStart payload carries native role
+            # catalog evidence.  Keep the field explicit so a later Host
+            # contract can populate it without reinterpreting disk state.
+            state[_HOST_ROLE_CATALOG_STATUS] = HOST_ROLE_CATALOG_UNKNOWN
         _write_capture(path, state)
 
 
@@ -1787,7 +1837,11 @@ def _start_attestation_path(root: Path, nonce: str) -> Path:
 
 
 def new_role_profile_files(root: Path, session_hash: str) -> list[str] | None:
-    """Compare current role filenames with this session's startup snapshot."""
+    """Compare current disk role filenames with this session's disk snapshot.
+
+    The result is a file-presence observation.  It is never a native Host
+    role-catalog observation.
+    """
     try:
         runtime = json.loads((root / ".context" / "audit" / session_hash[:24] / "runtime.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
@@ -1797,20 +1851,54 @@ def new_role_profile_files(root: Path, session_hash: str) -> list[str] | None:
         or runtime.get("managed_hook_spec_hash") != managed_hook_spec_hash()
         or runtime.get("adapter_protocol_version") != CODEX_ADAPTER_PROTOCOL_VERSION
         or type(runtime.get("session_start_monotonic_ns")) is not int
-        or not isinstance(runtime.get("native_role_profile_names_at_start"), list)
-        or not all(isinstance(name, str) for name in runtime["native_role_profile_names_at_start"])
     ):
         return None
-    start_names = set(runtime["native_role_profile_names_at_start"])
-    return sorted(
+    snapshot = runtime.get(_PROFILE_FILES_PRESENT_AT_SESSION_START)
+    if not isinstance(snapshot, dict):
+        return None
+    project = snapshot.get("project")
+    user_host = snapshot.get("user_host")
+    if not isinstance(project, dict) or not isinstance(user_host, dict):
+        return None
+    project_directory = project.get("directory")
+    project_files = project.get("files")
+    host_directory = user_host.get("directory")
+    host_files = user_host.get("files")
+    if (
+        project_directory != ".codex/agents"
+        or not isinstance(project_files, list)
+        or not all(isinstance(name, str) for name in project_files)
+        or not isinstance(host_directory, str)
+        or not host_directory
+        or not isinstance(host_files, list)
+        or not all(isinstance(name, str) for name in host_files)
+    ):
+        return None
+    start_project_names = set(project_files)
+    start_host_names = set(host_files)
+    current_project_dir = root / ".codex" / "agents"
+    current_host_dir = Path(host_directory)
+    added = [
         f".codex/agents/{name}" for name in roles.agent_profiles()
-        if (root / ".codex" / "agents" / name).is_file() and name not in start_names
+        if (current_project_dir / name).is_file() and name not in start_project_names
+    ]
+    added.extend(
+        str(current_host_dir / name) for name in roles.agent_profiles()
+        if (current_host_dir / name).is_file() and name not in start_host_names
     )
+    return sorted(added)
 
 
 def role_catalog_session_status(root: Path, session_hash: str) -> str:
     added = new_role_profile_files(root, session_hash)
-    return "ROLE_CATALOG_ACTIVE_FOR_SESSION" if added == [] else "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE"
+    if added is None:
+        return HOST_ROLE_CATALOG_UNKNOWN
+    if added:
+        return NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE
+    # The current hook payload has no authenticated native Host catalog
+    # observation.  In particular, a writable audit field cannot promote the
+    # file-presence result to OBSERVED.
+    return HOST_ROLE_CATALOG_UNKNOWN
 
 
 def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None = None) -> str:

@@ -59,18 +59,24 @@ loop.
 
 The installed `thaliris --root <repo> codex-bootstrap` command is the
 project-external zero-state boundary. It uses a read-only definition probe,
-then at most one trusted direct `thaliris init` call. It returns
+then at most one trusted direct `thaliris init` call. Native role identities
+are installed separately in the user's Codex role directory with
+`thaliris codex-install`; project `init` does not create project-local native
+profiles. It returns
 `MANUAL_ACTION_REQUIRED` when initialization leaves explicit manual work, and
 never task-starts or retries initialization. A trusted executable that lacks
 the current managed hook ABI, adapter protocol, or valid Controller bridge,
 or emits the obsolete `session_restart_required` field, returns
-`EXECUTABLE_PROTOCOL_SKEW`. When `init` creates new role profile filenames,
-bootstrap returns `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE` until a current-session
-native startup observation contains those filenames. `task-start` then requires
-the exact Controller bridge SHA-256 and a one-shot current-session, current-ABI
-`PreToolUse` attestation; a missing or mismatched bridge or attestation remains
-an explicit admission blocker. No automatic Codex Host hook is assumed or
-claimed by this command.
+`EXECUTABLE_PROTOCOL_SKEW`. SessionStart records role filenames as disk
+presence only. Without a native Host catalog signal, readiness reports
+`HOST_ROLE_CATALOG_UNKNOWN`; a profile filename added after the startup
+snapshot fails closed with `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`. Updating
+the content of an existing filename does not imply a restart. `task-start`
+then requires the exact Controller bridge SHA-256 and a one-shot
+current-session, current-ABI `PreToolUse` attestation; a missing or mismatched
+bridge or attestation remains an explicit admission blocker. No automatic
+Codex Host hook or native catalog refresh is assumed or claimed by this
+command.
 
 ## Role results
 

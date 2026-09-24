@@ -75,12 +75,14 @@ def test_uninitialized_task_start_reports_bootstrap_unknown_restart(tmp_path: Pa
     assert result["bootstrap"]["same_session_task_start"] == "UNKNOWN"
 
 
-def test_init_reports_new_role_catalog_fact_without_durable_fence(tmp_path: Path) -> None:
+def test_init_does_not_install_project_role_identities_or_durable_fence(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     first = codex_adapter.init(tmp_path)
     assert first["session_restart_required"] is False
-    assert first["role_catalog_changed"] is True
-    assert first["new_role_profile_files"]
+    assert first["role_catalog_changed"] is False
+    assert first["new_role_profile_files"] == []
+    assert first["agent_profile_changed"] is False
+    assert not (tmp_path / ".codex" / "agents").exists()
     assert not (tmp_path / ".context" / "audit" / "bootstrap-restart.json").exists()
     assert not (tmp_path / ".context" / "audit" / "role-catalog-change.json").exists()
 
@@ -94,15 +96,118 @@ def test_task_start_blocks_roles_added_after_current_session_start(tmp_path: Pat
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "same-session", "source": "startup", "cwd": str(tmp_path)})
     init = codex_adapter.init(tmp_path)
-    assert init["role_catalog_changed"] is True
+    assert init["role_catalog_changed"] is False
+    agents = tmp_path / ".codex" / "agents"
+    agents.mkdir(parents=True)
+    (agents / "thaliris-implementer.toml").write_bytes(
+        codex_adapter._agent_profile("thaliris-implementer", "implementer", "gpt-6-luna", "xhigh")
+    )
     digest = init["controller_bridge_sha256"]
     pre = {"session_id": "same-session", "turn_id": "turn", "tool_name": "Bash", "tool_input": {"command": f"thaliris task-start goal --controller-bridge-sha256 {digest}"}}
     rewritten = json.loads(codex_adapter.audit_hook(tmp_path, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
     token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten["hookSpecificOutput"]["updatedInput"]["command"]).group(1)
     result = codex_adapter.task_start(tmp_path, "goal", None, None, token, digest)
     assert result["status"] == "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE"
-    assert result["new_role_profile_files"] == init["new_role_profile_files"]
+    assert result["new_role_profile_files"] == [".codex/agents/thaliris-implementer.toml"]
     assert not (tmp_path / ".context" / "state.json").exists()
+
+
+def test_session_start_records_project_and_host_file_snapshot_without_catalog_evidence(tmp_path: Path, monkeypatch) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    host_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(host_home))
+    profile = tmp_path / ".codex" / "agents" / "thaliris-implementer.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_bytes(codex_adapter._agent_profile("thaliris-implementer", "implementer", "gpt-6-luna", "xhigh"))
+    host_profile = host_home / "agents" / "thaliris-investigator.toml"
+    host_profile.parent.mkdir(parents=True)
+    host_profile.write_bytes(codex_adapter._agent_profile("thaliris-investigator", "investigator", "gpt-6-luna", "xhigh"))
+    codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "snapshot-session", "source": "startup", "cwd": str(tmp_path)})
+    session_hash = hashlib.sha256(b"snapshot-session").hexdigest()
+    runtime = json.loads((tmp_path / ".context" / "audit" / session_hash[:24] / "runtime.json").read_text(encoding="utf-8"))
+    assert runtime["profile_files_present_at_session_start"] == {
+        "project": {"directory": ".codex/agents", "files": ["thaliris-implementer.toml"]},
+        "user_host": {"directory": str(host_home.resolve() / "agents"), "files": ["thaliris-investigator.toml"]},
+    }
+    assert "native_role_profile_names_at_start" not in runtime
+    assert runtime["host_role_catalog_status"] == lifecycle_module.HOST_ROLE_CATALOG_UNKNOWN
+    assert lifecycle_module.role_catalog_session_status(tmp_path, session_hash) == lifecycle_module.HOST_ROLE_CATALOG_UNKNOWN
+
+
+def test_role_content_update_by_existing_filename_does_not_look_like_new_identity(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    profile = tmp_path / ".codex" / "agents" / "thaliris-implementer.toml"
+    profile.parent.mkdir(parents=True)
+    profile.write_bytes(codex_adapter._agent_profile("thaliris-implementer", "implementer", "gpt-6-luna", "xhigh"))
+    codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "content-session", "source": "startup", "cwd": str(tmp_path)})
+    profile.write_bytes(profile.read_bytes() + b"\n# updated content\n")
+    session_hash = hashlib.sha256(b"content-session").hexdigest()
+    assert lifecycle_module.new_role_profile_files(tmp_path, session_hash) == []
+    assert lifecycle_module.role_catalog_session_status(tmp_path, session_hash) == lifecycle_module.HOST_ROLE_CATALOG_UNKNOWN
+
+
+def test_host_profiles_added_after_session_start_are_reported(tmp_path: Path, monkeypatch) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    host_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(host_home))
+    codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "host-late-session", "source": "startup", "cwd": str(tmp_path)})
+    installed = codex_adapter.codex_install()
+    assert installed["changed"] is True
+    session_hash = hashlib.sha256(b"host-late-session").hexdigest()
+    expected = sorted(str(host_home.resolve() / "agents" / name) for name in codex_adapter._AGENT_PROFILES)
+    assert lifecycle_module.new_role_profile_files(tmp_path, session_hash) == expected
+    assert lifecycle_module.role_catalog_session_status(tmp_path, session_hash) == lifecycle_module.NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE
+
+
+def test_missing_profile_snapshot_and_forged_catalog_field_stay_unknown(tmp_path: Path, monkeypatch) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "unknown-session", "source": "startup", "cwd": str(tmp_path)})
+    session_hash = hashlib.sha256(b"unknown-session").hexdigest()
+    runtime_path = tmp_path / ".context" / "audit" / session_hash[:24] / "runtime.json"
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime["host_role_catalog_status"] = lifecycle_module.HOST_ROLE_CATALOG_OBSERVED
+    runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
+    assert lifecycle_module.role_catalog_session_status(tmp_path, session_hash) == lifecycle_module.HOST_ROLE_CATALOG_UNKNOWN
+    runtime.pop("profile_files_present_at_session_start")
+    runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
+    assert lifecycle_module.new_role_profile_files(tmp_path, session_hash) is None
+    assert lifecycle_module.role_catalog_session_status(tmp_path, session_hash) == lifecycle_module.HOST_ROLE_CATALOG_UNKNOWN
+
+
+def test_task_start_blocks_host_role_added_after_current_session_start(tmp_path: Path, monkeypatch) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    host_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(host_home))
+    codex_adapter.audit_hook(tmp_path, "SessionStart", {"session_id": "late-host-session", "source": "startup", "cwd": str(tmp_path)})
+    init = codex_adapter.init(tmp_path)
+    codex_adapter.codex_install()
+    digest = init["controller_bridge_sha256"]
+    pre = {"session_id": "late-host-session", "turn_id": "turn", "tool_name": "Bash", "tool_input": {"command": f"thaliris task-start goal --controller-bridge-sha256 {digest}"}}
+    rewritten = json.loads(codex_adapter.audit_hook(tmp_path, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
+    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten["hookSpecificOutput"]["updatedInput"]["command"]).group(1)
+    result = codex_adapter.task_start(tmp_path, "goal", None, None, token, digest)
+    assert result["status"] == lifecycle_module.NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE
+    assert result["new_role_profile_files"] == sorted(str(host_home.resolve() / "agents" / name) for name in codex_adapter._AGENT_PROFILES)
+    assert not (tmp_path / ".context" / "state.json").exists()
+
+
+def test_codex_install_is_idempotent_and_preserves_non_owned_collisions(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    first = codex_adapter.codex_install()
+    assert first["ok"] is True
+    assert first["changed"] is True
+    assert set(first["files"]) == set(codex_adapter._AGENT_PROFILES)
+    assert first["host_role_catalog_status"] == lifecycle_module.HOST_ROLE_CATALOG_UNKNOWN
+    second = codex_adapter.codex_install()
+    assert second["changed"] is False
+    collision = home / "agents" / "thaliris-implementer.toml"
+    collision.write_text("user-owned = true\n", encoding="utf-8")
+    third = codex_adapter.codex_install()
+    assert third["ok"] is True
+    assert str(collision) in third["manual_action_required"]
+    assert collision.read_text(encoding="utf-8") == "user-owned = true\n"
 
 
 def test_initialized_task_start_reports_unavailable_trusted_executable(tmp_path: Path, monkeypatch) -> None:
@@ -123,11 +228,12 @@ def test_user_profile_is_preserved_and_not_a_definition(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     codex_adapter.init(tmp_path)
     profile = tmp_path / ".codex" / "agents" / "thaliris-implementer.toml"
+    profile.parent.mkdir(parents=True)
     profile.write_text("user-owned = true\n", encoding="utf-8")
     result = codex_adapter.init(tmp_path)
     assert profile.read_text(encoding="utf-8") == "user-owned = true\n"
     assert result["profile_definition_present"] == "NO"
-    assert result["project_definition_present"] == "NO"
+    assert result["project_definition_present"] == "YES"
 
 
 def test_mutated_managed_instruction_is_user_owned_and_preserved(tmp_path: Path) -> None:
@@ -1320,8 +1426,6 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "unverified external fact, an invalidating accepted invariant" in implementer
     assert "do not expand scope" in implementer
     assert "decision-changing unknown to the Controller" in implementer
-    agents = Path("AGENTS.md").read_text(encoding="utf-8")
-    assert codex_adapter.MANAGED.split("Startup contract:", 1)[1].strip() in agents
     assert "The native child profiles are Investigator" in codex_adapter.ROLE_PACKS
     assert "Controller-decided boundaries/contracts" in codex_adapter.ROLE_PACKS
     assert "recommendations/advice are not\ncontract" in codex_adapter.ROLE_PACKS
@@ -1595,6 +1699,7 @@ def test_only_current_lifecycle_schema_is_accepted(tmp_path: Path) -> None:
 def test_exact_role_keyed_historical_profiles_migrate_without_claiming_edits(tmp_path: Path) -> None:
     root = repo(tmp_path)
     agents = root / ".codex" / "agents"
+    agents.mkdir(parents=True)
     for name, hashes in codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES.items():
         assert hashes or name == "thaliris-focused-implementer.toml"
         # State recognition is hash-only and role-keyed: an unknown edit stays user-owned.
@@ -1653,7 +1758,7 @@ def test_exact_role_keyed_historical_profiles_migrate_without_claiming_edits(tmp
     assert codex_adapter._agent_profile_state(verifier_legacy + b"\nuser edit\n", verifier_name) == "user"
     (agents / verifier_name).write_bytes(verifier_legacy)
     first = codex_adapter.init(root)
-    assert first["agent_profile_changed"] is True
+    assert first["agent_profile_changed"] is False
     expected_manual = (
         ["canonical_executable_unavailable"]
         if first["canonical_executable_available"] == "NO"
@@ -1662,10 +1767,9 @@ def test_exact_role_keyed_historical_profiles_migrate_without_claiming_edits(tmp
     assert first["manual_action_required"] == expected_manual
     for role in ("investigator", "curator", "implementer"):
         name = f"thaliris-{role}.toml"
-        model, effort, _ = codex_adapter._AGENT_PROFILES[name]
-        assert (agents / name).read_bytes() == codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort)
+        assert codex_adapter._agent_profile_state((agents / name).read_bytes(), name) == "legacy"
     verifier = (agents / verifier_name).read_text(encoding="utf-8")
-    assert 'model = "gpt-6-luna"' in verifier
+    assert 'model = "gpt-5.6-luna"' in verifier
     assert 'model_reasoning_effort = "xhigh"' in verifier
     assert codex_adapter.init(root)["changed"] is False
 

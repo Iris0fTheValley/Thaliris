@@ -1,6 +1,6 @@
 ---
 Evidence: RECORDED
-Revision: 1
+Revision: 2
 ---
 
 # Codex adapter lifecycle observations
@@ -15,15 +15,15 @@ This record keeps future decision-changing facts from the managed lifecycle work
 ## Live-observed
 
 - The current pinned executable supported proactive bootstrap for substantive work in a blank Git repository and the same-session ACTIVE bridge. Project initialization did not require a restart.
-- A minimal nested `Focused Implementer -> Scanner` flow passed, including one `rg` operation and parent continuation; the exact bound child write passed.
+- One live managed Codex CLI `0.155.0-alpha.9.2` probe on 2026-09-25 verified the exact nested reservation, `SubagentStart`, and bound Scanner `PreToolUse` acceptance at depth two. The Scanner result returned and the Focused Implementer parent continued. This scope is limited to that one CLI build and probe.
 - A `CHANGED` freshness result reflected changed evidence while the conclusion remained true. Treat `CHANGED` as evidence change, not semantic invalidation by itself.
 
 ## Open lifecycle boundary
 
-- Native child `Completed` status was not observed after `wait` and `list_agents`. Any task closure that requires native lifecycle completion remains gated until explicit `Completed` is observed.
+- Raw Host wire-byte equality, other Host builds or Desktop scenarios, and native child `Completed`/`task-close` completion were not observed and remain UNKNOWN. Any task closure that requires native lifecycle completion remains gated until explicit `Completed` is observed.
 
 ## Evidence boundary
 
 - The source claims above are traceable to commits `44b9a84` through `45de489` on `adapter/codex`.
-- The live observations used disposable probes at `C:\Users\12298\AppData\Local\Temp\thaliris_nested_probe_20820842e9f3` and `C:\Users\12298\AppData\Local\Temp\thaliris-real-minimal-dd4d1fb9e5f5458f9dae2fcd2772e3c7`; those paths are not durable state.
+- Durable evidence for the nested probe is [`docs/codex-nested-scanner-live-20260925.md`](../docs/codex-nested-scanner-live-20260925.md) from commit `67e7743`. Its provenance records Codex Desktop / `codex-cli 0.155.0-alpha.9.2`, Thaliris `0.4.0`, adapter protocol `9`, and source hashes for the probe streams, audits, result, and native rollouts while omitting private paths and IDs.
 - Future reports should label source-verified, live-observed, and unknown facts separately.

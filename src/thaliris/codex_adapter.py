@@ -93,6 +93,32 @@ for _profile_name, _profile_hash in _BA84553_GENERATED_AGENT_PROFILE_HASHES.item
         _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
         | frozenset({_profile_hash})
     )
+# Exact SHA-256 identities of the complete eleven-profile set rendered by the
+# immutable 1f98dae adapter/registry revision immediately before the focused
+# role wording update (source blobs
+# b7e26ce90a940ba874390ab4cfa72982c2d0f813 and
+# c0ec3ad81b5461bff4d09aaf3e7a5357f2a3d407). These hashes were independently
+# compared with the effective CODEX_HOME files before being recorded here.
+# These hashes are historical generated ownership evidence, never a claim made
+# by the current renderer, and remain keyed by the exact native profile filename.
+_1F98DAE_GENERATED_AGENT_PROFILE_HASHES = {
+    "thaliris-curator.toml": "0ddddf8aae4cdbd2ccc49b455712ee9861c203e054333d418ff4f39fd9c898ae",
+    "thaliris-focused-implementer-astra-medium.toml": "4ba712ecb415700ce05bedbd0860d9d180d87baff0919143977e2969092b58b7",
+    "thaliris-focused-implementer-xhigh.toml": "62c946403f45b0cdc2e278fe4b37cdaf09a84ec6535a65e9885c2636967c6484",
+    "thaliris-focused-implementer.toml": "42042dbc7564432c5864c4c6faf6f58c1821da3c47041402faa979b69904286a",
+    "thaliris-implementer.toml": "c3e6fd2d10452a0d15e145decba7189d2a71db2d7e599b0de25c6875a6b44e59",
+    "thaliris-investigator.toml": "a787e046a558eb25c5e0cefe8aa933727beacbc5460c131dde5347cb532f01ad",
+    "thaliris-reasoning-specialist-astra-medium.toml": "723d032ec7f431acd899730cfae55af98756c5925712be863b08719dc932521a",
+    "thaliris-reasoning-specialist-xhigh.toml": "8a00c1fd917f795892af67b10c1a9acdaf8cd24c0d6f57cf3d9d22947e4d25f6",
+    "thaliris-reasoning-specialist.toml": "077c5037dade5a6a53a5247bc25bcddc6a895258d3dbce0e63c7c74e1fb399d3",
+    "thaliris-reviewer.toml": "01f1b4163a98bdf752c1bda84f45c6d53c662f86350739ac720d8027e680eff2",
+    "thaliris-verifier.toml": "44fb8af36bb7b668b71eccd73aa8a21f9870f252c17c07cc41753499136a35da",
+}
+for _profile_name, _profile_hash in _1F98DAE_GENERATED_AGENT_PROFILE_HASHES.items():
+    _KNOWN_GENERATED_AGENT_PROFILE_HASHES[_profile_name] = (
+        _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
+        | frozenset({_profile_hash})
+    )
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     # 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31, blob 7dfd7ab321c4ec1f1c32bd02b1d87f1b88d2aef7.
     "0a51833bf936b14053c08a6502a6a1d27ecd1518263e7eea5c4e43f53fa1c5f1",

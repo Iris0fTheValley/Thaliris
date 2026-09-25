@@ -172,6 +172,70 @@ def test_ba84553_profiles_migrate_by_exact_filename_and_preserve_edits(tmp_path:
         assert f"agents/{name}" in result["files"]
 
 
+def test_1f98dae_profiles_migrate_by_exact_filename_and_preserve_edits(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    # These bytes are rendered by the immutable 1f98dae revision immediately
+    # before b218783 changed focused-role wording; the host files were
+    # independently compared before pinning.
+    expected = {
+        "thaliris-curator.toml": "0ddddf8aae4cdbd2ccc49b455712ee9861c203e054333d418ff4f39fd9c898ae",
+        "thaliris-focused-implementer-astra-medium.toml": "4ba712ecb415700ce05bedbd0860d9d180d87baff0919143977e2969092b58b7",
+        "thaliris-focused-implementer-xhigh.toml": "62c946403f45b0cdc2e278fe4b37cdaf09a84ec6535a65e9885c2636967c6484",
+        "thaliris-focused-implementer.toml": "42042dbc7564432c5864c4c6faf6f58c1821da3c47041402faa979b69904286a",
+        "thaliris-implementer.toml": "c3e6fd2d10452a0d15e145decba7189d2a71db2d7e599b0de25c6875a6b44e59",
+        "thaliris-investigator.toml": "a787e046a558eb25c5e0cefe8aa933727beacbc5460c131dde5347cb532f01ad",
+        "thaliris-reasoning-specialist-astra-medium.toml": "723d032ec7f431acd899730cfae55af98756c5925712be863b08719dc932521a",
+        "thaliris-reasoning-specialist-xhigh.toml": "8a00c1fd917f795892af67b10c1a9acdaf8cd24c0d6f57cf3d9d22947e4d25f6",
+        "thaliris-reasoning-specialist.toml": "077c5037dade5a6a53a5247bc25bcddc6a895258d3dbce0e63c7c74e1fb399d3",
+        "thaliris-reviewer.toml": "01f1b4163a98bdf752c1bda84f45c6d53c662f86350739ac720d8027e680eff2",
+        "thaliris-verifier.toml": "44fb8af36bb7b668b71eccd73aa8a21f9870f252c17c07cc41753499136a35da",
+    }
+    assert codex_adapter._1F98DAE_GENERATED_AGENT_PROFILE_HASHES == expected
+    assert {
+        name: digest
+        for name, digest in expected.items()
+        if digest in codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES[name]
+    } == expected
+
+    tracked = tuple(expected)
+    changed = {
+        "thaliris-focused-implementer.toml",
+        "thaliris-focused-implementer-astra-medium.toml",
+        "thaliris-focused-implementer-xhigh.toml",
+        "thaliris-reviewer.toml",
+    }
+    historical: dict[str, bytes] = {}
+    for name in tracked:
+        value = _historical_profile("1f98dae", name)
+        assert hashlib.sha256(value).hexdigest() == expected[name]
+        assert codex_adapter._agent_profile_state(value, name) == ("legacy" if name in changed else "current")
+        assert codex_adapter._agent_profile_state(value + b"\nuser edit\n", name) == "user"
+        other = "thaliris-verifier.toml" if name != "thaliris-verifier.toml" else "thaliris-reviewer.toml"
+        assert codex_adapter._agent_profile_state(value, other) == "user"
+        historical[name] = value
+
+    host_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(host_home))
+    root = _initialized_repo(tmp_path)
+    agents = host_home / "agents"
+    agents.mkdir(parents=True)
+    for name, value in historical.items():
+        (agents / name).write_bytes(value)
+    edited_name = "thaliris-focused-implementer.toml"
+    edited = historical[edited_name] + b"\nuser edit\n"
+    (agents / edited_name).write_bytes(edited)
+
+    result = codex_adapter.codex_install()
+
+    assert (agents / edited_name).read_bytes() == edited
+    assert str(agents / edited_name) in result["manual_action_required"]
+    for name in changed - {edited_name}:
+        assert codex_adapter._agent_profile_state((agents / name).read_bytes(), name) == "current"
+        assert f"agents/{name}" in result["files"]
+    for name in set(tracked) - changed:
+        assert codex_adapter._agent_profile_state((agents / name).read_bytes(), name) == "current"
+        assert f"agents/{name}" not in result["files"]
+
+
 def test_child_communication_and_slice_routing_contract_is_shared() -> None:
     communication = (
         "ordinary progress, heartbeat, or partial-completion messages",

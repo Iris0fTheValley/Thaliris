@@ -40,6 +40,12 @@ their authorized parent's native spawn message. `SubagentStart` validates author
 identity, role, and session and binds lifecycle metadata; it never calls Core to
 construct or inject task context. Task state, memory, milestones, prior reviews,
 and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, or Reviewer automatically.
+Child sessions keep their working set private by default. Do not send ordinary
+progress, heartbeat, or partial-completion messages to the parent. Proactively
+wake the parent only when completed, blocked and requiring a parent decision, or
+when new decision-changing information arrives. Direct `send_message` remains
+available for genuine decision-changing information, with no automatic wake
+filter.
 
 The persistent root Controller has no fixed model, reasoning effort, or native
 profile; Host/user selection applies. The native child profiles are Investigator (`gpt-6-luna`, `xhigh`), Curator (`gpt-6-luna`, `xhigh`), Reasoning Specialist (`gpt-6-sol`, `high`), Implementer (`gpt-6-luna`, `xhigh`), Focused Implementer (`gpt-6-sol`, `high`), Verifier (`gpt-6-luna`, `xhigh`), and Reviewer (`gpt-6-sol`, `high`).
@@ -48,13 +54,15 @@ Focused Implementer or Reasoning Specialist before spawn for exceptional reasoni
 These fixed profiles retain the same stable role IDs; default profiles remain
 on Luna or Sol. Per-spawn model/effort overrides are denied;
 role sessions never select their own model or effort.
-Route low-difficulty, high-certainty slices to standard Implementer on Luna,
-even within a large project. Use Focused Implementer on Sol for complex,
-creative lifecycle, ownership, or compatibility work. Use Reasoning Specialist
-on Sol only when problem framing or slice decomposition is unclear; it does not
-implement. Astra is an escalation for an already small, unusually demanding
-slice or an evidenced Sol failure. Astra medium is the default escalation;
-xhigh requires a clear reason.
+Choose the model per handoff and semantic slice difficulty. Deterministic
+documentation, test, configuration, or reference cleanup and small defined
+implementations default to standard Implementer on Luna, even within a large
+project. Use Focused Implementer on Sol only when the current slice itself
+requires complex lifecycle, ownership, compatibility, or multi-option reasoning.
+Use Reasoning Specialist on Sol only when problem framing or slice decomposition
+is unclear; it does not implement. Astra is an escalation for an already small,
+unusually demanding slice or an evidenced Sol failure. Astra medium is the
+default escalation; xhigh requires a clear reason.
 Implementer and Focused Implementer both execute implementation work. Reasoning
 Specialist reframes ill-defined problems; ordinary design and implementation
 remain with the Executors. Verifier is retained read-only for compatibility

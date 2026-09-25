@@ -1162,7 +1162,7 @@ def _host_install_executable(
         return None, None, "host_executable_current_hook_abi_probe_failed"
     if probe.returncode != 0 or probe.stderr:
         return None, None, "host_executable_current_hook_abi_probe_failed"
-    if any(character in str(resolved) for character in ('"', "%", "!", "\r", "\n")):
+    if any(character in str(resolved) for character in ('"', "%", "!", "`", "\r", "\n")):
         return None, None, "host_executable_path_not_safe_for_cmd_trampoline"
     return resolved, digest, None
 
@@ -1186,24 +1186,41 @@ def _atomic_host_write(path: Path, contents: bytes) -> None:
                 pass
 
 
-def _global_agents_block() -> bytes:
-    """The user-layer instruction only discovers and starts project routing."""
-    return b"""<!-- thaliris:global:begin -->
+def _global_agents_block(executable: Path | None = None, executable_sha256: str | None = None) -> bytes:
+    """Render the user-layer startup contract with an optional installed pin."""
+    if (executable is None) != (executable_sha256 is None):
+        raise ValueError("global instruction executable and SHA-256 must be paired")
+    trusted_route = (
+        f"Installed direct executable: `{executable}`\n"
+        f"Expected SHA-256: `{executable_sha256}`\n"
+        "Check the executable's current SHA-256 against this exact pin before use.\n"
+        "Invoke that absolute executable directly for Thaliris commands; a different\n"
+        "`thaliris` found on PATH is not evidence that it has the installed ABI.\n"
+        if executable is not None else
+        "If no trusted direct executable route is available, report bootstrap unavailable.\n"
+    )
+    return f"""<!-- thaliris:global:begin -->
 ## Thaliris project startup
 
-At the start of repository work, check the repository root for
+For substantive work that creates or changes files in a Git repository,
+including a README, unless the user explicitly opts out, check the repository root for
 `.codex/thaliris.json` and the effective root AGENTS instruction for the
-`<!-- thaliris:begin -->` project block. If neither is present, continue with
-the ordinary Codex instructions. If either is present, use the direct
-`thaliris --root <repo> bootstrap-check` command. If it reports that the
-project definition or activation marker is missing, run
-`thaliris --root <repo> init` directly and read its result. Read the canonical
-managed instruction text and SHA-256 from `init` or `bootstrap-check`, then
-acknowledge that digest with `--controller-bridge-sha256` in `task-start`.
-Follow the effective project instruction for task routing. A CLI result does
-not prove Host instruction activation or a loaded current-session hook.
+`<!-- thaliris:begin -->` project block. If readiness is not already confirmed,
+run a trusted direct `--root <repo> bootstrap-check` once, including when both
+project markers are absent. If it reports either project definition or activation
+marker missing, run trusted direct `--root <repo> init` and read its result.
+Do not repeat bootstrap for confirmed readiness or run `init` during an ACTIVE
+managed task. Chatting, informational questions, read-only work, and non-Git
+directories do not call for proactive project bootstrap.
+
+{trusted_route}
+Read the canonical managed instruction text and SHA-256 from `init` or
+`bootstrap-check`, then acknowledge that digest with
+`--controller-bridge-sha256` in `task-start` in the same session. Follow the
+effective project instruction for task routing. A CLI result does not prove
+Host instruction activation or a loaded current-session hook.
 <!-- thaliris:global:end -->
-"""
+""".encode("utf-8")
 
 
 def _global_agents_span(current: bytes) -> tuple[int, int] | None:
@@ -1230,7 +1247,10 @@ def _global_agents_span(current: bytes) -> tuple[int, int] | None:
     return start, end
 
 
-def _global_agents_update(current: bytes, *, remove: bool = False) -> bytes:
+def _global_agents_update(
+    current: bytes, *, remove: bool = False,
+    executable: Path | None = None, executable_sha256: str | None = None,
+) -> bytes:
     span = _global_agents_span(current)
     # Project-owned markers in the user layer indicate a different ownership
     # claim. Never silently replace or combine it with the global block.
@@ -1238,9 +1258,9 @@ def _global_agents_update(current: bytes, *, remove: bool = False) -> bytes:
     if MANAGED_START.encode() in outside or MANAGED_END.encode() in outside:
         raise ValueError("AGENTS.md has conflicting project Thaliris markers")
     if span is None:
-        return current if remove else _global_agents_block() + current
+        return current if remove else _global_agents_block(executable, executable_sha256) + current
     start, end = span
-    return current[:start] + (b"" if remove else _global_agents_block()) + current[end:]
+    return current[:start] + (b"" if remove else _global_agents_block(executable, executable_sha256)) + current[end:]
 
 
 def _install_host_hook_trust(home: Path, executable: Path, executable_sha256: str) -> dict[str, Any]:
@@ -1375,7 +1395,9 @@ def codex_install(
     if not home.is_symlink() and not global_agents.is_symlink() and (not global_agents.exists() or global_agents.is_file()):
         try:
             current_agents = global_agents.read_bytes() if global_agents.exists() else b""
-            updated_agents = _global_agents_update(current_agents)
+            updated_agents = _global_agents_update(
+                current_agents, executable=executable_path, executable_sha256=executable_hash
+            )
             if updated_agents != current_agents:
                 _atomic_host_write(global_agents, updated_agents)
                 changed = True

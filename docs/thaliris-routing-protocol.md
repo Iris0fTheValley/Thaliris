@@ -90,10 +90,18 @@ contracts change, check and synchronize both the repository-managed instruction
 and the currently effective Codex global instruction.
 
 `thaliris codex-install` also maintains one marker-owned startup block in
-`CODEX_HOME/AGENTS.md`. That block only discovers a project's activation marker
-or managed instruction and directs the Controller through `bootstrap-check`,
-`init` when needed, and the explicit bridge digest at `task-start`. It does not
-carry task routing policy or mutate repositories from a hook. Install replaces
+`CODEX_HOME/AGENTS.md`. For substantive Git repository changes, including a
+README task, without an explicit
+opt-out, that block directs the Controller through a trusted one-shot
+`bootstrap-check` even when no project marker exists, then `init` if the
+definition or activation marker is missing. Chatting, informational questions,
+read-only work, and non-Git directories are excluded; confirmed readiness is
+not rechecked, and ACTIVE tasks do not run `init`. The installed instruction
+includes the exact executable path and SHA-256 used for Host integration, so
+the Controller can verify and invoke that direct route even if an ordinary PATH
+command is stale. It requires the explicit bridge digest at same-session
+`task-start`. It does not carry task routing policy or mutate repositories from
+a hook. Install replaces
 only the well-formed `thaliris:global` span; uninstall removes only that span.
 Text outside the span remains byte-for-byte intact, and damaged, duplicate, or
 conflicting Thaliris markers require manual resolution. A newly saved global

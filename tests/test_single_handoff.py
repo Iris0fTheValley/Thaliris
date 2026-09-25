@@ -225,6 +225,7 @@ def test_codex_install_is_idempotent_and_preserves_non_owned_collisions(tmp_path
 
 
 def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    executable, digest = pinned_test_thaliris
     home = tmp_path / "codex-home"
     home.mkdir()
     monkeypatch.setenv("CODEX_HOME", str(home))
@@ -237,18 +238,22 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     assert first["global_instruction_ready"] == "YES"
     assert "AGENTS.md" in first["files"]
     assert first["controller_bridge_sha256"] == hashlib.sha256(first["controller_bridge_content"].encode()).hexdigest()
-    assert global_agents.read_bytes() == codex_adapter._global_agents_block() + original
+    expected = codex_adapter._global_agents_block(executable, digest)
+    assert global_agents.read_bytes() == expected + original
+    assert b"including when both\nproject markers are absent" in expected
+    assert str(executable).encode() in expected and digest.encode() in expected
+    assert b"read-only work" in expected and b"same session" in expected
 
     second = codex_adapter.codex_install()
     assert second["changed"] is False
-    assert global_agents.read_bytes() == codex_adapter._global_agents_block() + original
+    assert global_agents.read_bytes() == expected + original
 
     old_owned = b"<!-- thaliris:global:begin -->\nold startup\n<!-- thaliris:global:end -->\n"
     global_agents.write_bytes(b"before\r\n" + old_owned + b"after\r\n\xff")
     refreshed = codex_adapter.codex_install()
     assert refreshed["changed"] is True
     assert refreshed["host_setup_requires_session_start"] is False
-    assert global_agents.read_bytes() == b"before\r\n" + codex_adapter._global_agents_block() + b"after\r\n\xff"
+    assert global_agents.read_bytes() == b"before\r\n" + expected + b"after\r\n\xff"
 
     removed = codex_adapter.codex_uninstall()
     assert "AGENTS.md" in removed["files"]
@@ -260,7 +265,7 @@ def test_codex_uninstall_removes_new_global_instruction_file(tmp_path: Path, mon
     monkeypatch.setenv("CODEX_HOME", str(home))
     codex_adapter.codex_install()
     global_agents = home / "AGENTS.md"
-    assert global_agents.read_bytes() == codex_adapter._global_agents_block()
+    assert global_agents.read_bytes() == codex_adapter._global_agents_block(*pinned_test_thaliris)
     removed = codex_adapter.codex_uninstall()
     assert "AGENTS.md" in removed["files"]
     assert not global_agents.exists()
@@ -370,6 +375,7 @@ def test_codex_install_replaces_its_stale_executable_pin(tmp_path: Path, monkeyp
     assert len(commands) == 1
     assert old_digest not in commands[0]
     assert new_digest in commands[0]
+    assert (home / "AGENTS.md").read_bytes() == codex_adapter._global_agents_block(executable, new_digest)
 
 
 def test_codex_install_migrates_exact_old_trampoline_bytes(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:

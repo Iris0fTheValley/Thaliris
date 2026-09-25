@@ -1770,8 +1770,14 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "Controller-decided boundaries/contracts" in codex_adapter.ROLE_PACKS
     assert "recommendations/advice are not\ncontract" in codex_adapter.ROLE_PACKS
     assert "Do not silently drop, guess, or freeze an unknown" in codex_adapter.ROLE_PACKS
-    assert Path("docs/thaliris-role-packs.md").read_bytes() == codex_adapter.ROLE_PACKS.encode("utf-8")
-    assert "only after Reviewer PASS" in codex_adapter.ROLE_PACKS
+    # Git may materialize this LF-owned document as CRLF when core.autocrlf is
+    # enabled; keep the ownership check exact after normalizing line endings.
+    role_packs = Path("docs/thaliris-role-packs.md").read_bytes()
+    role_packs = role_packs.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    assert role_packs == codex_adapter.ROLE_PACKS.encode("utf-8")
+    assert "whether a concise conclusion could change a\nfuture decision and needs durable maintenance" in codex_adapter.ROLE_PACKS
+    assert "A fresh Curator is selected\nonly when useful, never as an automatic step." in codex_adapter.ROLE_PACKS
+    assert "only after Reviewer PASS" not in codex_adapter.ROLE_PACKS
     assert "read-only compatibility role, not recommended" in codex_adapter.ROLE_PACKS
     assert "workspace anomaly as an observation" in codex_adapter.ROLE_PACKS
     assert "exact independent historical evidence" in codex_adapter.ROLE_PACKS

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from thaliris import codex_adapter, codex_bootstrap as bootstrap
+from thaliris import codex_adapter, codex_bootstrap as bootstrap, lifecycle
 from thaliris import cli, core
 
 
@@ -200,8 +200,8 @@ def test_invoke_success_normalizes_restart_to_strict_boolean(monkeypatch, tmp_pa
         stderr = ""
 
     current = {
-        "managed_hook_abi": bootstrap.EXPECTED_MANAGED_HOOK_ABI,
-        "executable_adapter_protocol_version": bootstrap.EXPECTED_ADAPTER_PROTOCOL_VERSION,
+        "managed_hook_abi": lifecycle.MANAGED_HOOK_ABI,
+        "executable_adapter_protocol_version": lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION,
         "controller_bridge_content": "managed text",
         "controller_bridge_sha256": hashlib.sha256(b"managed text").hexdigest(),
     }
@@ -219,6 +219,11 @@ def test_invoke_success_normalizes_restart_to_strict_boolean(monkeypatch, tmp_pa
     result = bootstrap._invoke(["thaliris"], tmp_path, "bootstrap-check")
     assert result["session_restart_required"] is False
     assert type(result["session_restart_required"]) is bool
+
+
+def test_bootstrap_protocol_expectations_follow_lifecycle_authority():
+    assert bootstrap.EXPECTED_MANAGED_HOOK_ABI == lifecycle.MANAGED_HOOK_ABI
+    assert bootstrap.EXPECTED_ADAPTER_PROTOCOL_VERSION == lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION
 
 
 def test_invoke_rejects_old_executable_protocol(monkeypatch, tmp_path: Path):

@@ -1,6 +1,6 @@
 """One-shot project-external bootstrap for a Codex Git workspace.
 
-This module intentionally depends only on the Python standard library.  It is
+This module shares protocol constants with the lifecycle adapter.  It is
 installed with the canonical ``thaliris`` command, so it remains available
 before a workspace has a project definition and is independent of workspace
 instruction files.
@@ -15,8 +15,10 @@ import re
 import shutil
 import subprocess
 
-EXPECTED_MANAGED_HOOK_ABI = "thaliris-hook-abi-9"
-EXPECTED_ADAPTER_PROTOCOL_VERSION = 9
+from . import lifecycle
+
+EXPECTED_MANAGED_HOOK_ABI = lifecycle.MANAGED_HOOK_ABI
+EXPECTED_ADAPTER_PROTOCOL_VERSION = lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION
 
 
 def _repo_root(path: Path) -> Path:

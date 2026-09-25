@@ -159,9 +159,13 @@ def _instructions(role: str) -> str:
             "repo-relative Artifact; return only its pointer and the distilled result by default."
         ),
         "curator": (
-            "Compress or reconcile only the material explicitly supplied in the handoff. "
-            "Preserve reusable long-term knowledge. Do not delegate. "
-            "Your output is an ordinary result or Artifact; there is no Curator Core state."
+            "Maintain only the Controller-selected durable knowledge and linked index entries. "
+            "Use the supplied material and exact selected documents to keep the corpus small, "
+            "current, non-conflicting, and traceable; modify, merge, split, supersede, or delete "
+            "entries when justified. Keep concise conclusions useful for future decisions in "
+            "memory; leave detailed evidence in Artifacts, Git, or rollout records. Do not scan "
+            "the full corpus, make architecture decisions, or delegate. Your output is an "
+            "ordinary result or Artifact; there is no Curator Core state."
         ),
         "reasoning-specialist": (
             "Reframe the selected ill-defined problem from supplied information; ordinary design "
@@ -179,7 +183,8 @@ def _instructions(role: str) -> str:
             "Core does not supply semantic completion authority. If an assigned correction cannot "
             "be completed without an unverified external fact, an invalidating accepted invariant, "
             "or changing the decision basis, do not expand scope; return that dependency as a "
-            "decision-changing unknown to the Controller."
+            "decision-changing unknown to the Controller. Keep formal project documentation "
+            "within the assigned slice synchronized with verified behavior."
         ),
         "verifier": (
             "Retained for compatibility only, not recommended as a workflow stage. Do not delegate. "
@@ -206,7 +211,8 @@ def _instructions(role: str) -> str:
             "accepted invariant, depends on an unproved external capability, makes feasibility uncertain, "
             "or changes a Controller boundary is a decision-basis failure: route it back to the Controller "
             "for a decision reopen, not directly to correction. Only a local implementation defect with "
-            "the accepted design unchanged may go to a fresh Implementer. Return findings and a distilled "
+            "the accepted design unchanged may go to a fresh Implementer. Challenge semantic drift "
+            "between the candidate and its formal project documentation when relevant. Return findings and a distilled "
             "verdict; the Controller decides what follows."
         ),
     }

@@ -34,6 +34,18 @@ implementations, complex semantic repairs, or remaining correctness
 uncertainty. Curator and Reasoning Specialist are optional and selected only
 when they add actual value.
 
+At task end, the Controller makes one short semantic judgment about whether
+a concise conclusion could change a future decision and needs durable
+maintenance. It selects a fresh Curator only for that purpose and supplies
+the selected material in a concise handoff. Curator maintains the selected
+documents and relevant index links as a small, current, non-conflicting,
+traceable corpus. It may modify, merge, split, supersede, or delete entries;
+it does not scan the full corpus or decide architecture. Detailed evidence
+stays in Artifacts, Git, or rollout records rather than memory. `CHANGED`
+reports an evidence change, not semantic invalidation. The Controller may
+request revalidation when a decision depends on changed evidence and has
+become unreliable.
+
 For divisible work, the Controller chooses bounded semantic slices instead of
 handing an entire multi-slice stage to a higher-capability Executor. Define
 slice boundaries by semantic dependencies, decision coupling, implementation
@@ -69,6 +81,9 @@ Implementer, and Reviewer may delegate Investigator. The remaining child roles
 cannot delegate. Fresh children always use `fork_turns="none"`. Executors work
 only within their assigned semantic slice, preserve Controller decisions and
 invariants, and return a decision-changing unknown rather than changing them.
+They synchronize formal project documentation for behavior changed within
+their slice. Reviewer challenges semantic drift between a candidate and its
+formal project documentation when selected.
 
 When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
 contracts change, check and synchronize both the repository-managed instruction

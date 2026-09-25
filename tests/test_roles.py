@@ -345,3 +345,22 @@ def test_managed_renderer_matches_working_artifact_and_derives_added_role(monkey
         "never enter an Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, "
         "Verifier, Reviewer, or Formal Sentinel automatically."
     ) in rendered
+
+
+def test_knowledge_maintenance_and_formal_docs_stay_in_instruction_sources() -> None:
+    managed = codex_adapter.render_managed()
+    packs = codex_adapter.render_role_packs()
+    curator = roles.get_role("curator").instructions
+    implementer = roles.get_role("implementer").instructions
+    focused = roles.get_role("focused-implementer").instructions
+    reviewer = roles.get_role("reviewer").instructions
+
+    assert "At task end, make one short semantic judgment" in managed
+    assert "`CHANGED` records an evidence change, not semantic invalidation" in managed
+    assert "one short semantic judgment" in packs
+    assert "modify, merge, split,\nsupersede, or delete" in packs
+    assert "Do not scan" in curator
+    assert "formal project documentation" in implementer
+    assert "formal project documentation" in focused
+    assert "semantic drift" in reviewer
+    assert "semantic drift" in packs

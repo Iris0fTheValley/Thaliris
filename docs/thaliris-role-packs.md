@@ -44,18 +44,23 @@ explicitly supplies the material to curate. Do not automatically summarize a
 task, select a next role, or route a result. Curator output is an ordinary
 result or Artifact; Core has no Curator state machine.
 
-Knowledge derived from current implementation correctness defaults to curation
-only after Reviewer PASS and the Controller's reuse judgment. Independently
-verified stable facts unrelated to current implementation correctness may be
-curated earlier when the Controller explicitly selects them.
+Maintain only selected documents and their relevant index links. Keep the
+corpus small, current, non-conflicting, and traceable: modify, merge, split,
+supersede, or delete entries as evidence warrants. Do not scan the whole
+corpus or decide architecture. Memory holds concise future decision-changing
+conclusions; detailed evidence belongs in Artifacts, Git, or rollout records.
 
 ## Durable knowledge loop
 
 At task start, the Controller reads the root INDEX map and then makes an exact
-`document-get` request for the selected linked entries. At task end it decides
-whether any knowledge is genuinely reusable; a Curator is optional, never an
-automatic step. If the Controller promotes a selected record that changes the
-durable architecture, it supplies the model-authored INDEX CAS update in that
+`document-get` request for the selected linked entries. At task end it makes
+one short semantic judgment: whether a concise conclusion could change a
+future decision and needs durable maintenance. A fresh Curator is selected
+only when useful, never as an automatic step. `CHANGED` is an evidence change,
+not semantic invalidation; the Controller may request revalidation when a
+decision depends on changed evidence and has become unreliable. If the
+Controller promotes a selected record that changes durable navigation, it
+supplies the model-authored INDEX CAS update in that
 same promotion. Otherwise it leaves INDEX bytes unchanged. A fresh later task
 recovers only by reading INDEX and exact selected documents, not by broad
 reinvention or recursive scanning.
@@ -77,6 +82,9 @@ investigation to the Scanner. Use Scanner output as evidence; retain responsibil
 for implementation decisions. Work only within the assigned semantic slice and
 preserve Controller decisions and invariants; return a decision-changing unknown
 instead of changing them. Delegate only to Investigator with `fork_turns="none"`.
+Synchronize formal project documentation for behavior changed within the
+assigned slice and report any documentation boundary that needs a Controller
+decision.
 
 The Controller routes low-difficulty, high-certainty slices to standard
 Implementer on Luna, including slices inside a large project. Focused Implementer
@@ -116,7 +124,9 @@ and a distilled verdict. Reviewer may delegate broad mechanical scanning to one
 fresh Investigator while retaining independent review responsibility.
 After finding a real problem, understand its invariant
 and inspect adjacent legal states enough to return independent related blockers
-in one pass. Finding classifications are model-authored labels; the Controller
+in one pass. Challenge semantic drift between the candidate and its formal
+project documentation when relevant. Finding classifications are model-authored
+labels; the Controller
 decides what workflow, if any, follows.
 
 ## Verifier

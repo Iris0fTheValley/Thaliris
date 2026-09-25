@@ -118,6 +118,12 @@ Memory 默认不注入。模型自行维护 `.agent-memory/INDEX.md` 和
 不是传播权限。
 
 Milestone 是普通长期文档。Curator 是按需的知识增强角色，不是任务必经阶段。
+任务结束时 Controller 只做一次简短语义判断：若某个精简结论可能影响未来决策，且需要
+长期维护，才向新的 Curator 提供已选材料。Curator 只维护这些文档及相关 INDEX 链接，
+通过修改、合并、拆分、取代或删除保持知识精简、现时、无冲突且可追溯；详细证据保留在
+Artifact、Git 或 rollout 记录。`CHANGED` 仅表示证据变化；当依赖该证据的决策不再
+可靠时，Controller 可要求重新验证。Implementer 在负责的 slice 内同步正式项目文档，
+Reviewer 被选用时检查文档与实现的语义偏差。
 `task-promote` 保存 Controller 明确选择的记录；Core 不裁决其 epistemic legitimacy。
 当一次 promotion 会改变 durable navigation 时，Controller 应在同一次
 `task-promote` 中提供自己写好的 optional `index_update`。Core 不生成 INDEX

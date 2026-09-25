@@ -1748,9 +1748,9 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "degraded mode does not define a separate role\nsequence" in codex_adapter.MANAGED
     assert "For divisible work, the Controller chooses bounded semantic slices" in codex_adapter.MANAGED
     assert "not by token, file, or task-count\nthresholds" in codex_adapter.MANAGED
-    assert "low-difficulty, high-certainty slices to standard Implementer on Luna" in codex_adapter.MANAGED
-    assert "Reasoning Specialist\non Sol only when problem framing or slice decomposition is unclear; it does not\nimplement." in codex_adapter.MANAGED
-    assert "already small, unusually demanding\nslice or an evidenced Sol failure" in codex_adapter.MANAGED
+    assert "Choose the model per handoff and semantic slice difficulty. Deterministic\ndocumentation, test, configuration, or reference cleanup and small defined\nimplementations default to standard Implementer on Luna" in codex_adapter.MANAGED
+    assert "Use Reasoning Specialist on Sol only when problem framing or slice decomposition\nis unclear; it does not implement." in codex_adapter.MANAGED
+    assert "already small,\nunusually demanding slice or an evidenced Sol failure" in codex_adapter.MANAGED
     assert "Host instruction activation remains UNKNOWN" in codex_adapter.MANAGED
     assert "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE" in codex_adapter.MANAGED
     assert "Before another correction packet, distinguish a local implementation defect" in codex_adapter.MANAGED

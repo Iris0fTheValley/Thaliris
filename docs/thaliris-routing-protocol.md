@@ -65,13 +65,15 @@ These profiles map to the same stable IDs; defaults remain Luna or Sol. Per-spaw
 model/effort overrides are denied. Role sessions cannot choose their own
 model/effort. Reasoning Specialist reframes ill-defined
 problems; normal design and implementation belong to the Executors.
-Route low-difficulty, high-certainty slices to standard Implementer on Luna,
-even within a large project. Use Focused Implementer on Sol for complex,
-creative lifecycle, ownership, or compatibility work. Use Reasoning Specialist
-on Sol only when problem framing or slice decomposition is unclear; it does not
-implement. Astra is an escalation for an already small, unusually demanding
-slice or an evidenced Sol failure. Astra medium is the default escalation;
-xhigh requires a clear reason.
+Choose the model per handoff and semantic slice difficulty. Deterministic
+documentation, test, configuration, or reference cleanup and small defined
+implementations default to standard Implementer on Luna, even within a large
+project. Use Focused Implementer on Sol only when the current slice itself
+requires complex lifecycle, ownership, compatibility, or multi-option reasoning.
+Use Reasoning Specialist on Sol only when problem framing or slice decomposition
+is unclear; it does not implement. Astra is an escalation for an already small,
+unusually demanding slice or an evidenced Sol failure. Astra medium is the
+default escalation; xhigh requires a clear reason.
 
 Keep the working set focused. Delegate broad repository scanning, exhaustive
 call-site search, residual-reference checks, and other large mechanical
@@ -118,6 +120,11 @@ retain a focused private working set. The default result is a concise
 conclusion, key findings, decision-changing unknowns, contradictions,
 verification performed, and optional Artifact references. The detailed working
 set does not automatically re-enter the Controller.
+Child sessions do not send ordinary progress, heartbeat, or partial-completion
+messages to the parent. They proactively wake the parent only when completed,
+blocked and requiring a parent decision, or when new decision-changing
+information arrives. Direct `send_message` remains available for genuine
+decision-changing information, with no automatic wake filter.
 Scanner results return to their requesting Executor/Reviewer.
 
 When detailed material should survive, the selected role session writes a free-form Markdown or

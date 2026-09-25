@@ -108,6 +108,34 @@ def test_profile_defaults_and_static_astra_selection_are_fixed() -> None:
             assert codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(name, frozenset()) == frozenset()
 
 
+def test_child_communication_and_slice_routing_contract_is_shared() -> None:
+    communication = (
+        "ordinary progress, heartbeat, or partial-completion messages",
+        "proactively wake the parent only when completed, blocked and requiring a parent decision",
+        "genuine decision-changing information, with no automatic wake filter",
+    )
+    routing = (
+        "per handoff and semantic slice difficulty",
+        "Deterministic documentation, test, configuration, or reference cleanup and small defined implementations default",
+        "current slice",
+        "multi-option reasoning",
+    )
+    for name, (model, effort, role) in roles.agent_profiles().items():
+        instructions = tomllib.loads(
+            codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort).decode()
+        )["developer_instructions"]
+        normalized_instructions = instructions.lower()
+        assert all(phrase.lower() in normalized_instructions for phrase in communication)
+    for rendered in (
+        codex_adapter.MANAGED,
+        codex_adapter.ROLE_PACKS,
+        Path("docs/thaliris-routing-protocol.md").read_text(encoding="utf-8"),
+    ):
+        normalized = " ".join(rendered.split()).lower()
+        assert all(" ".join(phrase.split()).lower() in normalized for phrase in communication)
+        assert all(" ".join(phrase.split()).lower() in normalized for phrase in routing)
+
+
 def test_exact_phase_two_profile_bytes_are_recognized_only_for_own_role() -> None:
     fixture_dir = Path(__file__).parent / "fixtures"
     for role in ("investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer"):

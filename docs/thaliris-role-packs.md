@@ -29,6 +29,11 @@ Return a distilled result by default:
 Keep repository reads, tool output, test logs, and intermediate exploration in
 the role session's private working set. Do not copy an Artifact body into the result
 unless the Controller explicitly requested that content.
+Child sessions do not send ordinary progress, heartbeat, or partial-completion
+messages. They proactively wake the parent only when completed, blocked and
+requiring a parent decision, or when new decision-changing information arrives.
+Direct `send_message` remains available for genuine decision-changing
+information, with no automatic wake filter.
 
 ## Investigator
 
@@ -86,9 +91,12 @@ Synchronize formal project documentation for behavior changed within the
 assigned slice and report any documentation boundary that needs a Controller
 decision.
 
-The Controller routes low-difficulty, high-certainty slices to standard
-Implementer on Luna, including slices inside a large project. Focused Implementer
-on Sol handles complex, creative lifecycle, ownership, or compatibility work.
+The Controller chooses the model per handoff and semantic slice difficulty.
+Deterministic documentation, test, configuration, or reference cleanup and
+small defined implementations default to standard Implementer on Luna,
+including slices inside a large project. Focused Implementer on Sol handles
+only a current slice that requires complex lifecycle, ownership, compatibility,
+or multi-option reasoning.
 Reasoning Specialist on Sol is for unclear problem framing or slice decomposition
 and does not implement. Astra is an escalation for an already small, unusually
 demanding slice or an evidenced Sol failure; medium is the default escalation,

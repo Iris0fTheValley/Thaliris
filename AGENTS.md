@@ -23,6 +23,12 @@ Use Investigator/Scanner for missing facts, large working sets, broad scans,
 and factual compression, without transferring architecture decisions. Use a Reviewer only when independent semantic review adds real
 value; it is not a default gate. Curator and Reasoning Specialist remain
 optional and are selected only when they add actual value.
+At task end, make one short semantic judgment about knowledge that could
+change a future decision. Select a fresh Curator only when that knowledge
+needs durable maintenance; pass a concise selected handoff. Do not turn
+every task result into memory. Keep detailed evidence in Artifacts, Git,
+or rollout records. Executors synchronize formal project documentation for
+behavior changed within their slice; Reviewer challenges semantic drift when selected.
 
 When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
 contracts change, check and synchronize both the repository-managed
@@ -110,6 +116,12 @@ compaction. The Controller explicitly uses `catalog` or
 `document-get` to retrieve selected durable material. A single bounded
 `document-get` may name up to eight explicit paths; it never searches, ranks,
 or supplements the selection.
+`CHANGED` records an evidence change, not semantic invalidation. When a
+decision depends on changed evidence and is no longer reliable, the Controller
+may request revalidation. A selected Curator maintains a small, current,
+non-conflicting, traceable corpus and its relevant index links by modifying,
+merging, splitting, superseding, or deleting entries. It does not scan the
+whole corpus or decide architecture.
 When a promotion changes durable navigation, the Controller should include its
 own optional `index_update` in the same `task-promote` call. Core does not
 generate INDEX content; it validates the CAS, references, and atomic commit.

@@ -200,6 +200,28 @@ def test_child_communication_and_slice_routing_contract_is_shared() -> None:
         assert all(" ".join(phrase.split()).lower() in normalized for phrase in routing)
 
 
+def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence() -> None:
+    required = (
+        "bounded local reading needed for semantic judgment",
+        "preferentially delegate broad repository scanning",
+        "exhaustive search",
+        "rollout/log scans",
+        "call-site enumeration",
+        "residual checks",
+        "large mechanical evidence collection",
+        "fresh investigator/scanner",
+        "do not routinely perform those broad collections yourself merely because you can",
+    )
+    for role in ("focused-implementer", "reviewer"):
+        instructions = roles.get_role(role).instructions.lower()
+        assert all(phrase in instructions for phrase in required), role
+
+    rendered = codex_adapter.render_role_packs().lower()
+    assert all(phrase in rendered for phrase in required)
+    assert "deterministic documentation, test, configuration, or reference cleanup" in rendered
+    assert "default to standard implementer on luna" in rendered
+
+
 def test_exact_phase_two_profile_bytes_are_recognized_only_for_own_role() -> None:
     fixture_dir = Path(__file__).parent / "fixtures"
     for role in ("investigator", "curator", "reasoning-specialist", "implementer", "verifier", "reviewer"):

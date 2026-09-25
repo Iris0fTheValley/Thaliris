@@ -153,6 +153,26 @@ _EXECUTOR_INSTRUCTIONS = (
     "with fork_turns=\"none\" and no model or effort override."
 )
 
+_FOCUSED_SCANNER_INSTRUCTIONS = (
+    " Use only bounded local reading needed for semantic judgment within the assigned slice. "
+    "Preferentially delegate broad repository scanning, exhaustive search, rollout/log scans, "
+    "call-site enumeration, residual checks, and large mechanical evidence collection to a "
+    "fresh Investigator/Scanner. Use its evidence while retaining responsibility for the "
+    "focused implementation decision. Do not routinely perform those broad collections "
+    "yourself merely because you can."
+)
+
+_REVIEWER_SCANNER_INSTRUCTIONS = (
+    " Keep the working set focused on the independent semantic judgment. Use only bounded local "
+    "reading needed for semantic judgment of the candidate. Preferentially delegate broad "
+    "repository scanning, "
+    "exhaustive search, rollout/log scans, call-site enumeration, residual checks, and large "
+    "mechanical evidence collection to a fresh Investigator/Scanner with fork_turns=\"none\" "
+    "and no model or effort override. Use its evidence while retaining independent "
+    "responsibility for review decisions. Do not routinely perform those broad collections "
+    "yourself merely because you can."
+)
+
 
 def _instructions(role: str) -> str:
     role_instruction = {
@@ -224,12 +244,10 @@ def _instructions(role: str) -> str:
     result = _SHARED_INSTRUCTIONS + role_instruction[base_role]
     if role in {"implementer", "focused-implementer"}:
         result += _EXECUTOR_INSTRUCTIONS
+        if role == "focused-implementer":
+            result += _FOCUSED_SCANNER_INSTRUCTIONS
     elif role == "reviewer":
-        result += (
-            " Keep the working set focused. Delegate broad mechanical scanning only to a fresh "
-            "Investigator/Scanner with fork_turns=\"none\" and no model or effort override. "
-            "Use its evidence while retaining independent responsibility for review decisions."
-        )
+        result += _REVIEWER_SCANNER_INSTRUCTIONS
     return result
 
 

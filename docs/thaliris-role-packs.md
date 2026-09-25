@@ -92,6 +92,13 @@ Synchronize formal project documentation for behavior changed within the
 assigned slice and report any documentation boundary that needs a Controller
 decision.
 
+Focused Implementer uses only bounded local reading needed for semantic judgment
+within the assigned slice. Preferentially delegate broad repository scanning,
+exhaustive search, rollout/log scans, call-site enumeration, residual checks, and
+large mechanical evidence collection to a fresh Investigator/Scanner. Use its
+evidence while retaining responsibility for the focused implementation decision.
+Do not routinely perform those broad collections yourself merely because you can.
+
 The Controller chooses the model per handoff and semantic slice difficulty.
 Deterministic documentation, test, configuration, or reference cleanup and
 small defined implementations default to standard Implementer on Luna,
@@ -129,8 +136,13 @@ state from Core.
 Use when the Controller selects independent review because it adds value; it is
 not a mechanical post-implementation gate. Independently inspect the candidate
 identified in the handoff. Return findings
-and a distilled verdict. Reviewer may delegate broad mechanical scanning to one
-fresh Investigator while retaining independent review responsibility.
+and a distilled verdict. Reviewer keeps only bounded local reading needed for
+semantic judgment of the candidate. Preferentially delegate broad repository
+scanning, exhaustive search, rollout/log scans, call-site enumeration, residual
+checks, and large mechanical evidence collection to one fresh Investigator/Scanner
+with `fork_turns="none"` and no model or effort override. Use its evidence while
+retaining independent review responsibility. Do not routinely perform those broad
+collections yourself merely because you can.
 After finding a real problem, understand its invariant
 and inspect adjacent legal states enough to return independent related blockers
 in one pass. Challenge semantic drift between the candidate and its formal

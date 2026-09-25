@@ -68,6 +68,31 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = {
     for binding in roles.iter_codex_bindings()
     if binding.profile_filename is not None
 }
+# Exact SHA-256 identities of the complete eleven-profile set rendered by the
+# immutable ba84553 adapter/registry revision (source blobs
+# e1262c3440bdb5f6007a0cab5d78b49141cecbd9 and
+# 151f4ea6a403062fcc070acfd8b5fd1f830600f0). These hashes were independently
+# compared with the effective CODEX_HOME files before being recorded here.
+# They are historical generated ownership evidence, never a claim made by the
+# current renderer, and remain keyed by the exact native profile filename.
+_BA84553_GENERATED_AGENT_PROFILE_HASHES = {
+    "thaliris-curator.toml": "25b4addb9686086fe406076a122423b64017bff12bb8a49b7ef3940562a02791",
+    "thaliris-focused-implementer-astra-medium.toml": "a47c1cdca975dd10c4a0260f0a4b470b08c24b09d78ce58f40b49ac0f2cf031c",
+    "thaliris-focused-implementer-xhigh.toml": "9a508f3a20aa0ead6dfe5a497a28360bb80fcbae0b517449328ad72082459ed0",
+    "thaliris-focused-implementer.toml": "78adaf70f2719f7d1eae4f77fd59510f26ae4390e9143e33bfd97e940dece36b",
+    "thaliris-implementer.toml": "652bc0ec379f699307f52acdd8f3112f423aa885c19bff0244ac294ee4ae1d35",
+    "thaliris-investigator.toml": "1dbe2cca46484bcd31e13ebf6f3e7422dd477d4522d72da00360b8fd558d28b4",
+    "thaliris-reasoning-specialist-astra-medium.toml": "cf81e133c7382584a16852c22eedffe7a5c6a67388f64421b073ec721754fadd",
+    "thaliris-reasoning-specialist-xhigh.toml": "b88730b4bd7d9a18d5e57c95db2316c895f44c74cea32f0eba5810bbdee38211",
+    "thaliris-reasoning-specialist.toml": "ed9b227397dabf75552067d54663f6cac853d96f592e07b511e564493ee13d51",
+    "thaliris-reviewer.toml": "39c4396ea903bc58477dc329f670a34cc8e2b553c7a9e604fb85c8bfdfba0624",
+    "thaliris-verifier.toml": "67f965ebb7566330cdf771bfb78da20d4a0248c34c231b6ec336657bb529df0f",
+}
+for _profile_name, _profile_hash in _BA84553_GENERATED_AGENT_PROFILE_HASHES.items():
+    _KNOWN_GENERATED_AGENT_PROFILE_HASHES[_profile_name] = (
+        _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
+        | frozenset({_profile_hash})
+    )
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     # 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31, blob 7dfd7ab321c4ec1f1c32bd02b1d87f1b88d2aef7.
     "0a51833bf936b14053c08a6502a6a1d27ecd1518263e7eea5c4e43f53fa1c5f1",
@@ -136,8 +161,10 @@ def _agent_profile_state(value: bytes, name: str) -> str:
     expected = _agent_profile(name.removesuffix(".toml"), profile[2], profile[0], profile[1])
     if value == expected:
         return "current"
+    hashes = _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(name, frozenset())
     binding = roles.get_codex_binding(profile[2])
-    hashes = binding.legacy_profile_hashes if binding is not None and binding.profile_filename == name else frozenset()
+    if binding is not None and binding.profile_filename == name:
+        hashes |= binding.legacy_profile_hashes
     return "legacy" if hashlib.sha256(value).hexdigest() in hashes else "user"
 
 

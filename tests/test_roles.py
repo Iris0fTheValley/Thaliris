@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tomllib
+import types
 
 import pytest
 
@@ -105,7 +108,68 @@ def test_profile_defaults_and_static_astra_selection_are_fixed() -> None:
         for effort, suffix in (("medium", "astra-medium"), ("xhigh", "xhigh")):
             name = f"thaliris-{role}-{suffix}.toml"
             assert roles.agent_profiles()[name] == ("gpt-6-astra", effort, role)
-            assert codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(name, frozenset()) == frozenset()
+            assert codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(name, frozenset())
+
+
+def test_ba84553_profiles_migrate_by_exact_filename_and_preserve_edits(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    # These bytes are rendered by the immutable ba84553 registry/adapter
+    # revision; the host files were independently compared before pinning.
+    expected = {
+        "thaliris-curator.toml": "25b4addb9686086fe406076a122423b64017bff12bb8a49b7ef3940562a02791",
+        "thaliris-focused-implementer-astra-medium.toml": "a47c1cdca975dd10c4a0260f0a4b470b08c24b09d78ce58f40b49ac0f2cf031c",
+        "thaliris-focused-implementer-xhigh.toml": "9a508f3a20aa0ead6dfe5a497a28360bb80fcbae0b517449328ad72082459ed0",
+        "thaliris-focused-implementer.toml": "78adaf70f2719f7d1eae4f77fd59510f26ae4390e9143e33bfd97e940dece36b",
+        "thaliris-implementer.toml": "652bc0ec379f699307f52acdd8f3112f423aa885c19bff0244ac294ee4ae1d35",
+        "thaliris-investigator.toml": "1dbe2cca46484bcd31e13ebf6f3e7422dd477d4522d72da00360b8fd558d28b4",
+        "thaliris-reasoning-specialist-astra-medium.toml": "cf81e133c7382584a16852c22eedffe7a5c6a67388f64421b073ec721754fadd",
+        "thaliris-reasoning-specialist-xhigh.toml": "b88730b4bd7d9a18d5e57c95db2316c895f44c74cea32f0eba5810bbdee38211",
+        "thaliris-reasoning-specialist.toml": "ed9b227397dabf75552067d54663f6cac853d96f592e07b511e564493ee13d51",
+        "thaliris-reviewer.toml": "39c4396ea903bc58477dc329f670a34cc8e2b553c7a9e604fb85c8bfdfba0624",
+        "thaliris-verifier.toml": "67f965ebb7566330cdf771bfb78da20d4a0248c34c231b6ec336657bb529df0f",
+    }
+    assert codex_adapter._BA84553_GENERATED_AGENT_PROFILE_HASHES == expected
+    assert {
+        name: digest
+        for name, digest in expected.items()
+        if digest in codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES[name]
+    } == expected
+
+    tracked = (
+        "thaliris-focused-implementer.toml",
+        "thaliris-focused-implementer-astra-medium.toml",
+        "thaliris-focused-implementer-xhigh.toml",
+        "thaliris-reasoning-specialist-astra-medium.toml",
+        "thaliris-reasoning-specialist-xhigh.toml",
+        "thaliris-verifier.toml",
+    )
+    historical: dict[str, bytes] = {}
+    for name in tracked:
+        value = _historical_profile("ba84553", name)
+        assert hashlib.sha256(value).hexdigest() == expected[name]
+        assert codex_adapter._agent_profile_state(value, name) == "legacy"
+        assert codex_adapter._agent_profile_state(value + b"\nuser edit\n", name) == "user"
+        other = "thaliris-verifier.toml" if name != "thaliris-verifier.toml" else "thaliris-reviewer.toml"
+        assert codex_adapter._agent_profile_state(value, other) == "user"
+        historical[name] = value
+
+    host_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(host_home))
+    root = _initialized_repo(tmp_path)
+    agents = host_home / "agents"
+    agents.mkdir(parents=True)
+    for name, value in historical.items():
+        (agents / name).write_bytes(value)
+    edited_name = "thaliris-focused-implementer-xhigh.toml"
+    edited = historical[edited_name] + b"\nuser edit\n"
+    (agents / edited_name).write_bytes(edited)
+
+    result = codex_adapter.codex_install()
+
+    assert (agents / edited_name).read_bytes() == edited
+    assert str(agents / edited_name) in result["manual_action_required"]
+    for name in set(tracked) - {edited_name}:
+        assert codex_adapter._agent_profile_state((agents / name).read_bytes(), name) == "current"
+        assert f"agents/{name}" in result["files"]
 
 
 def test_child_communication_and_slice_routing_contract_is_shared() -> None:
@@ -212,6 +276,41 @@ def _initialized_repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     codex_adapter.init(tmp_path)
     return tmp_path
+
+
+def _historical_profile(revision: str, name: str) -> bytes:
+    """Render one profile from an immutable registry/adapter revision."""
+    module_name = f"historical_roles_{revision}"
+    module = sys.modules.get(module_name)
+    if module is None:
+        module = types.ModuleType(module_name)
+        module.__dict__["__name__"] = module_name
+        sys.modules[module_name] = module
+        source = subprocess.check_output(
+            ["git", "show", f"{revision}:src/thaliris/roles.py"],
+        )
+        exec(compile(source, f"{module_name}.py", "exec"), module.__dict__)
+    adapter_source = subprocess.check_output(
+        ["git", "show", f"{revision}:src/thaliris/codex_adapter.py"],
+    )
+    function = next(
+        node
+        for node in ast.parse(adapter_source).body
+        if isinstance(node, ast.FunctionDef) and node.name == "_agent_profile"
+    )
+    namespace: dict[str, object] = {
+        "json": json,
+        "roles": types.SimpleNamespace(
+            get_role=module.get_role,
+            get_codex_binding=module.get_codex_binding,
+        ),
+    }
+    exec(
+        compile(ast.Module([function], type_ignores=[]), "historical_adapter.py", "exec"),
+        namespace,
+    )
+    model, effort, role = module.agent_profiles()[name]
+    return namespace["_agent_profile"](name.removesuffix(".toml"), role, model, effort)
 
 
 def _historical_registry_document() -> bytes:

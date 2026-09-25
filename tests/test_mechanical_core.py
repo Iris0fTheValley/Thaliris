@@ -228,6 +228,23 @@ def test_nested_scanner_probe_guidance_is_scoped_and_linked() -> None:
         assert "grandchild hook identity behavior remains UNKNOWN" not in normalized
 
 
+def test_nested_scanner_artifact_links_render_as_relative_markdown() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "src" / "thaliris" / "codex_adapter.py").read_text(encoding="utf-8")
+    role_packs = (root / "docs" / "thaliris-role-packs.md").read_text(encoding="utf-8")
+
+    project_link = "[durable probe evidence](docs/codex-nested-scanner-live-20260925.md)"
+    role_pack_link = "[durable probe evidence](codex-nested-scanner-live-20260925.md)"
+
+    assert project_link in source
+    assert project_link in codex_adapter.render_managed()
+    assert role_pack_link in source
+    assert role_pack_link in role_packs
+    assert codex_adapter.render_role_packs() == role_packs
+    assert "[durable probe evidence]\n" not in source
+    assert "[durable probe evidence]\n" not in role_packs
+
+
 def test_lifecycle_policy_denials_name_role_sessions_or_native_codex_sessions() -> None:
     source = Path(lifecycle_module.__file__).read_text(encoding="utf-8")
     denials = re.findall(r'_permission_deny\("([^"]+)', source)

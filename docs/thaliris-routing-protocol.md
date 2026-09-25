@@ -34,6 +34,16 @@ implementations, complex semantic repairs, or remaining correctness
 uncertainty. Curator and Reasoning Specialist are optional and selected only
 when they add actual value.
 
+With INVALID_STATE, the PreToolUse guard denies only mechanically recognized
+Controller-owned state mutations: direct Thaliris task/lifecycle mutations and
+obvious writes to `.context/state.json` or lifecycle state. Unknown tools,
+coordination, diagnostics, and reads remain transparent. This does not prove
+managed enforcement. Damaged state does not transfer child semantic duties
+to Root. If Investigator or Implementer is unavailable, Root may diagnose
+the managed failure, read the evidence needed for that diagnosis, coordinate,
+and report; it does not take over substantial repository investigation,
+implementation, or testing.
+
 At task end, the Controller makes one short semantic judgment about whether
 a concise conclusion could change a future decision and needs durable
 maintenance. It selects a fresh Curator only for that purpose and supplies

@@ -117,7 +117,6 @@ _CHILD_CONTEXT_MUTATIONS = frozenset({
     "task-start", "task-update", "task-artifact", "task-close", "task-promote", "codex-install",
     "recover-pending-spawn", "rollback", "init", "uninstall", "codex-uninstall",
 })
-_INVALID_STATE_DIAGNOSTICS = frozenset({"doctor", "task-show", "task-status", "version"})
 _CONTROL_STATE_TARGET = re.compile(r"(?i)\.context[\\/](?:state\.json|audit[\\/]lifecycle(?:[\\/][^\s\"']+)?)")
 _DURABLE_PATH_TARGET = re.compile(r"(?i)(?:^|[\s\"'=])((?:\.agent-memory|\.milestones)(?:[\\/][^\s\"'|;&<>]*)?)")
 _START_ATTESTATION_TTL_NS = 120 * 1_000_000_000
@@ -2399,11 +2398,16 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
     operation = _context_operation(payload) if normalized in _CONTROLLER_EXECUTION_TOOL_NAMES else None
 
     if state_status == "INVALID_STATE":
-        if operation in _INVALID_STATE_DIAGNOSTICS:
-            _best_effort_record(_record_controller_guard_event, root, payload, f"CONTEXT_{operation}", "allowed")
-            return ""
-        _best_effort_record(_record_controller_guard_event, root, payload, "INVALID_STATE", "blocked")
-        return _permission_deny("THALIRIS_INVALID_STATE: managed control is unavailable until the task state is diagnosed or repaired.")
+        # Damaged managed state does not make unrelated native tools unsafe.
+        # Deny only direct Controller-owned mutations that are mechanically
+        # visible without interpreting an arbitrary command or tool name.
+        target = _control_state_target(payload)
+        if operation in _CHILD_CONTEXT_MUTATIONS or (
+            target is not None and (_obvious_write_attempt(payload) or _obvious_mutation_tool(normalized))
+        ):
+            _best_effort_record(_record_controller_guard_event, root, payload, "INVALID_STATE", "blocked")
+            return _permission_deny("THALIRIS_INVALID_STATE: managed control is unavailable until the task state is diagnosed or repaired.")
+        return ""
 
     if state_status == "NO_TASK" and operation == "task-start":
         return _issue_task_start_attestation(root, payload, managed_hook_abi)

@@ -632,6 +632,11 @@ trusted direct `thaliris` runtime commands. `init`, `codex-install`, `uninstall`
 second `task-start`, and `task-show` are blocked for ACTIVE Root. `task-status`
 is bounded; `task-get`, `artifact-get`, `catalog`, and `document-get`
 retrieve explicitly selected objects.
+With INVALID_STATE, the PreToolUse guard denies only mechanically recognized
+Controller-owned state mutations: direct Thaliris task/lifecycle mutations and
+obvious writes targeting `.context/state.json` or lifecycle state. Other
+tools, including unknown tool names, coordination, diagnostics, and reads,
+remain transparent. This hook behavior does not establish managed enforcement.
 If `task-start` was attempted but managed enforcement is unavailable or
 rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
 Codex version, host capability, task schema, git/worktree identity,
@@ -643,9 +648,15 @@ explicit executable SHA-256 pin, and hook/install state, then report bootstrap
 unavailable. Once the cause is known, do not read user-task repository source,
 tests, docs, or search results. If work continues, apply the same minimum-role
 routing policy defined above; degraded mode does not define a separate role
-sequence. The Controller must not take over repository
-investigation, implementation, or testing merely because NO_TASK applies. The
-final report must not claim managed enforcement was verified.
+sequence. The Controller must not take over repository investigation,
+implementation, or testing merely because NO_TASK applies. Damaged managed
+state also does not transfer a child's semantic duties to Root. If an
+Investigator or Implementer is unavailable, the Controller
+may diagnose the managed failure, read only the evidence needed for that
+diagnosis, coordinate, and report; it must not take over their substantial
+repository investigation, implementation, or testing. Do not add a
+mechanical Root-investigation detector. The final report must not claim
+managed enforcement was verified.
 If Codex reports a native spawn failure before `SubagentStart`, the Controller
 may explicitly run `thaliris recover-pending-spawn <handoff-id>` for that exact
 reservation. Core never infers failure from a missing event, timeout, or retry.

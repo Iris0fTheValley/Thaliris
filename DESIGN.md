@@ -63,6 +63,16 @@ The Controller writes each native handoff, chooses the information in that
 handoff, interprets results and observations, accepts or rejects conclusions,
 and decides when the task is complete.
 
+An INVALID_STATE task state degrades the mechanical guard to a strict
+blacklist: it denies direct, recognized Controller-owned Thaliris task and
+lifecycle mutations and obvious writes to `.context/state.json` or lifecycle
+state. Unknown tools, coordination, diagnostics, and reads remain transparent.
+This does not prove managed enforcement. Damaged managed state does not
+transfer Investigator or Implementer duties to Root. If those roles are
+unavailable, Root may diagnose the managed failure, read the evidence needed
+for that diagnosis, coordinate, and report; it does not take over substantial
+repository investigation, implementation, or testing.
+
 Routing, categorizing, and status labels in task records are model-authored.
 Core does not attach behavior to them.
 

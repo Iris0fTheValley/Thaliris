@@ -1684,7 +1684,7 @@ def test_doctor_keeps_valid_runtime_and_host_executable_observations_distinct(tm
     assert host["active_codex_host_executable_observed"] == "UNKNOWN"
 
 
-def test_invalid_task_state_fails_closed_for_managed_root_control(tmp_path: Path) -> None:
+def test_invalid_task_state_denies_only_explicit_managed_mutations(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.task_start(root, "invalid state", None, None)
     (root / ".context" / "state.json").write_text("{broken", encoding="utf-8")
@@ -1694,16 +1694,34 @@ def test_invalid_task_state_fails_closed_for_managed_root_control(tmp_path: Path
     assert diagnostic["host_capability"]["reviewer_native_readonly_observed"] != "PASS"
 
     for payload in (
-        hook_payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker", "message": "work"}),
-        hook_payload(tool_name="list_agents", tool_input={}),
         hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-close --base-revision 1"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-promote --base-revision 1 records.json"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-update --base-revision 1 records.json"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-start --goal new"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-artifact --base-revision 1"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris recover-pending-spawn handoff"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris rollback"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris init"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris codex-install"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris codex-uninstall"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris uninstall"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "Set-Content .context/state.json '{}'"}),
+        hook_payload(tool_name="functions.apply_patch", tool_input={"patch": "*** Update File: .context/state.json\n+{}"}),
     ):
         denied = json.loads(handle_hook(root, "PreToolUse", payload))
         assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "INVALID_STATE" in denied["hookSpecificOutput"]["permissionDecisionReason"]
-    assert handle_hook(root, "PreToolUse", hook_payload(
-        tool_name="Bash", tool_input={"command": "thaliris doctor"},
-    )) == ""
+    for payload in (
+        hook_payload(tool_name="Bash", tool_input={"command": "Get-Content C:/Users/example/.codex/sessions/rollout.jsonl"}),
+        hook_payload(tool_name="thaliris-completely-unknown-mutate", tool_input={"command": "opaque"}),
+        hook_payload(tool_name="spawn_agent", tool_input={"fork_turns": "none", "agent_type": "worker", "message": "work"}),
+        hook_payload(tool_name="list_agents", tool_input={}),
+        hook_payload(tool_name="send_message", tool_input={"target": "worker", "message": "status"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris doctor"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-status"}),
+        hook_payload(tool_name="Bash", tool_input={"command": "Get-Content .context/state.json"}),
+    ):
+        assert handle_hook(root, "PreToolUse", payload) == ""
 
 
 def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_path: Path) -> None:

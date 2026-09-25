@@ -224,6 +224,71 @@ def test_codex_install_is_idempotent_and_preserves_non_owned_collisions(tmp_path
     assert collision.read_text(encoding="utf-8") == "user-owned = true\n"
 
 
+def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    original = b"# User instructions\r\nKeep this text and its bytes.\r\n\xff"
+    global_agents = home / "AGENTS.md"
+    global_agents.write_bytes(original)
+
+    first = codex_adapter.codex_install()
+    assert first["ok"] is True
+    assert first["global_instruction_ready"] == "YES"
+    assert "AGENTS.md" in first["files"]
+    assert first["controller_bridge_sha256"] == hashlib.sha256(first["controller_bridge_content"].encode()).hexdigest()
+    assert global_agents.read_bytes() == codex_adapter._global_agents_block() + original
+
+    second = codex_adapter.codex_install()
+    assert second["changed"] is False
+    assert global_agents.read_bytes() == codex_adapter._global_agents_block() + original
+
+    old_owned = b"<!-- thaliris:global:begin -->\nold startup\n<!-- thaliris:global:end -->\n"
+    global_agents.write_bytes(b"before\r\n" + old_owned + b"after\r\n\xff")
+    refreshed = codex_adapter.codex_install()
+    assert refreshed["changed"] is True
+    assert refreshed["host_setup_requires_session_start"] is False
+    assert global_agents.read_bytes() == b"before\r\n" + codex_adapter._global_agents_block() + b"after\r\n\xff"
+
+    removed = codex_adapter.codex_uninstall()
+    assert "AGENTS.md" in removed["files"]
+    assert global_agents.read_bytes() == b"before\r\nafter\r\n\xff"
+
+
+def test_codex_uninstall_removes_new_global_instruction_file(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    codex_adapter.codex_install()
+    global_agents = home / "AGENTS.md"
+    assert global_agents.read_bytes() == codex_adapter._global_agents_block()
+    removed = codex_adapter.codex_uninstall()
+    assert "AGENTS.md" in removed["files"]
+    assert not global_agents.exists()
+
+
+@pytest.mark.parametrize("original", [
+    b"<!-- thaliris:global:begin -->\nbroken",
+    b"<!-- thaliris:global:end -->\n",
+    b"<!-- thaliris:global:begin -->\none\n<!-- thaliris:global:end -->\n<!-- thaliris:global:begin -->\ntwo\n<!-- thaliris:global:end -->\n",
+    b"<!-- thaliris:begin -->\nproject content\n<!-- thaliris:end -->\n",
+])
+def test_codex_install_rejects_ambiguous_global_markers(tmp_path: Path, monkeypatch, pinned_test_thaliris, original: bytes) -> None:
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    global_agents = home / "AGENTS.md"
+    global_agents.write_bytes(original)
+    result = codex_adapter.codex_install()
+    assert result["ok"] is False
+    assert result["global_instruction_ready"] == "NO"
+    assert str(global_agents) in result["manual_action_required"]
+    assert global_agents.read_bytes() == original
+    removed = codex_adapter.codex_uninstall()
+    assert removed["ok"] is False
+    assert str(global_agents) in removed["manual_action_required"]
+    assert global_agents.read_bytes() == original
+
+
 def test_codex_install_migrates_exact_legacy_host_hook_and_uninstall_preserves_user_data(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
     home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(home))

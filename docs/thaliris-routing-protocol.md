@@ -74,6 +74,16 @@ When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
 contracts change, check and synchronize both the repository-managed instruction
 and the currently effective Codex global instruction.
 
+`thaliris codex-install` also maintains one marker-owned startup block in
+`CODEX_HOME/AGENTS.md`. That block only discovers a project's activation marker
+or managed instruction and directs the Controller through `bootstrap-check`,
+`init` when needed, and the explicit bridge digest at `task-start`. It does not
+carry task routing policy or mutate repositories from a hook. Install replaces
+only the well-formed `thaliris:global` span; uninstall removes only that span.
+Text outside the span remains byte-for-byte intact, and damaged, duplicate, or
+conflicting Thaliris markers require manual resolution. A newly saved global
+instruction does not prove what the current session loaded.
+
 `SubagentStart` is lifecycle-only. It validates the authorized native Codex child and binds
 identity, role, session, start time, provenance, handoff ID, and payload hash.
 It does not construct a role packet or inject task state.

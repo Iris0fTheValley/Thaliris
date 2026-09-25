@@ -345,6 +345,8 @@ def _normalize_line_endings(value: str) -> str:
 
 MANAGED_START = "<!-- thaliris:begin -->"
 MANAGED_END = "<!-- thaliris:end -->"
+GLOBAL_MANAGED_START = b"<!-- thaliris:global:begin -->"
+GLOBAL_MANAGED_END = b"<!-- thaliris:global:end -->"
 AUDIT_IGNORE_START = "# thaliris-codex:begin"
 AUDIT_IGNORE_END = "# thaliris-codex:end"
 AUDIT_IGNORE_RULE = ".context/audit/"
@@ -1162,6 +1164,63 @@ def _atomic_host_write(path: Path, contents: bytes) -> None:
                 pass
 
 
+def _global_agents_block() -> bytes:
+    """The user-layer instruction only discovers and starts project routing."""
+    return b"""<!-- thaliris:global:begin -->
+## Thaliris project startup
+
+At the start of repository work, check the repository root for
+`.codex/thaliris.json` and the effective root AGENTS instruction for the
+`<!-- thaliris:begin -->` project block. If neither is present, continue with
+the ordinary Codex instructions. If either is present, use the direct
+`thaliris --root <repo> bootstrap-check` command. If it reports that the
+project definition or activation marker is missing, run
+`thaliris --root <repo> init` directly and read its result. Read the canonical
+managed instruction text and SHA-256 from `init` or `bootstrap-check`, then
+acknowledge that digest with `--controller-bridge-sha256` in `task-start`.
+Follow the effective project instruction for task routing. A CLI result does
+not prove Host instruction activation or a loaded current-session hook.
+<!-- thaliris:global:end -->
+"""
+
+
+def _global_agents_span(current: bytes) -> tuple[int, int] | None:
+    """Find one well-formed owned block, including its trailing line break."""
+    start_count = current.count(GLOBAL_MANAGED_START)
+    end_count = current.count(GLOBAL_MANAGED_END)
+    if (start_count, end_count) == (0, 0):
+        if b"<!-- thaliris:global:" in current:
+            raise ValueError("AGENTS.md has damaged global Thaliris markers")
+        return None
+    if (start_count, end_count) != (1, 1) or current.count(b"<!-- thaliris:global:") != 2:
+        raise ValueError("AGENTS.md has duplicate or damaged global Thaliris markers")
+    start = current.index(GLOBAL_MANAGED_START)
+    end_marker = current.index(GLOBAL_MANAGED_END)
+    end = end_marker + len(GLOBAL_MANAGED_END)
+    if start >= end_marker or (start and current[start - 1:start] != b"\n"):
+        raise ValueError("AGENTS.md has misplaced global Thaliris markers")
+    if current[end:end + 2] == b"\r\n":
+        end += 2
+    elif current[end:end + 1] == b"\n":
+        end += 1
+    elif end != len(current):
+        raise ValueError("AGENTS.md has misplaced global Thaliris markers")
+    return start, end
+
+
+def _global_agents_update(current: bytes, *, remove: bool = False) -> bytes:
+    span = _global_agents_span(current)
+    # Project-owned markers in the user layer indicate a different ownership
+    # claim. Never silently replace or combine it with the global block.
+    outside = current if span is None else current[:span[0]] + current[span[1]:]
+    if MANAGED_START.encode() in outside or MANAGED_END.encode() in outside:
+        raise ValueError("AGENTS.md has conflicting project Thaliris markers")
+    if span is None:
+        return current if remove else _global_agents_block() + current
+    start, end = span
+    return current[:start] + (b"" if remove else _global_agents_block()) + current[end:]
+
+
 def _install_host_hook_trust(home: Path, executable: Path, executable_sha256: str) -> dict[str, Any]:
     return codex_app_server.trust_installed_host_hooks(home, executable, executable_sha256)
 
@@ -1192,9 +1251,10 @@ def codex_install(
     executable: str | Path | None = None,
     executable_sha256: str | None = None,
 ) -> dict[str, object]:
-    """Install stable role identities and the stable Host hook trampoline."""
+    """Install stable Host integration and the global startup instruction."""
     home = _codex_home(codex_home)
     agents = home / "agents"
+    global_agents = home / "AGENTS.md"
     hooks_path = home / "hooks.json"
     script_path = home / HOST_HOOK_SCRIPT_NAME
     manual: list[str] = []
@@ -1289,6 +1349,21 @@ def codex_install(
         except OSError:
             manual.append(str(path))
 
+    global_instruction_ready = False
+    if not home.is_symlink() and not global_agents.is_symlink() and (not global_agents.exists() or global_agents.is_file()):
+        try:
+            current_agents = global_agents.read_bytes() if global_agents.exists() else b""
+            updated_agents = _global_agents_update(current_agents)
+            if updated_agents != current_agents:
+                _atomic_host_write(global_agents, updated_agents)
+                changed = True
+                files.append("AGENTS.md")
+            global_instruction_ready = True
+        except (OSError, ValueError):
+            manual.append(str(global_agents))
+    else:
+        manual.append(str(global_agents))
+
     health = lifecycle.host_hooks_health(home)
     trust_status = "NOT_REGISTERED"
     trusted_count = 0
@@ -1323,7 +1398,7 @@ def codex_install(
     if trust_status == "TRUSTED" and enabled_count != expected_count:
         manual.append("one_or_more_Thaliris_Host_hooks_are_disabled_by_user_state")
     return {
-        "ok": host_integration_ready,
+        "ok": host_integration_ready and global_instruction_ready,
         "changed": changed,
         "target": str(home),
         "files": sorted(set(files)),
@@ -1335,23 +1410,26 @@ def codex_install(
         "host_hook_enabled_count": enabled_count,
         "host_hook_expected_count": expected_count,
         "host_integration_ready": "YES" if host_integration_ready else "NO",
+        "global_instruction_ready": "YES" if global_instruction_ready else "NO",
         "host_hook_trust_error": trust_error,
         "managed_hook_abi": MANAGED_HOOK_ABI,
         "native_profile_names": sorted(roles.native_profile_names()),
         "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
         "host_session_load_status": "UNKNOWN",
-        "host_setup_requires_session_start": changed,
+        "host_setup_requires_session_start": any(path != "AGENTS.md" for path in files),
         "project_files_touched": [],
+        **_controller_bridge(),
     }
 
 
 def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
-    """Remove exact Thaliris-owned Host roles and trampoline only."""
+    """Remove exact Thaliris-owned Host integration and global instruction."""
     home = _codex_home(codex_home)
     manual: list[str] = []
     removed: list[str] = []
     hooks_path = home / "hooks.json"
     script_path = home / HOST_HOOK_SCRIPT_NAME
+    global_agents = home / "AGENTS.md"
     has_hook_manual = False
     owned_commands: dict[str, set[str]] = {event: set() for event in lifecycle.HOOK_EVENTS}
     host_hook_keys: list[str] = []
@@ -1435,9 +1513,23 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
             manual.append("HOST_HOOK_TRUST_CLEANUP_FAILED")
     elif host_hook_keys and "hooks.json" not in removed:
         trust_cleanup_status = "SKIPPED_MANUAL"
+    if home.is_symlink() or global_agents.is_symlink() or (global_agents.exists() and not global_agents.is_file()):
+        manual.append(str(global_agents))
+    elif global_agents.is_file():
+        try:
+            current_agents = global_agents.read_bytes()
+            updated_agents = _global_agents_update(current_agents, remove=True)
+            if updated_agents != current_agents:
+                if updated_agents:
+                    _atomic_host_write(global_agents, updated_agents)
+                else:
+                    global_agents.unlink()
+                removed.append("AGENTS.md")
+        except (OSError, ValueError):
+            manual.append(str(global_agents))
     health = lifecycle.host_hooks_health(home)
     return {
-        "ok": trust_cleanup_status != "FAILED",
+        "ok": trust_cleanup_status != "FAILED" and str(global_agents) not in manual,
         "changed": bool(removed),
         "target": str(home),
         "files": sorted(removed),

@@ -11,3 +11,5 @@ Symbols: []
 ---
 
 # Durable memory index
+
+- [Codex adapter lifecycle observations](codex-adapter-lifecycle.md)

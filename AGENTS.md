@@ -175,8 +175,15 @@ Managed native Codex child lifecycles permit one top-level child and one nested
 Scanner. Nested authorization requires the exact bound parent's agent, role,
 session, and turn identity; missing or conflicting identity fails closed.
 SubagentStart consumes the unique reservation and binds the Scanner's own
-identity. Grandchild Host hook identity behavior remains UNKNOWN until observed
-on that Host; fixture verification is not live managed activation proof.
+identity. One live managed Codex CLI `0.155.0-alpha.9.2` probe on 2026-09-25
+verified the exact reservation, SubagentStart, and bound Scanner PreToolUse
+acceptance at depth two. The Scanner result returned and the Focused
+Implementer parent continued. See the [durable probe evidence]
+(`docs/codex-nested-scanner-live-20260925.md`).
+This is evidence for that one CLI build and probe only. Raw Host wire-byte
+equality, other Host builds or Desktop scenarios, and native child
+`Completed`/`task-close` completion were not observed and remain UNKNOWN.
+The identity binding and fail-closed mechanics above are unchanged.
 Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
 mechanical. SubagentStop alone is not success; only an explicitly observed

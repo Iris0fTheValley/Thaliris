@@ -32,8 +32,9 @@ unless the Controller explicitly requested that content.
 Child sessions do not send ordinary progress, heartbeat, or partial-completion
 messages. They proactively wake the parent only when completed, blocked and
 requiring a parent decision, or when new decision-changing information arrives.
-Direct `send_message` remains available for genuine decision-changing
-information, with no automatic wake filter.
+Direct `send_message` to the exact bound parent remains available for genuine
+decision-changing information, with no automatic wake filter. Follow-up and
+input tools remain denied for managed children.
 
 ## Investigator
 

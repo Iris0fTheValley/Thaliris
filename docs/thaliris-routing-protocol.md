@@ -123,8 +123,9 @@ set does not automatically re-enter the Controller.
 Child sessions do not send ordinary progress, heartbeat, or partial-completion
 messages to the parent. They proactively wake the parent only when completed,
 blocked and requiring a parent decision, or when new decision-changing
-information arrives. Direct `send_message` remains available for genuine
-decision-changing information, with no automatic wake filter.
+information arrives. Direct `send_message` to the exact bound parent remains
+available for genuine decision-changing information, with no automatic wake
+filter. Follow-up and input tools remain denied for managed children.
 Scanner results return to their requesting Executor/Reviewer.
 
 When detailed material should survive, the selected role session writes a free-form Markdown or

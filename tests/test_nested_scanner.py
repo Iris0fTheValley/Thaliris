@@ -84,6 +84,65 @@ def test_executor_scanner_parent_binding_and_completion(active, role):
     assert codex_adapter.task_close(active, core.task_show(active)["state"]["revision"])["status"] == "DONE"
 
 
+def message(actor, target=None, tool_name="send_message"):
+    tool_input = {"message": "decision-changing fact"}
+    if target is not None:
+        tool_input["target"] = target
+    return {**actor, "tool_name": tool_name, "tool_input": tool_input}
+
+
+def test_bound_child_messages_only_root(active):
+    child = start(active)
+    assert lifecycle.handle_hook(active, "PreToolUse", message(child, "/root")) == ""
+    for target in (None, "", "root", "/root/peer", "executor"):
+        assert "deny" in lifecycle.handle_hook(active, "PreToolUse", message(child, target))
+    for target in (0, ["/root"]):
+        assert "deny" in lifecycle.handle_hook(active, "PreToolUse", {**child, "tool_name": "send_message", "tool_input": {"target": target, "message": "fact"}})
+    for tool_name in ("followup_task", "send_input"):
+        assert "deny" in lifecycle.handle_hook(active, "PreToolUse", message(child, "/root", tool_name))
+    assert "deny" in lifecycle.handle_hook(active, "PreToolUse", message({**child, "turn_id": "spoof"}, "/root"))
+    assert "deny" in lifecycle.handle_hook(active, "PreToolUse", message(event(), "/root"))
+
+
+def test_nested_child_messages_only_exact_parent(active):
+    parent = start(active)
+    scanner = start(active, "investigator", "scanner", parent)
+    for target in ("executor", "/root/executor"):
+        assert lifecycle.handle_hook(active, "PreToolUse", message(scanner, target)) == ""
+    for target in (None, "", "/root", "scanner", "/root/scanner", "/root/peer"):
+        assert "deny" in lifecycle.handle_hook(active, "PreToolUse", message(scanner, target))
+    for tool_name in ("followup_task", "send_input"):
+        assert "deny" in lifecycle.handle_hook(active, "PreToolUse", message(scanner, "executor", tool_name))
+    assert "deny" in lifecycle.handle_hook(active, "PreToolUse", message({**scanner, "agent_id": "spoof"}, "executor"))
+
+
+def test_nested_message_with_missing_parent_task_name_and_ambiguous_target(active):
+    request = spawn(role="implementer")
+    assert lifecycle.handle_hook(active, "PreToolUse", request) == ""
+    parent = identity()
+    assert lifecycle._record_subagent_start(active, parent)
+    assert state(active)["children"][0]["task_name_hash"] is None
+    scanner = start(active, "investigator", "scanner", parent)
+    assert lifecycle.handle_hook(active, "PreToolUse", message(scanner, "executor")) == ""
+    assert "deny" in lifecycle.handle_hook(active, "PreToolUse", message(scanner, "/root/executor"))
+    task = core.task_show(active)["state"]["task_id"]
+    path = lifecycle._lifecycle_path(active, task)
+    capture = state(active)
+    capture["children"][1]["task_name_hash"] = capture["children"][0]["agent_id_hash"]
+    lifecycle._write_capture(path, capture)
+    assert "deny" in lifecycle.handle_hook(active, "PreToolUse", message(scanner, "executor"))
+
+
+def test_nested_child_cannot_message_bound_peer(active):
+    parent = start(active)
+    first = start(active, "investigator", "first", parent)
+    finish(active, first, parent)
+    second = start(active, "investigator", "second", parent)
+    for target in ("first", "/root/first"):
+        assert "deny" in lifecycle.handle_hook(active, "PreToolUse", message(second, target))
+    assert lifecycle.handle_hook(active, "PreToolUse", message(second, "/root/executor")) == ""
+
+
 @pytest.mark.parametrize("role", ["investigator", "curator", "reasoning-specialist", "verifier"])
 def test_non_executor_delegation_denied(active, role):
     parent = start(active, role)

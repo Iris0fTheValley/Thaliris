@@ -1323,6 +1323,47 @@ def _bound_managed_child(root: Path, payload: dict[str, Any]) -> bool:
         return False
 
 
+def _bound_child_parent_message(root: Path, payload: dict[str, Any]) -> bool:
+    """Permit only an exact bound child's unambiguous native parent target."""
+    target = _delegation_input(payload).get("target")
+    if not isinstance(target, str) or not target:
+        return False
+    task_id = _active_task_id(root)
+    if task_id is None:
+        return False
+    try:
+        with core._lock(root):
+            state = _load_lifecycle(_lifecycle_path(root, task_id), task_id)
+            child = _bound_child_record(state, payload)
+            if child is None:
+                return False
+            if child["depth"] == 1:
+                return target == "/root"
+            if child["depth"] != 2:
+                return False
+            parents = [parent for parent in state["children"] if isinstance(parent, dict)
+                and parent.get("managed") is True and parent.get("handoff_bound") is True
+                and parent.get("depth") == 1
+                and parent.get("agent_id_hash") == child["parent_agent_id_hash"]
+                and parent.get("role") == child["parent_role"]
+                and parent.get("turn_id_hash") == child["parent_turn_id_hash"]
+                and parent.get("session_id_hash") == child["session_id_hash"]
+                and parent.get("handoff_id") == child["root_handoff_id"]]
+            if len(parents) != 1:
+                return False
+            target_hash = _identity_hash(target)
+            parent = parents[0]
+            if target_hash not in {parent.get("agent_id_hash"), parent.get("task_name_hash")}:
+                return False
+            return sum(
+                target_hash in {record.get("agent_id_hash"), record.get("task_name_hash")}
+                for record in state["children"]
+                if isinstance(record, dict) and record.get("managed") is True and record.get("handoff_bound") is True
+            ) == 1
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+
+
 def _session_id_hash(payload: dict[str, Any]) -> str | None:
     value = payload.get("session_id")
     return _identity_hash(value) if isinstance(value, str) and value else None
@@ -2031,6 +2072,8 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
     binding = roles.get_codex_binding(role)
     role_names = _native_role_names()
     if normalized in _DELEGATION_TOOL_NAMES:
+        if normalized == "send_message" and managed_task_state(root)[0] == "ACTIVE" and _bound_child_parent_message(root, payload):
+            return ""
         if normalized != "spawn_agent" or binding is None or not binding.allowed_delegation_targets:
             return _permission_deny(f"THALIRIS_ROLE_SESSION_DELEGATION: a managed {role_names} session may only use its explicit allowed fresh delegation targets.")
         if managed_task_state(root)[0] == "ACTIVE":

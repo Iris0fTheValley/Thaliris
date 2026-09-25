@@ -85,8 +85,13 @@ Only Implementer, Focused Implementer, and Reviewer may delegate one fresh
 Investigator/Scanner. There is one active top-level role session and at most
 one nested Scanner; its result belongs to its requesting parent. Exact parent
 agent/session/turn/role identity is required, with missing/conflicting fields
-denied. Grandchild Host hook identity remains UNKNOWN; scenario fixtures do
-not prove live managed activation. Task-close still requires the latest
+denied. One live managed Codex CLI `0.155.0-alpha.9.2` probe verified the exact
+reservation, Start, and bound Scanner PreToolUse acceptance for a depth-two
+Scanner; the Scanner result returned and the Focused parent continued. See the
+[durable probe evidence](docs/codex-nested-scanner-live-20260925.md). This is
+scoped to that one CLI build and probe: raw Host wire-byte equality, other Host
+builds or Desktop scenarios, and native child `Completed`/`task-close` were not
+observed and remain UNKNOWN. Task-close still requires the latest
 Controller-direct handoff's successful lifecycle and no pending or active
 descendants.
 

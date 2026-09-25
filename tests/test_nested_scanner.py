@@ -1,10 +1,13 @@
-"""Bounded delegation scenarios, not proof of live grandchild hook behavior.
+"""Bounded delegation scenarios plus scoped live nested Scanner evidence.
 
 Direct-child wire provenance: isolated codex-cli 0.155.0-alpha.9.2 probe,
-2026-09-23. Start/PreToolUse/Stop carry the child's agent_id and turn_id;
+2026-09-25. Start/PreToolUse/Stop carry the child's agent_id and turn_id;
 all share the root session_id. Child PreToolUse also has agent_type. Start
-has neither parent_id nor spawn tool_use_id. Grandchild events below are
-explicit contract-shaped fixtures: live Host equality remains UNKNOWN.
+has neither parent_id nor spawn tool_use_id. The 2026-09-25 live managed CLI
+probe verified exact reservation/Start/bound PreToolUse acceptance and parent
+continuation for one CLI build. Grandchild events below remain contract-shaped
+fixtures for other cases; raw Host wire-byte equality and other Host/Desktop
+behavior remain UNKNOWN.
 """
 from __future__ import annotations
 

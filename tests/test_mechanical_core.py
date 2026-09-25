@@ -204,6 +204,30 @@ def test_routing_guidance_permits_the_bounded_implementer_only_path() -> None:
     assert "not a mechanical post-implementation gate" in role_packs
 
 
+def test_nested_scanner_probe_guidance_is_scoped_and_linked() -> None:
+    root = Path(__file__).resolve().parents[1]
+    protocol = (root / "docs" / "thaliris-routing-protocol.md").read_text(encoding="utf-8")
+    role_packs = (root / "docs" / "thaliris-role-packs.md").read_text(encoding="utf-8")
+    rendered = codex_adapter.ROLE_PACKS
+    artifact = root / "docs" / "codex-nested-scanner-live-20260925.md"
+
+    assert artifact.is_file()
+    for document in (protocol, role_packs, rendered):
+        normalized = " ".join(document.split())
+        assert "One live managed Codex CLI `0.155.0-alpha.9.2` probe" in normalized
+        assert "exact reservation" in normalized
+        assert "bound Scanner `PreToolUse` acceptance" in normalized
+        assert "Scanner result returned" in normalized
+        assert (
+            "Focused parent continued" in normalized
+            or "Focused Implementer parent continued" in normalized
+        )
+        assert "codex-nested-scanner-live-20260925.md" in normalized
+        assert "Raw Host wire-byte equality" in normalized
+        assert "native child `Completed`/`task-close` completion" in normalized
+        assert "grandchild hook identity behavior remains UNKNOWN" not in normalized
+
+
 def test_lifecycle_policy_denials_name_role_sessions_or_native_codex_sessions() -> None:
     source = Path(lifecycle_module.__file__).read_text(encoding="utf-8")
     denials = re.findall(r'_permission_deny\("([^"]+)', source)

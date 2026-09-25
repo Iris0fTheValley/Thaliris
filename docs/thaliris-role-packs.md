@@ -180,5 +180,11 @@ return to the requesting parent; no automatic result or Artifact propagation
 is introduced. Exact parent agent/session/turn/role identity authorizes the
 unique reservation; the matching Start binds the Scanner's own identity.
 Missing or conflicting fields deny execution. Direct-child hook wire shapes
-have been observed on the CLI; grandchild hook identity behavior remains
-UNKNOWN. Shaped scenario fixtures do not prove live managed nesting.
+have been observed on the CLI. One live managed Codex CLI
+`0.155.0-alpha.9.2` probe verified the exact reservation, `Start`, and bound
+Scanner `PreToolUse` acceptance for a depth-two Scanner; the Scanner result
+returned and the Focused parent continued. See the [durable probe evidence]
+(codex-nested-scanner-live-20260925.md).
+This scoped probe covers that one CLI build and probe only. Raw Host wire-byte
+equality, other Host builds or Desktop scenarios, and native child
+`Completed`/`task-close` completion were not observed and remain UNKNOWN.

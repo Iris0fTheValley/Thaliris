@@ -84,9 +84,13 @@ managed native Codex child、且当前 session effective maximum 已被机械验
 Controller 可以选择注册角色；仅 Implementer、Focused Implementer 和 Reviewer
 可以再委派一个 fresh Investigator/Scanner。最多一个顶层子角色与一个 Scanner
 同时活动，Scanner 结果归请求它的父级。嵌套授权要求父级精确的 agent、role、
-session、turn 身份，缺失或冲突即拒绝。真实 grandchild Hook 身份仍为 UNKNOWN；
-场景 fixture 不是 live managed 嵌套证明。`task-close` 仍以最后一个 Controller
-直接 handoff 的完成为准，且不允许 pending 或 active 后代。
+session、turn 身份，缺失或冲突即拒绝。一个 live managed Codex CLI
+`0.155.0-alpha.9.2` probe 已验证二层 Scanner 的精确 reservation、Start 和绑定的
+PreToolUse 接受，Scanner 结果已返回且 Focused parent 继续执行；详见
+[durable probe evidence](docs/codex-nested-scanner-live-20260925.md)。该证据只覆盖这一个
+CLI 构建与 probe。raw Host wire-byte equality、其他 Host 构建或 Desktop 场景仍为
+UNKNOWN；native child `Completed` 与 `task-close` 也未被观测。`task-close` 仍以最后一个
+Controller 直接 handoff 的完成为准，且不允许 pending 或 active 后代。
 
 ## Task ledger
 

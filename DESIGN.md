@@ -78,9 +78,14 @@ optional Artifact references. These are prompt conventions, not Core schema
 authority.
 
 Exact parent agent/session/turn/role identity authorizes the unique nested
-reservation. The matching Start binds the Scanner's own identity. Missing or
-conflicting identity fails closed; live grandchild Hook behavior remains
-UNKNOWN. The flat lifecycle ledger remains bounded, not an arbitrary tree.
+reservation. The matching Start binds the Scanner's own identity. One live
+managed Codex CLI `0.155.0-alpha.9.2` probe verified that reservation, Start,
+and bound Scanner PreToolUse acceptance at depth two; the Scanner result
+returned and the Focused parent continued. See the [durable probe evidence](docs/codex-nested-scanner-live-20260925.md).
+This scoped probe does not establish raw Host wire-byte equality, behavior on
+other Host builds or Desktop scenarios, or native child `Completed`/`task-close`
+completion; those remain UNKNOWN. Missing or conflicting identity still fails
+closed. The flat lifecycle ledger remains bounded, not an arbitrary tree.
 Task-close selects the last Controller-direct handoff and rejects pending or
 active descendants. Stable role and historical producer IDs do not change.
 

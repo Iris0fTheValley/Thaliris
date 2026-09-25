@@ -166,12 +166,14 @@ authorized reservation, never path or shared session identity as parent proof.
 Missing or conflicting identity denies execution. SubagentStart cannot block
 native creation; an unbound child is blocked on its first tool call.
 
-Direct-child wire fields were observed in an isolated Codex CLI
-`0.155.0-alpha.9.2` probe on 2026-09-23. Native desktop depth-two creation and
-parent-directed result delivery were observed, but no desktop hook payload
-was captured; nested CLI creation failed with `no thread with id`.
-Grandchild hook identity equality therefore remains **UNKNOWN**. The shaped
-fixtures test the fail-closed contract, not live managed activation.
+One live managed Codex CLI `0.155.0-alpha.9.2` probe on 2026-09-25 verified the
+exact reservation, `SubagentStart`, and bound Scanner `PreToolUse` acceptance at
+depth two. The Scanner result returned and the Focused Implementer parent
+continued. See the [durable probe evidence](codex-nested-scanner-live-20260925.md).
+This is evidence for that one CLI build and probe only. Raw Host wire-byte
+equality, other Host builds or Desktop scenarios, and native child
+`Completed`/`task-close` completion were not observed and remain **UNKNOWN**.
+The identity binding and fail-closed mechanics above are unchanged.
 
 Task-close requires the latest Controller-direct handoff's matching Start,
 Stop, and native Completed observation, with no pending or active descendants.

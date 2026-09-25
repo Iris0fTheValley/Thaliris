@@ -178,8 +178,7 @@ SubagentStart consumes the unique reservation and binds the Scanner's own
 identity. One live managed Codex CLI `0.155.0-alpha.9.2` probe on 2026-09-25
 verified the exact reservation, SubagentStart, and bound Scanner PreToolUse
 acceptance at depth two. The Scanner result returned and the Focused
-Implementer parent continued. See the [durable probe evidence]
-(`docs/codex-nested-scanner-live-20260925.md`).
+Implementer parent continued. [nested Scanner live probe](docs/codex-nested-scanner-live-20260925.md)
 This is evidence for that one CLI build and probe only. Raw Host wire-byte
 equality, other Host builds or Desktop scenarios, and native child
 `Completed`/`task-close` completion were not observed and remain UNKNOWN.

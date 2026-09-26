@@ -275,11 +275,15 @@ The stable Host
 trampoline checks only the activation marker before dispatching into the
 current executable; an inactive repository skips Thaliris Python and state
 access. A registration on disk does not prove the current session loaded it.
-SessionStart's role filename snapshot is disk presence evidence only. Without
-a Host-native catalog signal, catalog status remains
-`HOST_ROLE_CATALOG_UNKNOWN`; if a new role filename appears after the startup
-snapshot, admission fails closed with `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`.
-Existing catalogued profile content updates by filename do not imply a restart.
+SessionStart records the filenames and SHA-256 digests of Thaliris-owned role
+profile bytes visible in the project and user Host directories. These are disk
+observations only. Without a Host-native catalog signal,
+`host_runtime_profile_status` remains `UNKNOWN`: a new role filename after the
+startup snapshot fails closed with `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`, and
+changed bytes under an existing filename report
+`PROFILE_BYTES_CHANGED_SINCE_SESSION_START`. Unchanged bytes do not verify Host
+runtime contents. These comparisons do not establish restart or hot-reload
+behavior.
 If neither trusted
 direct route is available, report bootstrap unavailable and do not continue.
 If all facts are present, read `.agent-memory/INDEX.md` and

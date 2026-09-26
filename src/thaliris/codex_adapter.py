@@ -770,11 +770,15 @@ The stable Host
 trampoline checks only the activation marker before dispatching into the
 current executable; an inactive repository skips Thaliris Python and state
 access. A registration on disk does not prove the current session loaded it.
-SessionStart's role filename snapshot is disk presence evidence only. Without
-a Host-native catalog signal, catalog status remains
-`HOST_ROLE_CATALOG_UNKNOWN`; if a new role filename appears after the startup
-snapshot, admission fails closed with `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`.
-Existing catalogued profile content updates by filename do not imply a restart.
+SessionStart records the filenames and SHA-256 digests of Thaliris-owned role
+profile bytes visible in the project and user Host directories. These are disk
+observations only. Without a Host-native catalog signal,
+`host_runtime_profile_status` remains `UNKNOWN`: a new role filename after the
+startup snapshot fails closed with `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`, and
+changed bytes under an existing filename report
+`PROFILE_BYTES_CHANGED_SINCE_SESSION_START`. Unchanged bytes do not verify Host
+runtime contents. These comparisons do not establish restart or hot-reload
+behavior.
 If neither trusted
 direct route is available, report bootstrap unavailable and do not continue.
 If all facts are present, read `.agent-memory/INDEX.md` and
@@ -1899,7 +1903,9 @@ def task_start(
     if hook_attestation is not None:
         catalog_status = lifecycle.role_catalog_session_status(root, session_hash)
         if catalog_status == "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE":
-            return {"ok": False, "status": catalog_status, "new_role_profile_files": lifecycle.new_role_profile_files(root, session_hash), "host_instruction_activation": "UNKNOWN"}
+            return {"ok": False, "status": catalog_status, "new_role_profile_files": lifecycle.new_role_profile_files(root, session_hash), "host_runtime_profile_status": "UNKNOWN", "host_instruction_activation": "UNKNOWN"}
+        if catalog_status == lifecycle.PROFILE_BYTES_CHANGED_SINCE_SESSION_START:
+            return {"ok": False, "status": catalog_status, "changed_role_profile_files": lifecycle.changed_role_profile_files(root, session_hash), "host_runtime_profile_status": "UNKNOWN", "host_instruction_activation": "UNKNOWN"}
     mode = selected_continuation_mode(root)
     readiness = {
         "status": "PASS" if mode in {"EVENT_DRIVEN", "BLOCKING_WAIT"} else "MANAGED_CONTINUATION_UNAVAILABLE",
@@ -1910,7 +1916,7 @@ def task_start(
     if mode == "UNAVAILABLE":
         return {"ok": False, "status": "MANAGED_CONTINUATION_UNAVAILABLE", "managed_readiness": readiness}
     result = core.task_start(root, goal, milestone, input_file, actor="controller")
-    result["managed_readiness"] = {**readiness, **_activation_fields(root), "CONTROLLER_ACTIVATION_BRIDGE_ACTIVE": "YES" if hook_attestation is not None else "NOT_APPLICABLE", "HOST_INSTRUCTION_ACTIVE": "UNKNOWN", "controller_activation_bridge": "ACTIVE" if hook_attestation is not None else "NOT_APPLICABLE", "host_instruction_activation": "UNKNOWN", "role_catalog_session_status": catalog_status if hook_attestation is not None else "NOT_APPLICABLE"}
+    result["managed_readiness"] = {**readiness, **_activation_fields(root), "CONTROLLER_ACTIVATION_BRIDGE_ACTIVE": "YES" if hook_attestation is not None else "NOT_APPLICABLE", "HOST_INSTRUCTION_ACTIVE": "UNKNOWN", "controller_activation_bridge": "ACTIVE" if hook_attestation is not None else "NOT_APPLICABLE", "host_instruction_activation": "UNKNOWN", "role_catalog_session_status": catalog_status if hook_attestation is not None else "NOT_APPLICABLE", "host_runtime_profile_status": "UNKNOWN"}
     return result
 
 

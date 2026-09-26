@@ -95,13 +95,16 @@ does not install project lifecycle hooks or project-local native roles. It retur
 never task-starts or retries initialization. A trusted executable that lacks
 the current managed hook ABI, adapter protocol, or valid Controller bridge,
 or emits the obsolete `session_restart_required` field, returns
-`EXECUTABLE_PROTOCOL_SKEW`. SessionStart records role filenames as disk
-presence only, not as Host catalog evidence. Without a native Host catalog
-signal, readiness reports `HOST_ROLE_CATALOG_UNKNOWN`; a profile filename
-added after the startup snapshot fails closed with
-`NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`. Updating the content of an existing
-filename does not imply a restart. Host registration files on disk do not prove
-that a current session loaded them. `task-start`
+`EXECUTABLE_PROTOCOL_SKEW`. SessionStart records filenames and SHA-256 digests
+for Thaliris-owned role profile bytes visible in the project and user Host
+directories. These disk observations do not establish Host catalog contents.
+Without a native Host signal, `host_runtime_profile_status` remains `UNKNOWN`.
+A profile filename added after the startup snapshot fails closed with
+`NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`; changed bytes under an existing
+filename report `PROFILE_BYTES_CHANGED_SINCE_SESSION_START`. Unchanged bytes do
+not verify Host runtime contents, and the comparison does not establish restart
+or hot-reload behavior. Host registration files on disk do not prove that a
+current session loaded them. `task-start`
 then requires the exact Controller bridge SHA-256 and a one-shot current-ABI
 hook bearer attestation. A successful direct `init` supplies it through the
 same Host result's `PostToolUse` callback; `PreToolUse` remains a fallback. The

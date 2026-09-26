@@ -127,8 +127,10 @@ _START_ATTESTATION_TTL_NS = 120 * 1_000_000_000
 HOST_ROLE_CATALOG_OBSERVED = "HOST_ROLE_CATALOG_OBSERVED"
 HOST_ROLE_CATALOG_UNKNOWN = "HOST_ROLE_CATALOG_UNKNOWN"
 NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE = "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE"
+PROFILE_BYTES_CHANGED_SINCE_SESSION_START = "PROFILE_BYTES_CHANGED_SINCE_SESSION_START"
 _PROFILE_FILES_PRESENT_AT_SESSION_START = "profile_files_present_at_session_start"
 _HOST_ROLE_CATALOG_STATUS = "host_role_catalog_status"
+_HOST_RUNTIME_PROFILE_STATUS = "host_runtime_profile_status"
 def hook_spec() -> dict[str, Any]:
     """Return the exact managed hooks fragment; callers merge it conservatively."""
     hooks: dict[str, list[dict[str, Any]]] = {}
@@ -889,24 +891,29 @@ def _host_role_profile_dir() -> Path:
 
 
 def _profile_files_present_at_session_start(root: Path) -> dict[str, dict[str, object]]:
-    """Capture known Thaliris profile files in both relevant directories."""
+    """Capture names and byte digests for known Thaliris role profiles."""
     project_dir = root / ".codex" / "agents"
     host_dir = _host_role_profile_dir()
+
+    def snapshot(directory: Path, *, recorded_directory: str | None = None) -> dict[str, object]:
+        files: dict[str, str | None] = {}
+        for name in roles.agent_profiles():
+            path = directory / name
+            try:
+                if path.is_file():
+                    try:
+                        files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+                    except OSError:
+                        # Preserve the observed filename while making the
+                        # missing byte evidence explicit for later comparison.
+                        files[name] = None
+            except OSError:
+                continue
+        return {"directory": recorded_directory or str(directory), "files": files}
+
     return {
-        "project": {
-            "directory": ".codex/agents",
-            "files": sorted(
-                name for name in roles.agent_profiles()
-                if (project_dir / name).is_file()
-            ),
-        },
-        "user_host": {
-            "directory": str(host_dir),
-            "files": sorted(
-                name for name in roles.agent_profiles()
-                if (host_dir / name).is_file()
-            ),
-        },
+        "project": snapshot(project_dir, recorded_directory=".codex/agents"),
+        "user_host": snapshot(host_dir),
     }
 
 
@@ -921,15 +928,16 @@ def _record_session_start(root: Path, payload: dict[str, Any]) -> None:
         if payload.get("source") == "startup":
             state["session_start_at_ns"] = time.time_ns()
             state["session_start_monotonic_ns"] = time.monotonic_ns()
-            # This is deliberately a file-presence snapshot.  Neither the
-            # project nor user Host role directory establishes what the Host
-            # loaded into its native role catalog.
+            # These name and byte-digest observations describe disk only.
+            # They do not establish what the Host loaded into its native role
+            # catalog or whether the Host runtime profile bytes are active.
             state.pop("native_role_profile_names_at_start", None)
             state[_PROFILE_FILES_PRESENT_AT_SESSION_START] = _profile_files_present_at_session_start(root)
             # No current Codex SessionStart payload carries native role
             # catalog evidence.  Keep the field explicit so a later Host
             # contract can populate it without reinterpreting disk state.
             state[_HOST_ROLE_CATALOG_STATUS] = HOST_ROLE_CATALOG_UNKNOWN
+            state[_HOST_RUNTIME_PROFILE_STATUS] = "UNKNOWN"
         _write_capture(path, state)
 
 
@@ -2223,12 +2231,7 @@ def _post_init_attestation(root: Path, payload: dict[str, Any], managed_hook_abi
     return _issue_task_start_attestation(root, payload, managed_hook_abi, controller_bridge_sha256, event="PostToolUse")
 
 
-def new_role_profile_files(root: Path, session_hash: str) -> list[str] | None:
-    """Compare current disk role filenames with this session's disk snapshot.
-
-    The result is a file-presence observation.  It is never a native Host
-    role-catalog observation.
-    """
+def _session_role_profile_snapshot(root: Path, session_hash: str) -> tuple[dict[str, str | None], str, dict[str, str | None]] | None:
     try:
         runtime = json.loads((root / ".context" / "audit" / session_hash[:24] / "runtime.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
@@ -2253,27 +2256,75 @@ def new_role_profile_files(root: Path, session_hash: str) -> list[str] | None:
     host_files = user_host.get("files")
     if (
         project_directory != ".codex/agents"
-        or not isinstance(project_files, list)
-        or not all(isinstance(name, str) for name in project_files)
+        or not isinstance(project_files, dict)
         or not isinstance(host_directory, str)
         or not host_directory
-        or not isinstance(host_files, list)
-        or not all(isinstance(name, str) for name in host_files)
+        or not isinstance(host_files, dict)
     ):
         return None
-    start_project_names = set(project_files)
-    start_host_names = set(host_files)
+    allowed_names = set(roles.agent_profiles())
+    for files in (project_files, host_files):
+        if any(
+            not isinstance(name, str)
+            or name not in allowed_names
+            or (digest is not None and (not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None))
+            for name, digest in files.items()
+        ):
+            return None
+    return project_files, host_directory, host_files
+
+
+def new_role_profile_files(root: Path, session_hash: str) -> list[str] | None:
+    """Find known role-profile filenames absent from this session's disk snapshot."""
+    snapshot = _session_role_profile_snapshot(root, session_hash)
+    if snapshot is None:
+        return None
+    project_files, host_directory, host_files = snapshot
     current_project_dir = root / ".codex" / "agents"
     current_host_dir = Path(host_directory)
     added = [
         f".codex/agents/{name}" for name in roles.agent_profiles()
-        if (current_project_dir / name).is_file() and name not in start_project_names
+        if (current_project_dir / name).is_file() and name not in project_files
     ]
     added.extend(
         str(current_host_dir / name) for name in roles.agent_profiles()
-        if (current_host_dir / name).is_file() and name not in start_host_names
+        if (current_host_dir / name).is_file() and name not in host_files
     )
     return sorted(added)
+
+
+def changed_role_profile_files(root: Path, session_hash: str) -> list[str] | None:
+    """Find existing known role-profile filenames whose bytes changed since SessionStart.
+
+    Missing or unreadable hash evidence remains UNKNOWN.  A byte comparison is
+    a disk observation and cannot prove what a Host runtime currently uses.
+    """
+    snapshot = _session_role_profile_snapshot(root, session_hash)
+    if snapshot is None:
+        return None
+    project_files, host_directory, host_files = snapshot
+    current_directories = {
+        "project": (root / ".codex" / "agents", project_files),
+        "user_host": (Path(host_directory), host_files),
+    }
+    changed: list[str] = []
+    unknown = False
+    for label, (directory, expected_files) in current_directories.items():
+        for name, expected_digest in expected_files.items():
+            path = directory / name
+            try:
+                if not path.is_file():
+                    continue
+                if expected_digest is None:
+                    unknown = True
+                    continue
+                current_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                unknown = True
+                continue
+            if current_digest != expected_digest:
+                changed.append(f".codex/agents/{name}" if label == "project" else str(path))
+    return sorted(changed) if changed else (None if unknown else [])
 
 
 def role_catalog_session_status(root: Path, session_hash: str) -> str:
@@ -2282,9 +2333,12 @@ def role_catalog_session_status(root: Path, session_hash: str) -> str:
         return HOST_ROLE_CATALOG_UNKNOWN
     if added:
         return NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE
+    changed = changed_role_profile_files(root, session_hash)
+    if changed:
+        return PROFILE_BYTES_CHANGED_SINCE_SESSION_START
     # The current hook payload has no authenticated native Host catalog
-    # observation.  In particular, a writable audit field cannot promote the
-    # file-presence result to OBSERVED.
+    # observation.  Unchanged disk bytes and writable audit fields cannot
+    # promote the result to a verified Host runtime profile status.
     return HOST_ROLE_CATALOG_UNKNOWN
 
 

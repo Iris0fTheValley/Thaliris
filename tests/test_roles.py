@@ -239,6 +239,52 @@ def test_1f98dae_profiles_migrate_by_exact_filename_and_preserve_edits(tmp_path:
         assert f"agents/{name}" not in result["files"]
 
 
+def test_b218783_global_profiles_migrate_by_exact_filename_and_preserve_edits(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    # These four bytes are rendered by the immutable b218783 revision and were
+    # independently confirmed as uncustomized global Host profiles.
+    expected = {
+        "thaliris-focused-implementer-astra-medium.toml": "e22136925d2bcaed111c687c47a8de1464014427a6c8bbed7e1021076bd20d8a",
+        "thaliris-focused-implementer-xhigh.toml": "1f4311da03a5ee0185253156c3510ed3c2855f0a8091a4699a80b1ebe7b9ca9a",
+        "thaliris-focused-implementer.toml": "a929ec5bbbb748a880a95fea40aec4de05b225269e70473937c9deee3411608a",
+        "thaliris-reviewer.toml": "4b1593d4269bccd7e86da5fabaa129f9da431302e072469e60f273abb36a05a0",
+    }
+    assert codex_adapter._B218783_GENERATED_AGENT_PROFILE_HASHES == expected
+    assert {
+        name: digest
+        for name, digest in expected.items()
+        if digest in codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES[name]
+    } == expected
+
+    historical: dict[str, bytes] = {}
+    for name, digest in expected.items():
+        value = _historical_profile("b218783", name)
+        assert hashlib.sha256(value).hexdigest() == digest
+        assert codex_adapter._agent_profile_state(value, name) == "legacy"
+        assert codex_adapter._agent_profile_state(value + b"\nuser edit\n", name) == "user"
+        other = "thaliris-reviewer.toml" if name != "thaliris-reviewer.toml" else "thaliris-focused-implementer.toml"
+        assert codex_adapter._agent_profile_state(value, other) == "user"
+        historical[name] = value
+
+    host_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(host_home))
+    root = _initialized_repo(tmp_path)
+    agents = host_home / "agents"
+    agents.mkdir(parents=True)
+    for name, value in historical.items():
+        (agents / name).write_bytes(value)
+    edited_name = "thaliris-focused-implementer-xhigh.toml"
+    edited = historical[edited_name] + b"\nuser edit\n"
+    (agents / edited_name).write_bytes(edited)
+
+    result = codex_adapter.codex_install()
+
+    assert (agents / edited_name).read_bytes() == edited
+    assert str(agents / edited_name) in result["manual_action_required"]
+    for name in set(expected) - {edited_name}:
+        assert codex_adapter._agent_profile_state((agents / name).read_bytes(), name) == "current"
+        assert f"agents/{name}" in result["files"]
+
+
 def test_child_communication_and_slice_routing_contract_is_shared() -> None:
     communication = (
         "ordinary progress, heartbeat, or partial-completion messages",

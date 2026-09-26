@@ -119,6 +119,22 @@ for _profile_name, _profile_hash in _1F98DAE_GENERATED_AGENT_PROFILE_HASHES.item
         _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
         | frozenset({_profile_hash})
     )
+# Exact SHA-256 identities of the four global profiles rendered by the
+# immutable b218783 adapter/registry revision. These hashes were independently
+# compared with the effective CODEX_HOME files and found to have no user
+# customization. They are historical generated ownership evidence, never a
+# claim made by the current renderer, and remain keyed by exact profile name.
+_B218783_GENERATED_AGENT_PROFILE_HASHES = {
+    "thaliris-focused-implementer-astra-medium.toml": "e22136925d2bcaed111c687c47a8de1464014427a6c8bbed7e1021076bd20d8a",
+    "thaliris-focused-implementer-xhigh.toml": "1f4311da03a5ee0185253156c3510ed3c2855f0a8091a4699a80b1ebe7b9ca9a",
+    "thaliris-focused-implementer.toml": "a929ec5bbbb748a880a95fea40aec4de05b225269e70473937c9deee3411608a",
+    "thaliris-reviewer.toml": "4b1593d4269bccd7e86da5fabaa129f9da431302e072469e60f273abb36a05a0",
+}
+for _profile_name, _profile_hash in _B218783_GENERATED_AGENT_PROFILE_HASHES.items():
+    _KNOWN_GENERATED_AGENT_PROFILE_HASHES[_profile_name] = (
+        _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
+        | frozenset({_profile_hash})
+    )
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     # 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31, blob 7dfd7ab321c4ec1f1c32bd02b1d87f1b88d2aef7.
     "0a51833bf936b14053c08a6502a6a1d27ecd1518263e7eea5c4e43f53fa1c5f1",

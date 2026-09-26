@@ -47,9 +47,13 @@ high-difficulty semantic closure is complete, Focused reports the deterministic
 patch, test, format, documentation, and residual-reference tail to the
 Controller. The Controller owns closure of the Focused slice and may authorize
 a fresh standard Luna Implementer handoff for that deterministic tail. Model
-choice follows the current slice difficulty, not the parent task. A Scanner
-batches a few searches and reads, returns compact facts, and ends once the
-handoff has enough evidence.
+choice follows the current slice difficulty, not the parent task. Small,
+bounded modifications with a confirmed direction and no complex semantic
+uncertainty, including lifecycle or admission work, use the standard Luna
+Implementer. Do not select Focused Implementer from the parent task or topic;
+use Focused Implementer on Sol only when the current slice itself requires
+high-difficulty reasoning. A Scanner batches a few searches and reads, returns
+compact facts, and ends once the handoff has enough evidence.
 
 The ACTIVE root Controller uses only bounded control-plane commands and
 explicit retrieval. Execution, mutation, and testing belong to fresh
@@ -98,10 +102,11 @@ added after the startup snapshot fails closed with
 `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`. Updating the content of an existing
 filename does not imply a restart. Host registration files on disk do not prove
 that a current session loaded them. `task-start`
-then requires the exact Controller bridge SHA-256 and a one-shot
-current-ABI `PreToolUse` bearer attestation. The token embeds a hash of the
-hook payload's session id, and the adapter checks that hash, bridge digest, hook
-ABI, expiry, and one-time local record. This is an adapter-side hook-path check
+then requires the exact Controller bridge SHA-256 and a one-shot current-ABI
+hook bearer attestation. A successful direct `init` supplies it through the
+same Host result's `PostToolUse` callback; `PreToolUse` remains a fallback. The
+token embeds a hash of the hook payload's session id, and the adapter checks
+that hash, bridge digest, hook ABI, expiry, and one-time local record. This is an adapter-side hook-path check
 inside the selected same-Windows-user local trust boundary; it does not
 authenticate Host provenance, and another local process under that user could
 replay the bearer while it remains valid. A missing or mismatched bridge or

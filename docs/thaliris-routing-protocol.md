@@ -91,10 +91,13 @@ model/effort overrides are denied. Role sessions cannot choose their own
 model/effort. Reasoning Specialist reframes ill-defined
 problems; normal design and implementation belong to the Executors.
 Choose the model per handoff and semantic slice difficulty. Deterministic
-documentation, test, configuration, or reference cleanup and small defined
-implementations default to standard Implementer on Luna, even within a large
-project. Use Focused Implementer on Sol only when the current slice itself
-requires complex lifecycle, ownership, compatibility, or multi-option reasoning.
+documentation, test, configuration, or reference cleanup and small, bounded
+modifications with a confirmed direction and no complex semantic uncertainty
+default to standard Implementer on Luna, including lifecycle or admission work
+and slices inside a large project. Do not select Focused Implementer from the
+parent task or topic. Use Focused Implementer on Sol only when the current
+slice itself requires high-difficulty reasoning about lifecycle, ownership,
+compatibility, or multiple plausible implementations.
 Use Reasoning Specialist on Sol only when problem framing or slice decomposition
 is unclear; it does not implement. Astra is an escalation for an already small,
 unusually demanding slice or an evidenced Sol failure. Astra medium is the
@@ -140,13 +143,14 @@ Text outside the span remains byte-for-byte intact, and damaged, duplicate, or
 conflicting Thaliris markers require manual resolution. A newly saved global
 instruction does not prove what the current session loaded.
 
-The `task-start` bridge also requires a one-shot PreToolUse bearer attestation
-from the loaded current-ABI hook. The token embeds a hash of the hook payload's
-session id; the adapter checks that hash, bridge digest, hook ABI, expiry, and
-one-time local record. This is an adapter-side hook-path check inside the
-selected same-Windows-user local trust boundary. It does not authenticate Host
-provenance, and another local process under that user could replay the bearer
-while it remains valid.
+The `task-start` bridge also requires a one-shot bearer attestation from the
+loaded current-ABI hook. A successful direct `init` delivers the proof through
+its PostToolUse callback; PreToolUse remains a fallback. The token embeds a
+hash of the hook payload's session id; the adapter checks that hash, bridge
+digest, hook ABI, expiry, and one-time local record. This is an adapter-side
+hook-path check inside the selected same-Windows-user local trust boundary.
+It does not authenticate Host provenance, and another local process under that
+user could replay the bearer while it remains valid.
 
 The scoped live sequence is recorded in the [admission proof probe report](codex-admission-live-20260926.md).
 

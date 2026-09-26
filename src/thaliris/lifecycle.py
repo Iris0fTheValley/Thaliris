@@ -817,6 +817,8 @@ def handle_hook(root: Path, event: str, payload: object, managed_hook_abi: str |
                     _best_effort_record(_record_delegation_telemetry, root, payload)
             if isinstance(tool, str) and _tool_basename(tool) in _OBSERVED_EXECUTION_TOOL_NAMES:
                 _best_effort_record(_record_execution_observation, root, payload)
+            if isinstance(tool, str) and _tool_basename(tool) == "Bash":
+                return _post_init_attestation(root, payload, managed_hook_abi, controller_bridge_sha256)
             return ""
         # Stop has no production policy role. It neither invokes a model nor
         # blocks or corrects the Controller.
@@ -2179,6 +2181,48 @@ def _start_attestation_path(root: Path, session_hash: str) -> Path:
     return root / ".context" / "audit" / "task-start-attestations" / f"{session_hash}.json"
 
 
+def _direct_init_call(root: Path, payload: dict[str, Any]) -> bool:
+    """Recognize only a direct init of this worktree in the Host's Bash input."""
+    command = _bash_command(payload)
+    if command is None:
+        return False
+    separator_check = command.lstrip()
+    if separator_check.startswith("&") and len(separator_check) > 1 and separator_check[1].isspace():
+        separator_check = separator_check[1:].lstrip()
+    if _COMMAND_SEPARATOR.search(separator_check):
+        return False
+    arguments = _context_arguments(command)
+    if arguments is None:
+        return False
+    try:
+        tokens = [token.strip("\"'") for token in shlex.split(arguments, posix=False)]
+    except ValueError:
+        return False
+    index = 0
+    if index < len(tokens) and tokens[index] == "--root":
+        if index + 1 >= len(tokens) or not tokens[index + 1]:
+            return False
+        target = Path(tokens[index + 1])
+        cwd = payload.get("cwd")
+        base = Path(cwd) if isinstance(cwd, str) and cwd else root
+        if not target.is_absolute():
+            target = base / target
+        if target.resolve(strict=False) != root.resolve(strict=False):
+            return False
+        index += 2
+    return tokens[index:] == ["init"]
+
+
+def _post_init_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None, controller_bridge_sha256: str | None) -> str:
+    """Deliver the admission proof in the successful init callback itself."""
+    if managed_task_state(root)[0] != "NO_TASK" or not _direct_init_call(root, payload):
+        return ""
+    response = _post_tool_response(payload)
+    if response is None or not _post_tool_succeeded(response) or _execution_outcome(response) == "FAILED":
+        return ""
+    return _issue_task_start_attestation(root, payload, managed_hook_abi, controller_bridge_sha256, event="PostToolUse")
+
+
 def new_role_profile_files(root: Path, session_hash: str) -> list[str] | None:
     """Compare current disk role filenames with this session's disk snapshot.
 
@@ -2244,11 +2288,12 @@ def role_catalog_session_status(root: Path, session_hash: str) -> str:
     return HOST_ROLE_CATALOG_UNKNOWN
 
 
-def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None = None, controller_bridge_sha256: str | None = None) -> str:
+def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None = None, controller_bridge_sha256: str | None = None, *, event: str = "PreToolUse") -> str:
     session_hash = _session_id_hash(payload)
     marker = root / ".codex" / "thaliris.json"
     if (
-        session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI
+        event not in {"PreToolUse", "PostToolUse"}
+        or session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI
         or not isinstance(controller_bridge_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", controller_bridge_sha256) is None
         or marker.is_symlink() or not marker.is_file()
@@ -2291,7 +2336,7 @@ def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_h
             _write_capture(path, record)
         token = record["token"]
     return json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
+        "hookEventName": event,
         "additionalContext": f"Current-session Thaliris admission proof: --hook-attestation {token}. Pass it with the Controller bridge SHA-256 returned by init or bootstrap-check when calling task-start.",
     }}, ensure_ascii=False, separators=(",", ":"))
 

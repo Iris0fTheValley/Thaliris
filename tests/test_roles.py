@@ -104,6 +104,11 @@ def test_profile_defaults_and_static_astra_selection_are_fixed() -> None:
             assert "Work only within the assigned semantic slice" in value["developer_instructions"]
             assert "return a decision-changing unknown instead of changing them" in value["developer_instructions"]
             assert "its commit reference, and verification evidence" in value["developer_instructions"]
+            normalized = " ".join(value["developer_instructions"].lower().split())
+            assert "small, bounded modifications with a confirmed direction and no complex semantic uncertainty" in normalized
+            assert "including lifecycle or admission work" in normalized
+            assert "do not select focused implementer from the parent task or topic" in normalized
+            assert "current slice itself requires high-difficulty reasoning" in normalized
     for role in ("focused-implementer", "reasoning-specialist"):
         for effort, suffix in (("medium", "astra-medium"), ("xhigh", "xhigh")):
             name = f"thaliris-{role}-{suffix}.toml"
@@ -243,9 +248,9 @@ def test_child_communication_and_slice_routing_contract_is_shared() -> None:
     )
     routing = (
         "per handoff and semantic slice difficulty",
-        "Deterministic documentation, test, configuration, or reference cleanup and small defined implementations default",
+        "Deterministic documentation, test, configuration, or reference cleanup and small, bounded modifications with a confirmed direction and no complex semantic uncertainty default",
         "current slice",
-        "multi-option reasoning",
+        "multiple plausible implementations",
         "batches a few searches and reads",
         "high-difficulty semantic closure",
         "deterministic patch, test, format, documentation, and residual-reference tail to the Controller",
@@ -304,10 +309,21 @@ def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence()
         instructions = roles.get_role(role).instructions.lower()
         assert all(phrase in instructions for phrase in required), role
 
-    rendered = codex_adapter.render_role_packs().lower()
+    rendered = " ".join(codex_adapter.render_role_packs().lower().split())
     assert all(phrase in rendered for phrase in required)
     assert "deterministic documentation, test, configuration, or reference cleanup" in rendered
     assert "default to standard implementer on luna" in rendered
+    assert "small, bounded modifications with a confirmed direction and no complex semantic uncertainty" in rendered
+    assert "including lifecycle or admission work" in rendered
+    assert "do not select focused implementer from the parent task or topic" in rendered
+    assert "current slice itself requires high-difficulty reasoning" in rendered
+
+    for role in ("implementer", "focused-implementer"):
+        instructions = roles.get_role(role).instructions.lower()
+        assert "small, bounded modifications with a confirmed direction and no complex semantic uncertainty" in instructions
+        assert "including lifecycle or admission work" in instructions
+        assert "do not select focused implementer from the parent task or topic" in instructions
+        assert "current slice itself requires high-difficulty reasoning" in instructions
 
 
 def test_exact_phase_two_profile_bytes_are_recognized_only_for_own_role() -> None:
@@ -601,3 +617,9 @@ def test_knowledge_maintenance_and_formal_docs_stay_in_instruction_sources() -> 
     assert "formal project documentation" in focused
     assert "semantic drift" in reviewer
     assert "semantic drift" in packs
+    for rendered in (managed, packs):
+        normalized = " ".join(rendered.lower().split())
+        assert "small, bounded modifications with a confirmed direction and no complex semantic uncertainty" in normalized
+        assert "including lifecycle or admission work" in normalized
+        assert "do not select focused implementer from the parent task or topic" in normalized
+        assert "current slice itself requires high-difficulty reasoning" in normalized

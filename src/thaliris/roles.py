@@ -142,7 +142,10 @@ _SHARED_INSTRUCTIONS = (
     "alone is not a Reasoning Specialist trigger. For a broad task whose semantic slice is "
     "unclear, the Controller first selects the standard Luna Investigator to establish facts "
     "and coupling. Model choice follows the difficulty of the current semantic slice, not "
-    "the parent task. "
+    "the parent task. Small, bounded modifications with a confirmed direction and no complex "
+    "semantic uncertainty, including lifecycle or admission work, use the standard Luna "
+    "Implementer. Do not select Focused Implementer from the parent task or topic; use Focused "
+    "Implementer on Sol only when the current slice itself requires high-difficulty reasoning. "
 )
 
 _EXECUTOR_INSTRUCTIONS = (

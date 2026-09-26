@@ -207,7 +207,7 @@ def test_routing_guidance_permits_the_bounded_implementer_only_path() -> None:
     assert "Curator and Reasoning Specialist are optional" in protocol
     assert "For divisible work, the Controller chooses bounded semantic slices" in protocol
     assert "not by token, file, or task-count thresholds" in normalized_protocol
-    assert "Deterministic documentation, test, configuration, or reference cleanup and small defined implementations default to standard Implementer on Luna" in normalized_protocol
+    assert "Deterministic documentation, test, configuration, or reference cleanup and small, bounded modifications with a confirmed direction and no complex semantic uncertainty default to standard Implementer on Luna" in normalized_protocol
     assert "already small, unusually demanding" in normalized_protocol
     assert "Decision-changing investigation belongs to\nInvestigator" in protocol
     assert "Bounded local reading\nneeded for implementation may stay inside either Executor" in protocol

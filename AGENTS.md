@@ -72,10 +72,13 @@ These fixed profiles retain the same stable role IDs; default profiles remain
 on Luna or Sol. Per-spawn model/effort overrides are denied;
 role sessions never select their own model or effort.
 Choose the model per handoff and semantic slice difficulty. Deterministic
-documentation, test, configuration, or reference cleanup and small defined
-implementations default to standard Implementer on Luna, even within a large
-project. Use Focused Implementer on Sol only when the current slice itself
-requires complex lifecycle, ownership, compatibility, or multi-option reasoning.
+documentation, test, configuration, or reference cleanup and small, bounded
+modifications with a confirmed direction and no complex semantic uncertainty
+default to standard Implementer on Luna, including lifecycle or admission work
+and slices inside a large project. Do not select Focused Implementer from the
+parent task or topic. Use Focused Implementer on Sol only when the current
+slice itself requires high-difficulty reasoning about lifecycle, ownership,
+compatibility, or multiple plausible implementations.
 Use Reasoning Specialist on Sol only when problem framing or slice decomposition
 is unclear; it does not implement. Astra is an escalation for an already small,
 unusually demanding slice or an evidenced Sol failure. Astra medium is the
@@ -202,8 +205,10 @@ Controller notice per pending batch. Obvious attempts to mutate
 Controller-owned task or lifecycle state are denied, recorded, and included in
 that aggregate notice. Reviewer independence is a
 developer-instruction plus obvious-write hook guard, not a claimed native
-read-only sandbox. Starting managed mode requires a one-shot PreToolUse bearer
-attestation issued by the loaded current-ABI hook. The token embeds a hash of
+read-only sandbox. Starting managed mode requires a one-shot bearer attestation
+issued by the loaded current-ABI hook. After a successful direct `init`, its
+PostToolUse callback supplies the proof in the same Host tool result; a later
+PreToolUse callback remains a fallback. The token embeds a hash of
 the hook payload's session id, and the adapter checks that hash, bridge digest,
 hook ABI, expiry, and one-time local record. This is an adapter-side hook-path
 check inside the selected same-Windows-user local trust boundary; it does not
@@ -260,7 +265,8 @@ JSON result.
 Read the canonical managed text and SHA-256 returned by `init` or
 `bootstrap-check`. Explicitly acknowledge that digest with
 `--controller-bridge-sha256` when calling `task-start`; the loaded current-ABI
-PreToolUse hook must issue the one-shot bearer described above. The adapter
+PostToolUse hook supplies the one-shot bearer after a successful direct `init`,
+with PreToolUse as a fallback. The adapter
 checks the token's embedded session hash and local record, but this does not
 authenticate Host provenance or prevent same-user local replay before the
 record is consumed. This is Controller activation only: CLI output does not

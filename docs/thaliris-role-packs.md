@@ -109,10 +109,13 @@ Luna Implementer handoff for that deterministic tail.
 
 The Controller chooses the model per handoff and semantic slice difficulty.
 Deterministic documentation, test, configuration, or reference cleanup and
-small defined implementations default to standard Implementer on Luna,
-including slices inside a large project. Focused Implementer on Sol handles
-only a current slice that requires complex lifecycle, ownership, compatibility,
-or multi-option reasoning.
+small, bounded modifications with a confirmed direction and no complex
+semantic uncertainty default to standard Implementer on Luna, including
+lifecycle or admission work and slices inside a large project. Do not select
+Focused Implementer from the parent task or topic. Use Focused Implementer on
+Sol only when the current slice itself requires high-difficulty reasoning
+about lifecycle, ownership, compatibility, or multiple plausible
+implementations.
 Reasoning Specialist on Sol is for unclear problem framing or slice decomposition
 and does not implement. Astra is an escalation for an already small, unusually
 demanding slice or an evidenced Sol failure; medium is the default escalation,

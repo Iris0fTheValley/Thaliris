@@ -272,11 +272,16 @@ def _project_definition_facts(root: Path) -> dict[str, str]:
     root = core._repo_root(root)
     instruction = _effective_root_instruction_path(root)
     instruction_present = "NO"
+    instruction_state = "MISSING"
+    instruction_sha256 = "UNKNOWN"
     if instruction.is_file():
         try:
             current = _read_text(instruction)
             span = _managed_span(current, instruction.name)
             if span is not None:
+                owned = _normalize_line_endings(current[span[0]:span[1]])
+                instruction_sha256 = hashlib.sha256(owned.encode("utf-8")).hexdigest()
+                instruction_state = _managed_agents_state(current).upper()
                 start, end = span
                 # Only the adapter-owned span participates in definition
                 # validity. User-owned text may use different line endings;
@@ -284,8 +289,11 @@ def _project_definition_facts(root: Path) -> dict[str, str]:
                 # canonical LF-rendered definition.
                 expected = _normalize_line_endings(render_managed()).removesuffix("\n")
                 instruction_present = "YES" if _normalize_line_endings(current[start:end]) == expected else "NO"
+                if instruction_present == "YES":
+                    instruction_state = "CURRENT"
         except (OSError, UnicodeError, ValueError):
             instruction_present = "NO"
+            instruction_state = "UNKNOWN"
     activation = _project_activation_marker_present(root)
     host_hooks = lifecycle.host_hooks_health(_codex_home())
     # Host integration is installed once in CODEX_HOME before a session.
@@ -295,6 +303,16 @@ def _project_definition_facts(root: Path) -> dict[str, str]:
     return {
         "project_definition_present": initialized,
         "instruction_definition_present": instruction_present,
+        "managed_instruction_state": instruction_state,
+        "managed_instruction_sha256": instruction_sha256,
+        "expected_managed_instruction_sha256": hashlib.sha256(
+            _normalize_line_endings(render_managed()).removesuffix("\n").encode("utf-8")
+        ).hexdigest(),
+        "managed_instruction_recovery_action": (
+            f"thaliris init --accept-managed-instruction-sha256 {instruction_sha256}"
+            if instruction_state == "USER"
+            else "thaliris init" if instruction_state == "LEGACY" else "NONE"
+        ),
         "project_activation_marker_present": activation,
         "project_local_profile_files_present": _project_local_profile_files_present(root),
         "host_profile_definition_present": _host_profile_definition_present(),
@@ -637,6 +655,17 @@ Controller-owned state mutations: direct Thaliris task/lifecycle mutations and
 obvious writes targeting `.context/state.json` or lifecycle state. Other
 tools, including unknown tool names, coordination, diagnostics, and reads,
 remain transparent. This hook behavior does not establish managed enforcement.
+An incompatible older task schema remains INVALID_STATE until the Controller
+uses the supported explicit recovery operation. Read `task-status` for the
+version, exact state SHA-256, recoverability, and recovery action. After the
+project definition is ready, `task-recover-state --expected-sha256 <exact-hash>`
+archives the original bytes before a separate, newly attested `task-start`.
+An ACTIVE old task also requires `--abandon-active`; pending or nonterminal
+child lifecycle authority blocks recovery. Never interpret an invalid state
+as an absent state or delete it by hand. If `bootstrap-check` reports an
+unrecognized managed instruction block, review its exact SHA-256 and use
+`init --accept-managed-instruction-sha256 <exact-hash>` to update only that
+marked block while retaining text outside it.
 If `task-start` was attempted but managed enforcement is unavailable or
 rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
 Codex version, host capability, task schema, git/worktree identity,
@@ -1033,7 +1062,7 @@ def _managed_span(current: str, label: str) -> tuple[int, int] | None:
     return start, end
 
 
-def _managed_agents(current: str) -> str:
+def _managed_agents(current: str, accept_managed_instruction_sha256: str | None = None) -> str:
     span = _managed_span(current, "AGENTS.md")
     if span is not None:
         start, end = span
@@ -1043,11 +1072,23 @@ def _managed_agents(current: str) -> str:
             # differs (including its line-ending convention).
             return current
         if _managed_agents_state(current) == "user":
-            return current
+            actual = hashlib.sha256(_normalize_line_endings(current[start:end]).encode("utf-8")).hexdigest()
+            if accept_managed_instruction_sha256 != actual:
+                return current
     newline = "\r\n" if "\r\n" in current else "\n"
     block = render_managed().replace("\n", newline)
-    user_text = _strip_managed_agents(current) if span is not None else current
-    return block if not user_text else block + user_text
+    if span is None:
+        return block + current
+    start, end = span
+    canonical_span = block.removesuffix(newline)
+    prefix, suffix = current[:start], current[end:]
+    if prefix and not prefix.endswith(("\n", "\r")):
+        prefix += newline
+    if not suffix:
+        suffix = newline
+    elif not suffix.startswith(("\n", "\r")):
+        suffix = newline + suffix
+    return prefix + canonical_span + suffix
 
 
 def _managed_agents_state(current: str) -> str:
@@ -1090,7 +1131,11 @@ def _audit_ignore(current: str, *, remove: bool = False) -> str:
     return current[:start] + suffix
 
 
-def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
+def _install_plan(
+    root: Path,
+    *,
+    accept_managed_instruction_sha256: str | None = None,
+) -> tuple[dict[str, bytes], list[str]]:
     """Plan Codex-owned files without taking a second lock or backup."""
     root = core._repo_root(root)
     codex_config = _codex_config()
@@ -1104,9 +1149,24 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
     writes: dict[str, bytes] = {}
     manual: list[str] = []
     current_agents = _read_text(target_agents) if target_agents.is_file() else ""
-    if _managed_agents_state(current_agents) == "user":
+    current_agents_state = _managed_agents_state(current_agents)
+    current_span = _managed_span(current_agents, target_agents.name)
+    current_span_sha256 = (
+        hashlib.sha256(_normalize_line_endings(current_agents[current_span[0]:current_span[1]]).encode("utf-8")).hexdigest()
+        if current_span is not None else None
+    )
+    accepted_current_block = (
+        current_agents_state == "user"
+        and isinstance(accept_managed_instruction_sha256, str)
+        and re.fullmatch(r"[0-9a-f]{64}", accept_managed_instruction_sha256)
+        and accept_managed_instruction_sha256 == current_span_sha256
+    )
+    if current_agents_state == "user" and not accepted_current_block:
         manual.append(target_agents.relative_to(root).as_posix())
-    rendered_agents = _managed_agents(current_agents)
+    rendered_agents = _managed_agents(
+        current_agents,
+        accept_managed_instruction_sha256=(current_span_sha256 if accepted_current_block else None),
+    )
     if current_agents != rendered_agents:
         writes[target_agents.relative_to(root).as_posix()] = rendered_agents.encode("utf-8")
     # If an override became active after an earlier install, remove only our
@@ -1183,7 +1243,11 @@ def _install_plan(root: Path) -> tuple[dict[str, bytes], list[str]]:
     return writes, manual
 
 
-def init(root: Path) -> dict[str, object]:
+def init(
+    root: Path,
+    *,
+    accept_managed_instruction_sha256: str | None = None,
+) -> dict[str, object]:
     resolved = core._repo_root(root)
     for instruction in _root_instruction_candidates(resolved):
         if instruction.is_file():
@@ -1193,7 +1257,10 @@ def init(root: Path) -> dict[str, object]:
         _audit_ignore(_read_text(ignore))
     root = core._repo_root(root)
     generic_files, generic_manual = core._init_plan(root)
-    adapter_files, adapter_manual = _install_plan(root)
+    adapter_files, adapter_manual = _install_plan(
+        root,
+        accept_managed_instruction_sha256=accept_managed_instruction_sha256,
+    )
     # Both layers contribute ignored private paths. Compose the adapter's
     # addition over the Core-rendered .gitignore before the single mutation.
     if ".gitignore" in generic_files:
@@ -1208,7 +1275,13 @@ def init(root: Path) -> dict[str, object]:
     with core._lock(root):
         backup = core._apply_with_backup(root, files, [], "init") if files else None
         hooks = lifecycle.hooks_health(root)
-    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "instruction_definition_changed": instruction_changed, "hook_definition_changed": False, "project_activation_marker_changed": ".codex/thaliris.json" in files, "agent_profile_changed": profile_changed, "new_role_profile_files": new_profile_names, "role_catalog_changed": bool(new_profile_names), "hook_re_attestation_required": False, "managed_hook_abi": lifecycle.MANAGED_HOOK_ABI, "executable_adapter_protocol_version": lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": False, "hook_trust_required": False, "host_wait_mode": host_wait_mode(), **_project_definition_facts(root), **_activation_fields(root), **_controller_bridge()}
+    facts = _project_definition_facts(root)
+    definition_recovery_status = (
+        "READY" if facts["project_definition_present"] == "YES"
+        else "EXPLICIT_CONFIRMATION_REQUIRED" if any(item in manual for item in ("AGENTS.md", "AGENTS.override.md"))
+        else "INIT_REQUIRED"
+    )
+    return {"ok": True, "changed": bool(files), "backup": backup, "files": sorted(files), "manual_action_required": manual, "definition_recovery_status": definition_recovery_status, "instruction_definition_changed": instruction_changed, "hook_definition_changed": False, "project_activation_marker_changed": ".codex/thaliris.json" in files, "agent_profile_changed": profile_changed, "new_role_profile_files": new_profile_names, "role_catalog_changed": bool(new_profile_names), "hook_re_attestation_required": False, "managed_hook_abi": lifecycle.MANAGED_HOOK_ABI, "executable_adapter_protocol_version": lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION, "canonical_executable_available": hooks["canonical_executable_available"], "canonical_executable_identity": hooks["canonical_executable_identity"], "session_restart_required": False, "hook_trust_required": False, "host_wait_mode": host_wait_mode(), **facts, **_activation_fields(root), **_controller_bridge()}
 
 
 def _codex_home(codex_home: Path | None = None) -> Path:
@@ -1805,6 +1878,14 @@ def task_start(
             "status": "BOOTSTRAP_REQUIRED",
             "bootstrap": bootstrap,
         }
+    # Diagnose an existing incompatible ledger before consuming a one-shot
+    # Host attestation. Core still validates it again under the task-start lock.
+    try:
+        core._load_state(root)
+    except core.TaskStateSchemaIncompatible as exc:
+        return task_state_schema_error(root, exc)
+    except ValueError:
+        pass
     executable = lifecycle.managed_executable_health()
     # A missing trusted executable is an independent fail-closed bootstrap
     # fact. It is not represented by durable restart state.
@@ -1847,6 +1928,182 @@ def task_start(
     return result
 
 
+def task_state_schema_error(root: Path, error: core.TaskStateSchemaIncompatible) -> dict[str, object]:
+    """Add lifecycle recoverability without exposing the archived task ID."""
+    result = dict(error.diagnostic)
+    if result.get("recoverable") is True:
+        result["recovery_action"] = (
+            f"{result['recovery_action']} --controller-bridge-sha256 <current-bridge-sha256>"
+        )
+    if result.get("recoverable") is True and error.task_id is not None:
+        blocker = lifecycle.task_state_recovery_blocker(core._repo_root(root), error.task_id)
+        if blocker is not None:
+            result["recoverable"] = False
+            result["recovery_action"] = "NONE"
+            result["recovery_blocker"] = blocker
+    return result
+
+
+def task_recover_state(
+    root: Path,
+    expected_sha256: str,
+    abandon_active: bool,
+    hook_attestation: str | None,
+    controller_bridge_sha256: str | None,
+) -> dict[str, object]:
+    """Archive one exact incompatible ledger before a separately attested task-start."""
+    root = core._repo_root(root)
+    definition = _project_definition_facts(root)
+    if definition["project_definition_present"] != "YES":
+        return {
+            "ok": False,
+            "status": "BOOTSTRAP_REQUIRED",
+            "bootstrap": {
+                **definition,
+                "init_required": True,
+                "session_restart_required": "UNKNOWN",
+                "same_session_task_start": "UNKNOWN",
+                "managed_runtime_after_restart": "UNVERIFIED",
+            },
+        }
+    executable = lifecycle.managed_executable_health()
+    if executable["canonical_executable_available"] != "YES":
+        return {
+            "ok": False,
+            "status": "BOOTSTRAP_REQUIRED",
+            "bootstrap": {
+                **definition,
+                **executable,
+                "init_required": False,
+                "session_restart_required": False,
+                "manual_action_required": "canonical_executable_unavailable",
+            },
+        }
+    bridge = _controller_bridge()
+    if controller_bridge_sha256 != bridge["controller_bridge_sha256"]:
+        return {
+            "ok": False,
+            "status": "CONTROLLER_BRIDGE_REQUIRED",
+            "expected_controller_bridge_sha256": bridge["controller_bridge_sha256"],
+            "host_instruction_activation": "UNKNOWN",
+        }
+    session_hash = lifecycle.consume_task_start_attestation(
+        root,
+        hook_attestation,
+        controller_bridge_sha256,
+    )
+    catalog_status = lifecycle.role_catalog_session_status(root, session_hash)
+    if catalog_status == lifecycle.NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE:
+        return {
+            "ok": False,
+            "status": catalog_status,
+            "new_role_profile_files": lifecycle.new_role_profile_files(root, session_hash),
+            "host_instruction_activation": "UNKNOWN",
+        }
+    if selected_continuation_mode(root) == "UNAVAILABLE":
+        return {"ok": False, "status": "MANAGED_CONTINUATION_UNAVAILABLE"}
+
+    if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise ValueError("expected task state SHA-256 must be 64 lowercase hexadecimal characters")
+    state_name = ".context/state.json"
+    core._safe_without_final_symlink(root, state_name)
+
+    with core._lock(root):
+        state_path = core._state_path(root)
+        if not state_path.is_file():
+            return {"ok": False, "status": "NO_INCOMPATIBLE_TASK_STATE", "recoverable": False}
+        if state_path.stat().st_size > 512 * 1024:
+            return {
+                "ok": False,
+                "status": "STATE_SCHEMA_INCOMPATIBLE",
+                "from_version": "UNKNOWN",
+                "to_version": core._STATE_SCHEMA_VERSION,
+                "recoverable": False,
+                "recovery_action": "NONE",
+                "error": "task state exceeds 512 KiB",
+            }
+        raw_bytes = state_path.read_bytes()
+        digest = hashlib.sha256(raw_bytes).hexdigest()
+        if digest != expected_sha256:
+            return {
+                "ok": False,
+                "status": "TASK_STATE_CHANGED",
+                "expected_sha256": expected_sha256,
+                "observed_sha256": digest,
+                "recovered": False,
+            }
+        try:
+            raw = json.loads(raw_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {
+                "ok": False,
+                "status": "STATE_SCHEMA_INCOMPATIBLE",
+                "from_version": "UNKNOWN",
+                "to_version": core._STATE_SCHEMA_VERSION,
+                "state_sha256": digest,
+                "recoverable": False,
+                "recovery_action": "NONE",
+                "error": "task state is not valid UTF-8 JSON",
+            }
+        diagnostic = core._task_state_schema_diagnostic(raw, raw_bytes)
+        if diagnostic is None:
+            return {
+                "ok": False,
+                "status": "STATE_SCHEMA_NOT_RECOVERABLE",
+                "to_version": core._STATE_SCHEMA_VERSION,
+                "state_sha256": digest,
+                "recoverable": False,
+                "recovery_action": "NONE",
+            }
+        if diagnostic["recoverable"] is not True:
+            return diagnostic
+        if raw.get("status") == "ACTIVE" and not abandon_active:
+            return {
+                **diagnostic,
+                "ok": False,
+                "status": "STATE_ABANDON_CONFIRMATION_REQUIRED",
+                "recovery_action": f"thaliris task-recover-state --expected-sha256 {digest} --abandon-active --controller-bridge-sha256 <current-bridge-sha256>",
+            }
+        task_id = raw.get("task_id")
+        blocker = lifecycle.task_state_recovery_blocker(root, task_id)
+        if blocker is not None:
+            return {
+                **diagnostic,
+                "ok": False,
+                "status": "STATE_RECOVERY_BLOCKED",
+                "recoverable": False,
+                "recovery_action": "NONE",
+                "recovery_blocker": blocker,
+            }
+        version = diagnostic["from_version"]
+        archive_relative = f".context/recovery/task-state-v{version}-{digest}.json"
+        archive_path = core._safe_without_final_symlink(root, archive_relative)
+        if archive_path.exists():
+            if not archive_path.is_file() or archive_path.read_bytes() != raw_bytes:
+                return {
+                    "ok": False,
+                    "status": "STATE_ARCHIVE_COLLISION",
+                    "state_sha256": digest,
+                    "recoverable": False,
+                    "recovery_action": "NONE",
+                }
+            writes: dict[str, bytes] = {}
+        else:
+            writes = {archive_relative: raw_bytes}
+        backup = core._apply_with_backup(root, writes, [state_name], "task-state-recovery")
+    return {
+        "ok": True,
+        "status": "STATE_ARCHIVED_FOR_RECOVERY",
+        "from_version": version,
+        "to_version": core._STATE_SCHEMA_VERSION,
+        "state_sha256": digest,
+        "preserved_state_location": archive_relative,
+        "backup": backup,
+        "recovered": True,
+        "next_action": "bootstrap-check, then a fresh attested task-start",
+    }
+
+
 def bootstrap_check(root: Path) -> dict[str, object]:
     """Return the read-only facts needed by the external Codex bootstrap.
 
@@ -1855,7 +2112,13 @@ def bootstrap_check(root: Path) -> dict[str, object]:
     necessary before handing control back to the Controller.
     """
     root = core._repo_root(root)
-    return {"ok": True, **_project_definition_facts(root), **_controller_bridge(), "managed_hook_abi": lifecycle.MANAGED_HOOK_ABI, "executable_adapter_protocol_version": lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION, "session_restart_required": False}
+    facts = _project_definition_facts(root)
+    definition_recovery_status = (
+        "READY" if facts["project_definition_present"] == "YES"
+        else "EXPLICIT_CONFIRMATION_REQUIRED" if facts.get("managed_instruction_state") == "USER"
+        else "INIT_REQUIRED"
+    )
+    return {"ok": True, **facts, "definition_recovery_status": definition_recovery_status, **_controller_bridge(), "managed_hook_abi": lifecycle.MANAGED_HOOK_ABI, "executable_adapter_protocol_version": lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION, "session_restart_required": False}
 
 
 def task_close(root: Path, base_revision: int) -> dict[str, object]:

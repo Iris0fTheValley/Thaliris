@@ -1154,6 +1154,41 @@ def test_only_current_task_state_schema_is_accepted(tmp_path: Path) -> None:
         core.task_show(root)
 
 
+def test_old_task_schema_reports_explicit_archive_recovery_without_mutation(tmp_path: Path, capsys) -> None:
+    root = repo(tmp_path)
+    old = {
+        "schema_version": 1,
+        "revision": 3,
+        "task_id": "21b52bcb-3719-4c39-a788-2c834179650f",
+        "status": "ACTIVE",
+        "goal": "legacy semantic ledger",
+        "current_milestone": None,
+        "active_work": [],
+        "pending_results": [],
+        "architectural_intent": None,
+        "confirmed_facts": ["preserve this old evidence"],
+    }
+    path = root / ".context" / "state.json"
+    before = json.dumps(old, sort_keys=True).encode("utf-8")
+    path.write_bytes(before)
+
+    with pytest.raises(core.TaskStateSchemaIncompatible) as caught:
+        core.task_status(root)
+    assert caught.value.diagnostic["from_version"] == 1
+    assert caught.value.diagnostic["to_version"] == core._STATE_SCHEMA_VERSION
+    assert caught.value.diagnostic["recoverable"] is True
+    assert caught.value.diagnostic["state_sha256"] == hashlib.sha256(before).hexdigest()
+    assert path.read_bytes() == before
+
+    assert cli.main(["--root", str(root), "task-status"]) == 3
+    packet = json.loads(capsys.readouterr().out)
+    assert packet["status"] == "STATE_SCHEMA_INCOMPATIBLE"
+    assert packet["abandon_active_confirmation_required"] is True
+    assert packet["recovery_action"].startswith("thaliris task-recover-state --expected-sha256 ")
+    assert packet["recovery_action"].endswith("--controller-bridge-sha256 <current-bridge-sha256>")
+    assert path.read_bytes() == before
+
+
 def test_revision_cas_rejects_stale_writer_without_mutating_state(tmp_path: Path) -> None:
     root = repo(tmp_path)
     started = core.task_start(root, "cas", None, None)

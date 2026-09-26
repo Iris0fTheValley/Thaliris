@@ -99,7 +99,7 @@ _OBVIOUS_WRITE = re.compile(
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
 _CONTEXT_OPERATIONS = frozenset({
     "init", "codex-install", "codex-uninstall", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
-    "task-start", "task-update", "task-show",
+    "task-start", "task-recover-state", "task-update", "task-show",
     "task-status", "task-get", "artifact-get", "catalog", "document-get",
     "task-artifact", "task-close", "task-promote", "recover-pending-spawn", "rollback", "version",
 })
@@ -114,7 +114,7 @@ _CHILD_CONTEXT_READS = frozenset({
     "document-get",
 })
 _CHILD_CONTEXT_MUTATIONS = frozenset({
-    "task-start", "task-update", "task-artifact", "task-close", "task-promote", "codex-install",
+    "task-start", "task-recover-state", "task-update", "task-artifact", "task-close", "task-promote", "codex-install",
     "recover-pending-spawn", "rollback", "init", "uninstall", "codex-uninstall",
 })
 _CONTROL_STATE_TARGET = re.compile(r"(?i)\.context[\\/](?:state\.json|audit[\\/]lifecycle(?:[\\/][^\s\"']+)?)")
@@ -1500,6 +1500,35 @@ def recover_pending_spawn(root: Path, handoff_id: str) -> dict[str, object]:
     return {"ok": True, "task_id": task_id, "handoff_id": handoff_id, "recovered": True}
 
 
+def task_state_recovery_blocker(root: Path, task_id: str) -> str | None:
+    """Fail closed if the incompatible task still has lifecycle authority."""
+    relative = f".context/audit/lifecycle/{_task_key(task_id)}.json"
+    try:
+        path = core._safe_without_final_symlink(root, relative)
+    except ValueError:
+        return "lifecycle state path traverses a symlink or escapes the repository"
+    if not path.is_file():
+        if path.exists():
+            return "lifecycle state is not a regular file"
+        return None
+    try:
+        state = _load_lifecycle(path, task_id)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return "lifecycle state is unreadable or incompatible"
+    if state.get("pending_authorized_spawn") is not None:
+        return "an authorized spawn reservation is still pending"
+    children = state.get("children")
+    if not isinstance(children, list):
+        return "lifecycle child state is malformed"
+    if any(
+        not isinstance(child, dict)
+        or child.get("terminal_state") != "NATIVE_TERMINAL_RECONCILED"
+        for child in children
+    ):
+        return "one or more child lifecycles are not explicitly terminal"
+    return None
+
+
 def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
     """Bind an authorized native child to its explicit Controller handoff."""
     task_id = _active_task_id(root)
@@ -2401,6 +2430,18 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
         # Damaged managed state does not make unrelated native tools unsafe.
         # Deny only direct Controller-owned mutations that are mechanically
         # visible without interpreting an arbitrary command or tool name.
+        schema_mismatch = (
+            core.task_state_schema_diagnostic(root)
+            if operation in {"task-start", "task-recover-state"} else None
+        )
+        if schema_mismatch is not None and (
+            operation == "task-start"
+            or (operation == "task-recover-state" and schema_mismatch["recoverable"] is True)
+        ):
+            # task-start performs a read-only incompatibility check before it
+            # can create state. Recovery is the sole admitted state mutation;
+            # its exact hash and explicit abandonment are checked by the CLI.
+            return _issue_task_start_attestation(root, payload, managed_hook_abi)
         target = _control_state_target(payload)
         if operation in _CHILD_CONTEXT_MUTATIONS or (
             target is not None and (_obvious_write_attempt(payload) or _obvious_mutation_tool(normalized))

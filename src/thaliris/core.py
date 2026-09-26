@@ -19,7 +19,12 @@ from .models import ContextConfig
 
 IGNORE_START = "# thaliris:begin"
 IGNORE_END = "# thaliris:end"
-IGNORE_RULES = (".context/backups/", ".context/state.json", ".context/context.lock")
+IGNORE_RULES = (
+    ".context/backups/",
+    ".context/recovery/",
+    ".context/state.json",
+    ".context/context.lock",
+)
 
 def _safe(root: Path, relative: str) -> Path:
     if not relative or Path(relative).is_absolute():
@@ -316,8 +321,69 @@ _STATE_FIELDS = {
 _RECORD_FIELDS = {"id", "kind", "text", "producer", "revision", "source_refs", "status", "supersedes"}
 
 
+class TaskStateSchemaIncompatible(ValueError):
+    """An older or newer task ledger needs an explicit recovery decision."""
+
+    def __init__(self, diagnostic: dict[str, object], task_id: str | None = None) -> None:
+        self.diagnostic = diagnostic
+        self.task_id = task_id
+        super().__init__("invalid task state schema")
+
+
 def _state_path(root: Path) -> Path:
     return _safe(root, _STATE_NAME)
+
+
+def _task_state_schema_diagnostic(raw: object, raw_bytes: bytes) -> dict[str, object] | None:
+    """Classify schema-version mismatch without migrating or mutating it."""
+    if not isinstance(raw, dict):
+        return None
+    version = raw.get("schema_version")
+    if type(version) is not int or version == _STATE_SCHEMA_VERSION:
+        return None
+    task_id = raw.get("task_id")
+    try:
+        uuid.UUID(str(task_id))
+        valid_task_id = isinstance(task_id, str)
+    except (ValueError, AttributeError, TypeError):
+        valid_task_id = False
+    status = raw.get("status")
+    older_supported_for_archive = 0 < version < _STATE_SCHEMA_VERSION
+    recoverable = older_supported_for_archive and valid_task_id and (status == "ACTIVE" or status == "DONE")
+    digest = hashlib.sha256(raw_bytes).hexdigest()
+    action = "NONE"
+    if recoverable:
+        action = f"thaliris task-recover-state --expected-sha256 {digest}"
+    return {
+        "ok": False,
+        "status": "STATE_SCHEMA_INCOMPATIBLE",
+        "error": "invalid task state schema",
+        "from_version": version,
+        "to_version": _STATE_SCHEMA_VERSION,
+        "state_sha256": digest,
+        "recoverable": recoverable,
+        "abandon_active_confirmation_required": status == "ACTIVE" and recoverable,
+        "recovery_action": action,
+    }
+
+
+def task_state_schema_diagnostic(root: Path) -> dict[str, object] | None:
+    """Read a bounded schema mismatch diagnostic without loading task content."""
+    root = _repo_root(root)
+    if (root / _STATE_NAME).is_symlink():
+        return None
+    path = _state_path(root)
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 512 * 1024:
+        return None
+    try:
+        with path.open("rb") as stream:
+            raw_bytes = stream.read(512 * 1024 + 1)
+        if len(raw_bytes) > 512 * 1024:
+            return None
+        raw = json.loads(raw_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return _task_state_schema_diagnostic(raw, raw_bytes)
 
 
 def _state_ignored(root: Path) -> bool:
@@ -676,15 +742,27 @@ def _write_state(root: Path, state: dict[str, object]) -> None:
 
 
 def _load_state(root: Path, *, active: bool = False) -> dict[str, object]:
+    if (root / _STATE_NAME).is_symlink():
+        raise ValueError("task state final component must not be a symlink")
     path = _state_path(root)
     if not path.is_file():
         raise ValueError("no current task state")
     if path.stat().st_size > 512 * 1024:
         raise ValueError("task state exceeds 512 KiB")
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as stream:
+            raw_bytes = stream.read(512 * 1024 + 1)
+        if len(raw_bytes) > 512 * 1024:
+            raise ValueError("task state exceeds 512 KiB")
+        raw = json.loads(raw_bytes.decode("utf-8"))
     except json.JSONDecodeError as exc:
         raise ValueError("invalid task state JSON") from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError("invalid task state encoding") from exc
+    incompatible = _task_state_schema_diagnostic(raw, raw_bytes)
+    if incompatible is not None:
+        task_id = raw.get("task_id") if isinstance(raw, dict) and isinstance(raw.get("task_id"), str) else None
+        raise TaskStateSchemaIncompatible(incompatible, task_id)
     state = _validate_state(root, raw)
     if active and state["status"] != "ACTIVE":
         raise ValueError("current task is not ACTIVE")

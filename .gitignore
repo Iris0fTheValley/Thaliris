@@ -1,5 +1,6 @@
 # thaliris:begin
 .context/backups/
+.context/recovery/
 .context/state.json
 .context/context.lock
 # thaliris:end

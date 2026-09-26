@@ -165,6 +165,22 @@ def _bridge_fields(payload: dict[str, object]) -> dict[str, object]:
     return {}
 
 
+def _definition_recovery_fields(payload: dict[str, object]) -> dict[str, object]:
+    """Keep the exact managed-span recovery decision visible at bootstrap."""
+    return {
+        key: payload[key]
+        for key in (
+            "definition_recovery_status",
+            "instruction_definition_present",
+            "managed_instruction_state",
+            "managed_instruction_sha256",
+            "expected_managed_instruction_sha256",
+            "managed_instruction_recovery_action",
+        )
+        if key in payload
+    }
+
+
 def bootstrap(root: Path) -> dict[str, object]:
     """Perform one bootstrap-check and, only when absent, one init attempt."""
     workspace = _repo_root(root)
@@ -210,6 +226,7 @@ def bootstrap(root: Path) -> dict[str, object]:
             "manual_action_required": probe_manual,
             "project_definition_present": probe_definition,
             "session_restart_required": _restart_required(facts),
+            **_definition_recovery_fields(facts),
         }
     if probe_definition == "YES":
         return {
@@ -261,6 +278,7 @@ def bootstrap(root: Path) -> dict[str, object]:
                 "project_definition_present", "UNKNOWN"
             ),
             "session_restart_required": restart_required,
+            **_definition_recovery_fields(initialized),
             **_bridge_fields(initialized),
         }
     if initialized.get("role_catalog_changed") is True:

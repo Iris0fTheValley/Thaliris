@@ -43,6 +43,36 @@ def test_manual_action_is_terminal_without_retry(monkeypatch, tmp_path: Path):
     assert calls == ["bootstrap-check", "init"]
 
 
+def test_bootstrap_forwards_exact_managed_definition_recovery_action(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
+    monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])
+    digest = "a" * 64
+    calls = []
+
+    def invoke(executable, root, command):
+        calls.append(command)
+        payload = {
+            "ok": True,
+            "project_definition_present": "NO",
+            "instruction_definition_present": "NO",
+            "definition_recovery_status": "EXPLICIT_CONFIRMATION_REQUIRED",
+            "managed_instruction_state": "USER",
+            "managed_instruction_sha256": digest,
+            "managed_instruction_recovery_action": f"thaliris init --accept-managed-instruction-sha256 {digest}",
+        }
+        if command == "init":
+            payload["manual_action_required"] = ["AGENTS.md"]
+            payload["changed"] = False
+        return payload
+
+    monkeypatch.setattr(bootstrap, "_invoke", invoke)
+    result = bootstrap.bootstrap(tmp_path)
+    assert result["status"] == "MANUAL_ACTION_REQUIRED"
+    assert result["definition_recovery_status"] == "EXPLICIT_CONFIRMATION_REQUIRED"
+    assert result["managed_instruction_recovery_action"] == f"thaliris init --accept-managed-instruction-sha256 {digest}"
+    assert calls == ["bootstrap-check", "init"]
+
+
 def test_manual_action_does_not_hide_executable_protocol_skew(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
     monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])

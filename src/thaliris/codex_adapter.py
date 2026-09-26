@@ -498,6 +498,15 @@ thresholds. Prefer slices that can each be independently understood,
 implemented, verified, committed, and closed. A completed slice returns
 distilled state, its commit reference, and verification evidence; discard its
 working set when closed.
+When a broad task has an unclear semantic slice, the Controller first selects
+the standard Luna Investigator to establish facts and coupling. After a Focused
+Implementer delegates broad collection, it waits for compact distilled evidence
+and reads only bounded immediate files; it does not duplicate the Scanner's
+working set. When high-difficulty semantic closure is complete, the Focused
+Implementer reports the deterministic patch, test, format, documentation, and
+residual-reference tail to the Controller. The Controller owns closure of the
+Focused slice and may authorize a fresh standard Luna Implementer handoff for
+that deterministic tail.
 Make each Executor handoff decision-complete enough to close one semantic slice
 without routine Controller steering. Do not keep an Executor as a long-lived
 interactive workspace. If new decision-changing information invalidates the
@@ -505,7 +514,9 @@ slice, let the child close with distilled state and create a fresh correction
 slice. `send_message` remains available for genuinely new decision-changing
 information.
 Use Investigator/Scanner for missing facts, large working sets, broad scans,
-and factual compression, without transferring architecture decisions. Use a Reviewer only when independent semantic review adds real
+and factual compression, without transferring architecture decisions. A Scanner
+batches a few searches and reads, returns compact facts, and ends once the
+handoff has enough evidence. Use a Reviewer only when independent semantic review adds real
 value; it is not a default gate. Curator and Reasoning Specialist remain
 optional and are selected only when they add actual value.
 At task end, make one short semantic judgment about knowledge that could
@@ -527,8 +538,8 @@ construct or inject task context. Task state, memory, milestones, prior reviews,
 and Artifact bodies never enter {_native_role_names_text(final_conjunction="or", with_article=True)} automatically.
 Child sessions keep their working set private by default. Do not send ordinary
 progress, heartbeat, or partial-completion messages to the parent. Proactively
-wake the parent only when completed, blocked and requiring a parent decision, or
-when new decision-changing information arrives. Direct `send_message` remains
+wake the parent only when completed, blocked or needing a decision, or when a
+decision-changing fact arrives. Direct `send_message` remains
 available for genuine decision-changing information, with no automatic wake
 filter.
 
@@ -670,8 +681,13 @@ Controller notice per pending batch. Obvious attempts to mutate
 Controller-owned task or lifecycle state are denied, recorded, and included in
 that aggregate notice. Reviewer independence is a
 developer-instruction plus obvious-write hook guard, not a claimed native
-read-only sandbox. Starting managed mode requires a current-session,
-current-hook, one-shot PreToolUse attestation.
+read-only sandbox. Starting managed mode requires a one-shot PreToolUse bearer
+attestation issued by the loaded current-ABI hook. The token embeds a hash of
+the hook payload's session id, and the adapter checks that hash, bridge digest,
+hook ABI, expiry, and one-time local record. This is an adapter-side hook-path
+check inside the selected same-Windows-user local trust boundary; it does not
+authenticate Host provenance, and another local process under that user could
+replay the bearer while it remains valid.
 
 Managed native Codex child lifecycles permit one top-level child and one nested
 Scanner. Nested authorization requires the exact bound parent's agent, role,
@@ -723,9 +739,12 @@ JSON result.
 Read the canonical managed text and SHA-256 returned by `init` or
 `bootstrap-check`. Explicitly acknowledge that digest with
 `--controller-bridge-sha256` when calling `task-start`; the loaded current-ABI
-PreToolUse hook binds that receipt to its session attestation. This is
-Controller activation only: CLI output does not become Host developer
-instruction, and Host instruction activation remains UNKNOWN. The stable Host
+PreToolUse hook must issue the one-shot bearer described above. The adapter
+checks the token's embedded session hash and local record, but this does not
+authenticate Host provenance or prevent same-user local replay before the
+record is consumed. This is Controller activation only: CLI output does not
+become Host developer instruction, and Host instruction activation remains UNKNOWN.
+The stable Host
 trampoline checks only the activation marker before dispatching into the
 current executable; an inactive repository skips Thaliris Python and state
 access. A registration on disk does not prove the current session loaded it.
@@ -783,8 +802,8 @@ Keep repository reads, tool output, test logs, and intermediate exploration in
 the role session's private working set. Do not copy an Artifact body into the result
 unless the Controller explicitly requested that content.
 Child sessions do not send ordinary progress, heartbeat, or partial-completion
-messages. They proactively wake the parent only when completed, blocked and
-requiring a parent decision, or when new decision-changing information arrives.
+messages. They proactively wake the parent only when completed, blocked or
+needing a decision, or when a decision-changing fact arrives.
 Direct `send_message` to the exact bound parent remains available for genuine
 decision-changing information, with no automatic wake filter. Follow-up and
 input tools remain denied for managed children.
@@ -792,7 +811,10 @@ input tools remain denied for managed children.
 ## Investigator
 
 Investigator/Scanner handles missing facts, broad scans, large working sets,
-and factual compression, not architecture decisions. It cannot delegate.
+and factual compression, not architecture decisions. A broad task whose
+semantic slice is unclear starts with a standard Luna Investigator for facts
+and coupling. The Scanner batches a few searches and reads, returns compact
+facts, and ends once the handoff has enough evidence. It cannot delegate.
 Investigate the task in the handoff. Save detailed reusable evidence as
 an optional repo-relative Artifact and return its pointer with a short result.
 
@@ -850,7 +872,12 @@ within the assigned slice. Preferentially delegate broad repository scanning,
 exhaustive search, rollout/log scans, call-site enumeration, residual checks, and
 large mechanical evidence collection to a fresh Investigator/Scanner. Use its
 evidence while retaining responsibility for the focused implementation decision.
-Do not routinely perform those broad collections yourself merely because you can.
+After delegating, wait for the distilled evidence and read only bounded immediate
+files; do not duplicate the Scanner's broad working set. Do not routinely perform those broad collections yourself merely because you can. When
+high-difficulty semantic closure is complete, report the deterministic patch,
+test, format, documentation, and residual-reference tail to the Controller. The
+Controller owns closure of the Focused slice and may authorize a fresh standard
+Luna Implementer handoff for that deterministic tail.
 
 The Controller chooses the model per handoff and semantic slice difficulty.
 Deterministic documentation, test, configuration, or reference cleanup and
@@ -940,6 +967,11 @@ returned and the Focused parent continued. See the [durable probe evidence](code
 This scoped probe covers that one CLI build and probe only. Raw Host wire-byte
 equality, other Host builds or Desktop scenarios, and native child
 `Completed`/`task-close` completion were not observed and remain UNKNOWN.
+The startup admission bearer is a local one-shot hook-path check scoped to the
+selected same-Windows-user trust boundary. It binds the hook payload's session
+hash, bridge digest, ABI, expiry, and local consumption record, but does not
+authenticate Host provenance; another same-user local process could replay it
+while it remains valid.
 """
 
 
@@ -1320,9 +1352,18 @@ directories do not call for proactive project bootstrap.
 {trusted_route}
 Read the canonical managed instruction text and SHA-256 from `init` or
 `bootstrap-check`, then acknowledge that digest with
-`--controller-bridge-sha256` in `task-start` in the same session. Follow the
-effective project instruction for task routing. A CLI result does not prove
-Host instruction activation or a loaded current-session hook.
+`--controller-bridge-sha256` in `task-start`, normally from the same session.
+That describes the intended workflow, not Host authentication. The loaded
+current-ABI PreToolUse hook must issue a one-shot bearer attestation. The token
+embeds a hash of the hook payload's session id, and the adapter checks that
+hash, bridge digest, hook ABI, expiry, and one-time local record. This is an
+adapter-side hook-path check inside the selected same-Windows-user local trust
+boundary; it does not authenticate Host provenance, and another local process
+under that user could replay the bearer while it remains valid. Follow the
+effective project instruction for task routing and its slice-based cost rules;
+choose by semantic difficulty rather than fixed token, file, or tool thresholds.
+A CLI result does not prove Host instruction activation or a loaded hook for
+the current session.
 <!-- thaliris:global:end -->
 """.encode("utf-8")
 
@@ -1867,7 +1908,15 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
 
 
 def audit_hook(root: Path, event: str, payload: object, managed_hook_abi: str | None = None) -> str:
-    result = handle_hook(root, event, payload, managed_hook_abi)
+    bridge_sha256 = None
+    if (
+        event == "PreToolUse" and managed_hook_abi == lifecycle.MANAGED_HOOK_ABI
+        and isinstance(payload, dict) and payload.get("agent_id") is None
+        and payload.get("agent_type") is None
+        and payload.get("tool_name", payload.get("tool")) == "Bash"
+    ):
+        bridge_sha256 = _controller_bridge()["controller_bridge_sha256"]
+    result = handle_hook(root, event, payload, managed_hook_abi, bridge_sha256)
     if result or event != "PreToolUse" or not isinstance(payload, dict):
         return result
     root = core._repo_root(root)

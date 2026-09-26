@@ -197,12 +197,10 @@ def test_1f98dae_profiles_migrate_by_exact_filename_and_preserve_edits(tmp_path:
     } == expected
 
     tracked = tuple(expected)
-    changed = {
-        "thaliris-focused-implementer.toml",
-        "thaliris-focused-implementer-astra-medium.toml",
-        "thaliris-focused-implementer-xhigh.toml",
-        "thaliris-reviewer.toml",
-    }
+    # The current shared role contract changed every generated profile after
+    # this historical revision, so each exact historical byte sequence must
+    # migrate while user-edited files remain protected.
+    changed = set(tracked)
     historical: dict[str, bytes] = {}
     for name in tracked:
         value = _historical_profile("1f98dae", name)
@@ -239,7 +237,8 @@ def test_1f98dae_profiles_migrate_by_exact_filename_and_preserve_edits(tmp_path:
 def test_child_communication_and_slice_routing_contract_is_shared() -> None:
     communication = (
         "ordinary progress, heartbeat, or partial-completion messages",
-        "proactively wake the parent only when completed, blocked and requiring a parent decision",
+        "proactively wake the parent only when completed, blocked or needing a decision",
+        "when a decision-changing fact arrives",
         "genuine decision-changing information, with no automatic wake filter",
     )
     routing = (
@@ -247,6 +246,11 @@ def test_child_communication_and_slice_routing_contract_is_shared() -> None:
         "Deterministic documentation, test, configuration, or reference cleanup and small defined implementations default",
         "current slice",
         "multi-option reasoning",
+        "batches a few searches and reads",
+        "high-difficulty semantic closure",
+        "deterministic patch, test, format, documentation, and residual-reference tail to the Controller",
+        "Controller owns closure of the Focused slice",
+        "may authorize a fresh standard Luna Implementer handoff",
     )
     for name, (model, effort, role) in roles.agent_profiles().items():
         instructions = tomllib.loads(
@@ -262,6 +266,26 @@ def test_child_communication_and_slice_routing_contract_is_shared() -> None:
         normalized = " ".join(rendered.split()).lower()
         assert all(" ".join(phrase.split()).lower() in normalized for phrase in communication)
         assert all(" ".join(phrase.split()).lower() in normalized for phrase in routing)
+
+    focused_profiles = {
+        name
+        for name, (_model, _effort, role) in roles.agent_profiles().items()
+        if role == "focused-implementer"
+    }
+    assert focused_profiles
+    for name in focused_profiles:
+        instructions = tomllib.loads(
+            codex_adapter._agent_profile(
+                name.removesuffix(".toml"),
+                "focused-implementer",
+                roles.agent_profiles()[name][0],
+                roles.agent_profiles()[name][1],
+            ).decode()
+        )["developer_instructions"]
+        assert "report the deterministic patch" in instructions
+        assert "Controller owns closure of the Focused slice" in instructions
+        assert "may authorize a fresh standard Luna Implementer handoff" in instructions
+        assert "hand the deterministic patch" not in instructions
 
 
 def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence() -> None:

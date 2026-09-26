@@ -39,6 +39,18 @@ Decision-changing uncertainty routes to Investigator; broad grep and exhaustive
 call-site or residual-reference scans route to Scanner under an Executor or
 Reviewer.
 
+For a broad task whose semantic slice is unclear, Controller first selects the
+standard Luna Investigator for facts and coupling. A Focused Implementer that
+delegates broad collection waits for compact distilled evidence and reads only
+bounded immediate files, without duplicating the Scanner's working set. Once
+high-difficulty semantic closure is complete, Focused reports the deterministic
+patch, test, format, documentation, and residual-reference tail to the
+Controller. The Controller owns closure of the Focused slice and may authorize
+a fresh standard Luna Implementer handoff for that deterministic tail. Model
+choice follows the current slice difficulty, not the parent task. A Scanner
+batches a few searches and reads, returns compact facts, and ends once the
+handoff has enough evidence.
+
 The ACTIVE root Controller uses only bounded control-plane commands and
 explicit retrieval. Execution, mutation, and testing belong to fresh
 Implementer or Focused Implementer sessions. Read-only inspection is prompt policy, not a shell-regex
@@ -87,16 +99,22 @@ added after the startup snapshot fails closed with
 filename does not imply a restart. Host registration files on disk do not prove
 that a current session loaded them. `task-start`
 then requires the exact Controller bridge SHA-256 and a one-shot
-current-session, current-ABI `PreToolUse` attestation; a missing or mismatched
-bridge or attestation remains an explicit admission blocker. Project init does
-not claim same-session activation unless that live hook attestation is observed.
+current-ABI `PreToolUse` bearer attestation. The token embeds a hash of the
+hook payload's session id, and the adapter checks that hash, bridge digest, hook
+ABI, expiry, and one-time local record. This is an adapter-side hook-path check
+inside the selected same-Windows-user local trust boundary; it does not
+authenticate Host provenance, and another local process under that user could
+replay the bearer while it remains valid. A missing or mismatched bridge or
+attestation remains an explicit admission blocker.
 
 ## Role results
 
 Role profiles ask each Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, and Reviewer to keep its working set private and return a distilled
 result plus optional Artifact pointers. This is a prompt convention, not a Core
 result schema. Artifact bodies, memory, milestone text, task history, and prior
-reviews are never automatically added to another role session.
+reviews are never automatically added to another role session. Child sessions
+send only completion, blocked or needs-decision, and decision-changing fact
+messages to the parent; ordinary progress and heartbeat messages stay private.
 
 ## Telemetry
 

@@ -130,8 +130,8 @@ _SHARED_INSTRUCTIONS = (
     "memory, milestone, Artifact, finding, decision, or review content. Keep repository "
     "reads, tool output, test logs, and intermediate exploration in your private working "
     "set. Do not send ordinary progress, heartbeat, or partial-completion messages to the parent. "
-    "Proactively wake the parent only when completed, blocked and requiring a parent decision, "
-    "or when new decision-changing information arrives. Direct send_message remains available "
+    "Proactively wake the parent only when completed, blocked or needing a decision, "
+    "or when a decision-changing fact arrives. Direct send_message remains available "
     "for genuine decision-changing information, with no automatic wake filter. Return a distilled "
     "result with Conclusion, Key findings, Decision-changing "
     "unknowns, Contradictions if any, Verification performed, and Artifact refs if detailed "
@@ -139,7 +139,10 @@ _SHARED_INSTRUCTIONS = (
     "Facts unknown route to Investigator; an ill-defined problem needing reframing routes to "
     "Reasoning Specialist; invalidated decisions return to Controller; a "
     "decided packet routes to Implementer; an independent challenge routes to Reviewer. Difficulty "
-    "alone is not a Reasoning Specialist trigger. "
+    "alone is not a Reasoning Specialist trigger. For a broad task whose semantic slice is "
+    "unclear, the Controller first selects the standard Luna Investigator to establish facts "
+    "and coupling. Model choice follows the difficulty of the current semantic slice, not "
+    "the parent task. "
 )
 
 _EXECUTOR_INSTRUCTIONS = (
@@ -157,9 +160,14 @@ _FOCUSED_SCANNER_INSTRUCTIONS = (
     " Use only bounded local reading needed for semantic judgment within the assigned slice. "
     "Preferentially delegate broad repository scanning, exhaustive search, rollout/log scans, "
     "call-site enumeration, residual checks, and large mechanical evidence collection to a "
-    "fresh Investigator/Scanner. Use its evidence while retaining responsibility for the "
+    "fresh Investigator/Scanner. After delegating, wait for its distilled evidence and read "
+    "only the bounded immediate files needed for the current slice; do not duplicate the "
+    "Scanner's broad working set. Use its evidence while retaining responsibility for the "
     "focused implementation decision. Do not routinely perform those broad collections "
-    "yourself merely because you can."
+    "yourself merely because you can. When high-difficulty semantic closure is complete, "
+    "report the deterministic patch, test, format, documentation, and residual-reference "
+    "tail to the Controller. The Controller owns closure of the Focused slice and may "
+    "authorize a fresh standard Luna Implementer handoff for that deterministic tail."
 )
 
 _REVIEWER_SCANNER_INSTRUCTIONS = (
@@ -178,7 +186,9 @@ def _instructions(role: str) -> str:
     role_instruction = {
         "investigator": (
             "Act as the Investigator/Scanner: investigate facts, scan large working sets, and "
-            "compress evidence, without making architecture decisions. Do not delegate. "
+            "compress evidence, without making architecture decisions. Batch a few searches "
+            "and reads, return compact facts, and end once the handoff has enough evidence; "
+            "do not keep collecting after sufficiency. Do not delegate. "
             "You may save detailed reusable material as a "
             "repo-relative Artifact; return only its pointer and the distilled result by default."
         ),

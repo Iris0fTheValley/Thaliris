@@ -19,6 +19,19 @@ def repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def admission_token(output: str) -> str:
+    """Extract the one-shot hook bearer from additionalContext."""
+    payload = json.loads(output)
+    specific = payload["hookSpecificOutput"]
+    assert specific["hookEventName"] == "PreToolUse"
+    assert "updatedInput" not in specific
+    assert "permissionDecision" not in specific
+    return re.search(
+        r"--hook-attestation (v2\.[0-9a-f]{64}\.[A-Za-z0-9_-]{16,128})",
+        specific["additionalContext"],
+    ).group(1)
+
+
 def test_project_init_does_not_re_attest_or_restart_for_host_hook_state(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     runtime = root / ".context" / "audit" / "stale-session" / "runtime.json"
@@ -106,8 +119,7 @@ def test_task_start_blocks_roles_added_after_current_session_start(tmp_path: Pat
     )
     digest = init["controller_bridge_sha256"]
     pre = {"session_id": "same-session", "turn_id": "turn", "tool_name": "Bash", "tool_input": {"command": f"thaliris task-start goal --controller-bridge-sha256 {digest}"}}
-    rewritten = json.loads(codex_adapter.audit_hook(tmp_path, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
-    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten["hookSpecificOutput"]["updatedInput"]["command"]).group(1)
+    token = admission_token(codex_adapter.audit_hook(tmp_path, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
     result = codex_adapter.task_start(tmp_path, "goal", None, None, token, digest)
     assert result["status"] == "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE"
     assert result["new_role_profile_files"] == [".codex/agents/thaliris-implementer.toml"]
@@ -186,8 +198,7 @@ def test_task_start_blocks_host_role_added_after_current_session_start(tmp_path:
     codex_adapter.codex_install()
     digest = init["controller_bridge_sha256"]
     pre = {"session_id": "late-host-session", "turn_id": "turn", "tool_name": "Bash", "tool_input": {"command": f"thaliris task-start goal --controller-bridge-sha256 {digest}"}}
-    rewritten = json.loads(codex_adapter.audit_hook(tmp_path, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
-    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten["hookSpecificOutput"]["updatedInput"]["command"]).group(1)
+    token = admission_token(codex_adapter.audit_hook(tmp_path, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
     result = codex_adapter.task_start(tmp_path, "goal", None, None, token, digest)
     assert result["status"] == lifecycle_module.NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE
     assert result["new_role_profile_files"] == sorted(str(host_home.resolve() / "agents" / name) for name in codex_adapter._AGENT_PROFILES)
@@ -482,8 +493,7 @@ def test_initialized_task_start_reports_unavailable_trusted_executable(tmp_path:
     root = repo(tmp_path)
     digest = codex_adapter._controller_bridge()["controller_bridge_sha256"]
     payload = {"session_id": "exec-s1", "turn_id": "exec-turn", "tool_name": "Bash", "tool_input": {"command": f"thaliris task-start x --controller-bridge-sha256 {digest}"}}
-    rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", payload, lifecycle_module.MANAGED_HOOK_ABI))
-    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten["hookSpecificOutput"]["updatedInput"]["command"]).group(1)
+    token = admission_token(codex_adapter.audit_hook(root, "PreToolUse", payload, lifecycle_module.MANAGED_HOOK_ABI))
     result = codex_adapter.task_start(root, "x", None, None, token, digest)
     assert result["status"] == "BOOTSTRAP_REQUIRED"
     assert result["bootstrap"]["canonical_executable_available"] == "NO"
@@ -1555,13 +1565,9 @@ def test_task_start_requires_current_one_shot_hook_attestation(tmp_path: Path, m
 
     digest = codex_adapter._controller_bridge()["controller_bridge_sha256"]
     pre = hook_payload(tool_name="Bash", tool_input={"command": f"thaliris task-start goal --controller-bridge-sha256 {digest}"})
-    old_registration = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre))
-    assert "MANAGED_CURRENT_SESSION_NOT_ATTESTED" in json.dumps(old_registration)
-    old_abi_registration = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre, "thaliris-hook-abi-9"))
-    assert "MANAGED_CURRENT_SESSION_NOT_ATTESTED" in json.dumps(old_abi_registration)
-    rewritten = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
-    command = rewritten["hookSpecificOutput"]["updatedInput"]["command"]
-    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", command).group(1)
+    assert codex_adapter.audit_hook(root, "PreToolUse", pre) == ""
+    assert codex_adapter.audit_hook(root, "PreToolUse", pre, "thaliris-hook-abi-9") == ""
+    token = admission_token(codex_adapter.audit_hook(root, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
     assert cli.main(["--root", str(root), "task-start", "attested", "--controller-bridge-sha256", "0" * 64, "--hook-attestation", token]) == 3
     assert json.loads(capsys.readouterr().out)["status"] == "CONTROLLER_BRIDGE_REQUIRED"
     assert cli.main(["--root", str(root), "task-start", "attested", "--controller-bridge-sha256", digest, "--hook-attestation", token]) == 0
@@ -1601,12 +1607,7 @@ def test_powershell_call_operator_to_pinned_executable_mints_task_start_attestat
         tool_name="Bash",
         tool_input={"command": command},
     )
-    rewritten = json.loads(
-        codex_adapter.audit_hook(root, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI)
-    )
-    updated_command = rewritten["hookSpecificOutput"]["updatedInput"]["command"]
-    assert updated_command.startswith(command)
-    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", updated_command).group(1)
+    token = admission_token(codex_adapter.audit_hook(root, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
 
     assert cli.main(
         ["--root", str(root), "task-start", "powershell direct route", "--controller-bridge-sha256", digest, "--hook-attestation", token]
@@ -1633,8 +1634,7 @@ def test_unsupported_prerelease_after_valid_attestation_is_continuation_unavaila
     monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "UNAVAILABLE")
     digest = codex_adapter._controller_bridge()["controller_bridge_sha256"]
     pre = hook_payload(tool_name="Bash", tool_input={"command": f"thaliris task-start goal --controller-bridge-sha256 {digest}"})
-    command = json.loads(codex_adapter.audit_hook(root, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))["hookSpecificOutput"]["updatedInput"]["command"]
-    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", command).group(1)
+    token = admission_token(codex_adapter.audit_hook(root, "PreToolUse", pre, lifecycle_module.MANAGED_HOOK_ABI))
     assert cli.main(["--root", str(root), "task-start", "attested", "--controller-bridge-sha256", digest, "--hook-attestation", token]) == 3
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "MANAGED_CONTINUATION_UNAVAILABLE"

@@ -24,8 +24,12 @@ define a second routing flow. A straightforward, bounded, low-risk task with
 confirmed facts may take the Controller -> fresh Implementer -> done path: the
 Implementer may do necessary bounded local reading, implementation, and
 deterministic verification. Decision-changing investigation belongs to
-Investigator/Scanner also handles broad scanning and factual compression of
-large working sets, without architecture decisions. Bounded local reading
+Investigator. The Investigator/Scanner also handles broad scanning and factual
+compression of large working sets, without architecture decisions. For a broad
+task whose semantic slice is unclear, the Controller first uses a standard Luna
+Investigator for facts and coupling. The Scanner batches a few searches and
+reads, returns compact facts, and ends once the handoff has enough evidence.
+Bounded local reading
 needed for implementation may stay inside either Executor. Reviewer is conditional, not a mechanical post-implementation gate;
 select it only when independent semantic review adds real value, such as
 for architecture or cross-module changes, lifecycle, Host, identity, or
@@ -65,6 +69,17 @@ implemented, verified, committed, and closed. A completed slice returns
 distilled state, its commit reference, and verification evidence; discard its
 working set when closed.
 
+When a broad task has an unclear semantic slice, the Controller first selects
+the standard Luna Investigator to establish facts and coupling. After a Focused
+Implementer delegates broad collection, it waits for compact distilled evidence
+and reads only bounded immediate files; it does not duplicate the Scanner's
+working set. When high-difficulty semantic closure is complete, the Focused
+Implementer reports the deterministic patch, test, format, documentation, and
+residual-reference tail to the Controller. The Controller owns closure of the
+Focused slice and may authorize a fresh standard Luna Implementer handoff for
+that deterministic tail. Model choice follows the difficulty of the current
+slice, not the parent task.
+
 Controller has no fixed model, effort, or native profile. The Host/user selects
 its model. Investigator, Curator, and standard Implementer use
 `gpt-6-luna/xhigh`; Focused Implementer, Reasoning Specialist, and Reviewer use
@@ -94,8 +109,14 @@ cannot delegate. Fresh children always use `fork_turns="none"`. Executors work
 only within their assigned semantic slice, preserve Controller decisions and
 invariants, and return a decision-changing unknown rather than changing them.
 They synchronize formal project documentation for behavior changed within
-their slice. Reviewer challenges semantic drift between a candidate and its
-formal project documentation when selected.
+their slice. After a Focused Implementer delegates broad collection, it waits
+for the distilled evidence and reads only bounded immediate files; it does not
+duplicate the Scanner's broad working set. When high-difficulty semantic
+closure is complete, it reports the deterministic patch, test, format,
+documentation, and residual-reference tail to the Controller. The Controller
+owns closure of the Focused slice and may authorize a fresh standard Luna
+Implementer handoff for that deterministic tail. Reviewer challenges semantic
+drift between a candidate and its formal project documentation when selected.
 
 When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
 contracts change, check and synchronize both the repository-managed instruction
@@ -112,12 +133,22 @@ not rechecked, and ACTIVE tasks do not run `init`. The installed instruction
 includes the exact executable path and SHA-256 used for Host integration, so
 the Controller can verify and invoke that direct route even if an ordinary PATH
 command is stale. It requires the explicit bridge digest at same-session
-`task-start`. It does not carry task routing policy or mutate repositories from
-a hook. Install replaces
+`task-start`; the loaded hook's bearer check is described below. It does not
+carry task routing policy or mutate repositories from a hook. Install replaces
 only the well-formed `thaliris:global` span; uninstall removes only that span.
 Text outside the span remains byte-for-byte intact, and damaged, duplicate, or
 conflicting Thaliris markers require manual resolution. A newly saved global
 instruction does not prove what the current session loaded.
+
+The `task-start` bridge also requires a one-shot PreToolUse bearer attestation
+from the loaded current-ABI hook. The token embeds a hash of the hook payload's
+session id; the adapter checks that hash, bridge digest, hook ABI, expiry, and
+one-time local record. This is an adapter-side hook-path check inside the
+selected same-Windows-user local trust boundary. It does not authenticate Host
+provenance, and another local process under that user could replay the bearer
+while it remains valid.
+
+The scoped live sequence is recorded in the [admission proof probe report](codex-admission-live-20260926.md).
 
 `SubagentStart` is lifecycle-only. It validates the authorized native Codex child and binds
 identity, role, session, start time, provenance, handoff ID, and payload hash.
@@ -132,8 +163,8 @@ verification performed, and optional Artifact references. The detailed working
 set does not automatically re-enter the Controller.
 Child sessions do not send ordinary progress, heartbeat, or partial-completion
 messages to the parent. They proactively wake the parent only when completed,
-blocked and requiring a parent decision, or when new decision-changing
-information arrives. Direct `send_message` to the exact bound parent remains
+blocked or needing a decision, or when a decision-changing fact arrives. Direct
+`send_message` to the exact bound parent remains
 available for genuine decision-changing information, with no automatic wake
 filter. Follow-up and input tools remain denied for managed children.
 Scanner results return to their requesting Executor/Reviewer.

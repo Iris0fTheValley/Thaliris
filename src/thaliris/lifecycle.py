@@ -776,7 +776,7 @@ def _observed_health(root: Path) -> dict[str, str]:
     return {"runtime_observed": observed, "current_hook_hash_observed": current_hash}
 
 
-def handle_hook(root: Path, event: str, payload: object, managed_hook_abi: str | None = None) -> str:
+def handle_hook(root: Path, event: str, payload: object, managed_hook_abi: str | None = None, controller_bridge_sha256: str | None = None) -> str:
     """Apply mechanical guard/lifecycle rules and record hash-only telemetry."""
     try:
         if event not in HOOK_EVENTS or not isinstance(payload, dict):
@@ -798,10 +798,10 @@ def handle_hook(root: Path, event: str, payload: object, managed_hook_abi: str |
         if event == "PreToolUse":
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) == "spawn_agent":
-                decision = _pre_tool_output(payload, root, managed_hook_abi)
+                decision = _pre_tool_output(payload, root, managed_hook_abi, controller_bridge_sha256)
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
                 return decision
-            return _pre_tool_output(payload, root, managed_hook_abi)
+            return _pre_tool_output(payload, root, managed_hook_abi, controller_bridge_sha256)
         if event == "SessionStart":
             _record_session_start(root, payload)
             return _session_start_output(root, payload)
@@ -2175,9 +2175,8 @@ def _task_key(task_id: str | None) -> str:
     return hashlib.sha256((task_id or "unknown-task").encode("utf-8")).hexdigest()[:24]
 
 
-def _start_attestation_path(root: Path, nonce: str) -> Path:
-    digest = hashlib.sha256(nonce.encode("utf-8")).hexdigest()
-    return root / ".context" / "audit" / "task-start-attestations" / f"{digest}.json"
+def _start_attestation_path(root: Path, session_hash: str) -> Path:
+    return root / ".context" / "audit" / "task-start-attestations" / f"{session_hash}.json"
 
 
 def new_role_profile_files(root: Path, session_hash: str) -> list[str] | None:
@@ -2245,31 +2244,56 @@ def role_catalog_session_status(root: Path, session_hash: str) -> str:
     return HOST_ROLE_CATALOG_UNKNOWN
 
 
-def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None = None) -> str:
+def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None = None, controller_bridge_sha256: str | None = None) -> str:
     session_hash = _session_id_hash(payload)
-    if session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI:
-        return _permission_deny("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
-    command = _bash_command(payload)
-    bridge_match = re.search(r"(?:^|\s)--controller-bridge-sha256\s+([0-9a-f]{64})(?=$|\s)", command or "")
-    if bridge_match is None:
-        return _permission_deny("THALIRIS_CONTROLLER_BRIDGE_REQUIRED: acknowledge the exact managed instruction SHA-256.")
-    nonce = secrets.token_urlsafe(24)
-    token = f"v1.{session_hash}.{nonce}"
-    now = time.time_ns()
-    record = {
-        "version": 1,
-        "nonce_sha256": hashlib.sha256(token.encode("utf-8")).hexdigest(),
-        "session_id_hash": session_hash,
-        "managed_hook_spec_hash": managed_hook_spec_hash(),
-        "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
-        "managed_hook_abi": MANAGED_HOOK_ABI,
-        "controller_bridge_sha256": bridge_match.group(1),
-        "created_at_ns": now,
-        "expires_at_ns": now + _START_ATTESTATION_TTL_NS,
-    }
+    marker = root / ".codex" / "thaliris.json"
+    if (
+        session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI
+        or not isinstance(controller_bridge_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", controller_bridge_sha256) is None
+        or marker.is_symlink() or not marker.is_file()
+        or marker.read_bytes() != b'{"format":"thaliris-project-activation-v1"}\n'
+    ):
+        return ""
     with core._lock(root):
-        _write_capture(_start_attestation_path(root, token), record)
-    return _updated_command_output(payload, f"--hook-attestation {token}")
+        path = _start_attestation_path(root, session_hash)
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            record = None
+        now = time.time_ns()
+        if not (
+            isinstance(record, dict)
+            and record.get("version") == 2
+            and record.get("session_id_hash") == session_hash
+            and record.get("managed_hook_spec_hash") == managed_hook_spec_hash()
+            and record.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
+            and record.get("managed_hook_abi") == MANAGED_HOOK_ABI
+            and record.get("controller_bridge_sha256") == controller_bridge_sha256
+            and isinstance(record.get("token"), str)
+            and re.fullmatch(rf"v2\.{session_hash}\.[A-Za-z0-9_-]{{16,128}}", record["token"]) is not None
+            and type(record.get("created_at_ns")) is int
+            and type(record.get("expires_at_ns")) is int
+            and record["created_at_ns"] <= now <= record["expires_at_ns"]
+        ):
+            token = f"v2.{session_hash}.{secrets.token_urlsafe(24)}"
+            record = {
+                "version": 2,
+                "token": token,
+                "session_id_hash": session_hash,
+                "managed_hook_spec_hash": managed_hook_spec_hash(),
+                "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
+                "managed_hook_abi": MANAGED_HOOK_ABI,
+                "controller_bridge_sha256": controller_bridge_sha256,
+                "created_at_ns": now,
+                "expires_at_ns": now + _START_ATTESTATION_TTL_NS,
+            }
+            _write_capture(path, record)
+        token = record["token"]
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": f"Current-session Thaliris admission proof: --hook-attestation {token}. Pass it with the Controller bridge SHA-256 returned by init or bootstrap-check when calling task-start.",
+    }}, ensure_ascii=False, separators=(",", ":"))
 
 
 def consume_task_start_attestation(root: Path, token: str | None, controller_bridge_sha256: str | None = None) -> str:
@@ -2277,10 +2301,10 @@ def consume_task_start_attestation(root: Path, token: str | None, controller_bri
     error = ValueError("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
     if not isinstance(token, str):
         raise error
-    match = re.fullmatch(r"v1\.([0-9a-f]{64})\.([A-Za-z0-9_-]{16,128})", token)
+    match = re.fullmatch(r"v2\.([0-9a-f]{64})\.([A-Za-z0-9_-]{16,128})", token)
     if match is None:
         raise error
-    path = _start_attestation_path(root, token)
+    path = _start_attestation_path(root, match.group(1))
     with core._lock(root):
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
@@ -2288,8 +2312,8 @@ def consume_task_start_attestation(root: Path, token: str | None, controller_bri
             raise error
         valid = (
             isinstance(record, dict)
-            and record.get("version") == 1
-            and record.get("nonce_sha256") == hashlib.sha256(token.encode("utf-8")).hexdigest()
+            and record.get("version") == 2
+            and record.get("token") == token
             and record.get("session_id_hash") == match.group(1)
             and record.get("managed_hook_spec_hash") == managed_hook_spec_hash()
             and record.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
@@ -2387,7 +2411,7 @@ def _isolation_classification(tool: str, tool_input: dict[str, Any], _role: str)
     return {"required": "YES", "fork_turns": "OTHER", "status": "FAIL"}
 
 
-def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_hook_abi: str | None = None) -> str:
+def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_hook_abi: str | None = None, controller_bridge_sha256: str | None = None) -> str:
     """Enforce the small ACTIVE Root tool boundary before native dispatch."""
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
@@ -2395,7 +2419,7 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
     root = _hook_repository_root(root or Path.cwd(), payload)
     normalized = _tool_basename(tool)
     state_status, _task_id = managed_task_state(root)
-    operation = _context_operation(payload) if normalized in _CONTROLLER_EXECUTION_TOOL_NAMES else None
+    operation = _context_operation(payload) if state_status != "NO_TASK" and normalized in _CONTROLLER_EXECUTION_TOOL_NAMES else None
 
     if state_status == "INVALID_STATE":
         # Damaged managed state does not make unrelated native tools unsafe.
@@ -2409,8 +2433,8 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
             return _permission_deny("THALIRIS_INVALID_STATE: managed control is unavailable until the task state is diagnosed or repaired.")
         return ""
 
-    if state_status == "NO_TASK" and operation == "task-start":
-        return _issue_task_start_attestation(root, payload, managed_hook_abi)
+    if state_status == "NO_TASK" and normalized == "Bash":
+        return _issue_task_start_attestation(root, payload, managed_hook_abi, controller_bridge_sha256)
 
     if state_status == "ACTIVE":
         if normalized in _FRESH_CHILD_REUSE_TOOL_NAMES or normalized == "Agent":

@@ -161,6 +161,20 @@ def test_authoritative_prose_uses_role_names_or_explicit_native_child_context() 
     for surface in surfaces:
         text = surface.read_text(encoding="utf-8")
         assert not re.search(r"(?m)^#+ (?:Shared )?Child(?: |$)", text), surface
+    project_agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+    core_contract = (
+        "## Thaliris Core\n\n"
+        "This repository contains the runtime-neutral Core and the Codex adapter. Keep\n"
+        "production mechanics smaller than model policy. Do not add role-based semantic\n"
+        "projection, automatic Artifact or memory propagation, semantic state\n"
+        "transitions, verification sufficiency gates, hidden model auditors, or\n"
+        "benchmark authority to the production package.\n\n"
+        "Detailed Investigator, Curator, Reasoning Specialist, Implementer, Verifier, and Reviewer work stays private unless explicitly saved as an Artifact.\n"
+        "Controller handoffs and retrieval are explicit. Runtime-specific lifecycle and\n"
+        "role-profile instructions belong in the adapter."
+    )
+    assert core_contract in project_agents
+    assert project_agents.index("<!-- thaliris:end -->") < project_agents.index("## Thaliris Core")
     generated = (root / "src" / "thaliris" / "codex_adapter.py").read_text(encoding="utf-8")
     assert "Do not delegate to another child" not in generated
     assert "another native Codex child session" not in generated

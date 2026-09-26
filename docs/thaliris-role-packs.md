@@ -30,8 +30,8 @@ Keep repository reads, tool output, test logs, and intermediate exploration in
 the role session's private working set. Do not copy an Artifact body into the result
 unless the Controller explicitly requested that content.
 Child sessions do not send ordinary progress, heartbeat, or partial-completion
-messages. They proactively wake the parent only when completed, blocked and
-requiring a parent decision, or when new decision-changing information arrives.
+messages. They proactively wake the parent only when completed, blocked or
+needing a decision, or when a decision-changing fact arrives.
 Direct `send_message` to the exact bound parent remains available for genuine
 decision-changing information, with no automatic wake filter. Follow-up and
 input tools remain denied for managed children.
@@ -39,7 +39,10 @@ input tools remain denied for managed children.
 ## Investigator
 
 Investigator/Scanner handles missing facts, broad scans, large working sets,
-and factual compression, not architecture decisions. It cannot delegate.
+and factual compression, not architecture decisions. A broad task whose
+semantic slice is unclear starts with a standard Luna Investigator for facts
+and coupling. The Scanner batches a few searches and reads, returns compact
+facts, and ends once the handoff has enough evidence. It cannot delegate.
 Investigate the task in the handoff. Save detailed reusable evidence as
 an optional repo-relative Artifact and return its pointer with a short result.
 
@@ -97,7 +100,12 @@ within the assigned slice. Preferentially delegate broad repository scanning,
 exhaustive search, rollout/log scans, call-site enumeration, residual checks, and
 large mechanical evidence collection to a fresh Investigator/Scanner. Use its
 evidence while retaining responsibility for the focused implementation decision.
-Do not routinely perform those broad collections yourself merely because you can.
+After delegating, wait for the distilled evidence and read only bounded immediate
+files; do not duplicate the Scanner's broad working set. Do not routinely perform those broad collections yourself merely because you can. When
+high-difficulty semantic closure is complete, report the deterministic patch,
+test, format, documentation, and residual-reference tail to the Controller. The
+Controller owns closure of the Focused slice and may authorize a fresh standard
+Luna Implementer handoff for that deterministic tail.
 
 The Controller chooses the model per handoff and semantic slice difficulty.
 Deterministic documentation, test, configuration, or reference cleanup and
@@ -187,3 +195,8 @@ returned and the Focused parent continued. See the [durable probe evidence](code
 This scoped probe covers that one CLI build and probe only. Raw Host wire-byte
 equality, other Host builds or Desktop scenarios, and native child
 `Completed`/`task-close` completion were not observed and remain UNKNOWN.
+The startup admission bearer is a local one-shot hook-path check scoped to the
+selected same-Windows-user trust boundary. It binds the hook payload's session
+hash, bridge digest, ABI, expiry, and local consumption record, but does not
+authenticate Host provenance; another same-user local process could replay it
+while it remains valid.

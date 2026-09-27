@@ -56,7 +56,8 @@ def _parser() -> argparse.ArgumentParser:
     install.add_argument("--executable", help="absolute Thaliris executable for Host hooks")
     install.add_argument("--sha256", help="exact SHA-256 pin for --executable")
     sub.add_parser("codex-uninstall", help="remove only Thaliris-owned Host integration")
-    sub.add_parser("codex-bootstrap", help="perform one-shot project-external Codex bootstrap")
+    q = sub.add_parser("codex-bootstrap", help="perform one-shot project-external Codex bootstrap")
+    q.add_argument("--hook-attestation", help=argparse.SUPPRESS)
     q = sub.add_parser("catalog", help="discover bounded durable document metadata")
     q.add_argument("path", nargs="?")
     q = sub.add_parser("document-get", help="retrieve 1 to 8 explicitly selected durable documents")
@@ -66,7 +67,15 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--milestone")
     q.add_argument("--input")
     q.add_argument("--hook-attestation", help=argparse.SUPPRESS)
+    q.add_argument("--bootstrap-receipt", dest="bootstrap_receipt")
     q.add_argument("--controller-bridge-sha256", help=argparse.SUPPRESS)
+    q = sub.add_parser("task-abandon", help="explicitly archive and release an incomplete ACTIVE task")
+    q.add_argument("--task-id", required=True)
+    q.add_argument("--revision", required=True, type=int)
+    q.add_argument("--state-sha256", required=True)
+    q.add_argument("--lifecycle-sha256", required=True)
+    q.add_argument("--reason", required=True)
+    q.add_argument("--hook-attestation", help=argparse.SUPPRESS)
     q = sub.add_parser("task-update")
     q.add_argument("--role", required=True, choices=codex_adapter.role_choices())
     q.add_argument("--base-revision", required=True, type=int)
@@ -173,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "codex-uninstall": out = codex_adapter.codex_uninstall()
         elif args.command == "codex-bootstrap":
             try:
-                out = codex_bootstrap.bootstrap(root)
+                out = codex_bootstrap.bootstrap(root, args.hook_attestation) if args.hook_attestation else codex_bootstrap.bootstrap(root)
             except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
                 out = {
                     "ok": False,
@@ -188,7 +197,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "milestone-check": out = milestone_check(root)
         elif args.command == "catalog": out = catalog(root, args.path)
         elif args.command == "document-get": out = document_get(root, args.path)
-        elif args.command == "task-start": out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.hook_attestation, args.controller_bridge_sha256)
+        elif args.command == "task-start":
+            receipt = args.bootstrap_receipt or args.controller_bridge_sha256
+            if args.bootstrap_receipt and args.controller_bridge_sha256 and args.bootstrap_receipt != args.controller_bridge_sha256:
+                raise ValueError("conflicting bootstrap receipts")
+            out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.hook_attestation, receipt)
+        elif args.command == "task-abandon": out = codex_adapter.task_abandon(root, args.task_id, args.revision, args.state_sha256, args.lifecycle_sha256, args.reason, args.hook_attestation)
         elif args.command == "task-update": out = task_update(root, codex_adapter.controller_actor(args.role), args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
         elif args.command == "task-status": out = _task_status(root, suppress_protocol_notice=args.suppress_protocol_notice)

@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 
-from . import lifecycle
+from . import core, lifecycle, runtime_identity
 
 EXPECTED_MANAGED_HOOK_ABI = lifecycle.MANAGED_HOOK_ABI
 EXPECTED_ADAPTER_PROTOCOL_VERSION = lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION
@@ -34,40 +32,19 @@ def _repo_root(path: Path) -> Path:
 
 
 def _trusted_executable() -> list[str] | None:
-    configured = os.environ.get("THALIRIS_EXECUTABLE") or os.environ.get(
-        "THALIRIS_CONTEXT_EXECUTABLE"
-    )
-    expected = (
-        os.environ.get("THALIRIS_EXECUTABLE_SHA256")
-        or os.environ.get("THALIRIS_CONTEXT_EXECUTABLE_SHA256", "")
-    ).lower()
-    if configured is not None or expected:
-        # A configured route is trusted only when it is an absolute regular
-        # executable file with an exact SHA-256 pin.  In particular, do not
-        # silently fall back to PATH when the configured route is malformed.
-        if not configured or not expected:
+    """Resolve only the full Host-installed runtime identity."""
+    home = lifecycle._host_home_path()
+    manifest = home / runtime_identity.MANIFEST_NAME
+    try:
+        if manifest.is_symlink() or not manifest.is_file():
             return None
-        path = Path(configured).expanduser()
-        if (
-            not path.is_absolute()
-            or not path.is_file()
-            or path.is_symlink()
-            or not re.fullmatch(r"[0-9a-f]{64}", expected)
-        ):
-            return None
-        try:
-            resolved = path.resolve(strict=True)
-            digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
-        except (OSError, RuntimeError):
-            return None
-        if digest != expected:
-            return None
-        return [str(resolved)]
-    # The unpinned route is the canonical command resolved by PATH.  An
-    # arbitrary configured alias or wrapper is never accepted as this route.
-    if shutil.which("thaliris"):
-        return ["thaliris"]
-    return None
+        contents = manifest.read_bytes()
+        record = runtime_identity.validate_manifest_record(contents)
+        executable = Path(str(record["executable"]))
+        runtime_identity.validate_manifest(contents, executable, runtime_identity.manifest_identity(contents))
+        return [str(executable)]
+    except (OSError, ValueError, RuntimeError, TypeError):
+        return None
 
 
 def _invoke(executable: list[str], root: Path, command: str) -> dict[str, object]:
@@ -140,32 +117,57 @@ def _restart_required(payload: dict[str, object]) -> bool:
 
 
 def _bridge_fields(payload: dict[str, object]) -> dict[str, object]:
-    """Forward only a complete canonical instruction receipt from the CLI."""
+    """Expose one opaque receipt while keeping instruction bytes internal."""
     content = payload.get("controller_bridge_content")
     digest = payload.get("controller_bridge_sha256")
     if isinstance(content, str) and isinstance(digest, str) and hashlib.sha256(content.encode("utf-8")).hexdigest() == digest:
-        result: dict[str, object] = {
-            "controller_bridge_content": content,
-            "controller_bridge_sha256": digest,
-            "host_instruction_activation": "UNKNOWN",
-        }
-        for key in (
-            "host_profile_definition_present",
-            "host_role_catalog_status",
-            "host_hook_registration_present",
-            "project_activation_marker_present",
-            "project_local_profile_files_present",
-            "legacy_project_hook_registration_present",
-        ):
-            if key in payload:
-                result[key] = payload[key]
-        if "host_hook_registration_present" in payload:
-            result["host_hook_session_activation"] = "UNKNOWN"
-        return result
+        return {"task_start_receipt": digest}
     return {}
 
 
-def bootstrap(root: Path) -> dict[str, object]:
+def _task_preflight(root: Path) -> dict[str, object]:
+    """Read exact task evidence before any project initialization."""
+    path = core._state_path(root)
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        return {"status": "INVALID_STATE"}
+    if not path.exists():
+        return {"status": "NO_TASK"}
+    try:
+        raw = path.read_bytes()
+        if len(raw) > 512 * 1024:
+            raise ValueError("task state exceeds 512 KiB")
+        state = core._validate_state(root, json.loads(raw.decode("utf-8")))
+        if state["status"] != "ACTIVE":
+            return {"status": "NO_TASK"}
+        task_id = str(state["task_id"])
+        lifecycle_path = lifecycle._lifecycle_path(root, task_id)
+        if lifecycle_path.is_symlink() or (lifecycle_path.exists() and not lifecycle_path.is_file()):
+            raise ValueError("invalid lifecycle path")
+        lifecycle_raw = lifecycle_path.read_bytes() if lifecycle_path.is_file() else None
+        ledger = lifecycle._load_lifecycle(lifecycle_path, task_id)
+        owner = ledger.get("owner_session_id_hash")
+        provenance = "TASK_START" if owner is not None else "UNKNOWN"
+        pending = ledger.get("pending_authorized_spawn")
+        if owner is None and isinstance(pending, dict) and pending.get("depth") == 1 and pending.get("parent_role") == "controller":
+            owner = pending.get("session_id_hash")
+            provenance = "DEPTH_ONE_PENDING_RESERVATION"
+        if owner is not None and (not isinstance(owner, str) or re.fullmatch(r"[0-9a-f]{64}", owner) is None):
+            raise ValueError("invalid lifecycle Controller owner")
+        return {
+            "status": "ACTIVE",
+            "task_id": task_id,
+            "revision": state["revision"],
+            "state_sha256": hashlib.sha256(raw).hexdigest(),
+            "lifecycle_sha256": hashlib.sha256(lifecycle_raw).hexdigest() if lifecycle_raw is not None else "ABSENT",
+            "owner_session_id_hash": owner or "UNKNOWN",
+            "owner_provenance": provenance,
+            "current_session_owner_match": "UNKNOWN",
+        }
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+        return {"status": "INVALID_STATE"}
+
+
+def bootstrap(root: Path, hook_attestation: str | None = None) -> dict[str, object]:
     """Perform one bootstrap-check and, only when absent, one init attempt."""
     workspace = _repo_root(root)
     executable = _trusted_executable()
@@ -176,6 +178,20 @@ def bootstrap(root: Path) -> dict[str, object]:
             "manual_action_required": ["canonical_executable_unavailable"],
             "session_restart_required": False,
         }
+
+    task = _task_preflight(workspace)
+    if task["status"] == "ACTIVE":
+        session_hash = lifecycle.consume_bootstrap_observation(workspace, str(task["task_id"]), hook_attestation)
+        owner = task["owner_session_id_hash"]
+        if session_hash is not None and owner != "UNKNOWN":
+            current = session_hash == owner
+            task["current_session_owner_match"] = "YES" if current else "NO"
+            status = "CURRENT_CONTINUATION" if current else "FOREIGN_RECOVERY_DECISION"
+        else:
+            status = "UNKNOWN"
+        return {"ok": False, "status": status, "recovery": task, "init_invoked": False, "session_restart_required": False}
+    if task["status"] == "INVALID_STATE":
+        return {"ok": False, "status": "INVALID_STATE", "init_invoked": False, "session_restart_required": False}
 
     facts = _invoke(executable, workspace, "bootstrap-check")
     if facts.get("ok") is not True:
@@ -227,6 +243,10 @@ def bootstrap(root: Path) -> dict[str, object]:
             "probe": facts,
             "session_restart_required": _restart_required(facts),
         }
+
+    task = _task_preflight(workspace)
+    if task["status"] != "NO_TASK":
+        return {"ok": False, "status": task["status"], "recovery": task if task["status"] == "ACTIVE" else None, "init_invoked": False, "session_restart_required": False}
 
     # Exactly one init attempt.  No durable fence, retry, or task-start is
     # performed by this boundary.

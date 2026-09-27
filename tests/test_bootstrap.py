@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from thaliris import codex_adapter, codex_bootstrap as bootstrap, lifecycle
+from thaliris import codex_adapter, codex_bootstrap as bootstrap, lifecycle, runtime_identity
 from thaliris import cli, core
 
 
@@ -537,3 +537,141 @@ def test_native_bootstrap_check_has_explicit_restart_boolean(monkeypatch, tmp_pa
     result = codex_adapter.bootstrap_check(tmp_path)
     assert result["session_restart_required"] is False
     assert type(result["session_restart_required"]) is bool
+
+
+def test_bootstrap_uses_full_installed_runtime_manifest(tmp_path: Path, monkeypatch, pinned_test_thaliris):
+    executable, _ = pinned_test_thaliris
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    monkeypatch.setenv("THALIRIS_EXECUTABLE", str(executable))
+    (home / runtime_identity.MANIFEST_NAME).write_bytes(runtime_identity.manifest_bytes(executable))
+    assert bootstrap._trusted_executable() == [str(executable)]
+
+    package = executable.parent.parent / "Lib" / "site-packages" / "thaliris" / "cli.py"
+    package.write_text("changed\n", encoding="utf-8")
+    assert bootstrap._trusted_executable() is None
+    assert (home / runtime_identity.MANIFEST_NAME).is_file()
+
+
+def test_active_task_yields_exact_recovery_without_probe_or_init(tmp_path: Path, monkeypatch):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    codex_adapter.init(tmp_path)
+    started = core.task_start(tmp_path, "unfinished", None, None)
+    owner = hashlib.sha256(b"owning-session").hexdigest()
+    lifecycle.record_task_start_owner(tmp_path, started["task_id"], owner)
+    monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["installed"])
+    monkeypatch.setattr(bootstrap, "_invoke", lambda *args: (_ for _ in ()).throw(AssertionError("no project probe")))
+
+    result = bootstrap.bootstrap(tmp_path)
+    state = (tmp_path / ".context" / "state.json").read_bytes()
+    ledger = lifecycle._lifecycle_path(tmp_path, started["task_id"]).read_bytes()
+    assert result["status"] == "UNKNOWN"
+    assert result["init_invoked"] is False
+    assert result["recovery"] == {
+        "status": "ACTIVE", "task_id": started["task_id"], "revision": started["revision"],
+        "state_sha256": hashlib.sha256(state).hexdigest(),
+        "lifecycle_sha256": hashlib.sha256(ledger).hexdigest(),
+        "owner_session_id_hash": owner, "owner_provenance": "TASK_START",
+        "current_session_owner_match": "UNKNOWN",
+    }
+
+
+def test_invalid_task_state_stops_before_runtime_or_init(tmp_path: Path, monkeypatch):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    state = tmp_path / ".context" / "state.json"
+    state.parent.mkdir()
+    state.write_text('{"status":"ACTIVE"}', encoding="utf-8")
+    monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["installed"])
+    result = bootstrap.bootstrap(tmp_path)
+    assert result["status"] == "INVALID_STATE"
+    assert result["init_invoked"] is False
+
+
+def test_ready_exposes_single_receipt_and_global_instruction_is_one_command(tmp_path: Path, monkeypatch):
+    digest = hashlib.sha256(b"managed text").hexdigest()
+    monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
+    monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["installed"])
+    monkeypatch.setattr(bootstrap, "_invoke", lambda *args: {
+        "ok": True, "project_definition_present": "YES",
+        "controller_bridge_content": "managed text", "controller_bridge_sha256": digest,
+    })
+    result = bootstrap.bootstrap(tmp_path)
+    assert result["task_start_receipt"] == digest
+    assert "controller_bridge_sha256" not in result
+    assert "controller_bridge_content" not in result
+    rendered = codex_adapter._global_agents_block(Path("C:/installed/thaliris.exe"), digest).decode("utf-8")
+    assert rendered.count("--root <repo> codex-bootstrap") == 1
+    assert "bootstrap-check" not in rendered and "Get-FileHash" not in rendered
+    assert "--bootstrap-receipt" in rendered
+
+
+def test_cli_bootstrap_receipt_alias_is_passed_to_task_start(tmp_path: Path, monkeypatch, capsys):
+    seen = []
+    monkeypatch.setattr(cli.codex_adapter, "task_start", lambda *args: seen.append(args) or {"ok": True})
+    assert cli.main(["--root", str(tmp_path), "task-start", "goal", "--bootstrap-receipt", "a" * 64]) == 0
+    assert seen[0][-1] == "a" * 64
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
+def test_current_hook_attests_receipt_alias_and_allows_active_bootstrap(tmp_path: Path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    codex_adapter.init(tmp_path)
+    digest = codex_adapter._controller_bridge()["controller_bridge_sha256"]
+    payload = {
+        "session_id": "controller-session", "turn_id": "start-turn", "tool_name": "Bash",
+        "tool_input": {"command": f"thaliris task-start goal --bootstrap-receipt {digest}"},
+    }
+    response = json.loads(lifecycle.handle_hook(tmp_path, "PreToolUse", payload, lifecycle.MANAGED_HOOK_ABI))
+    assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert "--hook-attestation" in response["hookSpecificOutput"]["updatedInput"]["command"]
+    core.task_start(tmp_path, "unfinished", None, None)
+    active = {"session_id": "controller-session", "turn_id": "active-turn", "tool_name": "Bash", "tool_input": {"command": "thaliris --root . codex-bootstrap"}}
+    rewritten = json.loads(lifecycle.handle_hook(tmp_path, "PreToolUse", active, lifecycle.MANAGED_HOOK_ABI))
+    assert rewritten["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert "--hook-attestation" in rewritten["hookSpecificOutput"]["updatedInput"]["command"]
+
+
+def test_active_bootstrap_proves_owner_or_foreign_session_once(tmp_path: Path, monkeypatch):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    codex_adapter.init(tmp_path)
+    started = core.task_start(tmp_path, "unfinished", None, None)
+    lifecycle.record_task_start_owner(tmp_path, started["task_id"], hashlib.sha256(b"owner-session").hexdigest())
+    monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["installed"])
+    monkeypatch.setattr(bootstrap, "_invoke", lambda *args: (_ for _ in ()).throw(AssertionError("ACTIVE must not probe or init")))
+
+    for session, expected in (("owner-session", "CURRENT_CONTINUATION"), ("foreign-session", "FOREIGN_RECOVERY_DECISION")):
+        payload = {"session_id": session, "turn_id": "turn", "tool_name": "Bash", "tool_input": {"command": "thaliris --root . codex-bootstrap"}}
+        rewritten = json.loads(lifecycle.handle_hook(tmp_path, "PreToolUse", payload, lifecycle.MANAGED_HOOK_ABI))
+        token = rewritten["hookSpecificOutput"]["updatedInput"]["command"].split("--hook-attestation ", 1)[1]
+        result = bootstrap.bootstrap(tmp_path, token)
+        assert result["status"] == expected
+        assert result["recovery"]["current_session_owner_match"] == ("YES" if session == "owner-session" else "NO")
+        assert token not in json.dumps(result)
+        with pytest.raises(ValueError, match="MANAGED_CURRENT_SESSION_NOT_ATTESTED"):
+            bootstrap.bootstrap(tmp_path, token)
+
+
+def test_active_owner_admission_and_unknown_owner_are_fail_closed(tmp_path: Path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    codex_adapter.init(tmp_path)
+    started = core.task_start(tmp_path, "unfinished", None, None)
+    call = lambda session, tool, data: {"session_id": session, "turn_id": "turn", "tool_name": tool, "tool_input": data}
+    spawn = {"fork_turns": "none", "agent_type": "thaliris-implementer", "message": "selected handoff"}
+    assert "THALIRIS_ACTIVE_OWNER_REQUIRED" in lifecycle.handle_hook(tmp_path, "PreToolUse", call("owner", "spawn_agent", spawn))
+    assert lifecycle.handle_hook(tmp_path, "PreToolUse", call("owner", "Bash", {"command": "thaliris task-status"})) == ""
+
+    lifecycle.record_task_start_owner(tmp_path, started["task_id"], hashlib.sha256(b"owner").hexdigest())
+    assert "THALIRIS_ACTIVE_OWNER_REQUIRED" in lifecycle.handle_hook(tmp_path, "PreToolUse", call("foreign", "spawn_agent", spawn))
+    assert "THALIRIS_ACTIVE_OWNER_REQUIRED" in lifecycle.handle_hook(tmp_path, "PreToolUse", call("foreign", "Bash", {"command": "thaliris task-update --role controller --base-revision 1 --input x"}))
+    assert lifecycle.handle_hook(tmp_path, "PreToolUse", call("owner", "spawn_agent", spawn)) == ""

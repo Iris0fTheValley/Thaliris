@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import base64
 from functools import lru_cache
 import os
 from pathlib import Path
@@ -12,14 +13,16 @@ import subprocess
 import tempfile
 import tomllib
 
-from . import codex_app_server, core, lifecycle, roles
+from . import codex_app_server, core, lifecycle, roles, runtime_identity
 from .lifecycle import (
     MANAGED_HOOKS_DESCRIPTION,
     MANAGED_HOOK_ABI,
     HOST_HOOK_SCRIPT_NAME,
+    HOST_RUN_SCRIPT_NAME,
     PROJECT_ACTIVATION_MARKER,
     handle_hook,
     host_hook_script_bytes,
+    host_run_script_bytes,
     merge_host_hooks,
     remove_hooks,
     remove_host_hooks,
@@ -1241,6 +1244,27 @@ def _host_install_executable(
     expected = executable_sha256.lower() if isinstance(executable_sha256, str) else digest
     if not re.fullmatch(r"[0-9a-f]{64}", expected) or digest != expected:
         return None, None, "host_executable_sha256_mismatch"
+    try:
+        package_dir = Path(json.loads(runtime_identity.manifest_bytes(resolved))["package_dir"])
+    except (OSError, RuntimeError, ValueError):
+        return None, None, "host_installed_runtime_unavailable_or_unsafe"
+    interpreter = resolved.parent / ("python.exe" if os.name == "nt" else "python")
+    if not interpreter.is_file() or interpreter.is_symlink():
+        return None, None, "host_runtime_interpreter_unavailable_or_unsafe"
+    probe_env = os.environ.copy()
+    probe_env.pop("PYTHONPATH", None)
+    probe_env.pop("PYTHONHOME", None)
+    probe_env["PYTHONNOUSERSITE"] = "1"
+    probe_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    try:
+        origin = subprocess.run(
+            [str(interpreter), "-I", "-c", "import thaliris; print(thaliris.__file__)"],
+            capture_output=True, timeout=15, check=False, env=probe_env,
+        )
+        if origin.returncode != 0 or origin.stderr or Path(origin.stdout.decode("utf-8").strip()).resolve(strict=True) != (package_dir / "__init__.py").resolve(strict=True):
+            return None, None, "host_runtime_import_origin_mismatch"
+    except (OSError, UnicodeError, subprocess.SubprocessError, RuntimeError):
+        return None, None, "host_runtime_import_origin_mismatch"
     # A process exit check prevents a stale installed launcher from being
     # embedded in the stable Host trampoline. This exact direct invocation
     # accepts no shell wrapper and runs from a disposable non-Thaliris repo.
@@ -1261,6 +1285,7 @@ def _host_install_executable(
                 capture_output=True,
                 timeout=15,
                 check=False,
+                env=probe_env,
             )
     except (OSError, subprocess.SubprocessError):
         return None, None, "host_executable_current_hook_abi_probe_failed"
@@ -1290,39 +1315,46 @@ def _atomic_host_write(path: Path, contents: bytes) -> None:
                 pass
 
 
-def _global_agents_block(executable: Path | None = None, executable_sha256: str | None = None) -> bytes:
-    """Render the user-layer startup contract with an optional installed pin."""
+def _write_runtime_audit(home: Path, previous: bytes, old_executable: Path) -> Path:
+    """Keep exact prior pin and best-effort observed runtime identity off the active path."""
+    try:
+        observed = runtime_identity.manifest_identity(runtime_identity.manifest_bytes(old_executable))
+    except (OSError, RuntimeError, ValueError):
+        observed = "UNAVAILABLE"
+    record = {
+        "format": "thaliris-installed-runtime-audit-v1",
+        "prior_manifest_base64": base64.b64encode(previous).decode("ascii"),
+        "prior_manifest_sha256": runtime_identity.manifest_identity(previous),
+        "observed_runtime_sha256": observed,
+    }
+    with tempfile.NamedTemporaryFile(mode="wb", prefix="thaliris-install-audit-", suffix=".json",
+                                     dir=home, delete=False) as output:
+        output.write((json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
+        return Path(output.name)
+
+
+def _global_agents_block(executable: Path | None = None, executable_sha256: str | None = None,
+                         codex_home: Path | None = None) -> bytes:
+    """Render the one-command user-layer startup contract."""
     if (executable is None) != (executable_sha256 is None):
         raise ValueError("global instruction executable and SHA-256 must be paired")
-    trusted_route = (
-        f"Installed direct executable: `{executable}`\n"
-        f"Expected SHA-256: `{executable_sha256}`\n"
-        "Check the executable's current SHA-256 against this exact pin before use.\n"
-        "Invoke that absolute executable directly for Thaliris commands; a different\n"
-        "`thaliris` found on PATH is not evidence that it has the installed ABI.\n"
-        if executable is not None else
-        "If no trusted direct executable route is available, report bootstrap unavailable.\n"
-    )
+    script = _codex_home(codex_home) / HOST_RUN_SCRIPT_NAME
+    quoted = str(script).replace("'", "''")
+    trusted_route = f"`& '{quoted}' --root <repo> codex-bootstrap`" if os.name == "nt" else f"`'{quoted}' --root <repo> codex-bootstrap`"
+    task_route = f"`& '{quoted}' --root <repo> task-start <goal> --bootstrap-receipt <receipt>`" if os.name == "nt" else f"`'{quoted}' --root <repo> task-start <goal> --bootstrap-receipt <receipt>`"
     return f"""<!-- thaliris:global:begin -->
 ## Thaliris project startup
 
-For substantive work that creates or changes files in a Git repository,
-including a README, unless the user explicitly opts out, check the repository root for
-`.codex/thaliris.json` and the effective root AGENTS instruction for the
-`<!-- thaliris:begin -->` project block. If readiness is not already confirmed,
-run a trusted direct `--root <repo> bootstrap-check` once, including when both
-project markers are absent. If it reports either project definition or activation
-marker missing, run trusted direct `--root <repo> init` and read its result.
-Do not repeat bootstrap for confirmed readiness or run `init` during an ACTIVE
-managed task. Chatting, informational questions, read-only work, and non-Git
-directories do not call for proactive project bootstrap.
-
-{trusted_route}
-Read the canonical managed instruction text and SHA-256 from `init` or
-`bootstrap-check`, then acknowledge that digest with
-`--controller-bridge-sha256` in `task-start` in the same session. Follow the
-effective project instruction for task routing. A CLI result does not prove
-Host instruction activation or a loaded current-session hook.
+For substantive Git repository file edits, unless the user opts out, run
+{trusted_route} directly once.
+Chatting, read-only work, and non-Git directories need no project bootstrap.
+On READY, pass its `task_start_receipt` as `<receipt>` in {task_route}
+in this session; the current Hook must attest
+task start. Use this installed command for later Thaliris operations. On ACTIVE, continue
+the owning task only when session ownership is proven; otherwise decide
+explicitly whether to recover it with `task-abandon` using the exact recovery
+packet. On INVALID_STATE or bootstrap failure, diagnose before edits.
+After task start, follow the effective project role router.
 <!-- thaliris:global:end -->
 """.encode("utf-8")
 
@@ -1354,6 +1386,7 @@ def _global_agents_span(current: bytes) -> tuple[int, int] | None:
 def _global_agents_update(
     current: bytes, *, remove: bool = False,
     executable: Path | None = None, executable_sha256: str | None = None,
+    codex_home: Path | None = None,
 ) -> bytes:
     span = _global_agents_span(current)
     # Project-owned markers in the user layer indicate a different ownership
@@ -1362,13 +1395,13 @@ def _global_agents_update(
     if MANAGED_START.encode() in outside or MANAGED_END.encode() in outside:
         raise ValueError("AGENTS.md has conflicting project Thaliris markers")
     if span is None:
-        return current if remove else _global_agents_block(executable, executable_sha256) + current
+        return current if remove else _global_agents_block(executable, executable_sha256, codex_home) + current
     start, end = span
-    return current[:start] + (b"" if remove else _global_agents_block(executable, executable_sha256)) + current[end:]
+    return current[:start] + (b"" if remove else _global_agents_block(executable, executable_sha256, codex_home)) + current[end:]
 
 
-def _install_host_hook_trust(home: Path, executable: Path, executable_sha256: str) -> dict[str, Any]:
-    return codex_app_server.trust_installed_host_hooks(home, executable, executable_sha256)
+def _install_host_hook_trust(home: Path, executable: Path, executable_sha256: str, runtime_sha256: str) -> dict[str, Any]:
+    return codex_app_server.trust_installed_host_hooks(home, executable, executable_sha256, runtime_sha256)
 
 
 def _owned_host_hook_commands(data: dict[str, Any], home: Path) -> dict[str, set[str]]:
@@ -1403,6 +1436,8 @@ def codex_install(
     global_agents = home / "AGENTS.md"
     hooks_path = home / "hooks.json"
     script_path = home / HOST_HOOK_SCRIPT_NAME
+    run_script_path = home / HOST_RUN_SCRIPT_NAME
+    manifest_path = home / runtime_identity.MANIFEST_NAME
     manual: list[str] = []
     files: list[str] = []
     changed = False
@@ -1438,7 +1473,31 @@ def codex_install(
     )
     if executable_problem is not None:
         manual.append(executable_problem)
+    runtime_bytes: bytes | None = None
+    runtime_hash: str | None = None
+    previous_runtime: tuple[bytes, Path] | None = None
+    if executable_path is not None:
+        try:
+            runtime_bytes = runtime_identity.manifest_bytes(executable_path)
+            runtime_hash = runtime_identity.manifest_identity(runtime_bytes)
+            if json.loads(runtime_bytes)["executable_sha256"] != executable_hash:
+                raise ValueError("Thaliris launcher changed while installing")
+            if manifest_path.is_symlink() or (manifest_path.exists() and not manifest_path.is_file()):
+                raise ValueError("unsafe installed runtime manifest path")
+            if manifest_path.exists():
+                previous = manifest_path.read_bytes()
+                old = runtime_identity.validate_manifest_record(previous)
+                old_executable = Path(old["executable"])
+                if old_executable == executable_path and previous != runtime_bytes:
+                    raise ValueError("installed runtime changed in place; install a new runtime directory")
+                if old_executable != executable_path:
+                    previous_runtime = (previous, old_executable)
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            manual.append(f"installed_runtime_identity_unavailable:{exc}")
+            runtime_bytes = None
+            runtime_hash = None
     script_bytes = host_hook_script_bytes()
+    run_script_bytes = host_run_script_bytes(executable_path, runtime_hash) if executable_path is not None and runtime_hash is not None else None
     unsafe_script_path = any(character in str(script_path) for character in ('"', "%", "!", "\r", "\n"))
     script_safe = not home.is_symlink() and not script_path.is_symlink() and not unsafe_script_path
     if unsafe_script_path:
@@ -1446,7 +1505,7 @@ def codex_install(
     if script_safe and script_path.exists():
         try:
             existing_script = script_path.read_bytes()
-            if existing_script not in {script_bytes, lifecycle._legacy_host_hook_script_bytes()}:
+            if existing_script not in {script_bytes, lifecycle._previous_host_hook_script_bytes(), lifecycle._legacy_host_hook_script_bytes()}:
                 manual.append(str(script_path))
                 script_safe = False
         except OSError:
@@ -1456,8 +1515,24 @@ def codex_install(
         manual.append(str(script_path))
         script_safe = False
 
+    if run_script_path.is_symlink() or (run_script_path.exists() and not run_script_path.is_file()):
+        manual.append(str(run_script_path))
+        script_safe = False
+    elif run_script_path.exists() and run_script_bytes is not None:
+        permitted = {run_script_bytes}
+        if manifest_path.is_file() and not manifest_path.is_symlink():
+            try:
+                prior = manifest_path.read_bytes()
+                prior_record = runtime_identity.validate_manifest_record(prior)
+                permitted.add(host_run_script_bytes(Path(prior_record["executable"]), runtime_identity.manifest_identity(prior)))
+            except (OSError, ValueError, TypeError):
+                pass
+        if run_script_path.read_bytes() not in permitted:
+            manual.append(str(run_script_path))
+            script_safe = False
+
     hook_bytes: bytes | None = None
-    if executable_path is not None and executable_hash is not None and script_safe and not hooks_path.is_symlink() and not home.is_symlink():
+    if executable_path is not None and executable_hash is not None and runtime_hash is not None and script_safe and not hooks_path.is_symlink() and not home.is_symlink():
         try:
             if hooks_path.exists():
                 original = json.loads(hooks_path.read_text(encoding="utf-8"))
@@ -1466,11 +1541,19 @@ def codex_install(
             else:
                 original = {}
             merged, hooks_changed, hook_manual = merge_host_hooks(
-                original, home, executable_path, executable_hash
+                original, home, executable_path, executable_hash, runtime_hash
             )
             if hook_manual:
                 manual.extend(str(hooks_path) + ":" + item for item in hook_manual)
             else:
+                if previous_runtime is not None:
+                    audit = _write_runtime_audit(home, *previous_runtime)
+                    changed = True
+                    files.append(audit.name)
+                if runtime_bytes is not None and (not manifest_path.exists() or manifest_path.read_bytes() != runtime_bytes):
+                    _atomic_host_write(manifest_path, runtime_bytes)
+                    changed = True
+                    files.append(runtime_identity.MANIFEST_NAME)
                 if hooks_changed:
                     hook_bytes = (json.dumps(merged, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
                 if not script_path.exists() or script_path.read_bytes() != script_bytes:
@@ -1478,6 +1561,10 @@ def codex_install(
                     changed = True
                     if HOST_HOOK_SCRIPT_NAME not in files:
                         files.append(HOST_HOOK_SCRIPT_NAME)
+                if run_script_bytes is not None and (not run_script_path.exists() or run_script_path.read_bytes() != run_script_bytes):
+                    _atomic_host_write(run_script_path, run_script_bytes)
+                    changed = True
+                    files.append(HOST_RUN_SCRIPT_NAME)
                 if hook_bytes is not None:
                     _atomic_host_write(hooks_path, hook_bytes)
                     changed = True
@@ -1496,11 +1583,11 @@ def codex_install(
             manual.append(str(path))
 
     global_instruction_ready = False
-    if not home.is_symlink() and not global_agents.is_symlink() and (not global_agents.exists() or global_agents.is_file()):
+    if runtime_hash is not None and script_safe and run_script_path.is_file() and not home.is_symlink() and not global_agents.is_symlink() and (not global_agents.exists() or global_agents.is_file()):
         try:
             current_agents = global_agents.read_bytes() if global_agents.exists() else b""
             updated_agents = _global_agents_update(
-                current_agents, executable=executable_path, executable_sha256=executable_hash
+                current_agents, executable=executable_path, executable_sha256=executable_hash, codex_home=home
             )
             if updated_agents != current_agents:
                 _atomic_host_write(global_agents, updated_agents)
@@ -1509,7 +1596,7 @@ def codex_install(
             global_instruction_ready = True
         except (OSError, ValueError):
             manual.append(str(global_agents))
-    else:
+    elif runtime_hash is not None:
         manual.append(str(global_agents))
 
     health = lifecycle.host_hooks_health(home)
@@ -1518,9 +1605,9 @@ def codex_install(
     enabled_count = 0
     expected_count = len(lifecycle.HOOK_EVENTS)
     trust_error: str | None = None
-    if health["hooks_configured"] == "YES" and executable_path is not None and executable_hash is not None:
+    if health["hooks_configured"] == "YES" and executable_path is not None and executable_hash is not None and runtime_hash is not None:
         try:
-            trust = _install_host_hook_trust(home, executable_path, executable_hash)
+            trust = _install_host_hook_trust(home, executable_path, executable_hash, runtime_hash)
             trust_status = str(trust.get("status", "FAILED"))
             trusted_count = int(trust.get("trusted_count", 0))
             enabled_count = int(trust.get("enabled_count", 0))
@@ -1564,7 +1651,10 @@ def codex_install(
         "native_profile_names": sorted(roles.native_profile_names()),
         "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
         "host_session_load_status": "UNKNOWN",
-        "host_setup_requires_session_start": any(path != "AGENTS.md" for path in files),
+        "installed_runtime_identity": runtime_hash if health["hooks_configured"] == "YES" else "UNKNOWN",
+        "install_status": "RESTART_CODEX_ONCE" if host_integration_ready and global_instruction_ready else "INSTALL_INCOMPLETE",
+        "session_restart_required": host_integration_ready and global_instruction_ready,
+        "host_setup_requires_session_start": bool(files),
         "project_files_touched": [],
         **_controller_bridge(),
     }
@@ -1575,8 +1665,11 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
     home = _codex_home(codex_home)
     manual: list[str] = []
     removed: list[str] = []
+    audit_records: list[str] = []
     hooks_path = home / "hooks.json"
     script_path = home / HOST_HOOK_SCRIPT_NAME
+    run_script_path = home / HOST_RUN_SCRIPT_NAME
+    manifest_path = home / runtime_identity.MANIFEST_NAME
     global_agents = home / "AGENTS.md"
     has_hook_manual = False
     owned_commands: dict[str, set[str]] = {event: set() for event in lifecycle.HOOK_EVENTS}
@@ -1620,7 +1713,7 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
         else:
             try:
                 if script_path.read_bytes() in {
-                    host_hook_script_bytes(), lifecycle._legacy_host_hook_script_bytes()
+                    host_hook_script_bytes(), lifecycle._previous_host_hook_script_bytes(), lifecycle._legacy_host_hook_script_bytes()
                 }:
                     script_path.unlink()
                     removed.append(HOST_HOOK_SCRIPT_NAME)
@@ -1628,6 +1721,41 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
                     manual.append(str(script_path))
             except OSError:
                 manual.append(str(script_path))
+    if not has_hook_manual and run_script_path.exists():
+        if run_script_path.is_symlink() or not manifest_path.is_file() or manifest_path.is_symlink():
+            manual.append(str(run_script_path))
+        else:
+            try:
+                prior = manifest_path.read_bytes()
+                record = runtime_identity.validate_manifest_record(prior)
+                expected = host_run_script_bytes(Path(record["executable"]), runtime_identity.manifest_identity(prior))
+                if run_script_path.read_bytes() != expected:
+                    manual.append(str(run_script_path))
+                else:
+                    run_script_path.unlink()
+                    removed.append(HOST_RUN_SCRIPT_NAME)
+            except (OSError, ValueError, TypeError):
+                manual.append(str(run_script_path))
+    if not has_hook_manual and not script_path.exists() and not run_script_path.exists() and manifest_path.exists():
+        if manifest_path.is_symlink() or not manifest_path.is_file():
+            manual.append(str(manifest_path))
+        else:
+            try:
+                contents = manifest_path.read_bytes()
+                installed = runtime_identity.validate_manifest_record(contents)
+                old_executable = Path(installed["executable"])
+                try:
+                    runtime_identity.validate_manifest(contents, old_executable, runtime_identity.manifest_identity(contents))
+                except (OSError, RuntimeError, ValueError):
+                    try:
+                        audit = _write_runtime_audit(home, contents, old_executable)
+                        audit_records.append(audit.name)
+                    except OSError:
+                        pass
+                manifest_path.unlink()
+                removed.append(runtime_identity.MANIFEST_NAME)
+            except (OSError, ValueError, TypeError):
+                manual.append(str(manifest_path))
     agents = home / "agents"
     if home.is_symlink() or agents.is_symlink() or (agents.exists() and not agents.is_dir()):
         manual.append(str(agents))
@@ -1681,6 +1809,7 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
         "changed": bool(removed),
         "target": str(home),
         "files": sorted(removed),
+        "runtime_audit_records": audit_records,
         "manual_action_required": sorted(set(manual)),
         "host_hook_registration_present": health["hooks_configured"],
         "host_hook_trust_cleanup_status": trust_cleanup_status,
@@ -1843,8 +1972,23 @@ def task_start(
     if mode == "UNAVAILABLE":
         return {"ok": False, "status": "MANAGED_CONTINUATION_UNAVAILABLE", "managed_readiness": readiness}
     result = core.task_start(root, goal, milestone, input_file, actor="controller")
+    if session_hash is not None:
+        lifecycle.record_task_start_owner(root, str(result["task_id"]), session_hash)
     result["managed_readiness"] = {**readiness, **_activation_fields(root), "CONTROLLER_ACTIVATION_BRIDGE_ACTIVE": "YES" if hook_attestation is not None else "NOT_APPLICABLE", "HOST_INSTRUCTION_ACTIVE": "UNKNOWN", "controller_activation_bridge": "ACTIVE" if hook_attestation is not None else "NOT_APPLICABLE", "host_instruction_activation": "UNKNOWN", "role_catalog_session_status": catalog_status if hook_attestation is not None else "NOT_APPLICABLE"}
     return result
+
+
+def task_abandon(
+    root: Path, task_id: str, revision: int, state_sha256: str,
+    lifecycle_sha256: str, reason: str, hook_attestation: str | None,
+) -> dict[str, object]:
+    """Use a current Hook PreToolUse proof for explicit ACTIVE takeover."""
+    root = core._repo_root(root)
+    session_hash, proof_hash = lifecycle.consume_task_abandon_attestation(root, hook_attestation)
+    return lifecycle.task_abandon(
+        root, task_id, revision, state_sha256, lifecycle_sha256,
+        reason, session_hash, proof_hash,
+    )
 
 
 def bootstrap_check(root: Path) -> dict[str, object]:

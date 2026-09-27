@@ -195,8 +195,8 @@ def _hooks_for_home(client: Any, codex_home: Path) -> list[dict[str, Any]]:
     return hooks
 
 
-def _expected_handlers(codex_home: Path, executable: Path, executable_sha256: str) -> dict[str, dict[str, Any]]:
-    fragment = lifecycle.host_hook_spec(codex_home, executable, executable_sha256)["hooks"]
+def _expected_handlers(codex_home: Path, executable: Path, executable_sha256: str, runtime_sha256: str | None = None) -> dict[str, dict[str, Any]]:
+    fragment = lifecycle.host_hook_spec(codex_home, executable, executable_sha256, runtime_sha256)["hooks"]
     expected: dict[str, dict[str, Any]] = {}
     for event in lifecycle.HOOK_EVENTS:
         group = fragment.get(event)
@@ -222,7 +222,8 @@ def _exact_installed_handlers(
         if _same_path(hook.get("sourcePath"), source_path)
         and hook.get("handlerType") == "command"
         and isinstance(hook.get("command"), str)
-        and script_token in hook["command"].casefold()
+        and (script_token in hook["command"].casefold()
+             or lifecycle._pinned_host_payload(hook["command"]) is not None)
     ]
     if len(candidates) != _EXPECTED_HOOK_COUNT:
         raise CodexAppServerError("HOST_HOOK_TRUST_INSTALL_FAILED: Host returned an unexpected Thaliris handler count")
@@ -261,12 +262,13 @@ def trust_installed_host_hooks(
     codex_home: Path,
     executable: Path,
     executable_sha256: str,
+    runtime_sha256: str | None = None,
     *,
     client_factory: Callable[[Path], Any] | None = None,
 ) -> dict[str, Any]:
     """Trust only the seven exact Host-returned Thaliris handler identities."""
     home = codex_home.resolve(strict=True)
-    expected = _expected_handlers(home, executable, executable_sha256)
+    expected = _expected_handlers(home, executable, executable_sha256, runtime_sha256)
     client_factory = client_factory or _app_server_client
     with client_factory(home) as client:
         before = _exact_installed_handlers(_hooks_for_home(client, home), home, expected)

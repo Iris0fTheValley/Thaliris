@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 import ntpath
@@ -12,9 +13,10 @@ import shlex
 import shutil
 import subprocess
 import time
+import uuid
 from typing import Any
 
-from . import core, roles
+from . import core, roles, runtime_identity
 
 HOOK_COMMAND_PREFIX = "thaliris audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
@@ -23,6 +25,7 @@ CODEX_ADAPTER_PROTOCOL_VERSION = 9
 # invoking a newer executable cannot manufacture the current hook ABI.
 MANAGED_HOOK_ABI = "thaliris-hook-abi-10"
 HOST_HOOK_SCRIPT_NAME = "thaliris-hook.cmd"
+HOST_RUN_SCRIPT_NAME = "thaliris-run.cmd"
 PROJECT_ACTIVATION_MARKER = ".codex\\thaliris.json"
 # Private adapter lifecycle state. This is deliberately separate from Core
 # state/schema and records only bounded native child provenance.
@@ -31,6 +34,7 @@ MANAGED_HOOKS_DESCRIPTION = "Thaliris managed lifecycle hooks"
 MAX_RAW_RECORDS = 64
 THALIRIS_EXECUTABLE_ENV = "THALIRIS_EXECUTABLE"
 THALIRIS_EXECUTABLE_SHA256_ENV = "THALIRIS_EXECUTABLE_SHA256"
+THALIRIS_RUNTIME_SHA256_ENV = "THALIRIS_RUNTIME_SHA256"
 # Older pin names remain readable only as a configuration compatibility aid.
 CONTEXT_EXECUTABLE_ENV = "THALIRIS_CONTEXT_EXECUTABLE"
 CONTEXT_EXECUTABLE_SHA256_ENV = "THALIRIS_CONTEXT_EXECUTABLE_SHA256"
@@ -98,15 +102,15 @@ _OBVIOUS_WRITE = re.compile(
 )
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
 _CONTEXT_OPERATIONS = frozenset({
-    "init", "codex-install", "codex-uninstall", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
-    "task-start", "task-update", "task-show",
+    "init", "codex-bootstrap", "codex-install", "codex-uninstall", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
+    "task-start", "task-abandon", "task-update", "task-show",
     "task-status", "task-get", "artifact-get", "catalog", "document-get",
     "task-artifact", "task-close", "task-promote", "recover-pending-spawn", "rollback", "version",
 })
 _ACTIVE_ROOT_CONTEXT_OPERATIONS = frozenset({
-    "doctor", "milestone-check", "memory-status", "task-update", "task-status", "task-get", "artifact-get",
+    "codex-bootstrap", "doctor", "milestone-check", "memory-status", "task-update", "task-status", "task-get", "artifact-get",
     "catalog", "document-get", "task-artifact", "task-close", "task-promote",
-    "recover-pending-spawn", "version",
+    "recover-pending-spawn", "task-abandon", "version",
 })
 _CHILD_CONTEXT_READS = frozenset({
     "task-show", "task-status", "stale",
@@ -114,7 +118,7 @@ _CHILD_CONTEXT_READS = frozenset({
     "document-get",
 })
 _CHILD_CONTEXT_MUTATIONS = frozenset({
-    "task-start", "task-update", "task-artifact", "task-close", "task-promote", "codex-install",
+    "task-start", "task-abandon", "task-update", "task-artifact", "task-close", "task-promote", "codex-install",
     "recover-pending-spawn", "rollback", "init", "uninstall", "codex-uninstall",
 })
 _CONTROL_STATE_TARGET = re.compile(r"(?i)\.context[\\/](?:state\.json|audit[\\/]lifecycle(?:[\\/][^\s\"']+)?)")
@@ -169,8 +173,147 @@ def _managed_handler(event: str) -> dict[str, Any]:
     return {"type": "command", "command": f"{_hook_command_prefix()} {event} --managed-hook-abi {MANAGED_HOOK_ABI}", "timeout": 60}
 
 
+def _runtime_validator_encoded() -> str:
+    """Return the platform preflight used by every installed runtime entrypoint."""
+    validator = r'''
+$ErrorActionPreference = 'Stop'
+function FileHash($path) {
+  $stream = [IO.File]::OpenRead($path)
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','').ToLowerInvariant() }
+  finally { $stream.Dispose(); $sha.Dispose() }
+}
+try {
+  $manifestPath = $env:THALIRIS_INSTALL_MANIFEST
+  $expectedIdentity = $env:THALIRIS_RUNTIME_SHA256
+  $exe = $env:THALIRIS_EXECUTABLE
+  if ($expectedIdentity -cnotmatch '^[0-9a-f]{64}$') { throw 'identity' }
+  if ((FileHash $manifestPath) -cne $expectedIdentity) { throw 'manifest hash' }
+  $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  if ($m.format -cne 'thaliris-installed-runtime-v1' -or $m.executable -cne $exe) { throw 'manifest shape' }
+  if ($m.executable_sha256 -cnotmatch '^[0-9a-f]{64}$' -or $m.package_dir -isnot [string] -or $m.venv_dir -isnot [string]) { throw 'manifest fields' }
+  if ((FileHash $exe) -cne $m.executable_sha256) { throw 'launcher hash' }
+  foreach ($path in @($exe, $m.package_dir, $m.venv_dir)) {
+    $item = Get-Item -LiteralPath $path
+    while ($null -ne $item) {
+      if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'linked runtime path' }
+      $item = $item.Parent
+    }
+  }
+  $venv = (Get-Item -LiteralPath $m.venv_dir).FullName
+  if (-not (Test-Path -LiteralPath $venv -PathType Container)) { throw 'venv directory' }
+  if (-not $exe.StartsWith($venv + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'launcher outside venv' }
+  if (-not $m.package_dir.StartsWith($venv + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'package outside venv' }
+  $expected = @{}
+  foreach ($entry in $m.files.PSObject.Properties) {
+    $name = $entry.Name
+    if ($name -match '(^|/)\.\.?(/|$)|\\|^/|:' -or $entry.Value -cnotmatch '^[0-9a-f]{64}$') { throw 'file entry' }
+    $expected[$name] = $entry.Value
+  }
+  if (-not $expected.ContainsKey('pyvenv.cfg')) { throw 'venv files' }
+  $seen = @{}
+  foreach ($item in (Get-ChildItem -LiteralPath $venv -Recurse -Force)) {
+    $relative = $item.FullName.Substring($venv.Length).TrimStart('\').Replace('\','/')
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'linked runtime member' }
+    if ($item.PSIsContainer) { continue }
+    if (-not $expected.ContainsKey($relative)) { throw 'extra runtime file' }
+    if ((FileHash $item.FullName) -cne $expected[$relative]) { throw 'runtime hash' }
+    $seen[$relative] = $true
+  }
+  if ($seen.Count -ne $expected.Count) { throw 'missing runtime file' }
+  $config = Get-Content -LiteralPath (Join-Path $venv 'pyvenv.cfg') -Raw -Encoding UTF8
+  if ($config -notmatch '(?im)^\s*include-system-site-packages\s*=\s*false\s*$') { throw 'system site packages' }
+  foreach ($pth in (Get-ChildItem -LiteralPath $venv -Recurse -Force -Filter '*.pth' -File)) {
+    foreach ($line in (Get-Content -LiteralPath $pth.FullName -Encoding UTF8)) {
+      if ($line.Trim() -and -not $line.TrimStart().StartsWith('#')) { throw 'external .pth path or executable code' }
+    }
+  }
+  exit 0
+} catch { exit 1 }
+'''
+    return base64.b64encode(validator.encode("utf-16le")).decode("ascii")
+
+
 def host_hook_script_bytes() -> bytes:
-    """Render the stable Windows trampoline; inactive projects stop before Python."""
+    """Render the Host trampoline with a pre-Python runtime file check."""
+    encoded = _runtime_validator_encoded()
+    return (
+        "@echo off\r\n"
+        "setlocal DisableDelayedExpansion\r\n"
+        "set \"_thaliris_search_dir=%CD%\"\r\n"
+        ":thaliris_find_activation_marker\r\n"
+        f"if exist \"%_thaliris_search_dir%\\{PROJECT_ACTIVATION_MARKER}\" goto thaliris_dispatch\r\n"
+        "for %%I in (\"%_thaliris_search_dir%\\..\") do set \"_thaliris_parent=%%~fI\"\r\n"
+        "if /i \"%_thaliris_parent%\"==\"%_thaliris_search_dir%\" exit /b 0\r\n"
+        "set \"_thaliris_search_dir=%_thaliris_parent%\"\r\n"
+        "goto thaliris_find_activation_marker\r\n"
+        ":thaliris_dispatch\r\n"
+        f"set \"{THALIRIS_EXECUTABLE_ENV}=%~1\"\r\n"
+        f"set \"{THALIRIS_EXECUTABLE_SHA256_ENV}=%~2\"\r\n"
+        f"set \"{THALIRIS_RUNTIME_SHA256_ENV}=%~3\"\r\n"
+        f"set \"THALIRIS_INSTALL_MANIFEST=%~dp0{runtime_identity.MANIFEST_NAME}\"\r\n"
+        f"powershell.exe -NoProfile -NonInteractive -EncodedCommand {encoded} >nul 2>nul\r\n"
+        "if errorlevel 1 goto thaliris_identity_rejected\r\n"
+        "shift\r\n"
+        "shift\r\n"
+        "shift\r\n"
+        "set \"PYTHONPATH=\"\r\n"
+        "set \"PYTHONHOME=\"\r\n"
+        "set \"PYTHONNOUSERSITE=1\"\r\n"
+        "set \"PYTHONDONTWRITEBYTECODE=1\"\r\n"
+        f"\"%{THALIRIS_EXECUTABLE_ENV}%\" audit-hook %~1 --managed-hook-abi %~2\r\n"
+        "exit /b %ERRORLEVEL%\r\n"
+        ":thaliris_identity_rejected\r\n"
+        "if /i \"%~4\"==\"PreToolUse\" echo {\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"THALIRIS_RUNTIME_IDENTITY_MISMATCH\"}}\r\n"
+        "if /i \"%~4\"==\"PreToolUse\" exit /b 0\r\n"
+        "exit /b 1\r\n"
+    ).encode("ascii")
+
+
+def host_run_script_bytes(executable: Path, runtime_sha256: str) -> bytes:
+    """Render the installed command used for bootstrap and managed CLI calls."""
+    if not re.fullmatch(r"[0-9a-f]{64}", runtime_sha256):
+        raise ValueError("invalid installed runtime identity")
+    if any(character in str(executable) for character in ('"', "%", "!", "`", "\r", "\n")):
+        raise ValueError("runtime path is unsafe for cmd")
+    encoded = _runtime_validator_encoded()
+    return (
+        "@echo off\r\n"
+        "setlocal DisableDelayedExpansion\r\n"
+        f"set \"THALIRIS_EXECUTABLE={executable}\"\r\n"
+        f"set \"THALIRIS_RUNTIME_SHA256={runtime_sha256}\"\r\n"
+        f"set \"THALIRIS_INSTALL_MANIFEST=%~dp0{runtime_identity.MANIFEST_NAME}\"\r\n"
+        f"powershell.exe -NoProfile -NonInteractive -EncodedCommand {encoded} >nul 2>nul\r\n"
+        "if errorlevel 1 goto thaliris_identity_rejected\r\n"
+        "set \"PYTHONPATH=\"\r\n"
+        "set \"PYTHONHOME=\"\r\n"
+        "set \"PYTHONNOUSERSITE=1\"\r\n"
+        "set \"PYTHONDONTWRITEBYTECODE=1\"\r\n"
+        "\"%THALIRIS_EXECUTABLE%\" %*\r\n"
+        "exit /b %ERRORLEVEL%\r\n"
+        ":thaliris_identity_rejected\r\n"
+        "echo {\"ok\":false,\"status\":\"THALIRIS_RUNTIME_IDENTITY_MISMATCH\"}\r\n"
+        "exit /b 1\r\n"
+    ).encode("ascii")
+
+
+def _legacy_host_hook_script_bytes() -> bytes:
+    """Exact previous trampoline bytes, retained only for safe migration/removal."""
+    return (
+        "@echo off\r\n"
+        "setlocal DisableDelayedExpansion\r\n"
+        f"if not exist \"{PROJECT_ACTIVATION_MARKER}\" exit /b 0\r\n"
+        f"set \"{THALIRIS_EXECUTABLE_ENV}=%~1\"\r\n"
+        f"set \"{THALIRIS_EXECUTABLE_SHA256_ENV}=%~2\"\r\n"
+        "shift\r\n"
+        "shift\r\n"
+        f"\"%{THALIRIS_EXECUTABLE_ENV}%\" audit-hook %~1 --managed-hook-abi %~2\r\n"
+        "exit /b %ERRORLEVEL%\r\n"
+    ).encode("ascii")
+
+
+def _previous_host_hook_script_bytes() -> bytes:
+    """Exact executable-only trampoline installed before runtime manifests."""
     return (
         "@echo off\r\n"
         "setlocal DisableDelayedExpansion\r\n"
@@ -191,34 +334,17 @@ def host_hook_script_bytes() -> bytes:
     ).encode("ascii")
 
 
-def _legacy_host_hook_script_bytes() -> bytes:
-    """Exact previous trampoline bytes, retained only for safe migration/removal."""
-    return (
-        "@echo off\r\n"
-        "setlocal DisableDelayedExpansion\r\n"
-        f"if not exist \"{PROJECT_ACTIVATION_MARKER}\" exit /b 0\r\n"
-        f"set \"{THALIRIS_EXECUTABLE_ENV}=%~1\"\r\n"
-        f"set \"{THALIRIS_EXECUTABLE_SHA256_ENV}=%~2\"\r\n"
-        "shift\r\n"
-        "shift\r\n"
-        f"\"%{THALIRIS_EXECUTABLE_ENV}%\" audit-hook %~1 --managed-hook-abi %~2\r\n"
-        "exit /b %ERRORLEVEL%\r\n"
-    ).encode("ascii")
-
-
 def host_hook_spec(
     codex_home: Path,
     executable: Path,
     executable_sha256: str,
+    runtime_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Return Host-global registration that dispatches through the cheap marker trampoline."""
     script = codex_home / HOST_HOOK_SCRIPT_NAME
     hooks: dict[str, list[dict[str, Any]]] = {}
     for event in HOOK_EVENTS:
-        command = subprocess.list2cmdline([
-            "cmd.exe", "/d", "/c", "call", str(script), str(executable),
-            executable_sha256, event, MANAGED_HOOK_ABI,
-        ])
+        command = _pinned_host_command(script, executable, executable_sha256, runtime_sha256, event)
         entry: dict[str, Any] = {
             "hooks": [{"type": "command", "command": command, "timeout": 60}]
         }
@@ -228,6 +354,57 @@ def host_hook_spec(
             entry["matcher"] = PRE_TOOL_MATCHER
         hooks[event] = [entry]
     return {"hooks": hooks}
+
+
+def _pinned_host_command(script: Path, executable: Path, executable_sha256: str,
+                         runtime_sha256: str | None, event: str) -> str:
+    """The Host owns this inline check; modified trampoline bytes cannot skip it."""
+    payload = {
+        "script": str(script), "executable": str(executable), "sha": executable_sha256,
+        "runtime": runtime_sha256, "event": event, "abi": MANAGED_HOOK_ABI,
+    }
+    data = base64.b64encode(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).decode("ascii")
+    script_sha = hashlib.sha256(host_hook_script_bytes()).hexdigest()
+    source = (
+        "$ErrorActionPreference='Stop';"
+        f"$p=([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{data}'))|ConvertFrom-Json);"
+        f"$expected='{script_sha}';"
+        "try {"
+        "$stream=[IO.File]::OpenRead($p.script); $sha=[Security.Cryptography.SHA256]::Create();"
+        "try { $actual=([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','').ToLowerInvariant() } finally { $stream.Dispose(); $sha.Dispose() };"
+        "if ($actual -cne $expected) { throw 'script drift' };"
+        "& $p.script $p.executable $p.sha $p.runtime $p.event $p.abi; exit $LASTEXITCODE"
+        "} catch {"
+        "if ($p.event -ceq 'PreToolUse') { [Console]::Out.WriteLine('{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"THALIRIS_RUNTIME_IDENTITY_MISMATCH\"}}'); exit 0 };"
+        "exit 1 }"
+    )
+    return "powershell.exe -NoProfile -NonInteractive -EncodedCommand " + base64.b64encode(source.encode("utf-16le")).decode("ascii")
+
+
+def _pinned_host_payload(command: str) -> dict[str, Any] | None:
+    prefix = "powershell.exe -NoProfile -NonInteractive -EncodedCommand "
+    if not command.startswith(prefix):
+        return None
+    try:
+        source = base64.b64decode(command[len(prefix):], validate=True).decode("utf-16le")
+        marker = "$p=([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"
+        if not source.startswith("$ErrorActionPreference='Stop';" + marker):
+            return None
+        data = source.split(marker, 1)[1].split("'", 1)[0]
+        payload = json.loads(base64.b64decode(data, validate=True))
+        if not isinstance(payload, dict) or set(payload) != {"script", "executable", "sha", "runtime", "event", "abi"}:
+            return None
+        if command != _pinned_host_command(Path(payload["script"]), Path(payload["executable"]),
+                                           payload["sha"], payload["runtime"], payload["event"]):
+            return None
+        return payload
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def _looks_host_trampoline(command: str) -> bool:
+    return (HOST_HOOK_SCRIPT_NAME.lower() in command.lower()
+            or command.startswith("powershell.exe -NoProfile -NonInteractive -EncodedCommand "))
 
 
 def _host_hook_command_is_managed(
@@ -249,10 +426,34 @@ def _host_hook_command_is_managed(
     command = value.get("command")
     if not isinstance(command, str):
         return False
+    pinned = _pinned_host_payload(command)
+    if pinned is not None:
+        try:
+            script = Path(pinned["script"])
+            executable = Path(pinned["executable"])
+            if (pinned["event"] != event or pinned["abi"] != MANAGED_HOOK_ABI
+                    or script != codex_home / HOST_HOOK_SCRIPT_NAME or not executable.is_absolute()
+                    or not re.fullmatch(r"[0-9a-f]{64}", pinned["sha"])
+                    or not isinstance(pinned["runtime"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", pinned["runtime"])):
+                return False
+            if not require_current_pin:
+                return True
+            return (
+                script.is_file() and not script.is_symlink()
+                and hashlib.sha256(script.read_bytes()).hexdigest() == hashlib.sha256(host_hook_script_bytes()).hexdigest()
+                and executable.is_file() and not executable.is_symlink()
+                and hashlib.sha256(executable.read_bytes()).hexdigest() == pinned["sha"]
+                and runtime_identity.validate_manifest(
+                    (codex_home / runtime_identity.MANIFEST_NAME).read_bytes(), executable, pinned["runtime"]
+                ) is not None
+            )
+        except (OSError, RuntimeError, ValueError):
+            return False
     script_token_pattern = rf'(?P<script_token>"[^"]+"|[^\s]+)'
     executable_token_pattern = rf'(?P<executable_token>"[^"]+"|[^\s]+)'
     match = re.fullmatch(
-        rf"(?i)cmd\.exe /d /c call {script_token_pattern} {executable_token_pattern} (?P<sha>[0-9a-f]{{64}}) {re.escape(event)} (?P<abi>thaliris-hook-abi-[0-9]+)",
+        rf"(?i)cmd\.exe /d /c call {script_token_pattern} {executable_token_pattern} (?P<sha>[0-9a-f]{{64}})(?: (?P<runtime>[0-9a-f]{{64}}))? {re.escape(event)} (?P<abi>thaliris-hook-abi-[0-9]+)",
         command,
     )
     if match is None:
@@ -266,7 +467,7 @@ def _host_hook_command_is_managed(
         if not script.is_absolute() or script.resolve(strict=True) != (codex_home / HOST_HOOK_SCRIPT_NAME).resolve(strict=True):
             return False
         if script.is_symlink() or script.read_bytes() not in {
-            host_hook_script_bytes(), _legacy_host_hook_script_bytes()
+            host_hook_script_bytes(), _previous_host_hook_script_bytes(), _legacy_host_hook_script_bytes()
         }:
             return False
         if not executable.is_absolute() or executable.is_symlink():
@@ -279,9 +480,14 @@ def _host_hook_command_is_managed(
         return (
             executable.is_file()
             and hashlib.sha256(executable.read_bytes()).hexdigest() == match.group("sha").lower()
+            and match.group("runtime") is not None
+            and runtime_identity.validate_manifest(
+                (codex_home / runtime_identity.MANIFEST_NAME).read_bytes(), executable,
+                match.group("runtime").lower(),
+            ) is not None
             and match.group("abi") == MANAGED_HOOK_ABI
         )
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
         return False
 
 
@@ -290,13 +496,14 @@ def merge_host_hooks(
     codex_home: Path,
     executable: Path,
     executable_sha256: str,
+    runtime_sha256: str | None = None,
 ) -> tuple[dict[str, Any], bool, list[str]]:
     """Merge the exact stable trampoline registrations without replacing user hooks."""
     merged = json.loads(json.dumps(data))
     hooks = merged.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise ValueError("Host hooks.json hooks must be an object")
-    wanted = host_hook_spec(codex_home, executable, executable_sha256)["hooks"]
+    wanted = host_hook_spec(codex_home, executable, executable_sha256, runtime_sha256)["hooks"]
     changed = False
     manual: list[str] = []
     for event, wanted_entries in wanted.items():
@@ -310,7 +517,7 @@ def merge_host_hooks(
                 if not isinstance(handler, dict) or handler.get("type") != "command":
                     continue
                 command = handler.get("command")
-                if isinstance(command, str) and HOST_HOOK_SCRIPT_NAME.lower() in command.lower():
+                if isinstance(command, str) and _looks_host_trampoline(command):
                     if not _host_hook_command_is_managed(handler, event, codex_home):
                         manual.append(f"hooks.{event}")
         if manual:
@@ -364,7 +571,7 @@ def remove_host_hooks(data: dict[str, Any], codex_home: Path) -> tuple[dict[str,
             handlers = []
             for handler in entry["hooks"]:
                 command = handler.get("command") if isinstance(handler, dict) else None
-                looks_trampoline = isinstance(command, str) and HOST_HOOK_SCRIPT_NAME.lower() in command.lower()
+                looks_trampoline = isinstance(command, str) and _looks_host_trampoline(command)
                 if looks_trampoline and not _host_hook_command_is_managed(handler, event, codex_home):
                     manual.append(f"hooks.{event}")
                     handlers.append(handler)
@@ -423,6 +630,31 @@ def _trusted_thaliris_executable() -> Path | None:
         return None
 
 
+def _trusted_installed_runner() -> Path | None:
+    """Recognize only the installed pre-Python runner observed by this Host hook."""
+    trusted = _trusted_thaliris_executable()
+    manifest_name = os.environ.get("THALIRIS_INSTALL_MANIFEST")
+    identity = os.environ.get(THALIRIS_RUNTIME_SHA256_ENV, "")
+    if trusted is None or not manifest_name or not re.fullmatch(r"[0-9a-f]{64}", identity):
+        return None
+    manifest = Path(manifest_name)
+    runner = manifest.parent / HOST_RUN_SCRIPT_NAME
+    try:
+        if manifest.is_symlink() or runner.is_symlink() or not manifest.is_file() or not runner.is_file():
+            return None
+        contents = manifest.read_bytes()
+        if runtime_identity.manifest_identity(contents) != identity:
+            return None
+        record = runtime_identity.validate_manifest_record(contents)
+        if Path(record["executable"]).resolve(strict=True) != trusted:
+            return None
+        if runner.read_bytes() != host_run_script_bytes(trusted, identity):
+            return None
+        return runner.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return None
+
+
 def managed_context_executable_pinned() -> bool:
     """Whether managed control-plane trust has an explicit path+byte pin."""
     return _trusted_thaliris_executable() is not None
@@ -446,7 +678,7 @@ def managed_executable_health() -> dict[str, str]:
 
 
 def _context_arguments(command: str) -> str | None:
-    """Extract arguments only from direct thaliris or a byte-pinned executable."""
+    """Extract arguments only from direct or exactly installed trusted routes."""
     command = command.lstrip()
     # Codex's Windows shell tool submits native PowerShell invocations with
     # its call operator (for example: & 'C:\\path\\thaliris.exe' ...).
@@ -470,6 +702,13 @@ def _context_arguments(command: str) -> str | None:
             pinned = Path(executable).resolve(strict=True) == trusted
         except (OSError, RuntimeError):
             pinned = False
+    if not pinned:
+        runner = _trusted_installed_runner()
+        if runner is not None:
+            try:
+                pinned = Path(executable).resolve(strict=True) == runner
+            except (OSError, RuntimeError):
+                pinned = False
     if not (canonical or pinned):
         return None
     return match.group(2) or ""
@@ -695,7 +934,7 @@ def host_hooks_health(codex_home: Path) -> dict[str, str]:
                 continue
             for handler in entry["hooks"]:
                 command = handler.get("command") if isinstance(handler, dict) else None
-                if isinstance(command, str) and HOST_HOOK_SCRIPT_NAME.lower() in command.lower() and not _host_hook_command_is_managed(handler, event, codex_home):
+                if isinstance(command, str) and _looks_host_trampoline(command) and not _host_hook_command_is_managed(handler, event, codex_home):
                     manual = True
     return {
         "hooks_configured": "YES" if present else "NO",
@@ -782,6 +1021,12 @@ def handle_hook(root: Path, event: str, payload: object, managed_hook_abi: str |
         if event not in HOOK_EVENTS or not isinstance(payload, dict):
             return ""
         root = _hook_repository_root(root, payload)
+        if event == "PreToolUse":
+            try:
+                if _session_fenced(root, _session_id_hash(payload)):
+                    return _permission_deny("THALIRIS_ABANDONED_SESSION: this native session belongs to an abandoned managed task.")
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                return _permission_deny("THALIRIS_ABANDONED_SESSION_FENCE_UNAVAILABLE")
         if event == "SubagentStart":
             return _subagent_start_output(root, payload)
         if event == "SubagentStop":
@@ -1209,6 +1454,9 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or value.get("version") != LIFECYCLE_STATE_VERSION or value.get("task_id_hash") != _task_key(task_id) or not isinstance(value.get("children"), list):
         raise ValueError("invalid lifecycle runtime state")
+    owner = value.get("owner_session_id_hash")
+    if owner is not None and (not isinstance(owner, str) or re.fullmatch(r"[0-9a-f]{64}", owner) is None):
+        raise ValueError("invalid lifecycle Controller owner")
     pending = value.get("pending_authorized_spawn")
     if pending is not None and (
         not isinstance(pending, dict)
@@ -1226,6 +1474,35 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     ):
         raise ValueError("invalid lifecycle authorized spawns")
     return value
+
+
+def record_task_start_owner(root: Path, task_id: str, session_hash: str) -> None:
+    """Bind a newly attested managed task to its immutable Controller session."""
+    if re.fullmatch(r"[0-9a-f]{64}", session_hash) is None:
+        raise ValueError("managed task start requires a proven Controller session")
+    with core._lock(root):
+        state = core._load_state(root, active=True)
+        if state.get("task_id") != task_id:
+            raise ValueError("managed task changed before owner recording")
+        path = _lifecycle_path(root, task_id)
+        lifecycle_state = _load_lifecycle(path, task_id)
+        existing = lifecycle_state.get("owner_session_id_hash")
+        if existing is not None and existing != session_hash:
+            raise ValueError("managed task Controller owner changed")
+        lifecycle_state["owner_session_id_hash"] = session_hash
+        _write_capture(path, lifecycle_state)
+
+
+def active_controller_owner(root: Path, task_id: str) -> str | None:
+    """Return only an immutable or legacy depth-one Controller binding."""
+    ledger = _load_lifecycle(_lifecycle_path(root, task_id), task_id)
+    owner = ledger.get("owner_session_id_hash")
+    if owner is not None:
+        return owner
+    pending = ledger.get("pending_authorized_spawn")
+    if isinstance(pending, dict) and pending.get("depth") == 1 and pending.get("parent_role") == "controller":
+        return pending["session_id_hash"]
+    return None
 
 
 def _valid_parent_metadata(record: dict[str, Any]) -> bool:
@@ -1373,9 +1650,9 @@ def _turn_id_hash(payload: dict[str, Any]) -> str | None:
     return _identity_hash(value) if isinstance(value, str) and value else None
 
 
-def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
+def _reserve_managed_spawn(root: Path, payload: dict[str, Any], expected_task_id: str | None = None) -> str:
     """Atomically reserve the one authorized native Codex role-session slot before allowing spawn."""
-    task_id = _active_task_id(root)
+    task_id = expected_task_id or _active_task_id(root)
     if task_id is None:
         return ""
     expected_agent_type = _native_spawn_agent_type(payload)
@@ -1400,8 +1677,12 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any]) -> str:
             # Re-read while holding the same lock used by task mutations.
             if _active_task_id(root) != task_id:
                 return _permission_deny("THALIRIS_MANAGED_SPAWN_UNAVAILABLE: the active task changed before authorization.")
+            if _session_fenced(root, session_id_hash):
+                return _permission_deny("THALIRIS_ABANDONED_SESSION: this native session belongs to an abandoned managed task.")
             path = _lifecycle_path(root, task_id)
             state = _load_lifecycle(path, task_id)
+            if not nested and active_controller_owner(root, task_id) != session_id_hash:
+                return _permission_deny("THALIRIS_ACTIVE_OWNER_REQUIRED: ACTIVE spawn requires the owning Hook session.")
             parent = _bound_child_record(state, payload) if nested else None
             if nested and (parent is None or parent.get("depth") != 1 or not roles.delegation_allowed(parent["role"], role)):
                 return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: exact bound depth-one Executor/Reviewer parent and Investigator target required.")
@@ -1512,8 +1793,12 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
     if task_id is None or not isinstance(agent_id, str) or not agent_id or role is None or session_id_hash is None or turn_id_hash is None:
         return False
     with core._lock(root):
+        if _active_task_id(root) != task_id or _session_fenced(root, session_id_hash):
+            return False
         path = _lifecycle_path(root, task_id)
         state = _load_lifecycle(path, task_id)
+        if active_controller_owner(root, task_id) != session_id_hash:
+            return False
         state["sequence"] = int(state.get("sequence", 0)) + 1
         child_hash = _identity_hash(agent_id)
         children = state["children"]
@@ -1584,6 +1869,8 @@ def _record_subagent_stop(root: Path, payload: dict[str, Any]) -> bool:
     if task_id is None or not isinstance(agent_id, str) or not agent_id or native_agent_type is None or session_id_hash is None or turn_id_hash is None:
         return False
     with core._lock(root):
+        if _active_task_id(root) != task_id or _session_fenced(root, session_id_hash):
+            return False
         path = _lifecycle_path(root, task_id)
         state = _load_lifecycle(path, task_id)
         child_hash = _identity_hash(agent_id)
@@ -1687,10 +1974,21 @@ def _reconcile_lifecycle_post_tool(root: Path, payload: dict[str, Any], tool: st
     if task_id is None or not isinstance(response, dict):
         return
     with core._lock(root):
+        if _active_task_id(root) != task_id:
+            return
         path = _lifecycle_path(root, task_id)
         if not path.is_file():
             return
         state = _load_lifecycle(path, task_id)
+        session_hash = _session_id_hash(payload)
+        if _session_fenced(root, session_hash):
+            return
+        nested = payload.get("agent_id") is not None or payload.get("agent_type") is not None
+        if nested:
+            if _bound_child_record(state, payload) is None:
+                return
+        elif session_hash is None or active_controller_owner(root, task_id) != session_hash:
+            return
         changed = observed = False
         if tool == "spawn_agent":
             task_name = response.get("task_name")
@@ -1876,14 +2174,20 @@ def managed_dependency_pending(root: Path, parent_payload: dict[str, Any] | None
     )
 
 
+def _reject_non_json_constant(value: str) -> None:
+    raise ValueError(f"Invalid JSON constant: {value}")
+
+
 def _post_tool_response(payload: dict[str, Any]) -> object:
     """Read the native PostToolUse result across 0.146 payload variants."""
+    tool = payload.get("tool_name") or payload.get("tool")
+    is_collaboration_tool = isinstance(tool, str) and _tool_basename(tool) in _COLLABORATION_TOOL_NAMES
     for key in ("tool_response", "tool_result", "result", "output"):
         if key in payload:
             response = payload[key]
-            if isinstance(response, str):
+            if isinstance(response, str) and is_collaboration_tool:
                 try:
-                    decoded = json.loads(response)
+                    decoded = json.loads(response, parse_constant=_reject_non_json_constant)
                 except (TypeError, ValueError, json.JSONDecodeError):
                     return response
                 return decoded if isinstance(decoded, dict) else response
@@ -2257,7 +2561,7 @@ def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_h
     if session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI:
         return _permission_deny("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
     command = _bash_command(payload)
-    bridge_match = re.search(r"(?:^|\s)--controller-bridge-sha256\s+([0-9a-f]{64})(?=$|\s)", command or "")
+    bridge_match = re.search(r"(?:^|\s)--(?:bootstrap-receipt|controller-bridge-sha256)\s+([0-9a-f]{64})(?=$|\s)", command or "")
     if bridge_match is None:
         return _permission_deny("THALIRIS_CONTROLLER_BRIDGE_REQUIRED: acknowledge the exact managed instruction SHA-256.")
     nonce = secrets.token_urlsafe(24)
@@ -2279,6 +2583,89 @@ def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_h
     return _updated_command_output(payload, f"--hook-attestation {token}")
 
 
+def _issue_task_abandon_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None = None) -> str:
+    session_hash = _session_id_hash(payload)
+    if session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI:
+        return _permission_deny("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
+    token = f"v1.{session_hash}.{secrets.token_urlsafe(24)}"
+    now = time.time_ns()
+    record = {
+        "version": 1,
+        "operation": "task-abandon",
+        "nonce_sha256": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        "session_id_hash": session_hash,
+        "managed_hook_spec_hash": managed_hook_spec_hash(),
+        "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
+        "managed_hook_abi": MANAGED_HOOK_ABI,
+        "created_at_ns": now,
+        "expires_at_ns": now + _START_ATTESTATION_TTL_NS,
+    }
+    with core._lock(root):
+        _write_capture(_start_attestation_path(root, token), record)
+    return _updated_command_output(payload, f"--hook-attestation {token}")
+
+
+def _issue_bootstrap_observation(root: Path, task_id: str, payload: dict[str, Any], managed_hook_abi: str | None = None) -> str:
+    """Bind one direct ACTIVE bootstrap call to this Hook session observation."""
+    session_hash = _session_id_hash(payload)
+    if session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI:
+        return _permission_deny("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
+    token = f"v1.{session_hash}.{secrets.token_urlsafe(24)}"
+    now = time.time_ns()
+    record = {
+        "version": 1,
+        "operation": "codex-bootstrap",
+        "nonce_sha256": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        "session_id_hash": session_hash,
+        "task_id_hash": _task_key(task_id),
+        "managed_hook_spec_hash": managed_hook_spec_hash(),
+        "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
+        "managed_hook_abi": MANAGED_HOOK_ABI,
+        "created_at_ns": now,
+        "expires_at_ns": now + _START_ATTESTATION_TTL_NS,
+    }
+    with core._lock(root):
+        _write_capture(_start_attestation_path(root, token), record)
+    return _updated_command_output(payload, f"--hook-attestation {token}")
+
+
+def consume_bootstrap_observation(root: Path, task_id: str, token: str | None) -> str | None:
+    """Consume a single-use Hook proof; absence leaves session identity unknown."""
+    if token is None:
+        return None
+    error = ValueError("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
+    match = re.fullmatch(r"v1\.([0-9a-f]{64})\.([A-Za-z0-9_-]{16,128})", token)
+    if match is None:
+        raise error
+    path = _start_attestation_path(root, token)
+    with core._lock(root):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            raise error
+        valid = (
+            isinstance(record, dict)
+            and record.get("version") == 1
+            and record.get("operation") == "codex-bootstrap"
+            and record.get("nonce_sha256") == hashlib.sha256(token.encode("utf-8")).hexdigest()
+            and record.get("session_id_hash") == match.group(1)
+            and record.get("task_id_hash") == _task_key(task_id)
+            and record.get("managed_hook_spec_hash") == managed_hook_spec_hash()
+            and record.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
+            and record.get("managed_hook_abi") == MANAGED_HOOK_ABI
+            and type(record.get("created_at_ns")) is int
+            and type(record.get("expires_at_ns")) is int
+            and record["created_at_ns"] <= time.time_ns() <= record["expires_at_ns"]
+        )
+        if not valid:
+            raise error
+        try:
+            path.unlink()
+        except OSError:
+            raise error
+    return match.group(1)
+
+
 def consume_task_start_attestation(root: Path, token: str | None, controller_bridge_sha256: str | None = None) -> str:
     """Consume one current-hook, current-session bearer attestation."""
     error = ValueError("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
@@ -2296,6 +2683,7 @@ def consume_task_start_attestation(root: Path, token: str | None, controller_bri
         valid = (
             isinstance(record, dict)
             and record.get("version") == 1
+            and record.get("operation") in (None, "task-start")
             and record.get("nonce_sha256") == hashlib.sha256(token.encode("utf-8")).hexdigest()
             and record.get("session_id_hash") == match.group(1)
             and record.get("managed_hook_spec_hash") == managed_hook_spec_hash()
@@ -2313,6 +2701,40 @@ def consume_task_start_attestation(root: Path, token: str | None, controller_bri
         except OSError:
             raise error
     return match.group(1)
+
+
+def consume_task_abandon_attestation(root: Path, token: str | None) -> tuple[str, str]:
+    """Consume one hook-issued recovery proof and return session and proof hashes."""
+    error = ValueError("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
+    match = re.fullmatch(r"v1\.([0-9a-f]{64})\.([A-Za-z0-9_-]{16,128})", token or "")
+    if match is None:
+        raise error
+    path = _start_attestation_path(root, token)
+    with core._lock(root):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            raise error
+        valid = (
+            isinstance(record, dict)
+            and record.get("version") == 1
+            and record.get("operation") == "task-abandon"
+            and record.get("nonce_sha256") == hashlib.sha256(token.encode("utf-8")).hexdigest()
+            and record.get("session_id_hash") == match.group(1)
+            and record.get("managed_hook_spec_hash") == managed_hook_spec_hash()
+            and record.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
+            and record.get("managed_hook_abi") == MANAGED_HOOK_ABI
+            and type(record.get("created_at_ns")) is int
+            and type(record.get("expires_at_ns")) is int
+            and record["created_at_ns"] <= time.time_ns() <= record["expires_at_ns"]
+        )
+        if not valid:
+            raise error
+        try:
+            path.unlink()
+        except OSError:
+            raise error
+    return match.group(1), hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def _write_capture(path: Path, state: dict[str, Any]) -> None:
@@ -2420,6 +2842,21 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
         return _issue_task_start_attestation(root, payload, managed_hook_abi)
 
     if state_status == "ACTIVE":
+        if operation == "codex-bootstrap":
+            return _issue_bootstrap_observation(root, _task_id, payload, managed_hook_abi)
+        if operation == "task-abandon":
+            return _issue_task_abandon_attestation(root, payload, managed_hook_abi)
+        try:
+            owner = active_controller_owner(root, _task_id)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            owner = None
+        if owner is None or owner != _session_id_hash(payload):
+            if normalized in {"list_agents", "wait_agent"} or operation in {
+                "doctor", "milestone-check", "memory-status", "task-status", "task-get",
+                "artifact-get", "catalog", "document-get", "version",
+            }:
+                return ""
+            return _permission_deny("THALIRIS_ACTIVE_OWNER_REQUIRED: ACTIVE control requires the owning Hook session; use direct codex-bootstrap for recovery evidence.")
         if normalized in _FRESH_CHILD_REUSE_TOOL_NAMES or normalized == "Agent":
             _best_effort_record(_record_controller_guard_event, root, payload, "CHILD_REUSE", "blocked")
             return _permission_deny("THALIRIS_FRESH_ROLE_SESSION_REQUIRED: continue work with a new named-role spawn_agent(fork_turns=\"none\") handoff.")
@@ -2427,7 +2864,7 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
             tool_input = _delegation_input(payload)
             if tool_input.get("fork_turns") != "none":
                 return _permission_deny(f"THALIRIS_ISOLATION_REQUIRED: spawn a fresh {_native_role_names()} session explicitly with fork_turns=\"none\".")
-            return _reserve_managed_spawn(root, payload)
+            return _reserve_managed_spawn(root, payload, _task_id)
         if normalized in _ROOT_MANAGED_TOOL_NAMES:
             _best_effort_record(_record_controller_guard_event, root, payload, normalized, "allowed")
             return ""
@@ -2455,6 +2892,25 @@ def _permission_deny(reason: str) -> str:
     }, ensure_ascii=False, separators=(",", ":"))
 
 
+def _session_fence_path(root: Path) -> Path:
+    return root / ".context" / "audit" / "abandoned" / "session-fence.json"
+
+
+def _read_session_fence(root: Path) -> set[str]:
+    path = _session_fence_path(root)
+    if not path.is_file():
+        return set()
+    value = json.loads(path.read_text(encoding="utf-8"))
+    hashes = value.get("session_id_hashes") if isinstance(value, dict) and value.get("version") == 1 else None
+    if not isinstance(hashes, list) or any(not isinstance(item, str) or re.fullmatch(r"[0-9a-f]{64}", item) is None for item in hashes):
+        raise ValueError("invalid abandoned session fence")
+    return set(hashes)
+
+
+def _session_fenced(root: Path, session_hash: str | None) -> bool:
+    return session_hash is not None and session_hash in _read_session_fence(root)
+
+
 def _dispatch_status(response: object) -> str:
     rejected = {"error", "failed", "failure", "rejected"}
     accepted = {"ok", "success", "completed"}
@@ -2477,3 +2933,103 @@ def _dispatch_status(response: object) -> str:
     if response.get("isError") is False or response.get("success") is True or normalized in accepted:
         return "ACCEPTED"
     return "UNKNOWN"
+
+
+def task_abandon(
+    root: Path, task_id: str, revision: int, state_sha256: str,
+    lifecycle_sha256: str, reason: str, recovery_session_hash: str,
+    attestation_sha256: str,
+) -> dict[str, object]:
+    """Archive exact ACTIVE evidence before releasing the current task slot."""
+    root = core._repo_root(root)
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > 4096 or any(ord(c) < 32 and c not in "\n\t" for c in reason):
+        raise ValueError("task-abandon requires a bounded explicit reason")
+    if type(revision) is not int or revision < 1:
+        raise ValueError("invalid expected task revision")
+    for value in (state_sha256, recovery_session_hash, attestation_sha256):
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ValueError("invalid recovery identity or SHA-256")
+    if lifecycle_sha256 != "ABSENT" and (not isinstance(lifecycle_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", lifecycle_sha256) is None):
+        raise ValueError("invalid lifecycle identity or SHA-256")
+    try:
+        uuid.UUID(task_id)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("invalid expected task id") from exc
+
+    with core._lock(root):
+        state_path = core._state_path(root)
+        state_raw = state_path.read_bytes()
+        if len(state_raw) > 512 * 1024:
+            raise ValueError("task state exceeds 512 KiB")
+        state = core._validate_state(root, json.loads(state_raw.decode("utf-8")))
+        if state["status"] != "ACTIVE" or state["task_id"] != task_id or state["revision"] != revision:
+            raise ValueError("task-abandon task identity or revision changed")
+        if hashlib.sha256(state_raw).hexdigest() != state_sha256:
+            raise ValueError("task-abandon state bytes changed")
+
+        lifecycle_path = _lifecycle_path(root, task_id)
+        lifecycle_present = lifecycle_path.is_file()
+        if lifecycle_present != (lifecycle_sha256 != "ABSENT"):
+            raise ValueError("task-abandon lifecycle presence changed")
+        lifecycle_raw = lifecycle_path.read_bytes() if lifecycle_present else None
+        if lifecycle_raw is not None and hashlib.sha256(lifecycle_raw).hexdigest() != lifecycle_sha256:
+            raise ValueError("task-abandon lifecycle bytes changed")
+        lifecycle_state = _load_lifecycle(lifecycle_path, task_id) if lifecycle_present else {}
+        pending = lifecycle_state.get("pending_authorized_spawn")
+        owner_hash = lifecycle_state.get("owner_session_id_hash")
+        owner_provenance = "TASK_START" if owner_hash is not None else "UNKNOWN"
+        if owner_hash is None and isinstance(pending, dict) and pending.get("depth") == 1 and pending.get("parent_role") == "controller":
+            owner_hash = pending.get("session_id_hash")
+            owner_provenance = "DEPTH_ONE_PENDING_RESERVATION"
+        if owner_hash is not None and (not isinstance(owner_hash, str) or re.fullmatch(r"[0-9a-f]{64}", owner_hash) is None):
+            raise ValueError("invalid lifecycle Controller owner")
+        if owner_hash == recovery_session_hash:
+            raise ValueError("task-abandon cannot take over an ACTIVE task in its owning session")
+
+        fence_sources: dict[str, list[str]] = {}
+        def add_fence(candidate: object, source: str) -> None:
+            if isinstance(candidate, str) and re.fullmatch(r"[0-9a-f]{64}", candidate):
+                fence_sources.setdefault(candidate, []).append(source)
+        add_fence(owner_hash, "owner:" + owner_provenance)
+        if isinstance(pending, dict):
+            add_fence(pending.get("session_id_hash"), "pending_authorized_spawn")
+        for index, child in enumerate(lifecycle_state.get("children", [])):
+            if isinstance(child, dict):
+                add_fence(child.get("session_id_hash"), f"children[{index}]")
+        add_fence(lifecycle_state.get("session_id_hash"), "top_level_telemetry")
+        if recovery_session_hash in fence_sources:
+            raise ValueError("task-abandon recovery session has old task activity evidence")
+
+        archive = root / ".context" / "audit" / "abandoned" / f"{_task_key(task_id)}-{uuid.uuid4().hex}"
+        archive.mkdir(parents=True, exist_ok=False)
+        core._atomic_write(archive / "state.json", state_raw)
+        if lifecycle_raw is not None:
+            core._atomic_write(archive / "lifecycle.json", lifecycle_raw)
+        manifest = {
+            "version": 1,
+            "status": "ABANDONED",
+            "lifecycle_status": "RECOVERED_INCOMPLETE",
+            "task_id": task_id,
+            "revision": revision,
+            "state_sha256": state_sha256,
+            "lifecycle_sha256": lifecycle_sha256,
+            "lifecycle_presence": "PRESENT" if lifecycle_present else "ABSENT",
+            "reason": reason,
+            "old_controller_session_id_hash": owner_hash or "UNKNOWN",
+            "old_controller_owner_provenance": owner_provenance,
+            "fenced_old_session_provenance": fence_sources,
+            "recovery_session_id_hash": recovery_session_hash,
+            "recovery_attestation_sha256": attestation_sha256,
+            "managed_hook_spec_hash": managed_hook_spec_hash(),
+            "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
+            "recovered_at_ns": time.time_ns(),
+        }
+        core._atomic_write(archive / "manifest.json", (json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8"))
+        if (archive / "state.json").read_bytes() != state_raw or (archive / "lifecycle.json").is_file() != lifecycle_present or (lifecycle_raw is not None and (archive / "lifecycle.json").read_bytes() != lifecycle_raw):
+            raise ValueError("task-abandon archive verification failed")
+        fence = _read_session_fence(root) | set(fence_sources)
+        _write_capture(_session_fence_path(root), {"version": 1, "session_id_hashes": sorted(fence)})
+        if _read_session_fence(root) != fence:
+            raise ValueError("task-abandon session fence verification failed")
+        state_path.unlink()
+    return {"ok": True, "status": "ABANDONED", "task_id": task_id, "revision": revision, "archive": str(archive.relative_to(root)).replace("\\", "/"), "lifecycle_status": "RECOVERED_INCOMPLETE"}

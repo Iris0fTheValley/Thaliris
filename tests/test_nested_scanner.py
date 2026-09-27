@@ -25,7 +25,8 @@ from thaliris import codex_adapter, core, lifecycle, roles
 def active(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     codex_adapter.init(tmp_path)
-    core.task_start(tmp_path, "bounded scanner", None, None)
+    started = core.task_start(tmp_path, "bounded scanner", None, None)
+    lifecycle.record_task_start_owner(tmp_path, started["task_id"], hashlib.sha256(b"root-session").hexdigest())
     return tmp_path
 
 

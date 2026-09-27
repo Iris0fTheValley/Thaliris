@@ -230,8 +230,8 @@ def test_trust_uses_host_current_hash_and_reinstall_trusts_changed_pin(tmp_path:
 
     second_commands = [hook["command"] for hook in clients[-1]._hooks()]
     assert first_commands != second_commands
-    assert pin_v1 not in second_commands[0]
-    assert pin_v2 in second_commands[0]
+    assert lifecycle._pinned_host_payload(first_commands[0])["sha"] == pin_v1
+    assert lifecycle._pinned_host_payload(second_commands[0])["sha"] == pin_v2
     assert second["status"] == "TRUSTED"
     assert second["changed"] is True
     assert {state["state"][f"{home / 'hooks.json'}:{event}:0:0"]["trusted_hash"] for event in lifecycle.HOOK_EVENTS} == set(second_hashes.values())
@@ -268,7 +268,7 @@ def test_app_server_failure_fails_closed_without_ready_claim(tmp_path: Path, mon
     home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(home))
 
-    def fail(_home, _executable, _pin):
+    def fail(_home, _executable, _pin, _runtime_pin):
         raise codex_app_server.CodexAppServerError("test app-server unavailable")
 
     monkeypatch.setattr(codex_adapter, "_install_host_hook_trust", fail)

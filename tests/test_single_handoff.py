@@ -9,6 +9,7 @@ import subprocess
 import pytest
 
 from thaliris import cli, codex_adapter, core
+from thaliris import runtime_identity
 from thaliris.lifecycle import handle_hook, hook_spec
 import thaliris.lifecycle as lifecycle_module
 
@@ -240,9 +241,9 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     assert first["controller_bridge_sha256"] == hashlib.sha256(first["controller_bridge_content"].encode()).hexdigest()
     expected = codex_adapter._global_agents_block(executable, digest)
     assert global_agents.read_bytes() == expected + original
-    assert b"including when both\nproject markers are absent" in expected
-    assert str(executable).encode() in expected and digest.encode() in expected
-    assert b"read-only work" in expected and b"same session" in expected
+    assert expected.count(b"--root <repo> codex-bootstrap") == 1
+    assert str(home / lifecycle_module.HOST_RUN_SCRIPT_NAME).encode() in expected and digest.encode() not in expected
+    assert b"read-only work" in expected and b"this session" in expected
 
     second = codex_adapter.codex_install()
     assert second["changed"] is False
@@ -252,7 +253,7 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     global_agents.write_bytes(b"before\r\n" + old_owned + b"after\r\n\xff")
     refreshed = codex_adapter.codex_install()
     assert refreshed["changed"] is True
-    assert refreshed["host_setup_requires_session_start"] is False
+    assert refreshed["host_setup_requires_session_start"] is True
     assert global_agents.read_bytes() == b"before\r\n" + expected + b"after\r\n\xff"
 
     removed = codex_adapter.codex_uninstall()
@@ -315,7 +316,7 @@ def test_codex_install_migrates_exact_legacy_host_hook_and_uninstall_preserves_u
     pre_handlers = [handler for group in merged["hooks"]["PreToolUse"] for handler in group["hooks"]]
     assert legacy_handler not in pre_handlers
     assert user_handler in pre_handlers
-    assert sum("thaliris-hook.cmd" in handler.get("command", "") for handler in pre_handlers) == 1
+    assert sum(lifecycle_module._host_hook_command_is_managed(handler, "PreToolUse", home) for handler in pre_handlers) == 1
 
     user_profile = home / "agents" / "thaliris-investigator.toml"
     user_profile.write_text("user-owned = true\n", encoding="utf-8")
@@ -348,7 +349,7 @@ def test_codex_install_user_hook_collision_is_manual_and_untouched(tmp_path: Pat
     assert json.loads(hooks_path.read_text(encoding="utf-8")) == original_hooks
 
 
-def test_codex_install_replaces_its_stale_executable_pin(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+def test_codex_install_rejects_changed_runtime_at_same_path(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
     executable, old_digest = pinned_test_thaliris
     home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", str(home))
@@ -363,19 +364,22 @@ def test_codex_install_replaces_its_stale_executable_pin(tmp_path: Path, monkeyp
 
     result = codex_adapter.codex_install()
 
-    assert result["changed"] is True
-    assert result["host_hook_registration_present"] == "YES"
+    assert result["changed"] is False
+    assert result["host_hook_registration_present"] == "NO"
+    assert result["ok"] is False
+    assert any("runtime changed" in item for item in result["manual_action_required"])
     registrations = json.loads((home / "hooks.json").read_text(encoding="utf-8"))["hooks"]
     commands = [
         handler["command"]
         for group in registrations["PreToolUse"]
         for handler in group.get("hooks", [])
-        if "thaliris-hook.cmd" in handler.get("command", "")
+        if lifecycle_module._host_hook_command_is_managed(handler, "PreToolUse", home)
     ]
     assert len(commands) == 1
-    assert old_digest not in commands[0]
-    assert new_digest in commands[0]
-    assert (home / "AGENTS.md").read_bytes() == codex_adapter._global_agents_block(executable, new_digest)
+    pinned = lifecycle_module._pinned_host_payload(commands[0])
+    assert pinned is not None and pinned["sha"] == old_digest
+    assert pinned["sha"] != new_digest
+    assert (home / "AGENTS.md").read_bytes() == codex_adapter._global_agents_block(executable, old_digest)
 
 
 def test_codex_install_migrates_exact_old_trampoline_bytes(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
@@ -450,15 +454,25 @@ def test_global_trampoline_finds_repo_marker_from_nested_cwd(tmp_path: Path, mon
     deep = project / "nested" / "a" / "b"
     deep.mkdir(parents=True)
     dispatched = tmp_path / "dispatch.log"
-    fake_executable = tmp_path / "fake thaliris.cmd"
+    venv = tmp_path / "fake runtime"
+    (venv / "Scripts").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = test\ninclude-system-site-packages = false\n", encoding="utf-8")
+    package = venv / "Lib" / "site-packages" / "thaliris"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "cli.py").write_text("def main(): pass\n", encoding="utf-8")
+    fake_executable = venv / "Scripts" / "fake thaliris.cmd"
     fake_executable.write_text(
         '@echo off\r\n> "%THALIRIS_TEST_DISPATCH_FILE%" echo %*\r\n',
         encoding="ascii",
     )
+    manifest = runtime_identity.manifest_bytes(fake_executable)
+    (script.parent / runtime_identity.MANIFEST_NAME).write_bytes(manifest)
+    identity = runtime_identity.manifest_identity(manifest)
     monkeypatch.setenv("THALIRIS_TEST_DISPATCH_FILE", str(dispatched))
 
     result = subprocess.run(
-        ["cmd.exe", "/d", "/c", "call", str(script), str(fake_executable), "0" * 64, "PreToolUse", lifecycle_module.MANAGED_HOOK_ABI],
+        ["cmd.exe", "/d", "/c", "call", str(script), str(fake_executable), hashlib.sha256(fake_executable.read_bytes()).hexdigest(), identity, "PreToolUse", lifecycle_module.MANAGED_HOOK_ABI],
         cwd=deep,
         input=b"{}",
         capture_output=True,
@@ -473,6 +487,26 @@ def test_global_trampoline_finds_repo_marker_from_nested_cwd(tmp_path: Path, mon
         f"audit-hook PreToolUse --managed-hook-abi {lifecycle_module.MANAGED_HOOK_ABI}"
     )
     assert not (project / ".context").exists()
+
+    dispatched.unlink()
+    (package / "cli.py").write_text("changed package code\n", encoding="utf-8")
+    rejected = subprocess.run(
+        ["cmd.exe", "/d", "/c", "call", str(script), str(fake_executable), hashlib.sha256(fake_executable.read_bytes()).hexdigest(), identity, "PreToolUse", lifecycle_module.MANAGED_HOOK_ABI],
+        cwd=deep, input=b"{}", capture_output=True, check=False, timeout=10,
+    )
+    assert rejected.returncode == 0
+    assert json.loads(rejected.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert not dispatched.exists()
+
+    (package / "cli.py").write_text("def main(): pass\n", encoding="utf-8")
+    (script.parent / runtime_identity.MANIFEST_NAME).write_bytes(manifest + b" ")
+    mismatched = subprocess.run(
+        ["cmd.exe", "/d", "/c", "call", str(script), str(fake_executable), hashlib.sha256(fake_executable.read_bytes()).hexdigest(), identity, "PreToolUse", lifecycle_module.MANAGED_HOOK_ABI],
+        cwd=deep, input=b"{}", capture_output=True, check=False, timeout=10,
+    )
+    assert mismatched.returncode == 0
+    assert json.loads(mismatched.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert not dispatched.exists()
 
 
 def test_initialized_task_start_reports_unavailable_trusted_executable(tmp_path: Path, monkeypatch) -> None:
@@ -563,6 +597,12 @@ def test_exact_historical_managed_instruction_migrates(tmp_path: Path) -> None:
     assert (root / "AGENTS.md").read_text(encoding="utf-8") == codex_adapter.render_managed() + "user text\n"
 
 
+def _owned_task_start(root: Path, *args: object, session: str = "controller-session") -> dict[str, object]:
+    started = core.task_start(root, *args)
+    lifecycle_module.record_task_start_owner(root, started["task_id"], hashlib.sha256(session.encode("utf-8")).hexdigest())
+    return started
+
+
 def hook_payload(**values: object) -> dict[str, object]:
     # Managed lifecycle tests exercise the concrete named profile.  Ordinary
     # worker remains covered separately in the NO_TASK transparency test.
@@ -587,6 +627,17 @@ def spawn_start(root: Path, agent_id: str, agent_type: str = "worker") -> None:
     assert handle_hook(root, "SubagentStart", hook_payload(agent_id=agent_id, agent_type=agent_type)) == ""
 
 
+def spawn_start_with_host_task_name(root: Path, task_name: str, agent_id: str) -> None:
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "handoff",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    assert handle_hook(root, "PostToolUse", {
+        **spawn, "tool_response": json.dumps({"task_name": task_name}),
+    }) == ""
+    assert handle_hook(root, "SubagentStart", hook_payload(agent_id=agent_id, agent_type="worker")) == ""
+
+
 def stop(root: Path, agent_id: str, agent_type: str = "worker") -> None:
     assert handle_hook(root, "SubagentStop", hook_payload(agent_id=agent_id, agent_type=agent_type)) == ""
 
@@ -607,7 +658,7 @@ def test_subagent_start_binds_explicit_handoff_without_injecting_projection(tmp_
             {"id": "old-decision", "kind": "decision", "text": "OLD_DECISION"},
         ],
     }), encoding="utf-8")
-    started = core.task_start(root, "single handoff", None, str(start_input))
+    started = _owned_task_start(root, "single handoff", None, str(start_input))
     artifact = root / "private.md"
     artifact.write_text("ARTIFACT_PRIVATE_SENTINEL", encoding="utf-8")
     registered = core.task_artifact(
@@ -704,7 +755,7 @@ def test_generated_instruction_full_equality_and_working_copy_ownership(tmp_path
 
 def test_blocking_wait_is_normalized_only_with_a_managed_dependency(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "wait mechanics", None, None)
+    _owned_task_start(root, "wait mechanics", None, None)
     monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
     monkeypatch.setattr(codex_adapter, "host_explicit_blocking_wait", lambda: {
         "status": "PASS",
@@ -729,7 +780,7 @@ def test_blocking_wait_is_normalized_only_with_a_managed_dependency(tmp_path: Pa
 
 def test_unavailable_effective_wait_maximum_preserves_legal_timeout(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "wait mechanics", None, None)
+    _owned_task_start(root, "wait mechanics", None, None)
     monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
     monkeypatch.setattr(codex_adapter, "host_explicit_blocking_wait", lambda: {
         "status": "PASS", "release_hard_max_wait_timeout_ms": 3_600_000,
@@ -744,7 +795,7 @@ def test_unavailable_effective_wait_maximum_preserves_legal_timeout(tmp_path: Pa
 @pytest.mark.parametrize("host_status", ["UNKNOWN", "UNSUPPORTED"])
 def test_unknown_or_unsupported_host_does_not_normalize_pending_wait(tmp_path: Path, monkeypatch, host_status: str) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "unknown wait host", None, None)
+    _owned_task_start(root, "unknown wait host", None, None)
     monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
     monkeypatch.setattr(codex_adapter, "host_explicit_blocking_wait", lambda: {
         "status": host_status, "effective_max_wait_timeout_ms": "UNAVAILABLE",
@@ -806,7 +857,7 @@ def test_exact_current_codex_alpha_wait_capability_is_source_pinned(monkeypatch)
 
 def test_release_pinned_host_does_not_normalize_with_unknown_turn_cap(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "pinned blocking wait", None, None)
+    _owned_task_start(root, "pinned blocking wait", None, None)
 
     monkeypatch.setattr(codex_adapter, "host_wait_mode", lambda _executable=None: {
         "status": "PASS", "version": "0.155.1", "min": 10_000,
@@ -873,7 +924,7 @@ def test_future_codex_wait_capability_is_conservative(monkeypatch) -> None:
 
 def test_production_hooks_record_hashes_without_model_audit_or_correction(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "telemetry only", None, None)
+    _owned_task_start(root, "telemetry only", None, None)
     prompt = "ROOT_PRIVATE_PROMPT"
     handoff = "CHILD_PRIVATE_HANDOFF"
 
@@ -899,7 +950,7 @@ def test_production_hooks_record_hashes_without_model_audit_or_correction(tmp_pa
 
 def test_user_prompt_does_not_clear_pending_spawn_reservation(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "causal reservation", None, None)
+    _owned_task_start(root, "causal reservation", None, None)
     spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "worker", "message": "handoff",
     })
@@ -911,7 +962,7 @@ def test_user_prompt_does_not_clear_pending_spawn_reservation(tmp_path: Path) ->
 
 def test_active_controller_uses_only_the_mechanical_tool_allowlist(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "mechanical guard", None, None)
+    _owned_task_start(root, "mechanical guard", None, None)
     assert hook_spec()["hooks"]["PreToolUse"][0]["matcher"] == "*"
 
     for payload in (
@@ -963,7 +1014,7 @@ def test_active_controller_uses_only_the_mechanical_tool_allowlist(tmp_path: Pat
 @pytest.mark.parametrize("command", ["thaliris task-status", "thaliris.exe task-status", "thaliris.cmd task-status"])
 def test_managed_control_accepts_only_direct_canonical_thaliris(tmp_path: Path, command: str) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "canonical executable", None, None)
+    _owned_task_start(root, "canonical executable", None, None)
     assert handle_hook(root, "PreToolUse", hook_payload(tool_name="Bash", tool_input={"command": command})) == ""
     for rejected in (
         "context task-status", "uv run thaliris task-status", "python -m thaliris task-status",
@@ -981,7 +1032,7 @@ def test_pinned_absolute_thaliris_is_accepted_but_legacy_handlers_only_migrate(t
     digest = hashlib.sha256(executable.read_bytes()).hexdigest()
     monkeypatch.setenv("THALIRIS_EXECUTABLE", str(executable))
     monkeypatch.setenv("THALIRIS_EXECUTABLE_SHA256", digest)
-    core.task_start(root, "pinned executable", None, None)
+    _owned_task_start(root, "pinned executable", None, None)
     assert handle_hook(root, "PreToolUse", hook_payload(
         tool_name="Bash", tool_input={"command": f'"{executable}" task-status'},
     )) == ""
@@ -1141,7 +1192,7 @@ def test_task_start_recreates_missing_root_navigation_before_active(tmp_path: Pa
     root = repo(tmp_path)
     (root / ".agent-memory" / "INDEX.md").unlink()
     (root / ".milestones" / "INDEX.md").unlink()
-    started = core.task_start(root, "establish navigation", None, None)
+    started = _owned_task_start(root, "establish navigation", None, None)
     assert started["status"] == "ACTIVE"
     assert (root / ".agent-memory" / "INDEX.md").is_file()
     assert (root / ".milestones" / "INDEX.md").is_file()
@@ -1156,7 +1207,7 @@ def test_task_status_does_not_reread_navigation_automatically(tmp_path: Path, mo
         raise AssertionError("task status must not read durable navigation")
 
     monkeypatch.setattr(core, "catalog", fail_catalog)
-    core.task_start(root, "no automatic navigation reread", None, None)
+    _owned_task_start(root, "no automatic navigation reread", None, None)
     core.task_status(root)
     assert calls == []
 
@@ -1184,7 +1235,7 @@ def test_no_task_child_worker_and_explorer_execution_is_transparent(tmp_path: Pa
 @pytest.mark.parametrize("agent_type", ("worker", "explorer"))
 def test_active_managed_spawn_rejects_ordinary_codex_agent_types(tmp_path: Path, agent_type: str) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "named roles only", None, None)
+    _owned_task_start(root, "named roles only", None, None)
     payload = {
         "session_id": "controller-session", "turn_id": "controller-turn",
         "tool_name": "spawn_agent",
@@ -1195,7 +1246,7 @@ def test_active_managed_spawn_rejects_ordinary_codex_agent_types(tmp_path: Path,
 
 def test_active_spawn_rejects_conflicting_or_unsupported_native_type_fields(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "exact native role fields", None, None)
+    _owned_task_start(root, "exact native role fields", None, None)
     for fields in (
         {"agent_type": "worker", "agentType": "thaliris-reviewer"},
         {"agent_type": "thaliris-implementer", "agentType": "thaliris-reviewer"},
@@ -1222,7 +1273,7 @@ def test_active_unbound_native_children_are_rejected_before_tool_rules(
     tmp_path: Path, agent_type: str, command: str,
 ) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "unbound child", None, None)
+    _owned_task_start(root, "unbound child", None, None)
     denied = json.loads(handle_hook(root, "PreToolUse", {
         "session_id": "unbound-session", "turn_id": "unbound-turn",
         "agent_id": f"unbound-{agent_type}", "agent_type": agent_type,
@@ -1238,7 +1289,7 @@ def test_active_unbound_native_children_are_rejected_before_tool_rules(
 ))
 def test_all_exact_bound_roles_pass_active_child_lifecycle(tmp_path: Path, agent_type: str) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "bound exact roles", None, None)
+    _owned_task_start(root, "bound exact roles", None, None, session=f"{agent_type}-session")
     payload = {
         "session_id": f"{agent_type}-session", "turn_id": f"{agent_type}-turn",
         "tool_name": "spawn_agent",
@@ -1273,7 +1324,7 @@ def test_adapter_task_start_records_controller_actor(tmp_path: Path, monkeypatch
 ))
 def test_execution_role_extra_context_reads_are_telemetry_only(tmp_path: Path, agent_type: str) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "deviation telemetry", None, None)
+    _owned_task_start(root, "deviation telemetry", None, None)
     spawn_start(root, "reader-3", agent_type)
     child_read = hook_payload(
         agent_id="reader-3",
@@ -1300,7 +1351,7 @@ def test_execution_role_extra_context_reads_are_telemetry_only(tmp_path: Path, a
 
 def test_task_status_keeps_core_ledger_only_and_cli_consumes_one_shot_notice(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "cli notice", None, None)
+    _owned_task_start(root, "cli notice", None, None)
     spawn_start(root, "reader", "thaliris-reviewer")
     assert handle_hook(root, "PreToolUse", hook_payload(
         agent_id="reader", agent_type="thaliris-reviewer", tool_name="Bash",
@@ -1322,7 +1373,7 @@ def test_selected_roles_receive_one_bounded_aggregate_deviation_notice(
     tmp_path: Path, agent_type: str, expected_role: str,
 ) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "role-aware telemetry", None, None)
+    _owned_task_start(root, "role-aware telemetry", None, None)
     spawn_start(root, "reader-1", agent_type)
     for operation in ("catalog", "document-get", "artifact-get"):
         assert handle_hook(root, "PreToolUse", hook_payload(
@@ -1341,7 +1392,7 @@ def test_selected_roles_receive_one_bounded_aggregate_deviation_notice(
 
 def test_selected_role_records_actual_context_and_obvious_shell_durable_targets(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "actual durable targets", None, None)
+    _owned_task_start(root, "actual durable targets", None, None)
     spawn_start(root, "reviewer-reader", "thaliris-reviewer")
     assert handle_hook(root, "PreToolUse", hook_payload(
         agent_id="reviewer-reader",
@@ -1373,7 +1424,7 @@ def test_selected_role_records_actual_context_and_obvious_shell_durable_targets(
 
 def test_investigator_obvious_shell_durable_read_is_telemetry_only(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "investigator durable read", None, None)
+    _owned_task_start(root, "investigator durable read", None, None)
     spawn_start(root, "investigator-reader", "thaliris-investigator")
     assert handle_hook(root, "PreToolUse", hook_payload(
         agent_id="investigator-reader",
@@ -1389,7 +1440,7 @@ def test_investigator_obvious_shell_durable_read_is_telemetry_only(tmp_path: Pat
 
 def test_reviewer_non_bash_durable_path_read_is_aggregated(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "reviewer durable read", None, None)
+    _owned_task_start(root, "reviewer durable read", None, None)
     spawn_start(root, "reviewer-reader", "thaliris-reviewer")
     assert handle_hook(root, "PreToolUse", hook_payload(
         agent_id="reviewer-reader",
@@ -1407,7 +1458,7 @@ def test_reviewer_non_bash_durable_path_read_is_aggregated(tmp_path: Path) -> No
 
 def test_investigator_non_bash_durable_path_read_is_telemetry_only(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "investigator durable read", None, None)
+    _owned_task_start(root, "investigator durable read", None, None)
     spawn_start(root, "investigator-reader", "thaliris-investigator")
     assert handle_hook(root, "PreToolUse", hook_payload(
         agent_id="investigator-reader",
@@ -1423,7 +1474,7 @@ def test_investigator_non_bash_durable_path_read_is_telemetry_only(tmp_path: Pat
 
 def test_one_generic_read_call_deduplicates_durable_targets(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "deduplicate durable read", None, None)
+    _owned_task_start(root, "deduplicate durable read", None, None)
     spawn_start(root, "reviewer-reader", "thaliris-reviewer")
     assert handle_hook(root, "PreToolUse", hook_payload(
         agent_id="reviewer-reader",
@@ -1437,7 +1488,7 @@ def test_one_generic_read_call_deduplicates_durable_targets(tmp_path: Path) -> N
 
 def test_protocol_deviation_ring_keeps_late_events_in_one_aggregate(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "deviation overflow", None, None)
+    _owned_task_start(root, "deviation overflow", None, None)
     spawn_start(root, "reader", "thaliris-reviewer")
     for index in range(40):
         assert handle_hook(root, "PreToolUse", hook_payload(
@@ -1458,7 +1509,7 @@ def test_protocol_deviation_ring_keeps_late_events_in_one_aggregate(tmp_path: Pa
 
 def test_child_control_state_mutation_is_blocked_and_recorded(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "child guard", None, None)
+    _owned_task_start(root, "child guard", None, None)
     spawn_start(root, "worker-1")
     mutation = hook_payload(
         agent_id="worker-1",
@@ -1486,7 +1537,7 @@ def test_child_control_state_mutation_is_blocked_and_recorded(tmp_path: Path) ->
 
 def test_non_bash_control_state_mutation_tools_are_blocked_but_reads_and_repo_writes_are_allowed(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "non bash child guard", None, None)
+    _owned_task_start(root, "non bash child guard", None, None)
     spawn_start(root, "worker-1")
     denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(
         agent_id="worker-1",
@@ -1521,7 +1572,7 @@ def test_read_only_roles_make_no_native_sandbox_claim_and_obvious_writes_are_blo
     tmp_path: Path, agent_type: str, role: str, model: str, effort: str,
 ) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "read-only role guard", None, None)
+    _owned_task_start(root, "read-only role guard", None, None)
     spawn_start(root, "read-only-1", agent_type)
     denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(
         agent_id="read-only-1",
@@ -1686,7 +1737,7 @@ def test_doctor_keeps_valid_runtime_and_host_executable_observations_distinct(tm
 
 def test_invalid_task_state_denies_only_explicit_managed_mutations(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "invalid state", None, None)
+    _owned_task_start(root, "invalid state", None, None)
     (root / ".context" / "state.json").write_text("{broken", encoding="utf-8")
     assert lifecycle_module.managed_task_state(root) == ("INVALID_STATE", None)
     diagnostic = codex_adapter.doctor(root)
@@ -1827,7 +1878,7 @@ def test_host_capability_record_requires_sessionmeta_for_live_implementer_activa
 
 def test_authorized_spawn_requires_fresh_explicit_serial_handoff(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "spawn contract", None, None)
+    _owned_task_start(root, "spawn contract", None, None)
 
     for tool_input in (
         {"fork_turns": "all", "agent_type": "worker", "message": "task"},
@@ -1849,7 +1900,7 @@ def test_authorized_spawn_requires_fresh_explicit_serial_handoff(tmp_path: Path)
 
 def test_native_spawn_failure_without_posttool_keeps_pending_reservation(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "spawn failure recovery", None, None)
+    _owned_task_start(root, "spawn failure recovery", None, None)
     failed_spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "worker", "message": "failed handoff",
     })
@@ -1864,7 +1915,7 @@ def test_native_spawn_failure_without_posttool_keeps_pending_reservation(tmp_pat
 
 def test_pending_spawn_recovery_requires_exact_handoff_id(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "wrong recovery id", None, None)
+    _owned_task_start(root, "wrong recovery id", None, None)
     spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "worker", "message": "handoff",
     })
@@ -1876,7 +1927,7 @@ def test_pending_spawn_recovery_requires_exact_handoff_id(tmp_path: Path) -> Non
 
 def test_exact_pending_spawn_recovery_clears_reservation_and_allows_next_spawn(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "exact recovery id", None, None)
+    _owned_task_start(root, "exact recovery id", None, None)
     spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "worker", "message": "handoff",
     })
@@ -1897,7 +1948,7 @@ def test_exact_pending_spawn_recovery_clears_reservation_and_allows_next_spawn(t
 
 def test_pending_spawn_recovery_rejects_handoff_already_bound_to_child(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "bound recovery", None, None)
+    _owned_task_start(root, "bound recovery", None, None)
     spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "worker", "message": "bound handoff",
     })
@@ -1912,7 +1963,7 @@ def test_pending_spawn_recovery_rejects_handoff_already_bound_to_child(tmp_path:
 
 def test_unknown_spawn_result_does_not_release_reservation(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "unknown spawn", None, None)
+    _owned_task_start(root, "unknown spawn", None, None)
     spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "worker", "message": "handoff",
     })
@@ -1923,7 +1974,7 @@ def test_unknown_spawn_result_does_not_release_reservation(tmp_path: Path) -> No
 
 def test_lifecycle_binds_matching_identity_and_stop(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "lifecycle", None, None)
+    _owned_task_start(root, "lifecycle", None, None)
     spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "thaliris-reviewer", "message": "review this",
     })
@@ -1949,7 +2000,7 @@ def test_lifecycle_binds_matching_identity_and_stop(tmp_path: Path) -> None:
 
 def test_stop_requires_explicit_native_completed_for_close(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "native completion", None, None)
+    _owned_task_start(root, "native completion", None, None)
     spawn_start(root, "worker-1")
     stop(root, "worker-1")
     state = core.task_show(root)["state"]
@@ -1962,7 +2013,7 @@ def test_stop_requires_explicit_native_completed_for_close(tmp_path: Path) -> No
 
 def test_string_spawn_response_records_native_task_name(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "string spawn response", None, None)
+    _owned_task_start(root, "string spawn response", None, None)
     spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "worker", "message": "handoff",
     })
@@ -1974,9 +2025,86 @@ def test_string_spawn_response_records_native_task_name(tmp_path: Path) -> None:
     assert lifecycle(root)["pending_authorized_spawn"]["task_name_hash"] == lifecycle_module._identity_hash("/root/worker-1")
 
 
+def test_post_tool_json_string_decoding_is_limited_to_collaboration_tools() -> None:
+    response = json.dumps({"exit_code": 1})
+    assert lifecycle_module._post_tool_response({"tool_name": "Bash", "tool_response": response}) == response
+    assert lifecycle_module._post_tool_response({"tool_name": "spawn_agent", "tool_response": response}) == {"exit_code": 1}
+
+
+def test_task_name_string_response_binds_distinct_host_child_id_through_close(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    _owned_task_start(root, "distinct native identities", None, None)
+    task_name, agent_id = "/root/worker-task-name", "native-child-id"
+    spawn_start_with_host_task_name(root, task_name, agent_id)
+    child = lifecycle(root)["children"][-1]
+    assert child["task_name_hash"] == lifecycle_module._identity_hash(task_name)
+    assert child["agent_id_hash"] == lifecycle_module._identity_hash(agent_id)
+    assert child["task_name_hash"] != child["agent_id_hash"]
+    stop(root, agent_id)
+
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents",
+        tool_response=json.dumps({"agents": [{"agent_name": task_name, "agent_status": {"completed": "result"}}]}),
+    )) == ""
+    child = lifecycle(root)["children"][-1]
+    assert child["terminal_state"] == "STOP_ATTESTED"
+    assert child["native_terminal_status"] == "completed"
+    assert codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])["status"] == "DONE"
+
+
+def test_string_list_response_does_not_reconcile_wrong_identity(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    _owned_task_start(root, "wrong native identity", None, None)
+    task_name, agent_id = "/root/worker-task-name", "native-child-id"
+    spawn_start_with_host_task_name(root, task_name, agent_id)
+    stop(root, agent_id)
+
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents",
+        tool_response=json.dumps({"agents": [{"agent_name": "/root/wrong-child", "agent_status": {"completed": "result"}}]}),
+    )) == ""
+    child = lifecycle(root)["children"][-1]
+    assert child["native_terminal_status"] is None
+    with pytest.raises(ValueError, match="matching native SubagentStart/Stop"):
+        codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])
+
+
+def test_string_wait_response_is_not_completion_evidence(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    _owned_task_start(root, "wait response is not completion", None, None)
+    task_name, agent_id = "/root/worker-task-name", "native-child-id"
+    spawn_start_with_host_task_name(root, task_name, agent_id)
+    stop(root, agent_id)
+
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="wait_agent", tool_input={"targets": [task_name]},
+        tool_response=json.dumps({"agents": [{"agent_name": task_name, "agent_status": {"completed": "result"}}]}),
+    )) == ""
+    child = lifecycle(root)["children"][-1]
+    assert child["native_terminal_status"] is None
+    with pytest.raises(ValueError, match="task-close requires"):
+        codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])
+
+
+def test_string_interrupt_response_reconciles_exact_task_name(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    _owned_task_start(root, "interrupt response identity", None, None)
+    task_name, agent_id = "/root/worker-task-name", "native-child-id"
+    spawn_start_with_host_task_name(root, task_name, agent_id)
+    stop(root, agent_id)
+
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="interrupt_agent", tool_input={"target": task_name},
+        tool_response=json.dumps({"previous_status": {"completed": "result"}}),
+    )) == ""
+    child = lifecycle(root)["children"][-1]
+    assert child["native_terminal_status"] == "completed"
+    assert codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])["status"] == "DONE"
+
+
 def test_string_list_response_reconciles_completed_child_and_allows_close(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "string list response", None, None)
+    _owned_task_start(root, "string list response", None, None)
     spawn_start(root, "worker-1")
     stop(root, "worker-1")
     assert handle_hook(root, "PostToolUse", hook_payload(
@@ -1992,10 +2120,11 @@ def test_string_list_response_reconciles_completed_child_and_allows_close(tmp_pa
     "{not-json}",
     json.dumps([{"task_name": "/root/worker-1"}]),
     json.dumps("completed"),
+    '{"agents":[{"agent_name":"worker-1","agent_status":{"completed":"result"}}],"extra":NaN}',
 ])
 def test_malformed_or_non_dict_string_response_produces_no_completion_fact(tmp_path: Path, response: str) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "unknown string response", None, None)
+    _owned_task_start(root, "unknown string response", None, None)
     spawn_start(root, "worker-1")
     assert handle_hook(root, "PostToolUse", hook_payload(
         tool_name="list_agents",
@@ -2008,7 +2137,7 @@ def test_malformed_or_non_dict_string_response_produces_no_completion_fact(tmp_p
 
 def test_missing_stop_native_terminal_reconciliation_is_not_success(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "reconcile", None, None)
+    _owned_task_start(root, "reconcile", None, None)
     spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "worker", "message": "implement",
     })
@@ -2033,7 +2162,7 @@ def test_missing_stop_native_terminal_reconciliation_is_not_success(tmp_path: Pa
 
 def test_selected_handoff_sentinel_exists_once_across_native_and_adapter_payload(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "once", None, None)
+    _owned_task_start(root, "once", None, None)
     handoff = "SELECTED_FACT HANDOFF_SENTINEL"
     spawn = hook_payload(tool_name="spawn_agent", tool_input={
         "fork_turns": "none", "agent_type": "worker", "message": handoff,
@@ -2055,7 +2184,7 @@ def test_latest_managed_child_alone_controls_close(tmp_path: Path) -> None:
         root = tmp_path / str(index)
         root.mkdir()
         root = repo(root)
-        core.task_start(root, "latest child", None, None)
+        _owned_task_start(root, "latest child", None, None)
         spawn_start(root, "child-a")
         stop(root, "child-a")
         reconcile(root, "child-a", {"completed": "result"})
@@ -2077,7 +2206,7 @@ def test_latest_managed_child_alone_controls_close(tmp_path: Path) -> None:
 
 def test_subagent_start_identity_collision_preserves_reservation(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    core.task_start(root, "collision", None, None)
+    _owned_task_start(root, "collision", None, None)
     spawn_start(root, "reused-id")
     stop(root, "reused-id")
     assert handle_hook(root, "PreToolUse", hook_payload(
@@ -2094,7 +2223,7 @@ def test_subagent_start_identity_collision_preserves_reservation(tmp_path: Path)
 
 def test_only_current_lifecycle_schema_is_accepted(tmp_path: Path) -> None:
     root = repo(tmp_path)
-    started = core.task_start(root, "current lifecycle", None, None)
+    started = _owned_task_start(root, "current lifecycle", None, None)
     path = root / ".context" / "audit" / "lifecycle" / f"{lifecycle_module._task_key(started['task_id'])}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({

@@ -103,17 +103,19 @@ and the currently effective Codex global instruction.
 
 `thaliris codex-install` also maintains one marker-owned startup block in
 `CODEX_HOME/AGENTS.md`. For substantive Git repository changes, including a
-README task, without an explicit
-opt-out, that block directs the Controller through a trusted one-shot
-`bootstrap-check` even when no project marker exists, then `init` if the
-definition or activation marker is missing. Chatting, informational questions,
-read-only work, and non-Git directories are excluded; confirmed readiness is
-not rechecked, and ACTIVE tasks do not run `init`. The installed instruction
-includes the exact executable path and SHA-256 used for Host integration, so
-the Controller can verify and invoke that direct route even if an ordinary PATH
-command is stale. It requires the explicit bridge digest at same-session
-`task-start`. It does not carry task routing policy or mutate repositories from
-a hook. Install replaces
+README task, without an explicit opt-out, that block gives one direct absolute
+installed `thaliris-run.cmd --root <repo> codex-bootstrap` command. The wrapper
+validates the complete installed runtime against `CODEX_HOME/thaliris-install.json`
+before starting Python. Bootstrap reads
+task state first, and performs one project `init` only for a missing definition.
+It returns READY with one opaque `task_start_receipt` for same-session
+`task-start --bootstrap-receipt`. The current Hook must attest task start. ACTIVE
+returns exact state and lifecycle identities and owner evidence for a Controller
+continuation or explicit `task-abandon` decision; it never initializes. Without
+a current-session Host proof, owner match remains UNKNOWN. Invalid task state
+also blocks initialization. Chatting, informational questions, read-only work,
+and non-Git directories are excluded. The startup block does not carry task
+routing policy or mutate repositories from a hook. Install replaces
 only the well-formed `thaliris:global` span; uninstall removes only that span.
 Text outside the span remains byte-for-byte intact, and damaged, duplicate, or
 conflicting Thaliris markers require manual resolution. A newly saved global

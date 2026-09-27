@@ -346,9 +346,12 @@ def test_new_registry_role_flows_through_adapter_inventories_and_cli(monkeypatch
 def test_new_registry_role_appears_in_active_spawn_isolation_diagnostic(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setitem(roles.ROLE_REGISTRY, "sentinel", _sentinel_definition())
     root = _initialized_repo(tmp_path)
-    core.task_start(root, "registry diagnostic", None, None)
+    started = core.task_start(root, "registry diagnostic", None, None)
+    session_id = "registry-controller-session"
+    lifecycle.record_task_start_owner(root, started["task_id"], hashlib.sha256(session_id.encode()).hexdigest())
 
     denied = lifecycle._pre_tool_output(root=root, payload={
+        "session_id": session_id,
         "tool_name": "spawn_agent",
         "tool_input": {"fork_turns": "all"},
     })

@@ -2454,6 +2454,7 @@ def test_string_list_response_reconciles_completed_child_and_allows_close(tmp_pa
 
 @pytest.mark.parametrize("response", [
     "{not-json}",
+    '{"agents":[{"agent_name":"worker-1","agent_status":{"completed":"result"}}],"extra":NaN}',
     json.dumps([{"task_name": "/root/worker-1"}]),
     json.dumps("completed"),
 ])

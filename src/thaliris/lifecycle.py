@@ -1906,6 +1906,10 @@ def managed_dependency_pending(root: Path, parent_payload: dict[str, Any] | None
     )
 
 
+def _reject_non_json_constant(value: str) -> None:
+    raise ValueError(f"Invalid JSON constant: {value}")
+
+
 def _post_tool_response(payload: dict[str, Any]) -> object:
     """Read the native PostToolUse result across 0.146 payload variants."""
     for key in ("tool_response", "tool_result", "result", "output"):
@@ -1913,7 +1917,7 @@ def _post_tool_response(payload: dict[str, Any]) -> object:
             response = payload[key]
             if isinstance(response, str):
                 try:
-                    decoded = json.loads(response)
+                    decoded = json.loads(response, parse_constant=_reject_non_json_constant)
                 except (TypeError, ValueError, json.JSONDecodeError):
                     return response
                 return decoded if isinstance(decoded, dict) else response

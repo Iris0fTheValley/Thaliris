@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "thaliris"
-version = "0.4.0"
+version = "0.4.1"
 description = "Git-native mechanical task ledger, artifact store, retrieval, and lifecycle adapter"
 requires-python = ">=3.11"
 readme = "README.md"

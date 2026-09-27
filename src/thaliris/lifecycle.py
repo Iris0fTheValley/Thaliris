@@ -103,7 +103,7 @@ _OBVIOUS_WRITE = re.compile(
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
 _CONTEXT_OPERATIONS = frozenset({
     "init", "codex-bootstrap", "codex-install", "codex-uninstall", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
-    "task-start", "task-abandon", "task-update", "task-show",
+    "task-start", "task-abandon", "task-recover-state", "task-update", "task-show",
     "task-status", "task-get", "artifact-get", "catalog", "document-get",
     "task-artifact", "task-close", "task-promote", "recover-pending-spawn", "rollback", "version",
 })
@@ -118,7 +118,7 @@ _CHILD_CONTEXT_READS = frozenset({
     "document-get",
 })
 _CHILD_CONTEXT_MUTATIONS = frozenset({
-    "task-start", "task-abandon", "task-update", "task-artifact", "task-close", "task-promote", "codex-install",
+    "task-start", "task-abandon", "task-recover-state", "task-update", "task-artifact", "task-close", "task-promote", "codex-install",
     "recover-pending-spawn", "rollback", "init", "uninstall", "codex-uninstall",
 })
 _CONTROL_STATE_TARGET = re.compile(r"(?i)\.context[\\/](?:state\.json|audit[\\/]lifecycle(?:[\\/][^\s\"']+)?)")
@@ -1062,6 +1062,7 @@ def handle_hook(root: Path, event: str, payload: object, managed_hook_abi: str |
                     _best_effort_record(_record_delegation_telemetry, root, payload)
             if isinstance(tool, str) and _tool_basename(tool) in _OBSERVED_EXECUTION_TOOL_NAMES:
                 _best_effort_record(_record_execution_observation, root, payload)
+                return _post_init_attestation(root, payload, managed_hook_abi)
             return ""
         # Stop has no production policy role. It neither invokes a model nor
         # blocks or corrects the Controller.
@@ -1781,6 +1782,35 @@ def recover_pending_spawn(root: Path, handoff_id: str) -> dict[str, object]:
     return {"ok": True, "task_id": task_id, "handoff_id": handoff_id, "recovered": True}
 
 
+def task_state_recovery_blocker(root: Path, task_id: str) -> str | None:
+    """Fail closed if the incompatible task still has lifecycle authority."""
+    relative = f".context/audit/lifecycle/{_task_key(task_id)}.json"
+    try:
+        path = core._safe_without_final_symlink(root, relative)
+    except ValueError:
+        return "lifecycle state path traverses a symlink or escapes the repository"
+    if not path.is_file():
+        if path.exists():
+            return "lifecycle state is not a regular file"
+        return None
+    try:
+        state = _load_lifecycle(path, task_id)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return "lifecycle state is unreadable or incompatible"
+    if state.get("pending_authorized_spawn") is not None:
+        return "an authorized spawn reservation is still pending"
+    children = state.get("children")
+    if not isinstance(children, list):
+        return "lifecycle child state is malformed"
+    if any(
+        not isinstance(child, dict)
+        or child.get("terminal_state") != "NATIVE_TERMINAL_RECONCILED"
+        for child in children
+    ):
+        return "one or more child lifecycles are not explicitly terminal"
+    return None
+
+
 def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
     """Bind an authorized native child to its explicit Controller handoff."""
     task_id = _active_task_id(root)
@@ -2304,6 +2334,22 @@ def _context_operation(payload: dict[str, Any]) -> str | None:
     return _context_call(payload)[0]
 
 
+def _compound_invalid_state_mutation(payload: dict[str, Any]) -> bool:
+    """Find disallowed direct mutations in a separator-delimited command.
+
+    This is only a deny check for INVALID_STATE. It does not authorize a
+    compound command or interpret a shell wrapper as a Thaliris invocation.
+    """
+    command = _bash_command(payload)
+    if command is None or _COMMAND_SEPARATOR.search(command) is None:
+        return False
+    for segment in _COMMAND_SEPARATOR.split(command):
+        operation, _ = _context_call({"tool_input": {"command": segment}})
+        if operation in _CHILD_CONTEXT_MUTATIONS:
+            return True
+    return False
+
+
 def _visible_durable_paths(payload: dict[str, Any]) -> list[str]:
     """Best-effort observation of obvious durable paths, not a security boundary."""
     tool_input = payload.get("tool_input")
@@ -2364,6 +2410,57 @@ def _updated_command_output(payload: dict[str, Any], argument: str) -> str:
         "permissionDecision": "allow",
         "updatedInput": updated,
     }}, ensure_ascii=False, separators=(",", ":"))
+
+
+def _recovery_task_id(root: Path, diagnostic: dict[str, Any]) -> str | None:
+    """Read the task identity from the exact state bytes being recovered."""
+    state_sha256 = diagnostic.get("state_sha256")
+    if not isinstance(state_sha256, str):
+        return None
+    try:
+        path = core._safe_without_final_symlink(root, core._STATE_NAME)
+        if not path.is_file() or path.stat().st_size > 512 * 1024:
+            return None
+        raw_bytes = path.read_bytes()
+        if hashlib.sha256(raw_bytes).hexdigest() != state_sha256:
+            return None
+        state = json.loads(raw_bytes.decode("utf-8"))
+    except (OSError, ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    task_id = state.get("task_id") if isinstance(state, dict) else None
+    return task_id if isinstance(task_id, str) else None
+
+
+def _recovery_command_admitted(root: Path, payload: dict[str, Any], diagnostic: dict[str, Any] | None) -> bool:
+    """Require the hook to confirm the exact observed state before recovery."""
+    if not isinstance(diagnostic, dict) or diagnostic.get("recoverable") is not True:
+        return False
+    task_id = _recovery_task_id(root, diagnostic)
+    if task_id is None or task_state_recovery_blocker(root, task_id) is not None:
+        return False
+    command = _bash_command(payload)
+    if command is None:
+        return False
+    arguments = _context_arguments(command)
+    if arguments is None:
+        return False
+    try:
+        tokens = [token.strip("\"'") for token in shlex.split(arguments, posix=False)]
+    except ValueError:
+        return False
+    expected_values: list[str] = []
+    abandon_active = False
+    for index, token in enumerate(tokens):
+        if token == "--expected-sha256" and index + 1 < len(tokens):
+            expected_values.append(tokens[index + 1])
+        elif token.startswith("--expected-sha256="):
+            expected_values.append(token.split("=", 1)[1])
+        elif token == "--abandon-active":
+            abandon_active = True
+    observed = diagnostic.get("state_sha256")
+    if len(expected_values) != 1 or expected_values[0] != observed:
+        return False
+    return diagnostic.get("abandon_active_confirmation_required") is not True or abandon_active
 
 
 def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
@@ -2491,6 +2588,58 @@ def _start_attestation_path(root: Path, nonce: str) -> Path:
     return root / ".context" / "audit" / "task-start-attestations" / f"{digest}.json"
 
 
+def _direct_init_call(root: Path, payload: dict[str, Any]) -> bool:
+    """Recognize only a direct init targeting this worktree."""
+    command = _bash_command(payload)
+    if command is None:
+        return False
+    separator_check = command.lstrip()
+    if separator_check.startswith("&") and len(separator_check) > 1 and separator_check[1].isspace():
+        separator_check = separator_check[1:].lstrip()
+    if _COMMAND_SEPARATOR.search(separator_check):
+        return False
+    arguments = _context_arguments(command)
+    if arguments is None:
+        return False
+    try:
+        tokens = [token.strip("\"'") for token in shlex.split(arguments, posix=False)]
+    except ValueError:
+        return False
+    if tokens[:1] == ["--root"]:
+        if len(tokens) < 3 or not tokens[1]:
+            return False
+        cwd = payload.get("cwd")
+        base = Path(cwd) if isinstance(cwd, str) and cwd else root
+        target = Path(tokens[1])
+        if not target.is_absolute():
+            target = base / target
+        if target.resolve(strict=False) != root.resolve(strict=False):
+            return False
+        tokens = tokens[2:]
+    return (
+        tokens == ["init"]
+        or len(tokens) == 3
+        and tokens[0] == "init"
+        and tokens[1] == "--accept-managed-instruction-sha256"
+        and re.fullmatch(r"[0-9a-f]{64}", tokens[2]) is not None
+    )
+
+
+def _post_init_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None) -> str:
+    """Deliver one current-session proof from a successful direct init callback."""
+    if managed_hook_abi != MANAGED_HOOK_ABI or managed_task_state(root)[0] != "NO_TASK" or not _direct_init_call(root, payload):
+        return ""
+    response = _post_tool_response(payload)
+    if response is None or not _post_tool_succeeded(response) or _execution_outcome(response) == "FAILED":
+        return ""
+    from . import codex_adapter
+
+    if codex_adapter._project_definition_facts(root)["project_definition_present"] != "YES":
+        return ""
+    digest = codex_adapter._controller_bridge()["controller_bridge_sha256"]
+    return _issue_task_start_attestation(root, payload, managed_hook_abi, bridge_sha256=digest, event="PostToolUse")
+
+
 def new_role_profile_files(root: Path, session_hash: str) -> list[str] | None:
     """Compare current disk role filenames with this session's disk snapshot.
 
@@ -2556,14 +2705,16 @@ def role_catalog_session_status(root: Path, session_hash: str) -> str:
     return HOST_ROLE_CATALOG_UNKNOWN
 
 
-def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None = None) -> str:
+def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None = None, *, bridge_sha256: str | None = None, event: str = "PreToolUse") -> str:
     session_hash = _session_id_hash(payload)
     if session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI:
-        return _permission_deny("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
-    command = _bash_command(payload)
-    bridge_match = re.search(r"(?:^|\s)--(?:bootstrap-receipt|controller-bridge-sha256)\s+([0-9a-f]{64})(?=$|\s)", command or "")
-    if bridge_match is None:
-        return _permission_deny("THALIRIS_CONTROLLER_BRIDGE_REQUIRED: acknowledge the exact managed instruction SHA-256.")
+        return _permission_deny("MANAGED_CURRENT_SESSION_NOT_ATTESTED") if event == "PreToolUse" else ""
+    if bridge_sha256 is None:
+        command = _bash_command(payload)
+        bridge_match = re.search(r"(?:^|\s)--(?:bootstrap-receipt|controller-bridge-sha256)\s+([0-9a-f]{64})(?=$|\s)", command or "")
+        if bridge_match is None:
+            return _permission_deny("THALIRIS_CONTROLLER_BRIDGE_REQUIRED: acknowledge the exact managed instruction SHA-256.")
+        bridge_sha256 = bridge_match.group(1)
     nonce = secrets.token_urlsafe(24)
     token = f"v1.{session_hash}.{nonce}"
     now = time.time_ns()
@@ -2574,12 +2725,17 @@ def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_h
         "managed_hook_spec_hash": managed_hook_spec_hash(),
         "adapter_protocol_version": CODEX_ADAPTER_PROTOCOL_VERSION,
         "managed_hook_abi": MANAGED_HOOK_ABI,
-        "controller_bridge_sha256": bridge_match.group(1),
+        "controller_bridge_sha256": bridge_sha256,
         "created_at_ns": now,
         "expires_at_ns": now + _START_ATTESTATION_TTL_NS,
     }
     with core._lock(root):
         _write_capture(_start_attestation_path(root, token), record)
+    if event == "PostToolUse":
+        return json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": f"Current-session Thaliris admission proof: --hook-attestation {token}. Use the task_start_receipt returned by codex-bootstrap when calling task-start.",
+        }}, ensure_ascii=False, separators=(",", ":"))
     return _updated_command_output(payload, f"--hook-attestation {token}")
 
 
@@ -2830,8 +2986,18 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
         # Damaged managed state does not make unrelated native tools unsafe.
         # Deny only direct Controller-owned mutations that are mechanically
         # visible without interpreting an arbitrary command or tool name.
+        if operation == "init":
+            # Project bootstrap repairs only the definition and activation
+            # surface.  It never reads or changes the incompatible task
+            # ledger; init's CLI retains the exact managed-instruction
+            # confirmation check for user-owned instruction blocks.
+            _best_effort_record(_record_controller_guard_event, root, payload, "CONTEXT_init", "allowed")
+            return ""
+        schema_mismatch = core.task_state_schema_diagnostic(root) if operation == "task-recover-state" else None
+        if operation == "task-recover-state" and _recovery_command_admitted(root, payload, schema_mismatch):
+            return _issue_task_start_attestation(root, payload, managed_hook_abi)
         target = _control_state_target(payload)
-        if operation in _CHILD_CONTEXT_MUTATIONS or (
+        if operation in _CHILD_CONTEXT_MUTATIONS or _compound_invalid_state_mutation(payload) or (
             target is not None and (_obvious_write_attempt(payload) or _obvious_mutation_tool(normalized))
         ):
             _best_effort_record(_record_controller_guard_event, root, payload, "INVALID_STATE", "blocked")

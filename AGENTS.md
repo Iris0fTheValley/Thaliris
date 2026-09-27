@@ -19,8 +19,27 @@ thresholds. Prefer slices that can each be independently understood,
 implemented, verified, committed, and closed. A completed slice returns
 distilled state, its commit reference, and verification evidence; discard its
 working set when closed.
+Before choosing an opportunistic discovered slice, the Controller confirms that
+each explicit user goal has been addressed, explicitly deferred, or has a
+decision-changing blocker. This is a semantic rule, not a mechanical checklist
+or state machine.
+After a Focused Implementer delegates broad collection, it waits for the
+Scanner's distilled result and reads only bounded immediate files; it does not
+duplicate the Scanner's broad scan. Once difficult semantic uncertainty is closed, end the
+Focused slice; the Focused Implementer reports the deterministic patch, test,
+format, documentation, and residual-reference tail to the Controller. The
+Controller routes that deterministic tail to a fresh standard Luna Implementer.
+Make each Executor handoff decision-complete enough to close one semantic slice
+without routine Controller steering. Do not keep an Executor as a long-lived
+interactive workspace. If new decision-changing information invalidates the
+slice, let the child close with distilled state and create a fresh correction
+slice. `send_message` remains available for genuinely new decision-changing
+information.
 Use Investigator/Scanner for missing facts, large working sets, broad scans,
-and factual compression, without transferring architecture decisions. Use a Reviewer only when independent semantic review adds real
+and factual compression, without transferring architecture decisions. A Scanner
+batches related searches and reads, returns compact facts, and once evidence is
+sufficient stops immediately; do not expand the scan for one more confirmation.
+Use a Reviewer only when independent semantic review adds real
 value; it is not a default gate. Curator and Reasoning Specialist remain
 optional and are selected only when they add actual value.
 At task end, make one short semantic judgment about knowledge that could
@@ -54,11 +73,15 @@ Focused Implementer or Reasoning Specialist before spawn for exceptional reasoni
 These fixed profiles retain the same stable role IDs; default profiles remain
 on Luna or Sol. Per-spawn model/effort overrides are denied;
 role sessions never select their own model or effort.
-Choose the model per handoff and semantic slice difficulty. Deterministic
-documentation, test, configuration, or reference cleanup and small defined
-implementations default to standard Implementer on Luna, even within a large
-project. Use Focused Implementer on Sol only when the current slice itself
-requires complex lifecycle, ownership, compatibility, or multi-option reasoning.
+Choose the model per handoff and semantic slice difficulty; model choice follows
+the current semantic slice, not the whole parent task. Deterministic
+documentation, test, configuration, or reference cleanup and small, bounded
+modifications with a confirmed direction and no complex semantic uncertainty
+default to standard Implementer on Luna, including lifecycle or admission work
+and slices inside a large project. Do not select Focused Implementer from the
+parent task or topic. Use Focused Implementer on Sol only when the current slice
+itself requires high-difficulty reasoning about lifecycle, ownership, compatibility,
+or multiple plausible implementations.
 Use Reasoning Specialist on Sol only when problem framing or slice decomposition
 is unclear; it does not implement. Astra is an escalation for an already small,
 unusually demanding slice or an evidenced Sol failure. Astra medium is the
@@ -99,6 +122,12 @@ gathering, implementation, or routine review, and difficulty alone is
 insufficient when the Controller can decide confidently from established facts.
 Do not use counters, thresholds, risk scores, classifiers, or a state machine
 for this routing.
+Semantic uncertainty that can change a decision routes to Investigator;
+broad grep, exhaustive residual references, and call-site scans route to a
+Scanner under an Executor or Reviewer.
+Reviewer challenges a converged implementation slice; do not start it against
+a still-mutating Executor to obtain parallel progress. Findings return to the
+Controller, which decides whether a fresh correction slice is needed.
 
 Each Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, and Reviewer keeps
 its private working set private. By default it returns a distilled conclusion, key findings,
@@ -137,7 +166,7 @@ generate INDEX content; it validates the CAS, references, and atomic commit.
 With NO_TASK, Thaliris leaves ordinary Codex tool use and spawn behavior
 transparent. During an ACTIVE managed task the persistent Controller uses only
 native spawn/wait/list/interrupt operations and an explicit allow-set of
-trusted direct `thaliris` runtime commands. `init`, `uninstall`, `rollback`, a
+trusted direct `thaliris` runtime commands. `init`, `codex-install`, `uninstall`, `rollback`, a
 second `task-start`, and `task-show` are blocked for ACTIVE Root. `task-status`
 is bounded; `task-get`, `artifact-get`, `catalog`, and `document-get`
 retrieve explicitly selected objects.
@@ -146,6 +175,17 @@ Controller-owned state mutations: direct Thaliris task/lifecycle mutations and
 obvious writes targeting `.context/state.json` or lifecycle state. Other
 tools, including unknown tool names, coordination, diagnostics, and reads,
 remain transparent. This hook behavior does not establish managed enforcement.
+An incompatible older task schema remains INVALID_STATE until the Controller
+uses the supported explicit recovery operation. Read `task-status` for the
+version, exact state SHA-256, recoverability, and recovery action. After the
+project definition is ready, `task-recover-state --expected-sha256 <exact-hash>`
+archives the original bytes before a separate, newly attested `task-start`.
+An ACTIVE old task also requires `--abandon-active`; pending or nonterminal
+child lifecycle authority blocks recovery. Never interpret an invalid state
+as an absent state or delete it by hand. If `bootstrap-check` reports an
+unrecognized managed instruction block, review its exact SHA-256 and use
+`init --accept-managed-instruction-sha256 <exact-hash>` to update only that
+marked block while retaining text outside it.
 If `task-start` was attempted but managed enforcement is unavailable or
 rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
 Codex version, host capability, task schema, git/worktree identity,
@@ -189,7 +229,7 @@ SubagentStart consumes the unique reservation and binds the Scanner's own
 identity. One live managed Codex CLI `0.155.0-alpha.9.2` probe on 2026-09-25
 verified the exact reservation, SubagentStart, and bound Scanner PreToolUse
 acceptance at depth two. The Scanner result returned and the Focused
-Implementer parent continued. [nested Scanner live probe](docs/codex-nested-scanner-live-20260925.md)
+Implementer parent continued. See the [durable probe evidence](docs/codex-nested-scanner-live-20260925.md).
 This is evidence for that one CLI build and probe only. Raw Host wire-byte
 equality, other Host builds or Desktop scenarios, and native child
 `Completed`/`task-close` completion were not observed and remain UNKNOWN.
@@ -202,10 +242,10 @@ authorized managed child, use one blocking `wait_agent` call with `timeout_ms`
 equal to the maximum advertised in the current turn's `wait_agent` tool
 definition. The current turn's tool definition is the authority; never infer a
 maximum from release defaults, configuration, history, or capability tables.
-Early return on mailbox activity is expected; if the child remains pending,
-inspect the relevant new state and wait again using the current turn's
-advertised maximum. Do not use short periodic polling. If no usable current
-maximum is advertised, do not invent one.
+If that blocking wait returns early, continue only when it delivered new,
+decision-changing information; otherwise resume the same wait without
+re-reasoning. Do not periodically wake the Controller to poll. If no usable
+current maximum is advertised, do not invent one.
 Task closure requires the last
 Controller-direct handoff's completed lifecycle and no pending or active
 descendants; a later Scanner does not replace that top-level completion.
@@ -213,30 +253,38 @@ The Controller interprets Investigator, Curator, Reasoning Specialist, Implement
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 
-Startup contract: determine project initialization only from these explicit
-project facts: a managed Thaliris block in the effective root instruction and
-a current managed `.codex/hooks.json`. If either fact is absent, invoke
+Startup contract: install Host integration once before sessions that use
+Thaliris roles. `thaliris codex-install` places stable role identities and the
+stable hook ABI trampoline under `CODEX_HOME`; it merges user hooks and keeps
+project data out of the user layer. It uses the official Codex app-server
+`hooks/list` and `config/batchWrite` path to trust only the seven exact
+Thaliris handlers with Host-returned keys and current hashes; it never
+calculates those identities locally or changes existing `enabled` state.
+`host_hook_trust_status` and its counts report saved Host config, not what a
+running session loaded. A changed Host installation is a disk fact until a
+later session loads it. For each repository, project readiness
+requires the managed Thaliris block in the effective root instruction and the
+static `.codex/thaliris.json` activation marker. If either is absent, invoke
 `thaliris --root <repo> init` directly, or invoke the absolute executable
-named by the Host's exact SHA-256 pin. Project `init` does not create native
-role identities. Stable Thaliris native role definitions are one-time Host
-integration installed with `thaliris codex-install` under the user's
-`CODEX_HOME/agents`; run it before starting a session that will use them. It
-installs only Thaliris-owned profiles and preserves user files. A profile
-filename added after SessionStart fails closed as
-`NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`. SessionStart's project and Host profile
-file snapshots are disk-presence evidence only; missing snapshot or missing
-Host-native catalog evidence remains `HOST_ROLE_CATALOG_UNKNOWN`, never PASS.
-Updating content at an already-known filename does not add a role identity.
+named by the host's exact SHA-256 pin. Project `init` does not install Host
+roles or Host hooks and does not require a session restart. Read the `init`
+JSON result.
 Read the canonical managed text and SHA-256 returned by `init` or
 `bootstrap-check`. Explicitly acknowledge that digest with
 `--controller-bridge-sha256` when calling `task-start`; the loaded current-ABI
 PreToolUse hook binds that receipt to its session attestation. This is
 Controller activation only: CLI output does not become Host developer
-instruction, and Host instruction activation remains UNKNOWN. Project hook
-activation is separate: use only a supported current-session Host refresh
-route; when unavailable, report `PROJECT_HOOK_REFRESH_UNAVAILABLE` and do not
-globalize lifecycle hooks. If neither trusted direct executable route is
-available, report bootstrap unavailable and do not continue.
+instruction, and Host instruction activation remains UNKNOWN. The stable Host
+trampoline checks only the activation marker before dispatching into the
+current executable; an inactive repository skips Thaliris Python and state
+access. A registration on disk does not prove the current session loaded it.
+SessionStart's role filename snapshot is disk presence evidence only. Without
+a Host-native catalog signal, catalog status remains
+`HOST_ROLE_CATALOG_UNKNOWN`; if a new role filename appears after the startup
+snapshot, admission fails closed with `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`.
+Existing catalogued profile content updates by filename do not imply a restart.
+If neither trusted
+direct route is available, report bootstrap unavailable and do not continue.
 If all facts are present, read `.agent-memory/INDEX.md` and
 `.milestones/INDEX.md` (creating only a minimal missing map as instructed),
 then proceed to normal managed startup.

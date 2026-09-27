@@ -14,6 +14,10 @@ Implementer or Reasoning Specialist before spawn for exceptional reasoning.
 These fixed profiles map to the same stable roles; defaults remain on Luna or
 Sol. Per-spawn model/effort overrides are denied. Role sessions never
 override their own model or effort.
+Before choosing an opportunistic discovered slice, the Controller confirms that
+each explicit user goal has been addressed, explicitly deferred, or has a
+decision-changing blocker. This is a semantic rule, not a mechanical checklist
+or state machine.
 
 ## Shared Role Result
 
@@ -39,7 +43,10 @@ input tools remain denied for managed children.
 ## Investigator
 
 Investigator/Scanner handles missing facts, broad scans, large working sets,
-and factual compression, not architecture decisions. It cannot delegate.
+and factual compression, not architecture decisions. The Scanner batches
+related searches and reads, returns compact facts, and once evidence is
+sufficient stops immediately; do not expand the
+scan for one more confirmation. It cannot delegate.
 Investigate the task in the handoff. Save detailed reusable evidence as
 an optional repo-relative Artifact and return its pointer with a short result.
 
@@ -97,14 +104,23 @@ within the assigned slice. Preferentially delegate broad repository scanning,
 exhaustive search, rollout/log scans, call-site enumeration, residual checks, and
 large mechanical evidence collection to a fresh Investigator/Scanner. Use its
 evidence while retaining responsibility for the focused implementation decision.
-Do not routinely perform those broad collections yourself merely because you can.
+After delegating, wait for the Scanner's distilled result and read only bounded
+immediate files; do not duplicate the Scanner's broad scan. Do not routinely
+perform those broad collections yourself merely because you can. Once difficult
+semantic uncertainty is closed, end the Focused slice and report the deterministic
+patch, test, format, documentation, and residual-reference tail to the Controller.
+The Controller routes that deterministic tail to a fresh standard Luna
+Implementer.
 
-The Controller chooses the model per handoff and semantic slice difficulty.
+The Controller chooses the model per handoff and semantic slice difficulty;
+model choice follows the current semantic slice, not the whole parent task.
 Deterministic documentation, test, configuration, or reference cleanup and
-small defined implementations default to standard Implementer on Luna,
-including slices inside a large project. Focused Implementer on Sol handles
-only a current slice that requires complex lifecycle, ownership, compatibility,
-or multi-option reasoning.
+small, bounded modifications with a confirmed direction and no complex
+semantic uncertainty default to standard Implementer on Luna, including
+lifecycle or admission work and slices inside a large project. Do not select
+Focused Implementer from the parent task or topic. Use Focused Implementer on
+Sol only when the current slice itself requires high-difficulty reasoning about
+lifecycle, ownership, compatibility, or multiple plausible implementations.
 Reasoning Specialist on Sol is for unclear problem framing or slice decomposition
 and does not implement. Astra is an escalation for an already small, unusually
 demanding slice or an evidenced Sol failure; medium is the default escalation,

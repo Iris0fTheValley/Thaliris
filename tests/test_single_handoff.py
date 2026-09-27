@@ -242,8 +242,23 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     expected = codex_adapter._global_agents_block(executable, digest)
     assert global_agents.read_bytes() == expected + original
     assert expected.count(b"--root <repo> codex-bootstrap") == 1
-    assert str(home / lifecycle_module.HOST_RUN_SCRIPT_NAME).encode() in expected and digest.encode() not in expected
-    assert b"read-only work" in expected and b"this session" in expected
+    assert str(home / lifecycle_module.HOST_RUN_SCRIPT_NAME).encode() in expected
+    assert str(executable).encode() not in expected and digest.encode() not in expected
+    assert b"task_start_receipt" in expected and b"--bootstrap-receipt" in expected
+    assert b"--controller-bridge-sha256" not in expected
+    assert b"bootstrap-check" not in expected and b" --root <repo> init" not in expected
+    assert b"Get-FileHash" not in expected and b"read-only work" in expected and b"this session" in expected
+    assert b"Choose the model for the current semantic slice, not the whole parent task" in expected
+    assert b"default to the standard Luna Implementer" in expected
+    assert b"A Scanner batches related searches and reads" in expected
+    assert b"stops as soon as evidence is\nsufficient" in expected
+    assert b"do not expand a scan for one more confirmation" in expected
+    assert b"waits for its distilled result" in expected
+    assert b"avoids\nduplicating the broad scan" in expected
+    assert b"End the Focused slice immediately once semantic\nuncertainty closes" in expected
+    assert b"fresh standard Luna Implementer" in expected
+    assert b"every explicit user goal is addressed, explicitly deferred, or has a\ndecision-changing blocker" in expected
+    assert b"semantic instruction, not a mechanical\nchecklist or state machine" in expected
 
     second = codex_adapter.codex_install()
     assert second["changed"] is False
@@ -259,6 +274,51 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     removed = codex_adapter.codex_uninstall()
     assert "AGENTS.md" in removed["files"]
     assert global_agents.read_bytes() == b"before\r\nafter\r\n\xff"
+
+
+def test_codex_install_upgrades_previous_official_global_block(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    executable, digest = pinned_test_thaliris
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    previous_official = f"""<!-- thaliris:global:begin -->
+## Thaliris project startup
+
+For substantive work that creates or changes files in a Git repository,
+including a README, unless the user explicitly opts out, check the repository root for
+`.codex/thaliris.json` and the effective root AGENTS instruction for the
+`<!-- thaliris:begin -->` project block. If readiness is not already confirmed,
+run a trusted direct `--root <repo> bootstrap-check` once, including when both
+project markers are absent. If it reports either project definition or activation
+marker missing, run trusted direct `--root <repo> init` and read its result.
+Do not repeat bootstrap for confirmed readiness or run `init` during an ACTIVE
+managed task. Chatting, informational questions, read-only work, and non-Git
+directories do not call for proactive project bootstrap.
+
+Installed direct executable: `{executable}`
+Expected SHA-256: `{digest}`
+Check the executable's current SHA-256 against this exact pin before use.
+Invoke that absolute executable directly for Thaliris commands; a different
+`thaliris` found on PATH is not evidence that it has the installed ABI.
+
+Read the canonical managed instruction text and SHA-256 from `init` or
+`bootstrap-check`, then acknowledge that digest with
+`--controller-bridge-sha256` in `task-start` in the same session. Follow the
+effective project instruction for task routing. A CLI result does not prove
+Host instruction activation or a loaded current-session hook.
+<!-- thaliris:global:end -->
+""".encode("utf-8")
+    user_prefix = b"# User rules\r\nKeep prefix.\r\n"
+    user_suffix = b"Keep suffix.\r\n\xff"
+    global_agents = home / "AGENTS.md"
+    global_agents.write_bytes(user_prefix + previous_official + user_suffix)
+
+    installed = codex_adapter.codex_install()
+
+    assert installed["ok"] is True
+    assert global_agents.read_bytes() == (
+        user_prefix + codex_adapter._global_agents_block(executable, digest) + user_suffix
+    )
 
 
 def test_codex_uninstall_removes_new_global_instruction_file(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
@@ -563,6 +623,208 @@ def test_mutated_managed_instruction_is_user_owned_and_preserved(tmp_path: Path)
     assert second["session_restart_required"] is False
 
 
+def test_explicit_managed_instruction_migration_replaces_only_confirmed_span(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    path = root / "AGENTS.md"
+    prefix = "# User-owned project notes\n\n"
+    suffix = "\n\n## User-owned footer\nKeep this text.\n"
+    stale = codex_adapter.render_managed().replace(
+        "If either is absent, invoke",
+        "If either is absent, invoke stale bootstrap advice via",
+        1,
+    )
+    path.write_text(prefix + stale.removesuffix("\n") + suffix, encoding="utf-8")
+    start = (prefix + stale).index(codex_adapter.MANAGED_START)
+    end = (prefix + stale).index(codex_adapter.MANAGED_END, start) + len(codex_adapter.MANAGED_END)
+    stale_span = (prefix + stale)[start:end]
+    digest = hashlib.sha256(stale_span.encode("utf-8")).hexdigest()
+
+    blocked = codex_adapter.init(root)
+    assert blocked["changed"] is False
+    assert blocked["definition_recovery_status"] == "EXPLICIT_CONFIRMATION_REQUIRED"
+    assert blocked["instruction_definition_present"] == "NO"
+    assert blocked["managed_instruction_sha256"] == digest
+    assert "AGENTS.md" in blocked["manual_action_required"]
+    assert path.read_text(encoding="utf-8") == prefix + stale.removesuffix("\n") + suffix
+    check = codex_adapter.bootstrap_check(root)
+    assert check["definition_recovery_status"] == "EXPLICIT_CONFIRMATION_REQUIRED"
+    assert check["managed_instruction_recovery_action"] == f"thaliris init --accept-managed-instruction-sha256 {digest}"
+
+    wrong = "0" * 64 if digest != "0" * 64 else "1" * 64
+    refused = codex_adapter.init(root, accept_managed_instruction_sha256=wrong)
+    assert refused["instruction_definition_present"] == "NO"
+    assert "AGENTS.md" in refused["manual_action_required"]
+
+    accepted = codex_adapter.init(root, accept_managed_instruction_sha256=digest)
+    assert accepted["changed"] is True
+    assert accepted["definition_recovery_status"] == "READY"
+    assert accepted["instruction_definition_present"] == "YES"
+    assert path.read_text(encoding="utf-8") == prefix + codex_adapter.render_managed().removesuffix("\n") + suffix
+
+
+def _attested_recovery_command(root: Path, command: str) -> tuple[str, str]:
+    response = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        hook_payload(tool_name="Bash", tool_input={"command": command}),
+        lifecycle_module.MANAGED_HOOK_ABI,
+    ))
+    rewritten = response["hookSpecificOutput"]["updatedInput"]["command"]
+    token = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten)
+    assert token is not None
+    return rewritten, token.group(1)
+
+
+def test_invalid_state_admission_requires_confirmed_recovery(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = repo(tmp_path)
+    monkeypatch.setattr(lifecycle_module, "managed_executable_health", lambda: {"canonical_executable_available": "YES"})
+    monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
+    state = {
+        "schema_version": 1,
+        "revision": 2,
+        "task_id": "7e500c6a-6aec-4e22-94b0-42cc6a5459ef",
+        "status": "ACTIVE",
+        "goal": "old state remains archived evidence",
+        "current_milestone": None,
+        "active_work": [],
+        "pending_results": [],
+        "architectural_intent": None,
+    }
+    state_path = root / ".context" / "state.json"
+    old_bytes = json.dumps(state, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+    state_path.write_bytes(old_bytes)
+    digest = hashlib.sha256(old_bytes).hexdigest()
+    bridge = codex_adapter._controller_bridge()["controller_bridge_sha256"]
+
+    start_command = f"thaliris task-start new-goal --controller-bridge-sha256 {bridge}"
+    start_denied = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        hook_payload(tool_name="Bash", tool_input={"command": start_command}),
+        lifecycle_module.MANAGED_HOOK_ABI,
+    ))
+    assert start_denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "INVALID_STATE" in start_denied["hookSpecificOutput"]["permissionDecisionReason"]
+    assert state_path.read_bytes() == old_bytes
+
+    no_confirm_command = f"thaliris task-recover-state --expected-sha256 {digest} --controller-bridge-sha256 {bridge}"
+    no_confirm_denied = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        hook_payload(tool_name="Bash", tool_input={"command": no_confirm_command}),
+        lifecycle_module.MANAGED_HOOK_ABI,
+    ))
+    assert no_confirm_denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "INVALID_STATE" in no_confirm_denied["hookSpecificOutput"]["permissionDecisionReason"]
+    assert state_path.read_bytes() == old_bytes
+
+    wrong_digest = "0" * 64 if digest != "0" * 64 else "1" * 64
+    wrong_command = f"thaliris task-recover-state --expected-sha256 {wrong_digest} --abandon-active --controller-bridge-sha256 {bridge}"
+    wrong_denied = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        hook_payload(tool_name="Bash", tool_input={"command": wrong_command}),
+        lifecycle_module.MANAGED_HOOK_ABI,
+    ))
+    assert wrong_denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "INVALID_STATE" in wrong_denied["hookSpecificOutput"]["permissionDecisionReason"]
+    assert state_path.read_bytes() == old_bytes
+
+    command = f"thaliris task-recover-state --expected-sha256 {digest} --abandon-active --controller-bridge-sha256 {bridge}"
+    _, token = _attested_recovery_command(root, command)
+    assert cli.main([
+        "--root", str(root), "task-recover-state", "--expected-sha256", digest,
+        "--abandon-active", "--hook-attestation", token,
+        "--controller-bridge-sha256", bridge,
+    ]) == 0
+    recovered = json.loads(capsys.readouterr().out)
+    archive = root / recovered["preserved_state_location"]
+    assert recovered["status"] == "STATE_ARCHIVED_FOR_RECOVERY"
+    assert recovered["from_version"] == 1
+    assert recovered["to_version"] == core._STATE_SCHEMA_VERSION
+    assert recovered["state_sha256"] == digest
+    assert archive.read_bytes() == old_bytes
+    assert not state_path.exists()
+    assert core.task_start(root, "new current-schema task", None, None)["status"] == "ACTIVE"
+    current = json.loads(state_path.read_text(encoding="utf-8"))
+    assert current["schema_version"] == core._STATE_SCHEMA_VERSION
+
+
+def test_state_recovery_blocks_when_lifecycle_authority_is_not_terminal(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    monkeypatch.setattr(lifecycle_module, "managed_executable_health", lambda: {"canonical_executable_available": "YES"})
+    monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
+    task_id = "a8d2185f-a0de-44f6-a4cc-697b07eb3038"
+    state = {"schema_version": 1, "revision": 1, "task_id": task_id, "status": "ACTIVE", "goal": "old", "active_work": [], "pending_results": []}
+    state_path = root / ".context" / "state.json"
+    old_bytes = json.dumps(state).encode("utf-8")
+    state_path.write_bytes(old_bytes)
+    lifecycle_path = lifecycle_module._lifecycle_path(root, task_id)
+    lifecycle_path.parent.mkdir(parents=True)
+    lifecycle_path.write_text(json.dumps({
+        "version": lifecycle_module.LIFECYCLE_STATE_VERSION,
+        "task_id_hash": lifecycle_module._task_key(task_id),
+        "children": [{"terminal_state": "RUNNING"}],
+        "pending_authorized_spawn": None,
+        "sequence": 1,
+    }), encoding="utf-8")
+    digest = hashlib.sha256(old_bytes).hexdigest()
+    bridge = codex_adapter._controller_bridge()["controller_bridge_sha256"]
+    command = f"thaliris task-recover-state --expected-sha256 {digest} --abandon-active --controller-bridge-sha256 {bridge}"
+    denied = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        hook_payload(tool_name="Bash", tool_input={"command": command}),
+        lifecycle_module.MANAGED_HOOK_ABI,
+    ))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "INVALID_STATE" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+    assert state_path.read_bytes() == old_bytes
+
+
+@pytest.mark.parametrize("lifecycle_state", ["unreadable", "pending", "nonterminal"])
+def test_state_recovery_refuses_unresolved_lifecycle_authority(tmp_path: Path, lifecycle_state: str) -> None:
+    root = repo(tmp_path)
+    task_id = "a8d2185f-a0de-44f6-a4cc-697b07eb3038"
+    state = {
+        "schema_version": 1,
+        "revision": 1,
+        "task_id": task_id,
+        "status": "ACTIVE",
+        "goal": "old",
+        "active_work": [],
+        "pending_results": [],
+    }
+    state_path = root / ".context" / "state.json"
+    old_bytes = json.dumps(state).encode("utf-8")
+    state_path.write_bytes(old_bytes)
+    path = lifecycle_module._lifecycle_path(root, task_id)
+    path.parent.mkdir(parents=True)
+    if lifecycle_state == "unreadable":
+        path.write_text("{malformed", encoding="utf-8")
+    else:
+        record = {
+            "version": lifecycle_module.LIFECYCLE_STATE_VERSION,
+            "task_id_hash": lifecycle_module._task_key(task_id),
+            "children": [] if lifecycle_state == "pending" else [{"terminal_state": "RUNNING"}],
+            "pending_authorized_spawn": {"unresolved": True} if lifecycle_state == "pending" else None,
+            "sequence": 1,
+        }
+        path.write_text(json.dumps(record), encoding="utf-8")
+    digest = hashlib.sha256(old_bytes).hexdigest()
+    bridge = codex_adapter._controller_bridge()["controller_bridge_sha256"]
+    command = f"thaliris task-recover-state --expected-sha256 {digest} --abandon-active --controller-bridge-sha256 {bridge}"
+    denied = json.loads(handle_hook(
+        root,
+        "PreToolUse",
+        hook_payload(tool_name="Bash", tool_input={"command": command}),
+        lifecycle_module.MANAGED_HOOK_ABI,
+    ))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "INVALID_STATE" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+    assert state_path.read_bytes() == old_bytes
+
+
 def test_mixed_user_line_endings_do_not_invalidate_unchanged_managed_instruction(tmp_path: Path) -> None:
     root = repo(tmp_path)
     instruction = root / "AGENTS.md"
@@ -601,6 +863,41 @@ def _owned_task_start(root: Path, *args: object, session: str = "controller-sess
     started = core.task_start(root, *args)
     lifecycle_module.record_task_start_owner(root, started["task_id"], hashlib.sha256(session.encode("utf-8")).hexdigest())
     return started
+
+
+def test_8a3fe930_managed_block_and_role_pack_upgrade_only_exact_bytes(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    old = subprocess.check_output(["git", "show", "8a3fe930:AGENTS.md"])
+    start = old.index(codex_adapter.MANAGED_START.encode("utf-8"))
+    end = old.index(codex_adapter.MANAGED_END.encode("utf-8"), start) + len(codex_adapter.MANAGED_END)
+    block = old[start:end]
+    pack = subprocess.check_output(["git", "show", "8a3fe930:docs/thaliris-role-packs.md"])
+    assert hashlib.sha256(block).hexdigest() == "96102e74cd2812e2f06382173807939c79e856371180f94c1413ba8e26e8facb"
+    assert hashlib.sha256(pack).hexdigest() == "4ee70a3c36b2c76d74c03179359181dfd34c96bbfae5bf1e5e7ee1c71b6f13d7"
+    instruction = root / "AGENTS.md"
+    role_pack = root / "docs" / "thaliris-role-packs.md"
+    instruction.write_bytes(block + b"\nuser text\n")
+    role_pack.write_bytes(pack)
+    assert codex_adapter._managed_agents_state(instruction.read_text(encoding="utf-8")) == "legacy"
+    assert codex_adapter._role_pack_state(role_pack.read_bytes()) == "legacy"
+
+    result = codex_adapter.init(root)
+    assert {"AGENTS.md", "docs/thaliris-role-packs.md"} <= set(result["files"])
+    assert instruction.read_text(encoding="utf-8") == codex_adapter.render_managed() + "user text\n"
+    assert role_pack.read_bytes() == codex_adapter.render_role_packs().encode("utf-8")
+
+    edited_block = block.replace(b"Codex is the runtime.", b"Codex is the edited runtime.")
+    assert edited_block != block
+    instruction.write_bytes(edited_block + b"\nuser text\n")
+    edited_pack = pack + b"\nuser edit\n"
+    role_pack.write_bytes(edited_pack)
+    assert codex_adapter._managed_agents_state(instruction.read_text(encoding="utf-8")) == "user"
+    assert codex_adapter._role_pack_state(role_pack.read_bytes()) == "user"
+
+    guarded = codex_adapter.init(root)
+    assert instruction.read_bytes() == edited_block + b"\nuser text\n"
+    assert role_pack.read_bytes() == edited_pack
+    assert {"AGENTS.md", "docs/thaliris-role-packs.md"} <= set(guarded["manual_action_required"])
 
 
 def hook_payload(**values: object) -> dict[str, object]:
@@ -1666,6 +1963,68 @@ def test_powershell_call_operator_to_pinned_executable_mints_task_start_attestat
     assert result["status"] == "ACTIVE"
 
 
+def test_direct_init_posttool_proof_admits_first_start_without_start_command_parsing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    root = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    executable = tmp_path / "thaliris.exe"
+    executable.write_bytes(b"exact test executable pin")
+    monkeypatch.setenv(lifecycle_module.THALIRIS_EXECUTABLE_ENV, str(executable))
+    monkeypatch.setenv(lifecycle_module.THALIRIS_EXECUTABLE_SHA256_ENV, hashlib.sha256(executable.read_bytes()).hexdigest())
+    monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
+    monkeypatch.setattr(codex_adapter, "native_child_completion_reenters_root", lambda: "UNSUPPORTED")
+    monkeypatch.setattr(codex_adapter, "host_explicit_blocking_wait", lambda: {"status": "PASS"})
+    codex_adapter.audit_hook(root, "SessionStart", {
+        "session_id": "init-controller", "source": "startup", "cwd": str(root),
+    })
+    init_payload = hook_payload(
+        session_id="init-controller", cwd=str(root), tool_name="functions.exec_command",
+        tool_input={"cmd": f"& '{executable}' --root '{root}' init"},
+    )
+    assert codex_adapter.audit_hook(root, "PreToolUse", init_payload, lifecycle_module.MANAGED_HOOK_ABI) == ""
+    initialized = codex_adapter.init(root)
+    assert initialized["project_definition_present"] == "YES"
+    post = json.loads(codex_adapter.audit_hook(root, "PostToolUse", {
+        **init_payload, "tool_response": {"exit_code": 0, "output": json.dumps(initialized)},
+    }, lifecycle_module.MANAGED_HOOK_ABI))
+    specific = post["hookSpecificOutput"]
+    assert specific["hookEventName"] == "PostToolUse"
+    assert "updatedInput" not in specific
+    token = re.search(r"--hook-attestation (v1\.[0-9a-f]{64}\.[A-Za-z0-9_-]{16,128})", specific["additionalContext"]).group(1)
+    digest = initialized["controller_bridge_sha256"]
+    start_command = f"powershell -NoProfile -Command \"& '{executable}' --root '{root}' task-start goal --controller-bridge-sha256 {digest} --hook-attestation {token}\""
+    start_payload = hook_payload(session_id="init-controller", tool_name="functions.exec_command", tool_input={"cmd": start_command})
+    assert lifecycle_module._context_operation(start_payload) is None
+    assert codex_adapter.audit_hook(root, "PreToolUse", start_payload, lifecycle_module.MANAGED_HOOK_ABI) == ""
+    assert cli.main(["--root", str(root), "task-start", "goal", "--controller-bridge-sha256", digest, "--hook-attestation", token]) == 0
+    started = json.loads(capsys.readouterr().out)
+    assert started["status"] == "ACTIVE"
+    assert core.task_show(root)["state"]["schema_version"] == 7
+    with pytest.raises(ValueError, match="MANAGED_CURRENT_SESSION_NOT_ATTESTED"):
+        lifecycle_module.consume_task_start_attestation(root, token, digest)
+
+
+def test_post_init_proof_requires_successful_direct_current_worktree_call(tmp_path: Path) -> None:
+    root = repo(tmp_path / "repo")
+    base = hook_payload(
+        session_id="init-controller", cwd=str(root), tool_name="Bash",
+        tool_input={"command": f"thaliris --root '{root}' init"},
+        tool_response={"exit_code": 0},
+    )
+    for changes in (
+        {"session_id": ""},
+        {"tool_input": {"command": "thaliris init; Get-Date"}},
+        {"tool_input": {"command": f"thaliris --root '{tmp_path}' init"}},
+        {"tool_input": {"command": "Get-Date"}},
+        {"tool_response": None},
+        {"tool_response": {"exit_code": 1}},
+        {"agent_id": "child", "agent_type": "thaliris-implementer"},
+    ):
+        assert codex_adapter.audit_hook(root, "PostToolUse", {**base, **changes}, lifecycle_module.MANAGED_HOOK_ABI) == ""
+    assert codex_adapter.audit_hook(root, "PostToolUse", base, "thaliris-hook-abi-9") == ""
+
+
 def test_unsupported_prerelease_after_valid_attestation_is_continuation_unavailable(tmp_path: Path, monkeypatch, capsys) -> None:
     root = repo(tmp_path)
     monkeypatch.setattr(lifecycle_module, "managed_executable_health", lambda: {"canonical_executable_available": "YES", "canonical_executable_identity": "TEST"})
@@ -1752,7 +2111,6 @@ def test_invalid_task_state_denies_only_explicit_managed_mutations(tmp_path: Pat
         hook_payload(tool_name="Bash", tool_input={"command": "thaliris task-artifact --base-revision 1"}),
         hook_payload(tool_name="Bash", tool_input={"command": "thaliris recover-pending-spawn handoff"}),
         hook_payload(tool_name="Bash", tool_input={"command": "thaliris rollback"}),
-        hook_payload(tool_name="Bash", tool_input={"command": "thaliris init"}),
         hook_payload(tool_name="Bash", tool_input={"command": "thaliris codex-install"}),
         hook_payload(tool_name="Bash", tool_input={"command": "thaliris codex-uninstall"}),
         hook_payload(tool_name="Bash", tool_input={"command": "thaliris uninstall"}),
@@ -1760,6 +2118,21 @@ def test_invalid_task_state_denies_only_explicit_managed_mutations(tmp_path: Pat
         hook_payload(tool_name="functions.apply_patch", tool_input={"patch": "*** Update File: .context/state.json\n+{}"}),
     ):
         denied = json.loads(handle_hook(root, "PreToolUse", payload))
+        assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "INVALID_STATE" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+    assert handle_hook(root, "PreToolUse", hook_payload(
+        tool_name="Bash", tool_input={"command": "thaliris init"},
+    )) == ""
+    for command in (
+        "thaliris init; thaliris rollback fake",
+        "Get-Content x; thaliris rollback fake",
+        "Get-Date && thaliris task-close --base-revision 1",
+        "Get-Date | thaliris task-update --base-revision 1 update.json",
+        "Get-Date; & 'thaliris.exe' task-start goal",
+    ):
+        denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(
+            tool_name="Bash", tool_input={"command": command},
+        )))
         assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "INVALID_STATE" in denied["hookSpecificOutput"]["permissionDecisionReason"]
     for payload in (
@@ -1773,6 +2146,98 @@ def test_invalid_task_state_denies_only_explicit_managed_mutations(tmp_path: Pat
         hook_payload(tool_name="Bash", tool_input={"command": "Get-Content .context/state.json"}),
     ):
         assert handle_hook(root, "PreToolUse", payload) == ""
+
+
+def test_invalid_state_keeps_unrelated_compound_commands_transparent(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "invalid state", None, None)
+    (root / ".context" / "state.json").write_text("{broken", encoding="utf-8")
+    for command in (
+        "Get-Date; Get-Content x",
+        "Get-Content x; thaliris task-status",
+        "thaliris doctor && Get-Date",
+    ):
+        assert handle_hook(root, "PreToolUse", hook_payload(
+            tool_name="Bash", tool_input={"command": command},
+        )) == ""
+
+
+def test_invalid_v1_active_state_admits_init_then_exact_recovery(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = repo(tmp_path)
+    monkeypatch.setattr(lifecycle_module, "managed_executable_health", lambda: {
+        "canonical_executable_available": "YES",
+        "canonical_executable_identity": "TEST",
+    })
+    monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
+    state = {
+        "schema_version": 1,
+        "revision": 2,
+        "task_id": "7e500c6a-6aec-4e22-94b0-42cc6a5459ef",
+        "status": "ACTIVE",
+        "goal": "old state remains archived evidence",
+        "current_milestone": None,
+        "active_work": [],
+        "pending_results": [],
+        "architectural_intent": None,
+    }
+    state_path = root / ".context" / "state.json"
+    old_bytes = json.dumps(state, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+    state_path.write_bytes(old_bytes)
+
+    instruction = root / "AGENTS.md"
+    stale_text = instruction.read_text(encoding="utf-8").replace(
+        "If either is absent, invoke",
+        "If either is absent, invoke stale bootstrap advice via",
+        1,
+    )
+    instruction.write_text(stale_text, encoding="utf-8")
+    (root / ".codex" / "thaliris.json").unlink()
+    facts = codex_adapter._project_definition_facts(root)
+    instruction_sha256 = facts["managed_instruction_sha256"]
+    assert facts["project_definition_present"] == "NO"
+    assert isinstance(instruction_sha256, str) and instruction_sha256 != "UNKNOWN"
+
+    init_command = f"thaliris init --accept-managed-instruction-sha256 {instruction_sha256}"
+    assert handle_hook(
+        root,
+        "PreToolUse",
+        hook_payload(tool_name="Bash", tool_input={"command": init_command}),
+    ) == ""
+    assert codex_adapter.init(root, accept_managed_instruction_sha256=instruction_sha256)["project_definition_present"] == "YES"
+    assert state_path.read_bytes() == old_bytes
+
+    for command in (
+        "thaliris task-close --base-revision 1",
+        "thaliris task-update --base-revision 1 old.json",
+        "thaliris task-artifact --base-revision 1",
+        "thaliris task-promote --base-revision 1 old.json",
+        "thaliris recover-pending-spawn handoff",
+        "thaliris rollback backup-id",
+        "thaliris codex-install",
+        "thaliris uninstall",
+    ):
+        denied = json.loads(handle_hook(root, "PreToolUse", hook_payload(tool_name="Bash", tool_input={"command": command})))
+        assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "INVALID_STATE" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+
+    digest = hashlib.sha256(old_bytes).hexdigest()
+    bridge = codex_adapter._controller_bridge()["controller_bridge_sha256"]
+    command = f"thaliris task-recover-state --expected-sha256 {digest} --abandon-active --controller-bridge-sha256 {bridge}"
+    _, token = _attested_recovery_command(root, command)
+    assert cli.main([
+        "--root", str(root), "task-recover-state", "--expected-sha256", digest,
+        "--abandon-active", "--hook-attestation", token,
+        "--controller-bridge-sha256", bridge,
+    ]) == 0
+    recovered = json.loads(capsys.readouterr().out)
+    archive = root / recovered["preserved_state_location"]
+    assert recovered["status"] == "STATE_ARCHIVED_FOR_RECOVERY"
+    assert archive.read_bytes() == old_bytes
+    assert not state_path.exists()
+
+    assert core.task_start(root, "new current-schema task", None, None)["status"] == "ACTIVE"
+    current = json.loads(state_path.read_text(encoding="utf-8"))
+    assert current["schema_version"] == core._STATE_SCHEMA_VERSION
 
 
 def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_path: Path) -> None:
@@ -1817,7 +2282,9 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "degraded mode does not define a separate role\nsequence" in codex_adapter.MANAGED
     assert "For divisible work, the Controller chooses bounded semantic slices" in codex_adapter.MANAGED
     assert "not by token, file, or task-count\nthresholds" in codex_adapter.MANAGED
-    assert "Choose the model per handoff and semantic slice difficulty. Deterministic\ndocumentation, test, configuration, or reference cleanup and small defined\nimplementations default to standard Implementer on Luna" in codex_adapter.MANAGED
+    assert "Choose the model per handoff and semantic slice difficulty; model choice follows\nthe current semantic slice, not the whole parent task. Deterministic\ndocumentation, test, configuration, or reference cleanup and small, bounded\nmodifications with a confirmed direction and no complex semantic uncertainty" in codex_adapter.MANAGED
+    assert "Do not select Focused Implementer from the parent task or topic" in " ".join(codex_adapter.MANAGED.split())
+    assert "Before choosing an opportunistic discovered slice" in codex_adapter.MANAGED
     assert "Use Reasoning Specialist on Sol only when problem framing or slice decomposition\nis unclear; it does not implement." in codex_adapter.MANAGED
     assert "already small,\nunusually demanding slice or an evidenced Sol failure" in codex_adapter.MANAGED
     assert "Host instruction activation remains UNKNOWN" in codex_adapter.MANAGED
@@ -2112,6 +2579,7 @@ def test_string_list_response_reconciles_completed_child_and_allows_close(tmp_pa
         tool_response=json.dumps({"agents": [{"agent_name": "worker-1", "agent_status": {"completed": "result"}}]}),
     )) == ""
     child = lifecycle(root)["children"][-1]
+    assert child["terminal_state"] == "STOP_ATTESTED"
     assert child["native_terminal_status"] == "completed"
     assert codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])["status"] == "DONE"
 

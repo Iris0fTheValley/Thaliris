@@ -139,7 +139,13 @@ _SHARED_INSTRUCTIONS = (
     "Facts unknown route to Investigator; an ill-defined problem needing reframing routes to "
     "Reasoning Specialist; invalidated decisions return to Controller; a "
     "decided packet routes to Implementer; an independent challenge routes to Reviewer. Difficulty "
-    "alone is not a Reasoning Specialist trigger. "
+    "alone is not a Reasoning Specialist trigger. Model choice follows the current semantic "
+    "slice, not the whole parent task; "
+    "difficulty determines the profile. Small, bounded modifications with a confirmed direction "
+    "and no complex "
+    "semantic uncertainty, including lifecycle or admission work, use the standard Luna "
+    "Implementer. Do not select Focused Implementer from the parent task or topic; use Focused "
+    "Implementer on Sol only when the current slice itself requires high-difficulty reasoning. "
 )
 
 _EXECUTOR_INSTRUCTIONS = (
@@ -157,9 +163,14 @@ _FOCUSED_SCANNER_INSTRUCTIONS = (
     " Use only bounded local reading needed for semantic judgment within the assigned slice. "
     "Preferentially delegate broad repository scanning, exhaustive search, rollout/log scans, "
     "call-site enumeration, residual checks, and large mechanical evidence collection to a "
-    "fresh Investigator/Scanner. Use its evidence while retaining responsibility for the "
+    "fresh Investigator/Scanner. After delegating, wait for the Scanner's distilled result and read "
+    "only the bounded immediate files needed for the current slice; do not duplicate the "
+    "Scanner's broad scan. Use its evidence while retaining responsibility for the "
     "focused implementation decision. Do not routinely perform those broad collections "
-    "yourself merely because you can."
+    "yourself merely because you can. Once difficult semantic uncertainty is closed, end the "
+    "Focused slice and report the deterministic patch, test, format, documentation, and "
+    "residual-reference tail to the Controller. The Controller routes that deterministic tail "
+    "to a fresh standard Luna Implementer."
 )
 
 _REVIEWER_SCANNER_INSTRUCTIONS = (
@@ -178,7 +189,9 @@ def _instructions(role: str) -> str:
     role_instruction = {
         "investigator": (
             "Act as the Investigator/Scanner: investigate facts, scan large working sets, and "
-            "compress evidence, without making architecture decisions. Do not delegate. "
+            "compress evidence, without making architecture decisions. Batch related searches "
+            "and reads, return compact facts, and once evidence is sufficient stop immediately; "
+            "do not expand the scan for one more confirmation. Do not delegate. "
             "You may save detailed reusable material as a "
             "repo-relative Artifact; return only its pointer and the distilled result by default."
         ),

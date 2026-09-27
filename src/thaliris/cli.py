@@ -9,7 +9,7 @@ import sys
 
 from . import __version__
 from . import codex_adapter, codex_bootstrap, lifecycle
-from .core import artifact_get, catalog, document_get, milestone_check, rollback, stale, task_artifact, task_get, task_promote, task_show, task_status, task_update
+from .core import TaskStateSchemaIncompatible, artifact_get, catalog, document_get, milestone_check, rollback, stale, task_artifact, task_get, task_promote, task_show, task_status, task_update
 
 
 class _Parser(argparse.ArgumentParser):
@@ -50,7 +50,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     _add_global_arguments(p)
     sub = p.add_subparsers(dest="command", required=True)
-    for name in ("init", "bootstrap-check", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
+    q = sub.add_parser("init")
+    q.add_argument(
+        "--accept-managed-instruction-sha256",
+        help="explicitly authorize replacement of exactly this current managed instruction block",
+    )
+    for name in ("bootstrap-check", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
         sub.add_parser(name)
     install = sub.add_parser("codex-install", help="install stable Thaliris Host identities and hook ABI")
     install.add_argument("--executable", help="absolute Thaliris executable for Host hooks")
@@ -76,6 +81,11 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--lifecycle-sha256", required=True)
     q.add_argument("--reason", required=True)
     q.add_argument("--hook-attestation", help=argparse.SUPPRESS)
+    q = sub.add_parser("task-recover-state", help="archive an incompatible task state before starting a new task")
+    q.add_argument("--expected-sha256", required=True)
+    q.add_argument("--abandon-active", action="store_true", help="confirm abandonment of the archived ACTIVE task")
+    q.add_argument("--hook-attestation", help=argparse.SUPPRESS)
+    q.add_argument("--controller-bridge-sha256", help=argparse.SUPPRESS)
     q = sub.add_parser("task-update")
     q.add_argument("--role", required=True, choices=codex_adapter.role_choices())
     q.add_argument("--base-revision", required=True, type=int)
@@ -176,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             if response:
                 sys.stdout.write(response)
             return 0
-        if args.command == "init": out = codex_adapter.init(root)
+        if args.command == "init": out = codex_adapter.init(root, accept_managed_instruction_sha256=args.accept_managed_instruction_sha256)
         elif args.command == "bootstrap-check": out = codex_adapter.bootstrap_check(root)
         elif args.command == "codex-install": out = codex_adapter.codex_install(executable=args.executable, executable_sha256=args.sha256)
         elif args.command == "codex-uninstall": out = codex_adapter.codex_uninstall()
@@ -203,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("conflicting bootstrap receipts")
             out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.hook_attestation, receipt)
         elif args.command == "task-abandon": out = codex_adapter.task_abandon(root, args.task_id, args.revision, args.state_sha256, args.lifecycle_sha256, args.reason, args.hook_attestation)
+        elif args.command == "task-recover-state": out = codex_adapter.task_recover_state(root, args.expected_sha256, args.abandon_active, args.hook_attestation, args.controller_bridge_sha256)
         elif args.command == "task-update": out = task_update(root, codex_adapter.controller_actor(args.role), args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
         elif args.command == "task-status": out = _task_status(root, suppress_protocol_notice=args.suppress_protocol_notice)
@@ -217,6 +228,10 @@ def main(argv: list[str] | None = None) -> int:
         else: out = {"ok": True, "version": __version__}
         print(json.dumps(out, sort_keys=True, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
         return 0 if out.get("ok", False) else 3
+    except TaskStateSchemaIncompatible as exc:
+        result = codex_adapter.task_state_schema_error(root, exc)
+        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        return 3
     except (ValueError, OSError, RuntimeError, json.JSONDecodeError) as exc:
         result = {"ok": False, "error": str(exc)}
         if bootstrap_requested or (args is not None and args.command == "codex-bootstrap"):

@@ -880,6 +880,17 @@ def spawn_start(root: Path, agent_id: str, agent_type: str = "worker") -> None:
     assert handle_hook(root, "SubagentStart", hook_payload(agent_id=agent_id, agent_type=agent_type)) == ""
 
 
+def spawn_start_with_host_task_name(root: Path, task_name: str, agent_id: str) -> None:
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "handoff",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    assert handle_hook(root, "PostToolUse", {
+        **spawn, "tool_response": json.dumps({"task_name": task_name}),
+    }) == ""
+    assert handle_hook(root, "SubagentStart", hook_payload(agent_id=agent_id, agent_type="worker")) == ""
+
+
 def stop(root: Path, agent_id: str, agent_type: str = "worker") -> None:
     assert handle_hook(root, "SubagentStop", hook_payload(agent_id=agent_id, agent_type=agent_type)) == ""
 
@@ -2435,6 +2446,83 @@ def test_string_spawn_response_records_native_task_name(tmp_path: Path) -> None:
         "tool_response": json.dumps({"task_name": "/root/worker-1"}),
     }) == ""
     assert lifecycle(root)["pending_authorized_spawn"]["task_name_hash"] == lifecycle_module._identity_hash("/root/worker-1")
+
+
+def test_post_tool_json_string_decoding_is_limited_to_collaboration_tools() -> None:
+    response = json.dumps({"exit_code": 1})
+    assert lifecycle_module._post_tool_response({"tool_name": "Bash", "tool_response": response}) == response
+    assert lifecycle_module._post_tool_response({"tool_name": "spawn_agent", "tool_response": response}) == {"exit_code": 1}
+
+
+def test_task_name_string_response_binds_distinct_host_child_id_through_close(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "distinct native identities", None, None)
+    task_name, agent_id = "/root/worker-task-name", "native-child-id"
+    spawn_start_with_host_task_name(root, task_name, agent_id)
+    child = lifecycle(root)["children"][-1]
+    assert child["task_name_hash"] == lifecycle_module._identity_hash(task_name)
+    assert child["agent_id_hash"] == lifecycle_module._identity_hash(agent_id)
+    assert child["task_name_hash"] != child["agent_id_hash"]
+    stop(root, agent_id)
+
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents",
+        tool_response=json.dumps({"agents": [{"agent_name": task_name, "agent_status": {"completed": "result"}}]}),
+    )) == ""
+    child = lifecycle(root)["children"][-1]
+    assert child["terminal_state"] == "STOP_ATTESTED"
+    assert child["native_terminal_status"] == "completed"
+    assert codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])["status"] == "DONE"
+
+
+def test_string_list_response_does_not_reconcile_wrong_identity(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "wrong native identity", None, None)
+    task_name, agent_id = "/root/worker-task-name", "native-child-id"
+    spawn_start_with_host_task_name(root, task_name, agent_id)
+    stop(root, agent_id)
+
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents",
+        tool_response=json.dumps({"agents": [{"agent_name": "/root/wrong-child", "agent_status": {"completed": "result"}}]}),
+    )) == ""
+    child = lifecycle(root)["children"][-1]
+    assert child["native_terminal_status"] is None
+    with pytest.raises(ValueError, match="matching native SubagentStart/Stop"):
+        codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])
+
+
+def test_string_wait_response_is_not_completion_evidence(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "wait response is not completion", None, None)
+    task_name, agent_id = "/root/worker-task-name", "native-child-id"
+    spawn_start_with_host_task_name(root, task_name, agent_id)
+    stop(root, agent_id)
+
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="wait_agent", tool_input={"targets": [task_name]},
+        tool_response=json.dumps({"agents": [{"agent_name": task_name, "agent_status": {"completed": "result"}}]}),
+    )) == ""
+    child = lifecycle(root)["children"][-1]
+    assert child["native_terminal_status"] is None
+    with pytest.raises(ValueError, match="task-close requires"):
+        codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])
+
+
+def test_string_interrupt_response_reconciles_exact_task_name(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "interrupt response identity", None, None)
+    task_name, agent_id = "/root/worker-task-name", "native-child-id"
+    spawn_start_with_host_task_name(root, task_name, agent_id)
+    stop(root, agent_id)
+
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="interrupt_agent", tool_input={"target": task_name},
+        tool_response=json.dumps({"previous_status": {"completed": "result"}}),
+    )) == ""
+    child = lifecycle(root)["children"][-1]
+    assert child["native_terminal_status"] == "completed"
+    assert codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])["status"] == "DONE"
 
 
 def test_string_list_response_reconciles_completed_child_and_allows_close(tmp_path: Path) -> None:

@@ -1912,10 +1912,12 @@ def _reject_non_json_constant(value: str) -> None:
 
 def _post_tool_response(payload: dict[str, Any]) -> object:
     """Read the native PostToolUse result across 0.146 payload variants."""
+    tool = payload.get("tool_name") or payload.get("tool")
+    is_collaboration_tool = isinstance(tool, str) and _tool_basename(tool) in _COLLABORATION_TOOL_NAMES
     for key in ("tool_response", "tool_result", "result", "output"):
         if key in payload:
             response = payload[key]
-            if isinstance(response, str):
+            if isinstance(response, str) and is_collaboration_tool:
                 try:
                     decoded = json.loads(response, parse_constant=_reject_non_json_constant)
                 except (TypeError, ValueError, json.JSONDecodeError):

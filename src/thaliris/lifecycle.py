@@ -1880,7 +1880,14 @@ def _post_tool_response(payload: dict[str, Any]) -> object:
     """Read the native PostToolUse result across 0.146 payload variants."""
     for key in ("tool_response", "tool_result", "result", "output"):
         if key in payload:
-            return payload[key]
+            response = payload[key]
+            if isinstance(response, str):
+                try:
+                    decoded = json.loads(response)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    return response
+                return decoded if isinstance(decoded, dict) else response
+            return response
     return None
 
 

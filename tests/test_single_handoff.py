@@ -243,6 +243,17 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     assert b"including when both\nproject markers are absent" in expected
     assert str(executable).encode() in expected and digest.encode() in expected
     assert b"read-only work" in expected and b"same session" in expected
+    assert b"Choose the model for the current semantic slice, not the whole parent task" in expected
+    assert b"default to the standard Luna Implementer" in expected
+    assert b"A Scanner batches related searches and reads" in expected
+    assert b"stops as soon as evidence is\nsufficient" in expected
+    assert b"do not expand a scan for one more confirmation" in expected
+    assert b"waits for its distilled result" in expected
+    assert b"avoids\nduplicating the broad scan" in expected
+    assert b"End the Focused slice immediately once semantic\nuncertainty closes" in expected
+    assert b"fresh standard Luna Implementer" in expected
+    assert b"every explicit user goal is addressed, explicitly deferred, or has a\ndecision-changing blocker" in expected
+    assert b"semantic instruction, not a mechanical\nchecklist or state machine" in expected
 
     second = codex_adapter.codex_install()
     assert second["changed"] is False
@@ -258,6 +269,51 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     removed = codex_adapter.codex_uninstall()
     assert "AGENTS.md" in removed["files"]
     assert global_agents.read_bytes() == b"before\r\nafter\r\n\xff"
+
+
+def test_codex_install_upgrades_previous_official_global_block(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    executable, digest = pinned_test_thaliris
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    previous_official = f"""<!-- thaliris:global:begin -->
+## Thaliris project startup
+
+For substantive work that creates or changes files in a Git repository,
+including a README, unless the user explicitly opts out, check the repository root for
+`.codex/thaliris.json` and the effective root AGENTS instruction for the
+`<!-- thaliris:begin -->` project block. If readiness is not already confirmed,
+run a trusted direct `--root <repo> bootstrap-check` once, including when both
+project markers are absent. If it reports either project definition or activation
+marker missing, run trusted direct `--root <repo> init` and read its result.
+Do not repeat bootstrap for confirmed readiness or run `init` during an ACTIVE
+managed task. Chatting, informational questions, read-only work, and non-Git
+directories do not call for proactive project bootstrap.
+
+Installed direct executable: `{executable}`
+Expected SHA-256: `{digest}`
+Check the executable's current SHA-256 against this exact pin before use.
+Invoke that absolute executable directly for Thaliris commands; a different
+`thaliris` found on PATH is not evidence that it has the installed ABI.
+
+Read the canonical managed instruction text and SHA-256 from `init` or
+`bootstrap-check`, then acknowledge that digest with
+`--controller-bridge-sha256` in `task-start` in the same session. Follow the
+effective project instruction for task routing. A CLI result does not prove
+Host instruction activation or a loaded current-session hook.
+<!-- thaliris:global:end -->
+""".encode("utf-8")
+    user_prefix = b"# User rules\r\nKeep prefix.\r\n"
+    user_suffix = b"Keep suffix.\r\n\xff"
+    global_agents = home / "AGENTS.md"
+    global_agents.write_bytes(user_prefix + previous_official + user_suffix)
+
+    installed = codex_adapter.codex_install()
+
+    assert installed["ok"] is True
+    assert global_agents.read_bytes() == (
+        user_prefix + codex_adapter._global_agents_block(executable, digest) + user_suffix
+    )
 
 
 def test_codex_uninstall_removes_new_global_instruction_file(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:

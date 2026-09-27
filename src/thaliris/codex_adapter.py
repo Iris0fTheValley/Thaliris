@@ -1483,6 +1483,23 @@ Read the canonical managed instruction text and SHA-256 from `init` or
 `--controller-bridge-sha256` in `task-start` in the same session. Follow the
 effective project instruction for task routing. A CLI result does not prove
 Host instruction activation or a loaded current-session hook.
+
+## Thaliris routing and goal coverage
+
+Choose the model for the current semantic slice, not the whole parent task.
+Small, bounded changes with a confirmed direction and no complex semantic
+uncertainty default to the standard Luna Implementer, even within a large task.
+A Scanner batches related searches and reads, then stops as soon as evidence is
+sufficient; do not expand a scan for one more confirmation.
+The Focused Implementer delegates broad evidence collection to a Scanner,
+waits for its distilled result, reads only bounded immediate files, and avoids
+duplicating the broad scan. End the Focused slice immediately once semantic
+uncertainty closes; the Controller routes any deterministic patch, test,
+format, documentation, or reference tail to a fresh standard Luna Implementer.
+Before choosing an opportunistic discovered slice, the Controller confirms
+every explicit user goal is addressed, explicitly deferred, or has a
+decision-changing blocker. This is a semantic instruction, not a mechanical
+checklist or state machine.
 <!-- thaliris:global:end -->
 """.encode("utf-8")
 

@@ -156,6 +156,21 @@ for _profile_name, _profile_hash in _FD4FBA36_GENERATED_AGENT_PROFILE_HASHES.ite
         _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
         | frozenset({_profile_hash})
     )
+# Exact generated profile bytes from immutable 8a3fe930 (roles blob
+# 758a31568fb6b8755b68721028d9b4a912bb6ef0, adapter blob
+# 7c7d7ea689461206502efe9fe4f521df5489dae4). Only these four profiles
+# changed in the role-contract update; ownership remains filename-bound.
+_8A3FE930_GENERATED_AGENT_PROFILE_HASHES = {
+    "thaliris-focused-implementer.toml": "a929ec5bbbb748a880a95fea40aec4de05b225269e70473937c9deee3411608a",
+    "thaliris-focused-implementer-astra-medium.toml": "e22136925d2bcaed111c687c47a8de1464014427a6c8bbed7e1021076bd20d8a",
+    "thaliris-focused-implementer-xhigh.toml": "1f4311da03a5ee0185253156c3510ed3c2855f0a8091a4699a80b1ebe7b9ca9a",
+    "thaliris-reviewer.toml": "4b1593d4269bccd7e86da5fabaa129f9da431302e072469e60f273abb36a05a0",
+}
+for _profile_name, _profile_hash in _8A3FE930_GENERATED_AGENT_PROFILE_HASHES.items():
+    _KNOWN_GENERATED_AGENT_PROFILE_HASHES[_profile_name] = (
+        _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
+        | frozenset({_profile_hash})
+    )
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     # 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31, blob 7dfd7ab321c4ec1f1c32bd02b1d87f1b88d2aef7.
     "0a51833bf936b14053c08a6502a6a1d27ecd1518263e7eea5c4e43f53fa1c5f1",
@@ -169,6 +184,7 @@ _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "2636a41ddd2f5cc3c9ee4efc522acc891b36068b67c1839593a1336c155497e8",
     "5d798d5a45e522db623a4d22b618e1e674905aa46da95acba6733a51f9d63a9d",
     "df6daef7e33c0032179c462f25afdc9af8883d2677c3d34c98b735039c0ad3e0",
+    "4ee70a3c36b2c76d74c03179359181dfd34c96bbfae5bf1e5e7ee1c71b6f13d7",  # 8a3fe930, blob 3253fc8
 })
 # Exact SHA-256 identity of the mechanical role-registry document emitted by
 # the first registry generator.  This is historical install metadata captured
@@ -188,6 +204,7 @@ _KNOWN_GENERATED_MANAGED_INSTRUCTION_HASHES = frozenset({
     "66c1ac81e010fba307cb579b519142124ddca128e028890f48c7e33f8fac6a11",  # 8eb1707
     "bc47c81d7004bc8a4095cc5d9079068af9ca3d2804a5a557d17a5abaf371f494",  # f316910
     "943c67bb7683785403429063bec0a0174119e8c2dbbe70f6684b8c46d1434c0b",  # e02b953
+    "96102e74cd2812e2f06382173807939c79e856371180f94c1413ba8e26e8facb",  # 8a3fe930, blob 93d73da
 })
 _KNOWN_HOST_WAIT_CAPABILITIES = {
     # These are release-pinned observations, not a cross-version assumption.
@@ -553,6 +570,16 @@ thresholds. Prefer slices that can each be independently understood,
 implemented, verified, committed, and closed. A completed slice returns
 distilled state, its commit reference, and verification evidence; discard its
 working set when closed.
+Before choosing an opportunistic discovered slice, the Controller confirms that
+each explicit user goal has been addressed, explicitly deferred, or has a
+decision-changing blocker. This is a semantic rule, not a mechanical checklist
+or state machine.
+After a Focused Implementer delegates broad collection, it waits for the
+Scanner's distilled result and reads only bounded immediate files; it does not
+duplicate the Scanner's broad scan. Once difficult semantic uncertainty is closed, end the
+Focused slice; the Focused Implementer reports the deterministic patch, test,
+format, documentation, and residual-reference tail to the Controller. The
+Controller routes that deterministic tail to a fresh standard Luna Implementer.
 Make each Executor handoff decision-complete enough to close one semantic slice
 without routine Controller steering. Do not keep an Executor as a long-lived
 interactive workspace. If new decision-changing information invalidates the
@@ -560,7 +587,10 @@ slice, let the child close with distilled state and create a fresh correction
 slice. `send_message` remains available for genuinely new decision-changing
 information.
 Use Investigator/Scanner for missing facts, large working sets, broad scans,
-and factual compression, without transferring architecture decisions. Use a Reviewer only when independent semantic review adds real
+and factual compression, without transferring architecture decisions. A Scanner
+batches related searches and reads, returns compact facts, and once evidence is
+sufficient stops immediately; do not expand the scan for one more confirmation.
+Use a Reviewer only when independent semantic review adds real
 value; it is not a default gate. Curator and Reasoning Specialist remain
 optional and are selected only when they add actual value.
 At task end, make one short semantic judgment about knowledge that could
@@ -594,11 +624,15 @@ Focused Implementer or Reasoning Specialist before spawn for exceptional reasoni
 These fixed profiles retain the same stable role IDs; default profiles remain
 on Luna or Sol. Per-spawn model/effort overrides are denied;
 role sessions never select their own model or effort.
-Choose the model per handoff and semantic slice difficulty. Deterministic
-documentation, test, configuration, or reference cleanup and small defined
-implementations default to standard Implementer on Luna, even within a large
-project. Use Focused Implementer on Sol only when the current slice itself
-requires complex lifecycle, ownership, compatibility, or multi-option reasoning.
+Choose the model per handoff and semantic slice difficulty; model choice follows
+the current semantic slice, not the whole parent task. Deterministic
+documentation, test, configuration, or reference cleanup and small, bounded
+modifications with a confirmed direction and no complex semantic uncertainty
+default to standard Implementer on Luna, including lifecycle or admission work
+and slices inside a large project. Do not select Focused Implementer from the
+parent task or topic. Use Focused Implementer on Sol only when the current slice
+itself requires high-difficulty reasoning about lifecycle, ownership, compatibility,
+or multiple plausible implementations.
 Use Reasoning Specialist on Sol only when problem framing or slice decomposition
 is unclear; it does not implement. Astra is an escalation for an already small,
 unusually demanding slice or an evidenced Sol failure. Astra medium is the
@@ -833,6 +867,10 @@ Implementer or Reasoning Specialist before spawn for exceptional reasoning.
 These fixed profiles map to the same stable roles; defaults remain on Luna or
 Sol. Per-spawn model/effort overrides are denied. Role sessions never
 override their own model or effort.
+Before choosing an opportunistic discovered slice, the Controller confirms that
+each explicit user goal has been addressed, explicitly deferred, or has a
+decision-changing blocker. This is a semantic rule, not a mechanical checklist
+or state machine.
 
 ## Shared Role Result
 
@@ -858,7 +896,10 @@ input tools remain denied for managed children.
 ## Investigator
 
 Investigator/Scanner handles missing facts, broad scans, large working sets,
-and factual compression, not architecture decisions. It cannot delegate.
+and factual compression, not architecture decisions. The Scanner batches
+related searches and reads, returns compact facts, and once evidence is
+sufficient stops immediately; do not expand the
+scan for one more confirmation. It cannot delegate.
 Investigate the task in the handoff. Save detailed reusable evidence as
 an optional repo-relative Artifact and return its pointer with a short result.
 
@@ -916,14 +957,23 @@ within the assigned slice. Preferentially delegate broad repository scanning,
 exhaustive search, rollout/log scans, call-site enumeration, residual checks, and
 large mechanical evidence collection to a fresh Investigator/Scanner. Use its
 evidence while retaining responsibility for the focused implementation decision.
-Do not routinely perform those broad collections yourself merely because you can.
+After delegating, wait for the Scanner's distilled result and read only bounded
+immediate files; do not duplicate the Scanner's broad scan. Do not routinely
+perform those broad collections yourself merely because you can. Once difficult
+semantic uncertainty is closed, end the Focused slice and report the deterministic
+patch, test, format, documentation, and residual-reference tail to the Controller.
+The Controller routes that deterministic tail to a fresh standard Luna
+Implementer.
 
-The Controller chooses the model per handoff and semantic slice difficulty.
+The Controller chooses the model per handoff and semantic slice difficulty;
+model choice follows the current semantic slice, not the whole parent task.
 Deterministic documentation, test, configuration, or reference cleanup and
-small defined implementations default to standard Implementer on Luna,
-including slices inside a large project. Focused Implementer on Sol handles
-only a current slice that requires complex lifecycle, ownership, compatibility,
-or multi-option reasoning.
+small, bounded modifications with a confirmed direction and no complex
+semantic uncertainty default to standard Implementer on Luna, including
+lifecycle or admission work and slices inside a large project. Do not select
+Focused Implementer from the parent task or topic. Use Focused Implementer on
+Sol only when the current slice itself requires high-difficulty reasoning about
+lifecycle, ownership, compatibility, or multiple plausible implementations.
 Reasoning Specialist on Sol is for unclear problem framing or slice decomposition
 and does not implement. Astra is an escalation for an already small, unusually
 demanding slice or an evidenced Sol failure; medium is the default escalation,

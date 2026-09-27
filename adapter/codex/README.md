@@ -38,6 +38,19 @@ findings return to Controller, which decides on fresh correction work.
 Decision-changing uncertainty routes to Investigator; broad grep and exhaustive
 call-site or residual-reference scans route to Scanner under an Executor or
 Reviewer.
+Before choosing an opportunistic discovered slice, the Controller confirms that
+each explicit user goal has been addressed, explicitly deferred, or has a
+decision-changing blocker. This is a semantic rule, not a mechanical checklist
+or state machine. After a Focused Implementer delegates broad collection, it
+waits for the Scanner's distilled result and reads only bounded immediate files;
+it does not duplicate
+the Scanner's broad scan. Once difficult semantic uncertainty is closed, end the
+Focused slice; the Focused Implementer reports the deterministic patch, test,
+format, documentation, and residual-reference tail to the Controller.
+The Controller routes that deterministic tail to a fresh standard Luna
+Implementer. A Scanner batches related searches and reads, returns compact
+facts, and once evidence is sufficient stops immediately; do not expand the
+scan for one more confirmation.
 
 The ACTIVE root Controller uses only bounded control-plane commands and
 explicit retrieval. Execution, mutation, and testing belong to fresh
@@ -57,6 +70,14 @@ static Astra medium and xhigh profiles for Focused Implementer and Reasoning
 Specialist let only Controller explicitly escalate before spawn, retaining the
 same stable role IDs and Luna or Sol defaults. Per-spawn model/effort overrides
 are denied; no dynamic role exists.
+Choose the model per handoff and semantic slice difficulty; model choice follows
+the current semantic slice, not the whole parent task. Small, bounded
+modifications with a confirmed direction and no complex semantic uncertainty
+default to standard Implementer on Luna, including lifecycle or admission work and
+slices inside a large project. Do not select Focused Implementer from the parent
+task or topic. Use Focused Implementer on Sol only when the current slice itself
+requires high-difficulty reasoning about lifecycle, ownership, compatibility, or
+multiple plausible implementations.
 
 When native event-driven continuation is unavailable, `wait_agent` is
 automatically normalized to a long wait only when an actual pending reservation

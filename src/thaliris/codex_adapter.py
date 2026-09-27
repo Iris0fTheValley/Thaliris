@@ -119,6 +119,22 @@ for _profile_name, _profile_hash in _1F98DAE_GENERATED_AGENT_PROFILE_HASHES.item
         _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
         | frozenset({_profile_hash})
     )
+# The three exact focused-implementer profiles emitted by immutable revision
+# 40fd5f2bcb928f8f9443b01389168f6a1b8e3054 (adapter blob
+# d1badfc56feb2c65a72f80d158ce67d0ad88f30c, role registry blob
+# 2e092e2e9293c6b51897a83e8b5de9d8326b2225). The effective Host files
+# were independently SHA-256 checked against these historical renderer bytes.
+# Preserve filename binding: a matching digest under another role is user-owned.
+_40FD5F2_GENERATED_AGENT_PROFILE_HASHES = {
+    "thaliris-focused-implementer.toml": "48b73ecaea2cd7b3c2515c0dfea69e1a7291c8e08599c1ddc9011208fcf3b6a2",
+    "thaliris-focused-implementer-astra-medium.toml": "3f7142b441521aca5b978b38a7c5de081eab7326c327524bdc9214b20c5b2971",
+    "thaliris-focused-implementer-xhigh.toml": "774b28e8a99a5f7396013cb94b2e183e57a940c482919526cf814fc54e018287",
+}
+for _profile_name, _profile_hash in _40FD5F2_GENERATED_AGENT_PROFILE_HASHES.items():
+    _KNOWN_GENERATED_AGENT_PROFILE_HASHES[_profile_name] = (
+        _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
+        | frozenset({_profile_hash})
+    )
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     # 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31, blob 7dfd7ab321c4ec1f1c32bd02b1d87f1b88d2aef7.
     "0a51833bf936b14053c08a6502a6a1d27ecd1518263e7eea5c4e43f53fa1c5f1",

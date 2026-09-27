@@ -236,6 +236,45 @@ def test_1f98dae_profiles_migrate_by_exact_filename_and_preserve_edits(tmp_path:
         assert f"agents/{name}" not in result["files"]
 
 
+def test_40fd5f2_focused_profiles_upgrade_only_exact_historical_bytes(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    expected = {
+        "thaliris-focused-implementer.toml": "48b73ecaea2cd7b3c2515c0dfea69e1a7291c8e08599c1ddc9011208fcf3b6a2",
+        "thaliris-focused-implementer-astra-medium.toml": "3f7142b441521aca5b978b38a7c5de081eab7326c327524bdc9214b20c5b2971",
+        "thaliris-focused-implementer-xhigh.toml": "774b28e8a99a5f7396013cb94b2e183e57a940c482919526cf814fc54e018287",
+    }
+    assert codex_adapter._40FD5F2_GENERATED_AGENT_PROFILE_HASHES == expected
+    historical = {name: _historical_profile("40fd5f2", name) for name in expected}
+    for name, value in historical.items():
+        assert hashlib.sha256(value).hexdigest() == expected[name]
+        assert codex_adapter._agent_profile_state(value, name) == "legacy"
+        assert codex_adapter._agent_profile_state(value + b"\nuser edit\n", name) == "user"
+        other = next(candidate for candidate in expected if candidate != name)
+        assert codex_adapter._agent_profile_state(value, other) == "user"
+
+    host_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(host_home))
+    _initialized_repo(tmp_path)
+    agents = host_home / "agents"
+    agents.mkdir(parents=True)
+    for name, value in historical.items():
+        (agents / name).write_bytes(value)
+
+    result = codex_adapter.codex_install()
+    assert result["manual_action_required"] == []
+    for name in expected:
+        assert codex_adapter._agent_profile_state((agents / name).read_bytes(), name) == "current"
+        assert f"agents/{name}" in result["files"]
+    assert codex_adapter._host_profile_definition_present(host_home) == "YES"
+    assert len(list(agents.glob("thaliris-*.toml"))) == 11
+
+    edited_name = "thaliris-focused-implementer.toml"
+    edited = historical[edited_name] + b"\nuser edit\n"
+    (agents / edited_name).write_bytes(edited)
+    guarded = codex_adapter.codex_install()
+    assert (agents / edited_name).read_bytes() == edited
+    assert str(agents / edited_name) in guarded["manual_action_required"]
+
+
 def test_child_communication_and_slice_routing_contract_is_shared() -> None:
     communication = (
         "ordinary progress, heartbeat, or partial-completion messages",

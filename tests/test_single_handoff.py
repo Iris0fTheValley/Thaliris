@@ -629,8 +629,8 @@ def test_explicit_managed_instruction_migration_replaces_only_confirmed_span(tmp
     prefix = "# User-owned project notes\n\n"
     suffix = "\n\n## User-owned footer\nKeep this text.\n"
     stale = codex_adapter.render_managed().replace(
-        "If either is absent, invoke",
-        "If either is absent, invoke stale bootstrap advice via",
+        "On READY, use only its opaque",
+        "On READY, use stale bootstrap advice instead of its opaque",
         1,
     )
     path.write_text(prefix + stale.removesuffix("\n") + suffix, encoding="utf-8")
@@ -857,6 +857,30 @@ def test_exact_historical_managed_instruction_migrates(tmp_path: Path) -> None:
     assert "AGENTS.md" in result["files"]
     assert "AGENTS.md" not in result["manual_action_required"]
     assert (root / "AGENTS.md").read_text(encoding="utf-8") == codex_adapter.render_managed() + "user text\n"
+
+
+def test_11e0cc9_generated_managed_instruction_upgrades_without_claiming_user_edits(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    published = subprocess.check_output(["git", "show", "11e0cc9:AGENTS.md"])
+    start = published.index(codex_adapter.MANAGED_START.encode("utf-8"))
+    end = published.index(codex_adapter.MANAGED_END.encode("utf-8"), start) + len(codex_adapter.MANAGED_END)
+    historical_block = published[start:end]
+    assert hashlib.sha256(historical_block).hexdigest() == "3c1e3475797d0c9270d9adafa210492b8b305748f5e7bd7fc9411752f74d959d"
+    instruction = root / "AGENTS.md"
+    instruction.write_bytes(b"user prefix\n" + historical_block + b"\nuser suffix\n")
+    assert codex_adapter._managed_agents_state(instruction.read_text(encoding="utf-8")) == "legacy"
+
+    result = codex_adapter.init(root)
+    assert "AGENTS.md" in result["files"]
+    assert "AGENTS.md" not in result["manual_action_required"]
+    assert instruction.read_bytes() == b"user prefix\n" + codex_adapter.render_managed().encode("utf-8") + b"user suffix\n"
+
+    instruction.write_bytes(b"user prefix\n" + historical_block.replace(b"Startup contract:", b"Edited startup contract:", 1) + b"\nuser suffix\n")
+    before = instruction.read_bytes()
+    assert codex_adapter._managed_agents_state(instruction.read_text(encoding="utf-8")) == "user"
+    result = codex_adapter.init(root)
+    assert "AGENTS.md" in result["manual_action_required"]
+    assert instruction.read_bytes() == before
 
 
 def _owned_task_start(root: Path, *args: object, session: str = "controller-session") -> dict[str, object]:
@@ -2273,9 +2297,10 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "Controller has no fixed model, reasoning effort, or native" in codex_adapter.MANAGED
     assert "Host/user selection applies" in codex_adapter.MANAGED
     assert "Decisions, invariants, and\nacceptance are contract; recommendations/advice are not." in codex_adapter.MANAGED
-    assert "direct canonical `thaliris` command or an absolute executable with an" in codex_adapter.MANAGED
-    assert "never recommend or use a shell-wrapper fallback" in codex_adapter.MANAGED
-    assert "explicit executable SHA-256 pin, and hook/install state, then report bootstrap\nunavailable" in codex_adapter.MANAGED
+    assert "installed pinned `thaliris-run.cmd` command named by the global startup block" in " ".join(codex_adapter.MANAGED.split())
+    assert "Do not choose `bootstrap-check` or `init` for normal startup" in codex_adapter.MANAGED
+    assert "task_start_receipt" in codex_adapter.MANAGED
+    assert "task-start --bootstrap-receipt" in codex_adapter.MANAGED
     assert "whether ACTIVE or degraded, it selects the minimum necessary fresh roles" in codex_adapter.MANAGED
     assert "Roles are capabilities, not mandatory workflow stages" in codex_adapter.MANAGED
     assert "Controller -> fresh\nImplementer -> done" in codex_adapter.MANAGED
@@ -2287,7 +2312,7 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "Before choosing an opportunistic discovered slice" in codex_adapter.MANAGED
     assert "Use Reasoning Specialist on Sol only when problem framing or slice decomposition\nis unclear; it does not implement." in codex_adapter.MANAGED
     assert "already small,\nunusually demanding slice or an evidenced Sol failure" in codex_adapter.MANAGED
-    assert "Host instruction activation remains UNKNOWN" in codex_adapter.MANAGED
+    assert "Saved Host registration alone does not prove\ncurrent-session activation" in codex_adapter.MANAGED
     assert "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE" in codex_adapter.MANAGED
     assert "Before another correction packet, distinguish a local implementation defect" in codex_adapter.MANAGED
     assert "overturns an accepted invariant" in codex_adapter.MANAGED

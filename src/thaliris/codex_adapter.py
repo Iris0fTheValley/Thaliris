@@ -208,6 +208,7 @@ _KNOWN_GENERATED_MANAGED_INSTRUCTION_HASHES = frozenset({
     "bc47c81d7004bc8a4095cc5d9079068af9ca3d2804a5a557d17a5abaf371f494",  # f316910
     "943c67bb7683785403429063bec0a0174119e8c2dbbe70f6684b8c46d1434c0b",  # e02b953
     "96102e74cd2812e2f06382173807939c79e856371180f94c1413ba8e26e8facb",  # 8a3fe930, blob 93d73da
+    "3c1e3475797d0c9270d9adafa210492b8b305748f5e7bd7fc9411752f74d959d",  # 11e0cc9:AGENTS.md, exact published managed span
 })
 _KNOWN_HOST_WAIT_CAPABILITIES = {
     # These are release-pinned observations, not a cross-version assumption.
@@ -736,20 +737,18 @@ project definition is ready, `task-recover-state --expected-sha256 <exact-hash>`
 archives the original bytes before a separate, newly attested `task-start`.
 An ACTIVE old task also requires `--abandon-active`; pending or nonterminal
 child lifecycle authority blocks recovery. Never interpret an invalid state
-as an absent state or delete it by hand. If `bootstrap-check` reports an
-unrecognized managed instruction block, review its exact SHA-256 and use
-`init --accept-managed-instruction-sha256 <exact-hash>` to update only that
-marked block while retaining text outside it.
+as an absent state or delete it by hand. An unrecognized, user-owned managed
+instruction block requires explicit review before project initialization may
+replace it; the installed one-shot bootstrap reports that conflict.
 If `task-start` was attempted but managed enforcement is unavailable or
 rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
 Codex version, host capability, task schema, git/worktree identity,
-hook/profile presence, and the `task-start` error are allowed reads. Use only
-the direct canonical `thaliris` command or an absolute executable with an
-explicit exact SHA-256 pin; never recommend or use a shell-wrapper fallback.
-If neither trusted direct route is available, check canonical availability, the
-explicit executable SHA-256 pin, and hook/install state, then report bootstrap
-unavailable. Once the cause is known, do not read user-task repository source,
-tests, docs, or search results. If work continues, apply the same minimum-role
+hook/profile presence, and the `task-start` error are allowed reads. Use the
+installed pinned `thaliris-run.cmd` command named by the global startup block;
+its runtime validation runs before Python starts. If that trusted route is
+unavailable, report bootstrap unavailable. Once the cause is known, do not read
+user-task repository source, tests, docs, or search results. If work continues,
+apply the same minimum-role
 routing policy defined above; degraded mode does not define a separate role
 sequence. The Controller must not take over repository investigation,
 implementation, or testing merely because NO_TASK applies. Damaged managed
@@ -807,41 +806,29 @@ The Controller interprets {_native_role_names_text()} results,
 verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 
-Startup contract: install Host integration once before sessions that use
-Thaliris roles. `thaliris codex-install` places stable role identities and the
-stable hook ABI trampoline under `CODEX_HOME`; it merges user hooks and keeps
-project data out of the user layer. It uses the official Codex app-server
-`hooks/list` and `config/batchWrite` path to trust only the seven exact
-Thaliris handlers with Host-returned keys and current hashes; it never
-calculates those identities locally or changes existing `enabled` state.
-`host_hook_trust_status` and its counts report saved Host config, not what a
-running session loaded. A changed Host installation is a disk fact until a
-later session loads it. For each repository, project readiness
-requires the managed Thaliris block in the effective root instruction and the
-static `.codex/thaliris.json` activation marker. If either is absent, invoke
-`thaliris --root <repo> init` directly, or invoke the absolute executable
-named by the host's exact SHA-256 pin. Project `init` does not install Host
-roles or Host hooks and does not require a session restart. Read the `init`
-JSON result.
-Read the canonical managed text and SHA-256 returned by `init` or
-`bootstrap-check`. Explicitly acknowledge that digest with
-`--controller-bridge-sha256` when calling `task-start`; the loaded current-ABI
-PreToolUse hook binds that receipt to its session attestation. This is
-Controller activation only: CLI output does not become Host developer
-instruction, and Host instruction activation remains UNKNOWN. The stable Host
-trampoline checks only the activation marker before dispatching into the
-current executable; an inactive repository skips Thaliris Python and state
-access. A registration on disk does not prove the current session loaded it.
-SessionStart's role filename snapshot is disk presence evidence only. Without
-a Host-native catalog signal, catalog status remains
-`HOST_ROLE_CATALOG_UNKNOWN`; if a new role filename appears after the startup
-snapshot, admission fails closed with `NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`.
-Existing catalogued profile content updates by filename do not imply a restart.
-If neither trusted
-direct route is available, report bootstrap unavailable and do not continue.
-If all facts are present, read `.agent-memory/INDEX.md` and
-`.milestones/INDEX.md` (creating only a minimal missing map as instructed),
-then proceed to normal managed startup.
+Startup contract: Host integration is installed once. For substantive Git work,
+run the installed pinned `thaliris-run.cmd --root <repo> codex-bootstrap` named
+by the global startup block. Bootstrap confirms repository identity, checks
+existing task state, and establishes missing project definitions without
+reinstalling Host hooks or profiles. On READY, use only its opaque
+`task_start_receipt` in a direct `task-start --bootstrap-receipt` call in this
+session; the current Host Hook must supply one-shot task-start attestation.
+Do not choose `bootstrap-check` or `init` for normal startup, calculate an
+executable hash in a shell wrapper, or select among internal SHA fields.
+On CURRENT_CONTINUATION, continue the owning task. On
+FOREIGN_RECOVERY_DECISION or UNKNOWN, the Controller explicitly decides whether
+to continue old work or use the exact recovery packet for `task-abandon` before
+starting a fresh task. An abandoned task remains incomplete and its original
+state and lifecycle evidence are preserved. On INVALID_STATE or a definition
+conflict, diagnose before edits; never delete state or invent completion.
+Project initialization never requires a Codex restart. A changed global Host
+installation may require one Codex restart before its hooks, profiles, and
+instructions become active. Saved Host registration alone does not prove
+current-session activation. SessionStart's role filename snapshot is disk
+presence evidence only; without a Host-native catalog signal, status remains
+`HOST_ROLE_CATALOG_UNKNOWN`, and an unseen new role filename fails closed with
+`NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE`. Read `.agent-memory/INDEX.md` and
+`.milestones/INDEX.md` explicitly when managed startup requires navigation.
 {MANAGED_END}
 """
 

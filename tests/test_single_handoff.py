@@ -2423,6 +2423,53 @@ def test_stop_requires_explicit_native_completed_for_close(tmp_path: Path) -> No
     assert codex_adapter.task_close(root, state["revision"])["status"] == "DONE"
 
 
+def test_string_spawn_response_records_native_task_name(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "string spawn response", None, None)
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "handoff",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    assert handle_hook(root, "PostToolUse", {
+        **spawn,
+        "tool_response": json.dumps({"task_name": "/root/worker-1"}),
+    }) == ""
+    assert lifecycle(root)["pending_authorized_spawn"]["task_name_hash"] == lifecycle_module._identity_hash("/root/worker-1")
+
+
+def test_string_list_response_reconciles_completed_child_and_allows_close(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "string list response", None, None)
+    spawn_start(root, "worker-1")
+    stop(root, "worker-1")
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents",
+        tool_response=json.dumps({"agents": [{"agent_name": "worker-1", "agent_status": {"completed": "result"}}]}),
+    )) == ""
+    child = lifecycle(root)["children"][-1]
+    assert child["terminal_state"] == "STOP_ATTESTED"
+    assert child["native_terminal_status"] == "completed"
+    assert codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])["status"] == "DONE"
+
+
+@pytest.mark.parametrize("response", [
+    "{not-json}",
+    json.dumps([{"task_name": "/root/worker-1"}]),
+    json.dumps("completed"),
+])
+def test_malformed_or_non_dict_string_response_produces_no_completion_fact(tmp_path: Path, response: str) -> None:
+    root = repo(tmp_path)
+    core.task_start(root, "unknown string response", None, None)
+    spawn_start(root, "worker-1")
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents",
+        tool_response=response,
+    )) == ""
+    child = lifecycle(root)["children"][-1]
+    assert child["terminal_state"] == "RUNNING"
+    assert child["native_terminal_status"] is None
+
+
 def test_missing_stop_native_terminal_reconciliation_is_not_success(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.task_start(root, "reconcile", None, None)

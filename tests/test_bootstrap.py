@@ -638,6 +638,10 @@ def test_ready_exposes_single_receipt_and_global_instruction_is_one_command(tmp_
     assert rendered.count("--root <repo> codex-bootstrap") == 1
     assert "bootstrap-check" not in rendered and "Get-FileHash" not in rendered
     assert "--bootstrap-receipt" in rendered
+    assert "the owning root Controller runs" in rendered
+    assert "managed child inside an ACTIVE task" in rendered
+    assert "do not run project bootstrap, task-start, or task-abandon" in rendered
+    assert "report blocked work honestly" in rendered
 
 
 def test_cli_bootstrap_receipt_alias_is_passed_to_task_start(tmp_path: Path, monkeypatch, capsys):

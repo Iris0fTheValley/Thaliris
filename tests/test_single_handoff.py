@@ -2405,6 +2405,9 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "Do not choose `bootstrap-check` or `init` for normal startup" in codex_adapter.MANAGED
     assert "task_start_receipt" in codex_adapter.MANAGED
     assert "task-start --bootstrap-receipt" in codex_adapter.MANAGED
+    assert "managed child inside an ACTIVE task" in codex_adapter.MANAGED
+    assert "do not run project bootstrap, task-start, or task-abandon" in codex_adapter.MANAGED
+    assert "report blocked work honestly" in codex_adapter.MANAGED
     assert "whether ACTIVE or degraded, it selects the minimum necessary fresh roles" in codex_adapter.MANAGED
     assert "Roles are capabilities, not mandatory workflow stages" in codex_adapter.MANAGED
     assert "Controller -> fresh\nImplementer -> done" in codex_adapter.MANAGED

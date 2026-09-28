@@ -815,12 +815,17 @@ verification observations, review findings, and task surface deltas and decides
 the next handoff and when work is complete.
 
 Startup contract: Host integration is installed once. For substantive Git work,
-run the installed pinned `thaliris-run.cmd --root <repo> codex-bootstrap` named
-by the global startup block. Bootstrap confirms repository identity, checks
+the owning root Controller runs the installed pinned
+`thaliris-run.cmd --root <repo> codex-bootstrap` named by the global startup
+block. Bootstrap confirms repository identity, checks
 existing task state, and establishes missing project definitions without
 reinstalling Host hooks or profiles. On READY, use only its opaque
 `task_start_receipt` in a direct `task-start --bootstrap-receipt` call in this
 session; the current Host Hook must supply one-shot task-start attestation.
+If operating as a managed child inside an ACTIVE task, follow the explicit
+handoff and do not run project bootstrap, task-start, or task-abandon for the
+parent's task; startup, admission, and continuation decisions belong to the
+owning root Controller.
 Do not choose `bootstrap-check` or `init` for normal startup, calculate an
 executable hash in a shell wrapper, or select among internal SHA fields.
 On CURRENT_CONTINUATION, the owner may continue or explicitly abort the
@@ -831,6 +836,9 @@ explicitly decides whether to continue old work or use that exact recovery
 packet before starting a fresh task. An abandoned task remains incomplete and its original
 state and lifecycle evidence are preserved. On INVALID_STATE or a definition
 conflict, diagnose before edits; never delete state or invent completion.
+In user-facing status, describe the work and any concrete blocker in ordinary
+task terms. Keep receipts, hashes, attestations, role/session binding details,
+and lifecycle protocol out of that prose; report blocked work honestly.
 Host maintenance uses a separate checkout and Codex session outside the ACTIVE
 project task. That checkout can repair Thaliris source, tests, installed runtime,
 hooks, profiles, and the global instruction without changing the original task
@@ -1514,9 +1522,13 @@ def _global_agents_block(executable: Path | None = None, executable_sha256: str 
 ## Thaliris project startup
 
 For substantive work that creates or changes files in a Git repository,
-including a README, unless the user opts out, run
+including a README, unless the user opts out, the owning root Controller runs
 {trusted_route} directly once.
 Chatting, read-only work, and non-Git directories need no project bootstrap.
+If you are a managed child inside an ACTIVE task, follow the explicit handoff;
+do not run project bootstrap, task-start, or task-abandon for the parent's
+task. The owning root Controller handles startup, admission, and continuation
+decisions.
 On READY, pass its `task_start_receipt` as `<receipt>` in {task_route}
 in this session; the current Hook must attest
 task start. Use this installed command for later Thaliris operations. On
@@ -1526,6 +1538,9 @@ terminal Host evidence first. On FOREIGN_RECOVERY_DECISION or UNKNOWN,
 explicitly decide whether to take over the old task using
 `task-abandon` and the exact recovery packet. On INVALID_STATE or bootstrap
 failure, diagnose before edits.
+In user-facing status, describe the work and any concrete blocker in ordinary
+task terms. Keep receipts, hashes, attestations, role/session binding details,
+and lifecycle protocol out of that prose; report blocked work honestly.
 For Host maintenance while another project is ACTIVE, use a separate checkout
 and Codex session. Only exact identity-checked installed `codex-install` and
 `codex-uninstall` invocations cross the ACTIVE project boundary; ordinary

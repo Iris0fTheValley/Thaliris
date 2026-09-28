@@ -158,6 +158,36 @@ def test_bound_role_session_denial_records_hash_only_identity_diagnostic(active,
         assert raw not in serialized
 
 
+def test_unavailable_lifecycle_ledger_reports_unknown_identity_comparisons(active, monkeypatch):
+    child = start(active, agent="private-executor-id")
+
+    def unavailable_ledger(path, task_id):
+        raise OSError("ledger unavailable")
+
+    monkeypatch.setattr(lifecycle, "_load_lifecycle", unavailable_ledger)
+    request = {**child, "tool_name": "read_file", "tool_input": {"path": "private-command-path"}}
+
+    result = json.loads(lifecycle.handle_hook(active, "PreToolUse", request))
+    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "THALIRIS_BOUND_ROLE_SESSION_REQUIRED" in result["hookSpecificOutput"]["permissionDecisionReason"]
+
+    session_dir = hashlib.sha256(request["session_id"].encode("utf-8")).hexdigest()[:24]
+    runtime = json.loads((active / ".context" / "audit" / session_dir / "runtime.json").read_text(encoding="utf-8"))
+    diagnostic, = runtime["bound_role_session_denials"]
+    assert diagnostic["field_status"] == {
+        "agent_id": "UNKNOWN",
+        "session": "UNKNOWN",
+        "turn": "UNKNOWN",
+        "role": "UNKNOWN",
+        "lifecycle_binding": "UNKNOWN",
+    }
+    assert diagnostic["missing_fields"] == []
+    assert diagnostic["mismatch_fields"] == []
+    serialized = json.dumps(diagnostic)
+    for raw in ("private-executor-id", "root-session", "executor-turn", "private-command-path", "thaliris-implementer"):
+        assert raw not in serialized
+
+
 def message(actor, target=None, tool_name="send_message"):
     tool_input = {"message": "decision-changing fact"}
     if target is not None:

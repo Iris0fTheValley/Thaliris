@@ -1713,7 +1713,9 @@ def _child_binding_field_statuses(
         if value_hash is None:
             raw = payload.get(key)
             return "MISMATCH" if raw is not None and raw != "" else "MISSING"
-        if records is None or not records:
+        if records is None:
+            return "UNKNOWN"
+        if not records:
             return "MISSING"
         return "MATCH" if any(child.get(expected) == value_hash for child in records) else "MISMATCH"
 
@@ -1725,7 +1727,9 @@ def _child_binding_field_statuses(
     if native_type is None:
         supplied_type = payload.get("agent_type")
         statuses["role"] = "MISMATCH" if supplied_type is not None and supplied_type != "" else "MISSING"
-    elif records is None or not records:
+    elif records is None:
+        statuses["role"] = "UNKNOWN"
+    elif not records:
         statuses["role"] = "MISSING"
     else:
         statuses["role"] = "MATCH" if any(

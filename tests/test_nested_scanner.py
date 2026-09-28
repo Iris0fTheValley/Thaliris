@@ -263,6 +263,11 @@ def test_nested_pending_recovery_is_exact_and_controller_owned(active):
         lifecycle.recover_pending_spawn(active, "handoff-" + "0" * 32)
     denied = lifecycle.handle_hook(active, "PreToolUse", {**parent, "tool_name": "Bash", "tool_input": {"command": f"thaliris recover-pending-spawn {handoff}"}})
     assert "CONTROL_STATE_MUTATION" in denied
+    with pytest.raises(ValueError, match="trusted terminal Host evidence"):
+        lifecycle.recover_pending_spawn(active, handoff)
+    native_name = "/root/scanner-failed"
+    lifecycle.handle_hook(active, "PostToolUse", {**spawn(parent), "tool_response": {"task_name": native_name}})
+    lifecycle.handle_hook(active, "PostToolUse", {**parent, "tool_name": "list_agents", "tool_response": {"agents": [{"agent_name": native_name, "agent_status": "shutdown"}]}})
     assert lifecycle.recover_pending_spawn(active, handoff)["recovered"]
     assert lifecycle.handle_hook(active, "PreToolUse", spawn(parent)) == ""
 

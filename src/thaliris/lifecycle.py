@@ -1021,6 +1021,13 @@ def handle_hook(root: Path, event: str, payload: object, managed_hook_abi: str |
         if event not in HOOK_EVENTS or not isinstance(payload, dict):
             return ""
         root = _hook_repository_root(root, payload)
+        if payload.get("agent_id") is not None and event in {"PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop"}:
+            try:
+                if _abandoned_child_fenced(root, payload):
+                    return _permission_deny("THALIRIS_ABANDONED_ROLE_SESSION: this native role session belongs to an abandoned managed task.") if event == "PreToolUse" else ""
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                if event == "PreToolUse":
+                    return _permission_deny("THALIRIS_ABANDONED_ROLE_SESSION_FENCE_UNAVAILABLE")
         if event == "PreToolUse":
             try:
                 if _session_fenced(root, _session_id_hash(payload)):
@@ -1538,7 +1545,7 @@ def _pending_parent_live(state: dict[str, Any], record: dict[str, Any]) -> bool:
     return _parent_binding_matches(state, record, require_live=True)
 
 
-def _spawn_parent_matches(record: dict[str, Any], payload: dict[str, Any]) -> bool:
+def _spawn_parent_matches(root: Path, record: dict[str, Any], payload: dict[str, Any]) -> bool:
     """Correlate returned native names to the exact reserving actor, never a path."""
     if record.get("session_id_hash") != _session_id_hash(payload):
         return False
@@ -1550,6 +1557,10 @@ def _spawn_parent_matches(record: dict[str, Any], payload: dict[str, Any]) -> bo
     ):
         return False
     expected = record.get("spawn_tool_use_id_hash")
+    if expected is None and _session_id_hash(payload) in _read_abandoned_owner_hashes(root):
+        # After an owner abort, an uncorrelated late spawn result could be
+        # mistaken for a fresh reservation in the same native session.
+        return False
     return expected is None or expected == _identity_hash(payload.get("tool_use_id"))
 
 
@@ -1736,6 +1747,7 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any], expected_task_id
                 "root_handoff_id": parent["handoff_id"] if parent else handoff_id,
                 "spawn_tool_use_id_hash": _identity_hash(payload.get("tool_use_id")) if isinstance(payload.get("tool_use_id"), str) else None,
             }
+            state["pending_spawn_terminal_evidence"] = None
             state["stall"] = None
             _runtime_metadata(state, payload)
             _write_capture(path, state)
@@ -1769,12 +1781,16 @@ def recover_pending_spawn(root: Path, handoff_id: str) -> dict[str, object]:
             raise ValueError("pending spawn is already bound to an authorized native Codex role session")
         if not isinstance(pending, dict) or pending.get("handoff_id") != handoff_id:
             raise ValueError("pending spawn handoff id does not match")
+        evidence = state.get("pending_spawn_terminal_evidence")
+        if not isinstance(evidence, dict) or evidence.get("handoff_id") != handoff_id or evidence.get("status") not in {"interrupted", "errored", "shutdown", "spawn_failed"}:
+            raise ValueError("pending spawn recovery requires trusted terminal Host evidence")
         recoveries = state.setdefault("spawn_recoveries", [])
         if not isinstance(recoveries, list):
             raise ValueError("invalid pending spawn recovery state")
         if len(recoveries) < 16:
             recoveries.append({"handoff_id": handoff_id, "observed_at_ns": time.time_ns()})
         state["pending_authorized_spawn"] = None
+        state["pending_spawn_terminal_evidence"] = None
         state["stall"] = None
         metrics = state.setdefault("metrics", {})
         metrics["spawn_recoveries"] = int(metrics.get("spawn_recoveries", 0)) + 1
@@ -1991,6 +2007,22 @@ def _record_native_terminal(state: dict[str, Any], child: dict[str, Any], status
     return True
 
 
+def _record_pending_terminal(state: dict[str, Any], name: str, status: str, source: str) -> bool:
+    """Retain only exact name-bound native failure for an unbound reservation."""
+    pending = state.get("pending_authorized_spawn")
+    if (status not in {"interrupted", "errored", "shutdown"}
+            or not isinstance(pending, dict)
+            or pending.get("task_name_hash") != _identity_hash(name)
+            or not _pending_parent_live(state, pending)):
+        return False
+    state["pending_spawn_terminal_evidence"] = {
+        "handoff_id": pending["handoff_id"], "status": status,
+        "source": source, "task_name_hash": pending["task_name_hash"],
+        "observed_at_ns": time.time_ns(),
+    }
+    return True
+
+
 def _reconcile_lifecycle_post_tool(root: Path, payload: dict[str, Any], tool: str) -> None:
     """Use naturally returned, identity-bound native statuses to repair liveness.
 
@@ -2021,11 +2053,21 @@ def _reconcile_lifecycle_post_tool(root: Path, payload: dict[str, Any], tool: st
             return
         changed = observed = False
         if tool == "spawn_agent":
+            pending = state.get("pending_authorized_spawn")
+            if (isinstance(pending, dict) and pending.get("spawn_tool_use_id_hash") is not None
+                    and pending["spawn_tool_use_id_hash"] == _identity_hash(payload.get("tool_use_id"))
+                    and _spawn_parent_matches(root, pending, payload)
+                    and _dispatch_status(response) == "REJECTED"):
+                state["pending_spawn_terminal_evidence"] = {
+                    "handoff_id": pending["handoff_id"], "status": "spawn_failed",
+                    "source": "spawn_agent", "observed_at_ns": time.time_ns(),
+                }
+                changed = True
             task_name = response.get("task_name")
             if isinstance(task_name, str) and task_name:
                 name_hash = _identity_hash(task_name)
                 pending = state.get("pending_authorized_spawn")
-                if isinstance(pending, dict) and pending.get("task_name_hash") is None and _spawn_parent_matches(pending, payload):
+                if isinstance(pending, dict) and pending.get("task_name_hash") is None and _spawn_parent_matches(root, pending, payload):
                     pending["task_name_hash"] = name_hash
                     changed = True
                 else:
@@ -2035,7 +2077,7 @@ def _reconcile_lifecycle_post_tool(root: Path, payload: dict[str, Any], tool: st
                         and child.get("managed") is True
                         and child.get("task_name_hash") is None
                         and child.get("terminal_state", "RUNNING") == "RUNNING"
-                        and _spawn_parent_matches(child, payload)
+                        and _spawn_parent_matches(root, child, payload)
                     ]
                     if len(candidates) == 1:
                         candidates[0]["task_name_hash"] = name_hash
@@ -2053,6 +2095,8 @@ def _reconcile_lifecycle_post_tool(root: Path, payload: dict[str, Any], tool: st
                     changed = _record_native_terminal(state, child, status)
                     if changed and child.get("terminal_state") == "NATIVE_TERMINAL_RECONCILED":
                         metrics["reconciliation_successes"] = int(metrics.get("reconciliation_successes", 0)) + 1
+                else:
+                    changed = _record_pending_terminal(state, target, status, "interrupt_agent") or changed
         elif tool == "list_agents":
             entries = response.get("agents")
             if isinstance(entries, list):
@@ -2064,6 +2108,7 @@ def _reconcile_lifecycle_post_tool(root: Path, payload: dict[str, Any], tool: st
                         continue
                     child = _child_for_native_name(state["children"], name)
                     if child is None:
+                        changed = _record_pending_terminal(state, name, status, "list_agents") or changed
                         continue
                     observed = True
                     metrics = state.setdefault("metrics", {})
@@ -3194,6 +3239,47 @@ def _session_fenced(root: Path, session_hash: str | None) -> bool:
     return session_hash is not None and session_hash in _read_session_fence(root)
 
 
+def _abandoned_child_fence_path(root: Path) -> Path:
+    return root / ".context" / "audit" / "abandoned-child-fence.json"
+
+
+def _read_abandoned_child_fence(root: Path) -> list[dict[str, str]]:
+    path = _abandoned_child_fence_path(root)
+    if not path.is_file():
+        return []
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("version") != 1 or not isinstance(value.get("children"), list):
+        raise ValueError("invalid abandoned child fence")
+    children = value["children"]
+    if any(not isinstance(child, dict) or set(child) != {"agent_id_hash", "session_id_hash", "turn_id_hash"}
+           or any(not isinstance(item, str) or re.fullmatch(r"[0-9a-f]{64}", item) is None for item in child.values())
+           for child in children):
+        raise ValueError("invalid abandoned child fence")
+    return children
+
+
+def _read_abandoned_owner_hashes(root: Path) -> set[str]:
+    path = _abandoned_child_fence_path(root)
+    if not path.is_file():
+        return set()
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("version") != 1:
+        raise ValueError("invalid abandoned owner fence")
+    owners = value.get("owner_session_id_hashes", [])
+    if not isinstance(owners, list) or any(not isinstance(item, str) or re.fullmatch(r"[0-9a-f]{64}", item) is None for item in owners):
+        raise ValueError("invalid abandoned owner fence")
+    return set(owners)
+
+
+def _abandoned_child_fenced(root: Path, payload: dict[str, Any]) -> bool:
+    identity = {
+        "agent_id_hash": _identity_hash(payload.get("agent_id")),
+        "session_id_hash": _session_id_hash(payload),
+        "turn_id_hash": _turn_id_hash(payload),
+    }
+    return all(identity.values()) and identity in _read_abandoned_child_fence(root)
+
+
 def _dispatch_status(response: object) -> str:
     rejected = {"error", "failed", "failure", "rejected"}
     accepted = {"ok", "success", "completed"}
@@ -3266,8 +3352,11 @@ def task_abandon(
             owner_provenance = "DEPTH_ONE_PENDING_RESERVATION"
         if owner_hash is not None and (not isinstance(owner_hash, str) or re.fullmatch(r"[0-9a-f]{64}", owner_hash) is None):
             raise ValueError("invalid lifecycle Controller owner")
-        if owner_hash == recovery_session_hash:
-            raise ValueError("task-abandon cannot take over an ACTIVE task in its owning session")
+        owner_abort = owner_hash == recovery_session_hash
+        # A reservation with no SubagentStart has no native child identity to
+        # fence. The owner must first recover it using trusted terminal proof.
+        if owner_abort and pending is not None:
+            raise ValueError("owner task-abandon requires recovery of the unbound pending spawn")
 
         fence_sources: dict[str, list[str]] = {}
         def add_fence(candidate: object, source: str) -> None:
@@ -3280,8 +3369,24 @@ def task_abandon(
             if isinstance(child, dict):
                 add_fence(child.get("session_id_hash"), f"children[{index}]")
         add_fence(lifecycle_state.get("session_id_hash"), "top_level_telemetry")
-        if recovery_session_hash in fence_sources:
+        if not owner_abort and recovery_session_hash in fence_sources:
             raise ValueError("task-abandon recovery session has old task activity evidence")
+        child_fence = _read_abandoned_child_fence(root)
+        owner_fence = _read_abandoned_owner_hashes(root)
+        if owner_abort:
+            owner_fence.add(recovery_session_hash)
+        old_child_count = 0
+        for child in lifecycle_state.get("children", []):
+            if not isinstance(child, dict) or child.get("managed") is not True:
+                continue
+            identity = {key: child.get(key) for key in ("agent_id_hash", "session_id_hash", "turn_id_hash")}
+            if any(not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in identity.values()):
+                if owner_abort:
+                    raise ValueError("owner task-abandon cannot fence an old managed child identity")
+                continue
+            old_child_count += 1
+            if identity not in child_fence:
+                child_fence.append(identity)
 
         archive = root / ".context" / "audit" / "abandoned" / f"{_task_key(task_id)}-{uuid.uuid4().hex}"
         archive.mkdir(parents=True, exist_ok=False)
@@ -3301,6 +3406,9 @@ def task_abandon(
             "old_controller_session_id_hash": owner_hash or "UNKNOWN",
             "old_controller_owner_provenance": owner_provenance,
             "fenced_old_session_provenance": fence_sources,
+            "recovery_mode": "OWNER_ABORT" if owner_abort else "FOREIGN_TAKEOVER",
+            "owner_session_retained": owner_abort,
+            "fenced_old_child_identities": old_child_count,
             "recovery_session_id_hash": recovery_session_hash,
             "recovery_attestation_sha256": attestation_sha256,
             "managed_hook_spec_hash": managed_hook_spec_hash(),
@@ -3310,9 +3418,12 @@ def task_abandon(
         core._atomic_write(archive / "manifest.json", (json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8"))
         if (archive / "state.json").read_bytes() != state_raw or (archive / "lifecycle.json").is_file() != lifecycle_present or (lifecycle_raw is not None and (archive / "lifecycle.json").read_bytes() != lifecycle_raw):
             raise ValueError("task-abandon archive verification failed")
-        fence = _read_session_fence(root) | set(fence_sources)
+        fence = _read_session_fence(root) | (set(fence_sources) - {recovery_session_hash} if owner_abort else set(fence_sources))
         _write_capture(_session_fence_path(root), {"version": 1, "session_id_hashes": sorted(fence)})
         if _read_session_fence(root) != fence:
             raise ValueError("task-abandon session fence verification failed")
+        _write_capture(_abandoned_child_fence_path(root), {"version": 1, "children": child_fence, "owner_session_id_hashes": sorted(owner_fence)})
+        if _read_abandoned_child_fence(root) != child_fence or _read_abandoned_owner_hashes(root) != owner_fence:
+            raise ValueError("task-abandon child fence verification failed")
         state_path.unlink()
     return {"ok": True, "status": "ABANDONED", "task_id": task_id, "revision": revision, "archive": str(archive.relative_to(root)).replace("\\", "/"), "lifecycle_status": "RECOVERED_INCOMPLETE"}

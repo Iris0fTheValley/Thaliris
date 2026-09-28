@@ -63,7 +63,7 @@ def test_requires_proof_and_rejects_same_session(tmp_path):
     expected, state_raw, lifecycle_raw = _fixture(tmp_path)
     with pytest.raises(ValueError, match="MANAGED_CURRENT_SESSION_NOT_ATTESTED"):
         _abandon(tmp_path, expected, None)
-    with pytest.raises(ValueError, match="owning session"):
+    with pytest.raises(ValueError, match="unbound pending spawn"):
         _abandon(tmp_path, expected, _proof(tmp_path, "old-controller-session"))
     assert (tmp_path / ".context" / "state.json").read_bytes() == state_raw
     assert lifecycle._lifecycle_path(tmp_path, expected["task_id"]).read_bytes() == lifecycle_raw
@@ -263,11 +263,41 @@ def test_attested_managed_start_records_owner_before_first_spawn(tmp_path, monke
     assert record["owner_session_id_hash"] == hashlib.sha256(b"old-controller-session").hexdigest()
     assert record["pending_authorized_spawn"] is None
     expected = {"task_id": started["task_id"], "revision": started["revision"], "state_sha256": hashlib.sha256((tmp_path / ".context" / "state.json").read_bytes()).hexdigest(), "lifecycle_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-    with pytest.raises(ValueError, match="owning session"):
-        _abandon(tmp_path, expected, _proof(tmp_path, "old-controller-session"))
-    result = _abandon(tmp_path, expected, _proof(tmp_path))
+    result = _abandon(tmp_path, expected, _proof(tmp_path, "old-controller-session"))
     manifest = json.loads((tmp_path / result["archive"] / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["old_controller_owner_provenance"] == "TASK_START"
+    assert manifest["recovery_mode"] == "OWNER_ABORT"
+    assert manifest["owner_session_retained"] is True
+    fresh = core.task_start(tmp_path, "fresh same-session task", None, None)
+    lifecycle.record_task_start_owner(tmp_path, fresh["task_id"], hashlib.sha256(b"old-controller-session").hexdigest())
+    call = {"session_id": "old-controller-session", "tool_name": "Bash", "tool_input": {"command": "thaliris task-status"}}
+    assert lifecycle.handle_hook(tmp_path, "PreToolUse", call) == ""
+
+
+def test_owner_abort_fences_bound_old_child_identity_but_retains_owner(tmp_path):
+    expected, _, _ = _fixture(tmp_path)
+    path = lifecycle._lifecycle_path(tmp_path, expected["task_id"])
+    lifecycle.record_task_start_owner(tmp_path, expected["task_id"], hashlib.sha256(b"old-controller-session").hexdigest())
+    child = {"session_id": "old-controller-session", "turn_id": "old-child-turn", "agent_id": "old-child", "agent_type": "thaliris-implementer"}
+    assert lifecycle.handle_hook(tmp_path, "SubagentStart", child) == ""
+    expected["lifecycle_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    result = _abandon(tmp_path, expected, _proof(tmp_path, "old-controller-session"))
+    assert result["status"] == "ABANDONED"
+    fresh = core.task_start(tmp_path, "fresh task", None, None)
+    lifecycle.record_task_start_owner(tmp_path, fresh["task_id"], hashlib.sha256(b"old-controller-session").hexdigest())
+    denied = lifecycle.handle_hook(tmp_path, "PreToolUse", {**child, "tool_name": "Bash", "tool_input": {"command": "echo late"}})
+    assert json.loads(denied)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    owner = {"session_id": "old-controller-session", "tool_name": "Bash", "tool_input": {"command": "thaliris task-status"}}
+    assert lifecycle.handle_hook(tmp_path, "PreToolUse", owner) == ""
+    spawn = {"session_id": "old-controller-session", "turn_id": "fresh-turn", "tool_name": "spawn_agent",
+             "tool_input": {"fork_turns": "none", "agent_type": "thaliris-implementer", "message": "fresh handoff"}}
+    assert lifecycle.handle_hook(tmp_path, "PreToolUse", spawn) == ""
+    fresh_path = lifecycle._lifecycle_path(tmp_path, fresh["task_id"])
+    before = fresh_path.read_bytes()
+    # A late result without native tool identity cannot attach its old name
+    # to a new reservation in the owner's reused session.
+    lifecycle.handle_hook(tmp_path, "PostToolUse", {**spawn, "tool_response": {"task_name": "/root/old-child"}})
+    assert fresh_path.read_bytes() == before
 
 
 def test_late_old_callbacks_cannot_change_fresh_task_lifecycle(tmp_path):

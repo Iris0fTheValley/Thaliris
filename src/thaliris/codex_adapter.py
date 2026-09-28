@@ -759,9 +759,12 @@ diagnosis, coordinate, and report; it must not take over their substantial
 repository investigation, implementation, or testing. Do not add a
 mechanical Root-investigation detector. The final report must not claim
 managed enforcement was verified.
-If Codex reports a native spawn failure before `SubagentStart`, the Controller
-may explicitly run `thaliris recover-pending-spawn <handoff-id>` for that exact
-reservation. Core never infers failure from a missing event, timeout, or retry.
+The Controller may explicitly run `thaliris recover-pending-spawn <handoff-id>`
+only after the Hook records exact, trusted native failure for that unbound
+reservation: a name-bound `interrupted`, `errored`, or `shutdown` observation,
+or an exact spawn failure callback. Missing events, `not_found`, completed,
+timeouts, and Controller reports cannot release it. A pre-Start native failure
+without a Hook callback or identity remains unresolved.
 Decision-changing investigation belongs to Investigator. Bounded local reading
 needed for implementation may stay inside either Executor. Execution, mutation,
 and testing belong to fresh Implementer or Focused Implementer sessions. Existing native Codex child sessions are never resumed with follow-up/send tools.
@@ -815,10 +818,12 @@ reinstalling Host hooks or profiles. On READY, use only its opaque
 session; the current Host Hook must supply one-shot task-start attestation.
 Do not choose `bootstrap-check` or `init` for normal startup, calculate an
 executable hash in a shell wrapper, or select among internal SHA fields.
-On CURRENT_CONTINUATION, continue the owning task. On
-FOREIGN_RECOVERY_DECISION or UNKNOWN, the Controller explicitly decides whether
-to continue old work or use the exact recovery packet for `task-abandon` before
-starting a fresh task. An abandoned task remains incomplete and its original
+On CURRENT_CONTINUATION, the owner may continue or explicitly abort the
+incomplete task using the exact `task-abandon` packet. An unbound pending spawn
+must have trusted terminal recovery first; otherwise its future child identity
+cannot be fenced. On FOREIGN_RECOVERY_DECISION or UNKNOWN, the Controller
+explicitly decides whether to continue old work or use that exact recovery
+packet before starting a fresh task. An abandoned task remains incomplete and its original
 state and lifecycle evidence are preserved. On INVALID_STATE or a definition
 conflict, diagnose before edits; never delete state or invent completion.
 Project initialization never requires a Codex restart. A changed global Host
@@ -1499,8 +1504,10 @@ Chatting, read-only work, and non-Git directories need no project bootstrap.
 On READY, pass its `task_start_receipt` as `<receipt>` in {task_route}
 in this session; the current Hook must attest
 task start. Use this installed command for later Thaliris operations. On
-CURRENT_CONTINUATION, continue the owning task. On FOREIGN_RECOVERY_DECISION
-or UNKNOWN, explicitly decide whether to take over the old task using
+CURRENT_CONTINUATION, continue or explicitly abort the owning task using the
+exact `task-abandon` packet. Recover any unbound pending spawn with trusted
+terminal Host evidence first. On FOREIGN_RECOVERY_DECISION or UNKNOWN,
+explicitly decide whether to take over the old task using
 `task-abandon` and the exact recovery packet. On INVALID_STATE or bootstrap
 failure, diagnose before edits.
 After task start, follow the effective project role router.

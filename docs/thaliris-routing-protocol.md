@@ -145,6 +145,15 @@ Text outside the span remains byte-for-byte intact, and damaged, duplicate, or
 conflicting Thaliris markers require manual resolution. A newly saved global
 instruction does not prove what the current session loaded.
 
+An owner may explicitly abort an incomplete ACTIVE task with its exact
+recovery packet. The original state and lifecycle bytes remain archived as
+incomplete, and the owner session can start a new task. A pending unbound
+spawn blocks owner abort until exact trusted native failure evidence recovers
+that reservation. An unknown child identity cannot be fenced. Pending-spawn
+recovery accepts a name-bound native `interrupted`, `errored`, or `shutdown`
+observation, or an exact spawn failure callback; `not_found`, successful
+completion, absent callbacks, and timeouts do not release the reservation.
+
 `SubagentStart` is lifecycle-only. It validates the authorized native Codex child and binds
 identity, role, session, start time, provenance, handoff ID, and payload hash.
 It does not construct a role packet or inject task state.

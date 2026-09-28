@@ -2529,6 +2529,12 @@ def test_exact_pending_spawn_recovery_clears_reservation_and_allows_next_spawn(t
     })
     assert handle_hook(root, "PreToolUse", spawn) == ""
     handoff_id = lifecycle(root)["pending_authorized_spawn"]["handoff_id"]
+    with pytest.raises(ValueError, match="trusted terminal Host evidence"):
+        lifecycle_module.recover_pending_spawn(root, handoff_id)
+    assert handle_hook(root, "PostToolUse", {**spawn, "tool_response": {"task_name": "/root/failed-child"}}) == ""
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents", tool_response={"agents": [{"agent_name": "/root/failed-child", "agent_status": "interrupted"}]},
+    )) == ""
     recovered = lifecycle_module.recover_pending_spawn(root, handoff_id)
     assert recovered["recovered"] is True
     state = lifecycle(root)
@@ -2540,6 +2546,39 @@ def test_exact_pending_spawn_recovery_clears_reservation_and_allows_next_spawn(t
     })
     assert handle_hook(root, "PreToolUse", next_spawn) == ""
     assert lifecycle(root)["pending_authorized_spawn"] is not None
+
+
+@pytest.mark.parametrize("status", ["pending_init", "running", "not_found", {"completed": "result"}])
+def test_pending_recovery_rejects_nonfailure_native_status(tmp_path: Path, status: object) -> None:
+    root = repo(tmp_path)
+    _owned_task_start(root, "pending evidence", None, None)
+    spawn = hook_payload(tool_name="spawn_agent", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "handoff",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    handoff_id = lifecycle(root)["pending_authorized_spawn"]["handoff_id"]
+    assert handle_hook(root, "PostToolUse", {**spawn, "tool_response": {"task_name": "/root/child"}}) == ""
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents", tool_response={"agents": [{"agent_name": "/root/child", "agent_status": status}]},
+    )) == ""
+    with pytest.raises(ValueError, match="trusted terminal Host evidence"):
+        lifecycle_module.recover_pending_spawn(root, handoff_id)
+    assert lifecycle(root)["pending_authorized_spawn"] is not None
+
+
+def test_pending_recovery_requires_exact_spawn_failure_callback_identity(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    _owned_task_start(root, "exact failure callback", None, None)
+    spawn = hook_payload(tool_name="spawn_agent", tool_use_id="native-tool-1", tool_input={
+        "fork_turns": "none", "agent_type": "worker", "message": "handoff",
+    })
+    assert handle_hook(root, "PreToolUse", spawn) == ""
+    handoff_id = lifecycle(root)["pending_authorized_spawn"]["handoff_id"]
+    handle_hook(root, "PostToolUse", {**spawn, "tool_use_id": "other-tool", "tool_response": {"error": "spawn failed"}})
+    with pytest.raises(ValueError, match="trusted terminal Host evidence"):
+        lifecycle_module.recover_pending_spawn(root, handoff_id)
+    handle_hook(root, "PostToolUse", {**spawn, "tool_response": {"error": "spawn failed"}})
+    assert lifecycle_module.recover_pending_spawn(root, handoff_id)["recovered"] is True
 
 
 def test_pending_spawn_recovery_rejects_handoff_already_bound_to_child(tmp_path: Path) -> None:

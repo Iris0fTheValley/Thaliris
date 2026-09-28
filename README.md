@@ -76,9 +76,10 @@ completion，也不根据 stale evidence 自动改写 decision、constraint 或 
 Codex adapter 只负责 fresh spawn、`fork_turns="none"`、授权的有限二层 native Codex child lifecycle、
 handoff hash、SubagentStart/Stop identity、missing-stop reconciliation 和 native
 wait。Controller 本身由 Host/user 当前选择的根 session 承载；child profile 的模型与
-reasoning effort 由 adapter 的 role binding 管理。只有确实存在 pending reservation 或
-managed native Codex child、且当前 session effective maximum 已被机械验证时，短 wait
-才会被规范化为长 blocking wait；否则不会自动规范化。`SubagentStop` 本身不是成功；
+reasoning effort 由 adapter 的 role binding 管理。短 wait 只有在确实存在 pending
+reservation 或 managed native Codex child，且当前 session effective maximum 已被机械验证时，
+才会被规范化为长 blocking wait。当前 Host hook 尚未暴露该 maximum，因此会保留请求的
+timeout，不会自动扩展。`SubagentStop` 本身不是成功；
 只有明确观测到 native `Completed` 才满足 lifecycle completion。
 
 Controller 可以选择注册角色；仅 Implementer、Focused Implementer 和 Reviewer

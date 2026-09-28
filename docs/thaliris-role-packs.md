@@ -203,3 +203,6 @@ returned and the Focused parent continued. See the [durable probe evidence](code
 This scoped probe covers that one CLI build and probe only. Raw Host wire-byte
 equality, other Host builds or Desktop scenarios, and native child
 `Completed`/`task-close` completion were not observed and remain UNKNOWN.
+A 2026-09-28 Desktop probe observed a `wait_agent` wake without child status;
+an exact name-bound native `Completed` observation must come from
+`list_agents` before `task-close`. End-to-end Desktop closure is unobserved.

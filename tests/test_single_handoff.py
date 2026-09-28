@@ -2721,6 +2721,35 @@ def test_string_wait_response_is_not_completion_evidence(tmp_path: Path) -> None
         codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])
 
 
+def test_desktop_wait_wake_needs_name_bound_list_status_before_close(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    _owned_task_start(root, "Desktop completion bridge", None, None)
+    task_name, agent_id = "/root/desktop_probe", "native-desktop-child-id"
+    spawn_start_with_host_task_name(root, task_name, agent_id)
+    stop(root, agent_id)
+
+    # Desktop's observed wait result is a wake signal without child status.
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="wait_agent", tool_input={"timeout_ms": 3_600_000},
+        tool_response=json.dumps({"message": "Wait completed.", "timed_out": False}),
+    )) == ""
+    assert lifecycle(root)["children"][-1]["native_terminal_status"] is None
+    with pytest.raises(ValueError, match="use list_agents"):
+        codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])
+
+    # A real Desktop list response contains a root entry and a named child
+    # whose completed variant carries the child's final text.
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents",
+        tool_response=json.dumps({"agents": [
+            {"agent_name": "/root", "agent_status": "running"},
+            {"agent_name": task_name, "agent_status": {"completed": "Probe completed normally."}},
+        ]}),
+    )) == ""
+    assert lifecycle(root)["children"][-1]["native_terminal_status"] == "completed"
+    assert codex_adapter.task_close(root, core.task_show(root)["state"]["revision"])["status"] == "DONE"
+
+
 def test_string_interrupt_response_reconciles_exact_task_name(tmp_path: Path) -> None:
     root = repo(tmp_path)
     _owned_task_start(root, "interrupt response identity", None, None)

@@ -802,6 +802,11 @@ If that blocking wait returns early, continue only when it delivered new,
 decision-changing information; otherwise resume the same wait without
 re-reasoning. Do not periodically wake the Controller to poll. If no usable
 current maximum is advertised, do not invent one.
+After a child finishes, call `list_agents` once before `task-close` to obtain
+its exact native name and Completed status. A `wait_agent` result that only
+reports `timed_out: false` is a wake signal, not completion evidence. If the
+name-bound status is unavailable, leave completion UNKNOWN and keep the task
+open; do not infer it from SubagentStop, child prose, or elapsed time.
 Task closure requires the last
 Controller-direct handoff's completed lifecycle and no pending or active
 descendants; a later Scanner does not replace that top-level completion.
@@ -1059,6 +1064,9 @@ returned and the Focused parent continued. See the [durable probe evidence](code
 This scoped probe covers that one CLI build and probe only. Raw Host wire-byte
 equality, other Host builds or Desktop scenarios, and native child
 `Completed`/`task-close` completion were not observed and remain UNKNOWN.
+A 2026-09-28 Desktop probe observed a `wait_agent` wake without child status;
+an exact name-bound native `Completed` observation must come from
+`list_agents` before `task-close`. End-to-end Desktop closure is unobserved.
 """
 
 
@@ -2409,7 +2417,7 @@ def task_close(root: Path, base_revision: int) -> dict[str, object]:
     state = core.task_show(root)["state"]
     task_id = str(state["task_id"])
     if not lifecycle.qualifying_child_completed(core._repo_root(root)):
-        raise ValueError("task-close requires an authorized explicit handoff, a matching native SubagentStart/Stop identity, and no pending or active managed work")
+        raise ValueError("task-close requires an authorized explicit handoff, a matching native SubagentStart/Stop identity, and no pending or active managed work; after child completion, use list_agents to observe an exact name-bound native Completed status")
     return core.task_close(root, base_revision, expected_task_id=task_id)
 
 

@@ -239,6 +239,16 @@ equality, other Host builds or Desktop scenarios, and native child
 `Completed`/`task-close` completion were not observed and remain **UNKNOWN**.
 The identity binding and fail-closed mechanics above are unchanged.
 
+A Codex Desktop probe on 2026-09-28 observed `wait_agent` return
+`{"message":"Wait completed.","timed_out":false}` after the child completed.
+That response contains no child identity or terminal status. Desktop
+`list_agents` responses have supplied an exact `agent_name` and an
+`agent_status` with a `completed` result. After a child finishes, the
+Controller calls `list_agents` once before `task-close`; lifecycle accepts
+only the exact name-bound status for its managed child. If it is unavailable,
+completion remains UNKNOWN and closure remains denied. End-to-end Desktop
+`list_agents`/`task-close` closure has not yet been observed.
+
 Task-close requires the latest Controller-direct handoff's matching Start,
 Stop, and native Completed observation, with no pending or active descendants.
 A later Scanner neither displaces that handoff nor supplies its completion

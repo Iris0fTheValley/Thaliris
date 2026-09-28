@@ -247,6 +247,11 @@ If that blocking wait returns early, continue only when it delivered new,
 decision-changing information; otherwise resume the same wait without
 re-reasoning. Do not periodically wake the Controller to poll. If no usable
 current maximum is advertised, do not invent one.
+After a child finishes, call `list_agents` once before `task-close` to obtain
+its exact native name and Completed status. A `wait_agent` result that only
+reports `timed_out: false` is a wake signal, not completion evidence. If the
+name-bound status is unavailable, leave completion UNKNOWN and keep the task
+open; do not infer it from SubagentStop, child prose, or elapsed time.
 Task closure requires the last
 Controller-direct handoff's completed lifecycle and no pending or active
 descendants; a later Scanner does not replace that top-level completion.

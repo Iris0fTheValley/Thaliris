@@ -2301,7 +2301,8 @@ def _context_call(payload: dict[str, Any]) -> tuple[str | None, list[str]]:
     separator_check = command.lstrip()
     if separator_check.startswith("&") and len(separator_check) > 1 and separator_check[1].isspace():
         separator_check = separator_check[1:].lstrip()
-    if _COMMAND_SEPARATOR.search(separator_check):
+    segments = _split_command_separators(separator_check)
+    if segments is None or len(segments) != 1:
         return None, []
     arguments = _context_arguments(command)
     if arguments is None:
@@ -2309,6 +2310,12 @@ def _context_call(payload: dict[str, Any]) -> tuple[str | None, list[str]]:
     try:
         tokens = shlex.split(arguments, posix=False)
     except ValueError:
+        return None, []
+    # argparse handles help before required-argument validation and exits
+    # without invoking the selected command. Keep help probes out of the
+    # Controller operation classifier so `task-abandon --help` is never
+    # treated as a state mutation.
+    if any(token.strip("\"'") in {"-h", "--help"} for token in tokens):
         return None, []
     index = 0
     while index < len(tokens):
@@ -2330,6 +2337,95 @@ def _context_call(payload: dict[str, Any]) -> tuple[str | None, list[str]]:
     return None, []
 
 
+def _context_help_status(payload: dict[str, Any]) -> tuple[bool, bool]:
+    """Return whether direct Thaliris help was requested and its syntax is unsafe."""
+    command = _bash_command(payload)
+    if command is None:
+        return False, False
+    arguments = _context_arguments(command)
+    if arguments is None:
+        return False, False
+    try:
+        tokens = shlex.split(arguments, posix=False)
+    except ValueError:
+        return False, False
+    requested = any(token.strip("\"'") in {"-h", "--help"} for token in tokens)
+    if not requested:
+        return False, False
+    separator_check = command.lstrip()
+    if separator_check.startswith("&") and len(separator_check) > 1 and separator_check[1].isspace():
+        separator_check = separator_check[1:].lstrip()
+    segments = _split_command_separators(separator_check)
+    return True, segments is None or len(segments) != 1
+
+
+def _context_help_requested(payload: dict[str, Any]) -> bool:
+    """Return whether safe direct Thaliris help was requested."""
+    requested, unsafe = _context_help_status(payload)
+    return requested and not unsafe
+
+
+def _split_command_separators(command: str) -> list[str] | None:
+    """Split shell separators outside simple quotes; reject ambiguous syntax.
+
+    The direct-command recognizer only needs ordinary single- and
+    double-quoted argument values. Separators inside those values are data.
+    PowerShell expressions, redirections, shell expansion, and quote-escape
+    forms that differ across Bash and PowerShell are rejected so they cannot
+    hide shell side effects.
+    """
+    segments: list[str] = []
+    quote: str | None = None
+    start = 0
+    index = 0
+    while index < len(command):
+        char = command[index]
+        next_char = command[index + 1] if index + 1 < len(command) else ""
+        if quote is None:
+            if char in {"'", '"'}:
+                quote = char
+                index += 1
+                continue
+            if char == "`" or (char == "$" and next_char == "("):
+                return None
+            if char in {"<", ">"}:
+                # Redirection runs before argparse, so even a help request
+                # must not bypass managed-state admission when it contains
+                # an unquoted shell redirection operator.
+                return None
+            if char in {"(", ")"} or (char == "@" and next_char in {"(", "{"}):
+                # PowerShell can evaluate @(...)/@{...}, and parenthesized
+                # expressions can execute before native argument dispatch.
+                return None
+            if char == "\\" and next_char in {"'", '"', "&", "|", ";", "<", ">", "\r", "\n"}:
+                return None
+            separator = _COMMAND_SEPARATOR.match(command, index)
+            if separator is not None:
+                segments.append(command[start:index].strip())
+                index = separator.end()
+                start = index
+                continue
+        elif quote == '"':
+            if char == "`" or (char == "$" and next_char == "("):
+                return None
+            if char == "\\" and next_char == '"':
+                return None
+            if char == '"':
+                quote = None
+        elif char == "'":
+            # Doubled single quotes are data in PowerShell and adjacent
+            # quoted literals in Bash; either way the semicolon stays quoted.
+            if next_char == "'":
+                index += 2
+                continue
+            quote = None
+        index += 1
+    if quote is not None:
+        return None
+    segments.append(command[start:].strip())
+    return segments
+
+
 def _context_operation(payload: dict[str, Any]) -> str | None:
     return _context_call(payload)[0]
 
@@ -2341,9 +2437,18 @@ def _compound_invalid_state_mutation(payload: dict[str, Any]) -> bool:
     compound command or interpret a shell wrapper as a Thaliris invocation.
     """
     command = _bash_command(payload)
-    if command is None or _COMMAND_SEPARATOR.search(command) is None:
+    if command is None:
         return False
-    for segment in _COMMAND_SEPARATOR.split(command):
+    segments = _split_command_separators(command)
+    if segments is None:
+        # If the shell syntax is ambiguous, keep the former raw scan as a
+        # conservative deny-only fallback. It never authorizes a command.
+        if _COMMAND_SEPARATOR.search(command) is None:
+            return False
+        segments = _COMMAND_SEPARATOR.split(command)
+    if len(segments) <= 1:
+        return False
+    for segment in segments:
         operation, _ = _context_call({"tool_input": {"command": segment}})
         if operation in _CHILD_CONTEXT_MUTATIONS:
             return True
@@ -2596,7 +2701,8 @@ def _direct_init_call(root: Path, payload: dict[str, Any]) -> bool:
     separator_check = command.lstrip()
     if separator_check.startswith("&") and len(separator_check) > 1 and separator_check[1].isspace():
         separator_check = separator_check[1:].lstrip()
-    if _COMMAND_SEPARATOR.search(separator_check):
+    segments = _split_command_separators(separator_check)
+    if segments is None or len(segments) != 1:
         return False
     arguments = _context_arguments(command)
     if arguments is None:
@@ -2979,6 +3085,17 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
         return ""
     root = _hook_repository_root(root or Path.cwd(), payload)
     normalized = _tool_basename(tool)
+    # Plain direct argparse help is read-only. Check its shell syntax before
+    # managed-state admission so expressions or redirections cannot use the
+    # help exemption to run before native invocation.
+    if normalized in _CONTROLLER_EXECUTION_TOOL_NAMES:
+        help_requested, unsafe_help_syntax = _context_help_status(payload)
+        if help_requested:
+            if unsafe_help_syntax:
+                return _permission_deny(
+                    "THALIRIS_UNSAFE_HELP_SYNTAX: direct Thaliris help cannot include shell expressions, redirections, or compound commands."
+                )
+            return ""
     state_status, _task_id = managed_task_state(root)
     operation = _context_operation(payload) if normalized in _CONTROLLER_EXECUTION_TOOL_NAMES else None
 

@@ -111,6 +111,95 @@ def test_archives_raw_evidence_and_allows_fresh_task(tmp_path, capsys):
     assert lifecycle.handle_hook(tmp_path, "PreToolUse", new_call) == ""
 
 
+def test_hook_attests_direct_task_abandon_with_quoted_semicolon_reason(tmp_path, capsys):
+    expected, state_raw, lifecycle_raw = _fixture(tmp_path)
+    reason = "Prior probe lifecycle ended; Controller explicitly takes over."
+    command = (
+        f"thaliris task-abandon --task-id {expected['task_id']} "
+        f"--revision {expected['revision']} --state-sha256 {expected['state_sha256']} "
+        f"--lifecycle-sha256 {expected['lifecycle_sha256']} --reason \"{reason}\""
+    )
+    payload = {
+        "session_id": "new-controller-session",
+        "turn_id": "recovery-turn",
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+    }
+
+    assert lifecycle._context_operation(payload) == "task-abandon"
+    admitted = json.loads(lifecycle.handle_hook(tmp_path, "PreToolUse", payload, lifecycle.MANAGED_HOOK_ABI))
+    assert admitted["hookSpecificOutput"]["permissionDecision"] == "allow"
+    rewritten = admitted["hookSpecificOutput"]["updatedInput"]["command"]
+    proof = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten)
+    assert proof is not None
+    assert rewritten == f"{command} --hook-attestation {proof.group(1)}"
+
+    assert cli.main([
+        "--root", str(tmp_path), "task-abandon",
+        "--task-id", expected["task_id"], "--revision", str(expected["revision"]),
+        "--state-sha256", expected["state_sha256"],
+        "--lifecycle-sha256", expected["lifecycle_sha256"],
+        "--reason", reason, "--hook-attestation", proof.group(1),
+    ]) == 0
+    result = json.loads(capsys.readouterr().out)
+    archive = tmp_path / result["archive"]
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    assert result["status"] == manifest["status"] == "ABANDONED"
+    assert manifest["lifecycle_status"] == "RECOVERED_INCOMPLETE"
+    assert (archive / "state.json").read_bytes() == state_raw
+    assert (archive / "lifecycle.json").read_bytes() == lifecycle_raw
+
+
+def test_hook_recognizes_powershell_task_abandon_with_single_quoted_semicolon_reason(tmp_path):
+    expected, state_raw, lifecycle_raw = _fixture(tmp_path)
+    reason = "Prior probe lifecycle ended; Controller explicitly takes over."
+    command = (
+        f"& 'thaliris.exe' task-abandon --task-id {expected['task_id']} "
+        f"--revision {expected['revision']} --state-sha256 {expected['state_sha256']} "
+        f"--lifecycle-sha256 {expected['lifecycle_sha256']} --reason '{reason}'"
+    )
+    payload = {
+        "session_id": "new-controller-session",
+        "turn_id": "recovery-turn",
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+    }
+
+    assert lifecycle._context_operation(payload) == "task-abandon"
+    admitted = json.loads(lifecycle.handle_hook(tmp_path, "PreToolUse", payload, lifecycle.MANAGED_HOOK_ABI))
+    assert admitted["hookSpecificOutput"]["permissionDecision"] == "allow"
+    rewritten = admitted["hookSpecificOutput"]["updatedInput"]["command"]
+    proof = re.search(r"--hook-attestation ([A-Za-z0-9._-]+)$", rewritten)
+    assert proof is not None
+    assert rewritten == f"{command} --hook-attestation {proof.group(1)}"
+    assert f"--reason '{reason}'" in rewritten
+    assert (tmp_path / ".context" / "state.json").read_bytes() == state_raw
+    assert lifecycle._lifecycle_path(tmp_path, expected["task_id"]).read_bytes() == lifecycle_raw
+
+
+def test_hook_denies_unquoted_separator_in_task_abandon_command(tmp_path):
+    expected, state_raw, lifecycle_raw = _fixture(tmp_path)
+    command = (
+        f"thaliris task-abandon --task-id {expected['task_id']} "
+        f"--revision {expected['revision']} --state-sha256 {expected['state_sha256']} "
+        f"--lifecycle-sha256 {expected['lifecycle_sha256']} "
+        "--reason prior probe lifecycle ended; Get-Date"
+    )
+    payload = {
+        "session_id": "new-controller-session",
+        "turn_id": "recovery-turn",
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+    }
+
+    denied = json.loads(lifecycle.handle_hook(tmp_path, "PreToolUse", payload, lifecycle.MANAGED_HOOK_ABI))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert (tmp_path / ".context" / "state.json").read_bytes() == state_raw
+    assert lifecycle._lifecycle_path(tmp_path, expected["task_id"]).read_bytes() == lifecycle_raw
+    attestation_dir = tmp_path / ".context" / "audit" / "task-start-attestations"
+    assert not attestation_dir.exists() or not list(attestation_dir.glob("*.json"))
+
+
 def test_unknown_controller_owner_can_be_explicitly_abandoned(tmp_path):
     expected, state_raw, _ = _fixture(tmp_path)
     lifecycle_path = lifecycle._lifecycle_path(tmp_path, expected["task_id"])

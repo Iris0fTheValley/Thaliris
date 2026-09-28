@@ -675,6 +675,110 @@ def _attested_recovery_command(root: Path, command: str) -> tuple[str, str]:
     return rewritten, token.group(1)
 
 
+@pytest.mark.parametrize("incompatible", [False, True])
+@pytest.mark.parametrize("help_flag", ["--help", "-h"])
+def test_task_abandon_help_is_read_only_and_does_not_issue_proof(
+    tmp_path: Path, capsys, incompatible: bool, help_flag: str,
+) -> None:
+    root = repo(tmp_path)
+    state_path = root / ".context" / "state.json"
+    if incompatible:
+        old_state = {
+            "schema_version": 1,
+            "revision": 1,
+            "task_id": "7e500c6a-6aec-4e22-94b0-42cc6a5459ef",
+            "status": "ACTIVE",
+            "goal": "old state remains unchanged",
+            "active_work": [],
+            "pending_results": [],
+        }
+        state_path.write_text(json.dumps(old_state), encoding="utf-8")
+    else:
+        core.task_start(root, "active state remains unchanged", None, None)
+    original_state = state_path.read_bytes()
+    command = (
+        f'thaliris task-abandon {help_flag} --reason "quoted >, <, and ; stay text" '
+        f"--hook-attestation v1.{('0' * 64)}.{('A' * 24)}"
+    )
+    payload = hook_payload(tool_name="Bash", tool_input={"command": command})
+
+    assert lifecycle_module._context_operation(payload) is None
+    assert lifecycle_module._context_help_requested(payload)
+    assert handle_hook(root, "PreToolUse", payload, lifecycle_module.MANAGED_HOOK_ABI) == ""
+    with pytest.raises(SystemExit) as help_exit:
+        cli.main(["--root", str(root), "task-abandon", help_flag, "--hook-attestation", "unused"])
+
+    assert help_exit.value.code == 0
+    assert "usage: thaliris task-abandon" in capsys.readouterr().out
+    assert state_path.read_bytes() == original_state
+    attestation_dir = root / ".context" / "audit" / "task-start-attestations"
+    assert not attestation_dir.exists() or not list(attestation_dir.glob("*.json"))
+
+
+@pytest.mark.parametrize("redirection", [">", ">>", "2>", "2>>", "<", "<<<"])
+def test_task_abandon_help_with_shell_redirection_is_denied_before_state_changes(
+    tmp_path: Path, redirection: str,
+) -> None:
+    root = repo(tmp_path)
+    state_path = root / ".context" / "state.json"
+    core.task_start(root, "active state survives redirected help", None, None)
+    original_state = state_path.read_bytes()
+    command = f"thaliris task-abandon --help {redirection} .context/state.json"
+    payload = hook_payload(tool_name="Bash", tool_input={"command": command})
+
+    assert not lifecycle_module._context_help_requested(payload)
+    denied = json.loads(handle_hook(root, "PreToolUse", payload, lifecycle_module.MANAGED_HOOK_ABI))
+
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert state_path.read_bytes() == original_state
+
+
+@pytest.mark.parametrize("expression", [
+    "@(Remove-Item .context/state.json)",
+    "@{x=Remove-Item .context/state.json}",
+    "(Remove-Item .context/state.json)",
+    "$(Remove-Item .context/state.json)",
+    "`x`",
+])
+def test_task_abandon_help_rejects_unquoted_shell_expressions(
+    tmp_path: Path, expression: str,
+) -> None:
+    root = repo(tmp_path)
+    state_path = root / ".context" / "state.json"
+    core.task_start(root, "active state survives shell expression help", None, None)
+    original_state = state_path.read_bytes()
+    command = f"& 'thaliris.exe' task-abandon --help {expression}"
+    payload = hook_payload(tool_name="Bash", tool_input={"command": command})
+
+    assert lifecycle_module._context_help_status(payload) == (True, True)
+    assert not lifecycle_module._context_help_requested(payload)
+    denied = json.loads(handle_hook(root, "PreToolUse", payload, lifecycle_module.MANAGED_HOOK_ABI))
+
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "THALIRIS_UNSAFE_HELP_SYNTAX" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+    assert state_path.read_bytes() == original_state
+    attestation_dir = root / ".context" / "audit" / "task-start-attestations"
+    assert not attestation_dir.exists() or not list(attestation_dir.glob("*.json"))
+
+
+def test_top_level_help_rejects_unquoted_powershell_hashtable_expression(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    state_path = root / ".context" / "state.json"
+    core.task_start(root, "active state survives hashtable help expression", None, None)
+    original_state = state_path.read_bytes()
+    command = "thaliris.exe --help @{x=Remove-Item .context/state.json}"
+    payload = hook_payload(tool_name="Bash", tool_input={"command": command})
+
+    assert lifecycle_module._context_help_status(payload) == (True, True)
+    denied = json.loads(handle_hook(root, "PreToolUse", payload, lifecycle_module.MANAGED_HOOK_ABI))
+
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "THALIRIS_UNSAFE_HELP_SYNTAX" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+    assert state_path.read_bytes() == original_state
+    attestation_dir = root / ".context" / "audit" / "task-start-attestations"
+    assert not attestation_dir.exists() or not list(attestation_dir.glob("*.json"))
+
+
 def test_invalid_state_admission_requires_confirmed_recovery(tmp_path: Path, monkeypatch, capsys) -> None:
     root = repo(tmp_path)
     monkeypatch.setattr(lifecycle_module, "managed_executable_health", lambda: {"canonical_executable_available": "YES"})

@@ -283,6 +283,7 @@ def host_run_script_bytes(executable: Path, runtime_sha256: str) -> bytes:
         f"set \"THALIRIS_EXECUTABLE={executable}\"\r\n"
         f"set \"THALIRIS_RUNTIME_SHA256={runtime_sha256}\"\r\n"
         f"set \"THALIRIS_INSTALL_MANIFEST=%~dp0{runtime_identity.MANIFEST_NAME}\"\r\n"
+        "set \"THALIRIS_RUN_SCRIPT=%~f0\"\r\n"
         f"powershell.exe -NoProfile -NonInteractive -EncodedCommand {encoded} >nul 2>nul\r\n"
         "if errorlevel 1 goto thaliris_identity_rejected\r\n"
         "set \"PYTHONPATH=\"\r\n"
@@ -295,6 +296,32 @@ def host_run_script_bytes(executable: Path, runtime_sha256: str) -> bytes:
         "echo {\"ok\":false,\"status\":\"THALIRIS_RUNTIME_IDENTITY_MISMATCH\"}\r\n"
         "exit /b 1\r\n"
     ).encode("ascii")
+
+
+def installed_run_script_identity(contents: bytes) -> tuple[Path, str] | None:
+    """Recognize an exact generated runner after its manifest was removed."""
+    try:
+        source = contents.decode("ascii")
+    except UnicodeError:
+        return None
+    executable = re.search(r'^set "THALIRIS_EXECUTABLE=([^"\r\n]+)"\r$', source, re.MULTILINE)
+    identity = re.search(r'^set "THALIRIS_RUNTIME_SHA256=([0-9a-f]{64})"\r$', source, re.MULTILINE)
+    if executable is None or identity is None:
+        return None
+    path = Path(executable.group(1))
+    if not path.is_absolute():
+        return None
+    try:
+        return (path, identity.group(1)) if contents == host_run_script_bytes(path, identity.group(1)) else None
+    except ValueError:
+        return None
+
+
+def _previous_host_run_script_bytes(executable: Path, runtime_sha256: str) -> bytes:
+    """Exact runner bytes installed before self-uninstall detection."""
+    return host_run_script_bytes(executable, runtime_sha256).replace(
+        b'set "THALIRIS_RUN_SCRIPT=%~f0"\r\n', b''
+    )
 
 
 def _legacy_host_hook_script_bytes() -> bytes:
@@ -712,6 +739,37 @@ def _context_arguments(command: str) -> str | None:
     if not (canonical or pinned):
         return None
     return match.group(2) or ""
+
+
+def _trusted_host_maintenance_route(payload: dict[str, Any]) -> bool:
+    """Admit Host-only install operations through an exact installed route."""
+    command = _bash_command(payload)
+    if command is None or _context_call(payload)[0] not in {"codex-install", "codex-uninstall"}:
+        return False
+    trusted_executable = _trusted_thaliris_executable()
+    manifest_name = os.environ.get("THALIRIS_INSTALL_MANIFEST")
+    identity = os.environ.get(THALIRIS_RUNTIME_SHA256_ENV)
+    if trusted_executable is None or not manifest_name or not identity:
+        return False
+    try:
+        manifest = Path(manifest_name)
+        if manifest.is_symlink() or not manifest.is_file():
+            return False
+        runtime_identity.validate_manifest(manifest.read_bytes(), trusted_executable, identity)
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return False
+    command = command.lstrip()
+    if command.startswith("& "):
+        command = command[2:].lstrip()
+    match = re.match(r"^(\"[^\"]+\"|'[^']+'|[^\s]+)(?:\s|$)", command)
+    if match is None:
+        return False
+    token = match.group(1).strip("\"'")
+    try:
+        selected = Path(token).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    return selected in {path for path in (_trusted_installed_runner(), trusted_executable) if path is not None}
 
 
 def is_managed_handler(value: object, event: str) -> bool:
@@ -2475,6 +2533,32 @@ def _context_operation(payload: dict[str, Any]) -> str | None:
     return _context_call(payload)[0]
 
 
+def _direct_context_option(payload: dict[str, Any], names: set[str]) -> str | None:
+    """Read a scalar option from the already recognized direct CLI invocation."""
+    command = _bash_command(payload)
+    if command is None or _context_call(payload)[0] is None:
+        return None
+    arguments = _context_arguments(command)
+    if arguments is None:
+        return None
+    try:
+        tokens = shlex.split(arguments, posix=False)
+    except ValueError:
+        return None
+    values: list[str] = []
+    for index, token in enumerate(tokens):
+        option = token.strip("\"'")
+        if option in names:
+            if index + 1 >= len(tokens):
+                return None
+            values.append(tokens[index + 1].strip("\"'"))
+        else:
+            for name in names:
+                if option.startswith(name + "="):
+                    values.append(option[len(name) + 1:])
+    return values[0] if len(values) == 1 and re.fullmatch(r"[0-9a-f]{64}", values[0]) else None
+
+
 def _compound_invalid_state_mutation(payload: dict[str, Any]) -> bool:
     """Find disallowed direct mutations in a separator-delimited command.
 
@@ -2861,11 +2945,9 @@ def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_h
     if session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI:
         return _permission_deny("MANAGED_CURRENT_SESSION_NOT_ATTESTED") if event == "PreToolUse" else ""
     if bridge_sha256 is None:
-        command = _bash_command(payload)
-        bridge_match = re.search(r"(?:^|\s)--(?:bootstrap-receipt|controller-bridge-sha256)\s+([0-9a-f]{64})(?=$|\s)", command or "")
-        if bridge_match is None:
+        bridge_sha256 = _direct_context_option(payload, {"--bootstrap-receipt", "--controller-bridge-sha256"})
+        if bridge_sha256 is None:
             return _permission_deny("THALIRIS_CONTROLLER_BRIDGE_REQUIRED: acknowledge the exact managed instruction SHA-256.")
-        bridge_sha256 = bridge_match.group(1)
     nonce = secrets.token_urlsafe(24)
     token = f"v1.{session_hash}.{nonce}"
     now = time.time_ns()
@@ -3172,6 +3254,9 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
     if state_status == "ACTIVE":
         if operation == "codex-bootstrap":
             return _issue_bootstrap_observation(root, _task_id, payload, managed_hook_abi)
+        if operation in {"codex-install", "codex-uninstall"} and _trusted_host_maintenance_route(payload):
+            _best_effort_record(_record_controller_guard_event, root, payload, f"HOST_{operation}", "allowed")
+            return ""
         if operation == "task-abandon":
             return _issue_task_abandon_attestation(root, payload, managed_hook_abi)
         try:

@@ -271,6 +271,14 @@ explicitly decides whether to continue old work or use that exact recovery
 packet before starting a fresh task. An abandoned task remains incomplete and its original
 state and lifecycle evidence are preserved. On INVALID_STATE or a definition
 conflict, diagnose before edits; never delete state or invent completion.
+Host maintenance uses a separate checkout and Codex session outside the ACTIVE
+project task. That checkout can repair Thaliris source, tests, installed runtime,
+hooks, profiles, and the global instruction without changing the original task
+ledger. In an ACTIVE project, only exact installed, identity-checked direct
+`codex-install` and `codex-uninstall` calls are Host maintenance exceptions;
+ordinary source commands remain under the managed Controller boundary. A
+self-invoked `codex-uninstall` may retain an inert runner until a later direct
+cleanup or reinstall, and reports that state explicitly.
 Project initialization never requires a Codex restart. A changed global Host
 installation may require one Codex restart before its hooks, profiles, and
 instructions become active. Saved Host registration alone does not prove

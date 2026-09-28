@@ -145,6 +145,16 @@ Text outside the span remains byte-for-byte intact, and damaged, duplicate, or
 conflicting Thaliris markers require manual resolution. A newly saved global
 instruction does not prove what the current session loaded.
 
+Host maintenance uses a separate checkout and Codex session from an ACTIVE
+project task. The maintenance checkout can edit and test Thaliris source and
+replace the installed runtime, hooks, profiles, or global instruction without
+altering the other project's lifecycle ledger. An ACTIVE Controller permits
+only direct `codex-install` and `codex-uninstall` invocations through an exact
+identity-checked installed route; ordinary project commands remain blocked by
+the managed role boundary. When `codex-uninstall` is invoked through its own
+Windows runner, the runner is retained inert after manifest removal and is
+reported as such. Direct uninstall or reinstall can remove or replace it later.
+
 An owner may explicitly abort an incomplete ACTIVE task with its exact
 recovery packet. The original state and lifecycle bytes remain archived as
 incomplete, and the owner session can start a new task. A pending unbound

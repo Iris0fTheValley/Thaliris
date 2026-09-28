@@ -113,6 +113,15 @@ owner and exact old-state evidence so the Controller can continue or explicitly
 abandon the old task. Abandon preserves incomplete evidence and never creates a
 completed child. Project initialization requires no Codex restart. A global
 Host installation change may require one restart before its integration loads.
+Host maintenance of source, tests, installed runtime, hooks, profiles, and the
+global instruction can proceed in a separate checkout and Codex session while
+another project's task is ACTIVE. The ACTIVE Controller guard admits only exact
+identity-checked installed `codex-install` and `codex-uninstall` calls for Host
+maintenance; ordinary project source and test commands retain the managed role
+boundary. If uninstall runs from its own `thaliris-run.cmd`, it leaves that
+launcher inert after removing the manifest and integration, reports
+`UNINSTALLED_INERT_RUNNER_RETAINED`, and a later direct uninstall or reinstall
+can clean it up. This avoids deleting a running Windows batch file.
 
 ## Role results
 

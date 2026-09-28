@@ -826,6 +826,14 @@ explicitly decides whether to continue old work or use that exact recovery
 packet before starting a fresh task. An abandoned task remains incomplete and its original
 state and lifecycle evidence are preserved. On INVALID_STATE or a definition
 conflict, diagnose before edits; never delete state or invent completion.
+Host maintenance uses a separate checkout and Codex session outside the ACTIVE
+project task. That checkout can repair Thaliris source, tests, installed runtime,
+hooks, profiles, and the global instruction without changing the original task
+ledger. In an ACTIVE project, only exact installed, identity-checked direct
+`codex-install` and `codex-uninstall` calls are Host maintenance exceptions;
+ordinary source commands remain under the managed Controller boundary. A
+self-invoked `codex-uninstall` may retain an inert runner until a later direct
+cleanup or reinstall, and reports that state explicitly.
 Project initialization never requires a Codex restart. A changed global Host
 installation may require one Codex restart before its hooks, profiles, and
 instructions become active. Saved Host registration alone does not prove
@@ -1510,6 +1518,11 @@ terminal Host evidence first. On FOREIGN_RECOVERY_DECISION or UNKNOWN,
 explicitly decide whether to take over the old task using
 `task-abandon` and the exact recovery packet. On INVALID_STATE or bootstrap
 failure, diagnose before edits.
+For Host maintenance while another project is ACTIVE, use a separate checkout
+and Codex session. Only exact identity-checked installed `codex-install` and
+`codex-uninstall` invocations cross the ACTIVE project boundary; ordinary
+project work continues through its managed roles. A self-invoked uninstall
+reports an inert retained runner for later direct cleanup or reinstall.
 After task start, follow the effective project role router.
 ## Thaliris routing and goal coverage
 
@@ -1692,11 +1705,14 @@ def codex_install(
         script_safe = False
     elif run_script_path.exists() and run_script_bytes is not None:
         permitted = {run_script_bytes}
+        if not manifest_path.exists() and lifecycle.installed_run_script_identity(run_script_path.read_bytes()) is not None:
+            permitted.add(run_script_path.read_bytes())
         if manifest_path.is_file() and not manifest_path.is_symlink():
             try:
                 prior = manifest_path.read_bytes()
                 prior_record = runtime_identity.validate_manifest_record(prior)
                 permitted.add(host_run_script_bytes(Path(prior_record["executable"]), runtime_identity.manifest_identity(prior)))
+                permitted.add(lifecycle._previous_host_run_script_bytes(Path(prior_record["executable"]), runtime_identity.manifest_identity(prior)))
             except (OSError, ValueError, TypeError):
                 pass
         if run_script_path.read_bytes() not in permitted:
@@ -1804,6 +1820,7 @@ def codex_install(
     )
     if trust_status == "TRUSTED" and enabled_count != expected_count:
         manual.append("one_or_more_Thaliris_Host_hooks_are_disabled_by_user_state")
+    restart_needed = host_integration_ready and global_instruction_ready and changed
     return {
         "ok": host_integration_ready and global_instruction_ready,
         "changed": changed,
@@ -1824,8 +1841,8 @@ def codex_install(
         "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
         "host_session_load_status": "UNKNOWN",
         "installed_runtime_identity": runtime_hash if health["hooks_configured"] == "YES" else "UNKNOWN",
-        "install_status": "RESTART_CODEX_ONCE" if host_integration_ready and global_instruction_ready else "INSTALL_INCOMPLETE",
-        "session_restart_required": host_integration_ready and global_instruction_ready,
+        "install_status": "RESTART_CODEX_ONCE" if restart_needed else "HOST_INTEGRATION_UNCHANGED" if host_integration_ready and global_instruction_ready else "INSTALL_INCOMPLETE",
+        "session_restart_required": restart_needed,
         "host_setup_requires_session_start": bool(files),
         "project_files_touched": [],
         **_controller_bridge(),
@@ -1842,6 +1859,12 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
     script_path = home / HOST_HOOK_SCRIPT_NAME
     run_script_path = home / HOST_RUN_SCRIPT_NAME
     manifest_path = home / runtime_identity.MANIFEST_NAME
+    # cmd.exe resumes reading a running .cmd by pathname. Removing that file
+    # inside its own child process makes the caller fail after a successful
+    # uninstall, so leave an inert launcher for later direct cleanup.
+    invoked_runner = os.environ.get("THALIRIS_RUN_SCRIPT")
+    self_invoked = bool(invoked_runner and Path(invoked_runner) == run_script_path)
+    retained_inert_runner = False
     global_agents = home / "AGENTS.md"
     has_hook_manual = False
     owned_commands: dict[str, set[str]] = {event: set() for event in lifecycle.HOOK_EVENTS}
@@ -1894,21 +1917,30 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
             except OSError:
                 manual.append(str(script_path))
     if not has_hook_manual and run_script_path.exists():
-        if run_script_path.is_symlink() or not manifest_path.is_file() or manifest_path.is_symlink():
+        if run_script_path.is_symlink() or manifest_path.is_symlink():
             manual.append(str(run_script_path))
         else:
             try:
-                prior = manifest_path.read_bytes()
-                record = runtime_identity.validate_manifest_record(prior)
-                expected = host_run_script_bytes(Path(record["executable"]), runtime_identity.manifest_identity(prior))
-                if run_script_path.read_bytes() != expected:
+                if manifest_path.is_file():
+                    prior = manifest_path.read_bytes()
+                    record = runtime_identity.validate_manifest_record(prior)
+                    expected = host_run_script_bytes(Path(record["executable"]), runtime_identity.manifest_identity(prior))
+                    owned = run_script_path.read_bytes() in {
+                        expected,
+                        lifecycle._previous_host_run_script_bytes(Path(record["executable"]), runtime_identity.manifest_identity(prior)),
+                    }
+                else:
+                    owned = lifecycle.installed_run_script_identity(run_script_path.read_bytes()) is not None
+                if not owned:
                     manual.append(str(run_script_path))
+                elif self_invoked:
+                    retained_inert_runner = True
                 else:
                     run_script_path.unlink()
                     removed.append(HOST_RUN_SCRIPT_NAME)
             except (OSError, ValueError, TypeError):
                 manual.append(str(run_script_path))
-    if not has_hook_manual and not script_path.exists() and not run_script_path.exists() and manifest_path.exists():
+    if not has_hook_manual and not script_path.exists() and (not run_script_path.exists() or retained_inert_runner) and manifest_path.exists():
         if manifest_path.is_symlink() or not manifest_path.is_file():
             manual.append(str(manifest_path))
         else:
@@ -1976,8 +2008,11 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
         except (OSError, ValueError):
             manual.append(str(global_agents))
     health = lifecycle.host_hooks_health(home)
+    inert_runner = retained_inert_runner and not manifest_path.exists() and health["hooks_configured"] == "NO"
+    complete = trust_cleanup_status != "FAILED" and str(global_agents) not in manual and not manifest_path.exists() and health["hooks_configured"] == "NO"
     return {
-        "ok": trust_cleanup_status != "FAILED" and str(global_agents) not in manual,
+        "ok": complete,
+        "status": "UNINSTALLED_INERT_RUNNER_RETAINED" if complete and inert_runner else "UNINSTALLED" if complete else "UNINSTALL_INCOMPLETE",
         "changed": bool(removed),
         "target": str(home),
         "files": sorted(removed),
@@ -1989,6 +2024,7 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
         "host_hook_trust_cleanup_error": trust_cleanup_error,
         "host_profile_definition_present": _host_profile_definition_present(home),
         "host_role_catalog_status": lifecycle.HOST_ROLE_CATALOG_UNKNOWN,
+        "retained_inert_runner": inert_runner,
         "project_files_touched": [],
     }
 

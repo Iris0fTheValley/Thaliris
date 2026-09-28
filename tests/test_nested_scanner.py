@@ -88,6 +88,76 @@ def test_executor_scanner_parent_binding_and_completion(active, role):
     assert codex_adapter.task_close(active, core.task_show(active)["state"]["revision"])["status"] == "DONE"
 
 
+@pytest.mark.parametrize(
+    ("case", "field", "status"),
+    [
+        ("agent_id_mismatch", "agent_id", "MISMATCH"),
+        ("agent_id_missing", "agent_id", "MISSING"),
+        ("role_mismatch", "role", "MISMATCH"),
+        ("role_missing", "role", "MISSING"),
+        ("session_mismatch", "session", "MISMATCH"),
+        ("session_missing", "session", "MISSING"),
+        ("turn_mismatch", "turn", "MISMATCH"),
+        ("turn_missing", "turn", "MISSING"),
+        ("lifecycle_binding_missing", "lifecycle_binding", "MISSING"),
+    ],
+)
+def test_bound_role_session_denial_records_hash_only_identity_diagnostic(active, case, field, status):
+    child = start(active, agent="private-executor-id")
+    request = {**child, "tool_name": "read_file", "tool_input": {"path": "private-command-path"}}
+    if case == "agent_id_mismatch":
+        request["agent_id"] = "different-private-agent"
+    elif case == "agent_id_missing":
+        request.pop("agent_id")
+    elif case == "role_mismatch":
+        request["agent_type"] = "thaliris-reviewer"
+    elif case == "role_missing":
+        request.pop("agent_type")
+    elif case == "session_mismatch":
+        request["session_id"] = "different-private-session"
+    elif case == "session_missing":
+        request.pop("session_id")
+    elif case == "turn_mismatch":
+        request["turn_id"] = "different-private-turn"
+    elif case == "turn_missing":
+        request.pop("turn_id")
+    elif case == "lifecycle_binding_missing":
+        task_id = core.task_show(active)["state"]["task_id"]
+        path = lifecycle._lifecycle_path(active, task_id)
+        ledger = lifecycle._load_lifecycle(path, task_id)
+        ledger["children"][0]["handoff_bound"] = False
+        lifecycle._write_capture(path, ledger)
+
+    result = json.loads(lifecycle.handle_hook(active, "PreToolUse", request))
+    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "THALIRIS_BOUND_ROLE_SESSION_REQUIRED" in result["hookSpecificOutput"]["permissionDecisionReason"]
+
+    session = request.get("session_id") or "unknown-session"
+    session_dir = hashlib.sha256(session.encode("utf-8")).hexdigest()[:24]
+    runtime = json.loads((active / ".context" / "audit" / session_dir / "runtime.json").read_text(encoding="utf-8"))
+    diagnostic, = runtime["bound_role_session_denials"]
+    assert diagnostic["field_status"][field] == status
+    if status == "MISSING":
+        assert field in diagnostic["missing_fields"]
+    else:
+        assert field not in diagnostic["missing_fields"]
+    if status == "MISMATCH":
+        assert field in diagnostic["mismatch_fields"]
+    else:
+        assert field not in diagnostic["mismatch_fields"]
+    assert len(diagnostic["event_hash"]) == 64
+    serialized = json.dumps(diagnostic)
+    for raw in (
+        "private-executor-id",
+        "different-private-agent",
+        "private-session",
+        "private-turn",
+        "private-command-path",
+        "thaliris-reviewer",
+    ):
+        assert raw not in serialized
+
+
 def message(actor, target=None, tool_name="send_message"):
     tool_input = {"message": "decision-changing fact"}
     if target is not None:

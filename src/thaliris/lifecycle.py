@@ -1688,6 +1688,123 @@ def _bound_managed_child(root: Path, payload: dict[str, Any]) -> bool:
         return False
 
 
+def _child_binding_field_statuses(
+    state: dict[str, Any] | None,
+    payload: dict[str, Any],
+    matched_record: dict[str, Any] | None,
+) -> tuple[dict[str, str], dict[str, str | None]]:
+    """Describe a denied child identity using statuses and digests only."""
+    children = state.get("children") if isinstance(state, dict) else None
+    records = [child for child in children if isinstance(child, dict)] if isinstance(children, list) else None
+    agent_id = payload.get("agent_id")
+    native_type = _native_spawn_agent_type({"tool_input": payload})
+    role = _native_agent_roles().get(native_type) if native_type is not None else None
+    session_hash = _session_id_hash(payload)
+    turn_hash = _turn_id_hash(payload)
+    agent_hash = _identity_hash(agent_id)
+    identity_hashes = {
+        "agent_id": agent_hash,
+        "role": _identity_hash(native_type),
+        "session": session_hash,
+        "turn": turn_hash,
+    }
+
+    def status(value_hash: str | None, key: str, expected: object) -> str:
+        if value_hash is None:
+            raw = payload.get(key)
+            return "MISMATCH" if raw is not None and raw != "" else "MISSING"
+        if records is None or not records:
+            return "MISSING"
+        return "MATCH" if any(child.get(expected) == value_hash for child in records) else "MISMATCH"
+
+    statuses = {
+        "agent_id": status(agent_hash, "agent_id", "agent_id_hash"),
+        "session": status(session_hash, "session_id", "session_id_hash"),
+        "turn": status(turn_hash, "turn_id", "turn_id_hash"),
+    }
+    if native_type is None:
+        supplied_type = payload.get("agent_type")
+        statuses["role"] = "MISMATCH" if supplied_type is not None and supplied_type != "" else "MISSING"
+    elif records is None or not records:
+        statuses["role"] = "MISSING"
+    else:
+        statuses["role"] = "MATCH" if any(
+            child.get("agent_type") == native_type and child.get("role") == role
+            for child in records
+        ) else "MISMATCH"
+
+    if matched_record is not None:
+        statuses["lifecycle_binding"] = "MATCH"
+    elif records is None:
+        statuses["lifecycle_binding"] = "UNKNOWN"
+    elif not records or any(value == "MISSING" for value in statuses.values()):
+        statuses["lifecycle_binding"] = "MISSING"
+    else:
+        exact_identity = next((child for child in records if
+            child.get("agent_id_hash") == agent_hash
+            and child.get("agent_type") == native_type
+            and child.get("role") == role
+            and child.get("session_id_hash") == session_hash
+            and child.get("turn_id_hash") == turn_hash), None)
+        if exact_identity is None:
+            statuses["lifecycle_binding"] = "MISMATCH"
+        elif exact_identity.get("managed") is not True or exact_identity.get("handoff_bound") is not True:
+            statuses["lifecycle_binding"] = "MISSING"
+        else:
+            statuses["lifecycle_binding"] = "MISMATCH"
+    return statuses, identity_hashes
+
+
+def _bound_child_pretool_diagnostic(root: Path, payload: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    """Return the guard's exact binding result and hash-only failure details."""
+    try:
+        task_id = _active_task_id(root)
+        if task_id is None:
+            statuses, hashes = _child_binding_field_statuses(None, payload, None)
+            return False, {"field_status": statuses, "identity_hashes": hashes}
+        with core._lock(root):
+            state = _load_lifecycle(_lifecycle_path(root, task_id), task_id)
+            record = _bound_child_record(state, payload)
+            statuses, hashes = _child_binding_field_statuses(state, payload, record)
+            return record is not None, {"field_status": statuses, "identity_hashes": hashes}
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        statuses, hashes = _child_binding_field_statuses(None, payload, None)
+        statuses["lifecycle_binding"] = "UNKNOWN"
+        return False, {"field_status": statuses, "identity_hashes": hashes}
+
+
+def _record_bound_role_session_denial(root: Path, payload: dict[str, Any], diagnostic: dict[str, Any]) -> None:
+    """Record a bounded, hash-only diagnostic for one denied child PreToolUse."""
+    observed_at_ns = time.time_ns()
+    call_id = payload.get("tool_call_id") or payload.get("call_id") or payload.get("id")
+    call_id_hash = _identity_hash(call_id)
+    event_hash = hashlib.sha256(json.dumps({
+        "identity_hashes": diagnostic.get("identity_hashes"),
+        "call_id_hash": call_id_hash,
+        "observed_at_ns": observed_at_ns,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    statuses = diagnostic.get("field_status")
+    if not isinstance(statuses, dict):
+        return
+    item = {
+        "event_hash": event_hash,
+        "denial_code": "THALIRIS_BOUND_ROLE_SESSION_REQUIRED",
+        "identity_hashes": diagnostic.get("identity_hashes"),
+        "field_status": statuses,
+        "missing_fields": sorted(key for key, value in statuses.items() if value == "MISSING"),
+        "mismatch_fields": sorted(key for key, value in statuses.items() if value == "MISMATCH"),
+        "observed_at_ns": observed_at_ns,
+    }
+    with core._lock(root):
+        path = _session_dir(root, payload) / "runtime.json"
+        state = _load_runtime(path)
+        _runtime_metadata(state, payload)
+        records = state.setdefault("bound_role_session_denials", [])
+        if isinstance(records, list) and len(records) < MAX_RAW_RECORDS:
+            records.append(item)
+        _write_capture(path, state)
+
+
 def _bound_child_parent_message(root: Path, payload: dict[str, Any]) -> bool:
     """Permit only an exact bound child's unambiguous native parent target."""
     target = _delegation_input(payload).get("target")
@@ -2720,10 +2837,13 @@ def _recovery_command_admitted(root: Path, payload: dict[str, Any], diagnostic: 
 def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
     """Allow reads with telemetry; block only mechanical protocol mutations."""
     _best_effort_record(_record_child_runtime_event, root, payload, "PreToolUse")
-    if managed_task_state(root)[0] == "ACTIVE" and not _bound_managed_child(root, payload):
-        return _permission_deny(
-            "THALIRIS_BOUND_ROLE_SESSION_REQUIRED: ACTIVE child execution requires a currently authorized, handoff-bound exact Thaliris role session."
-        )
+    if managed_task_state(root)[0] == "ACTIVE":
+        bound, diagnostic = _bound_child_pretool_diagnostic(root, payload)
+        if not bound:
+            _best_effort_record(_record_bound_role_session_denial, root, payload, diagnostic)
+            return _permission_deny(
+                "THALIRIS_BOUND_ROLE_SESSION_REQUIRED: ACTIVE child execution requires a currently authorized, handoff-bound exact Thaliris role session."
+            )
     tool = payload.get("tool_name") or payload.get("tool")
     if not isinstance(tool, str):
         return ""

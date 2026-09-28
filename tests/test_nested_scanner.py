@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import json
 import hashlib
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from contextlib import contextmanager
 from pathlib import Path
 import subprocess
+import threading
 
 import pytest
 
@@ -186,6 +189,38 @@ def test_unavailable_lifecycle_ledger_reports_unknown_identity_comparisons(activ
     serialized = json.dumps(diagnostic)
     for raw in ("private-executor-id", "root-session", "executor-turn", "private-command-path", "thaliris-implementer"):
         assert raw not in serialized
+
+
+@pytest.mark.parametrize("wrong_agent", [False, True])
+def test_bound_child_pretool_waits_for_concurrent_context_operation(active, monkeypatch, wrong_agent):
+    child = start(active)
+    request = {**child, "tool_name": "Bash", "tool_input": {"command": "thaliris task-status"}}
+    if wrong_agent:
+        request["agent_id"] = "different-agent"
+    original_lock = core._lock
+    attempting_lock = threading.Event()
+
+    @contextmanager
+    def observed_lock(root):
+        if threading.current_thread() is not threading.main_thread():
+            attempting_lock.set()
+        with original_lock(root):
+            yield
+
+    monkeypatch.setattr(core, "_lock", observed_lock)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with core._lock(active):
+            result = pool.submit(lifecycle.handle_hook, active, "PreToolUse", request)
+            assert attempting_lock.wait(timeout=5)
+            with pytest.raises(FutureTimeoutError):
+                result.result(timeout=0.2)
+        decision = json.loads(result.result(timeout=5))["hookSpecificOutput"]
+        if wrong_agent:
+            assert decision["permissionDecision"] == "deny"
+            assert "THALIRIS_BOUND_ROLE_SESSION_REQUIRED" in decision["permissionDecisionReason"]
+        else:
+            assert decision["permissionDecision"] == "allow"
+            assert decision["updatedInput"]["command"].startswith("thaliris task-status ")
 
 
 def message(actor, target=None, tool_name="send_message"):

@@ -14,6 +14,28 @@ import sys
 import tempfile
 import uuid
 
+if os.name == "nt":
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class _Overlapped(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_void_p),
+            ("InternalHigh", ctypes.c_void_p),
+            ("Offset", wintypes.DWORD),
+            ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
+        ]
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.LockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+                                     wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(_Overlapped)]
+    _kernel32.LockFileEx.restype = wintypes.BOOL
+    _kernel32.UnlockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                       wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(_Overlapped)]
+    _kernel32.UnlockFileEx.restype = wintypes.BOOL
+
 from .markdown import Entry, durable_descriptors, evidence_status, freshness_detail_budget_placeholder, parse, parse_text
 from .models import ContextConfig
 
@@ -61,28 +83,29 @@ def _repo_root(root: Path) -> Path:
 
 @contextmanager
 def _lock(root: Path):
-    """A non-blocking stdlib lock: concurrent mutations fail closed."""
+    """Serialize context operations until the current holder releases the lock."""
     path = _safe(root, ".context/context.lock")
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = path.open("a+b")
     acquired = False
+    overlap = None
     try:
-        handle.seek(0); handle.write(b"0"); handle.flush()
         if os.name == "nt":
-            import msvcrt
-            try:
-                handle.seek(0); msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1); acquired = True
-            except OSError as exc: raise ValueError("context operation already in progress") from exc
+            overlap = _Overlapped()
+            os_handle = wintypes.HANDLE(msvcrt.get_osfhandle(handle.fileno()))
+            if not _kernel32.LockFileEx(os_handle, 0x2, 0, 1, 0, ctypes.byref(overlap)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            acquired = True
         else:
             import fcntl
-            try: fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB); acquired = True
-            except OSError as exc: raise ValueError("context operation already in progress") from exc
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            acquired = True
         yield
     finally:
         try:
             if acquired and os.name == "nt":
-                import msvcrt
-                handle.seek(0); msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                if not _kernel32.UnlockFileEx(os_handle, 0, 1, 0, ctypes.byref(overlap)):
+                    raise ctypes.WinError(ctypes.get_last_error())
             elif acquired:
                 import fcntl
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

@@ -312,7 +312,10 @@ def installed_run_script_identity(contents: bytes) -> tuple[Path, str] | None:
     if not path.is_absolute():
         return None
     try:
-        return (path, identity.group(1)) if contents == host_run_script_bytes(path, identity.group(1)) else None
+        return (path, identity.group(1)) if contents in {
+            host_run_script_bytes(path, identity.group(1)),
+            _previous_host_run_script_bytes(path, identity.group(1)),
+        } else None
     except ValueError:
         return None
 
@@ -1526,7 +1529,10 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
     pending = value.get("pending_authorized_spawn")
     if pending is not None and (
         not isinstance(pending, dict)
-        or set(pending) != {"role", "expected_agent_type", "session_id_hash", "authorized_sequence", "task_name_hash", "handoff_id", "task_revision", "producer", "payload_hash", "created_at_ns", "parent_agent_id_hash", "parent_role", "parent_turn_id_hash", "depth", "root_handoff_id", "spawn_tool_use_id_hash"}
+        or set(pending) not in (
+            {"role", "expected_agent_type", "session_id_hash", "authorized_sequence", "task_name_hash", "handoff_id", "task_revision", "producer", "payload_hash", "created_at_ns", "parent_agent_id_hash", "parent_role", "parent_turn_id_hash", "depth", "root_handoff_id", "spawn_tool_use_id_hash"},
+            {"role", "expected_agent_type", "session_id_hash", "authorized_sequence", "task_name_hash", "handoff_id", "task_revision", "producer", "payload_hash", "created_at_ns", "parent_agent_id_hash", "parent_role", "parent_turn_id_hash", "depth", "root_handoff_id", "spawn_tool_use_id_hash", "spawn_turn_id_hash"},
+        )
         or pending.get("role") not in set(_native_agent_roles().values())
         or pending.get("expected_agent_type") not in _native_agent_roles()
         or not isinstance(pending.get("session_id_hash"), str)
@@ -1536,6 +1542,8 @@ def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
         or pending.get("producer") != "controller"
         or not isinstance(pending.get("payload_hash"), str)
         or type(pending.get("created_at_ns")) is not int
+        or ("spawn_turn_id_hash" in pending and pending["spawn_turn_id_hash"] is not None
+            and (not isinstance(pending["spawn_turn_id_hash"], str) or re.fullmatch(r"[0-9a-f]{64}", pending["spawn_turn_id_hash"]) is None))
         or not _valid_parent_metadata(pending)
     ):
         raise ValueError("invalid lifecycle authorized spawns")
@@ -1615,11 +1623,22 @@ def _spawn_parent_matches(root: Path, record: dict[str, Any], payload: dict[str,
     ):
         return False
     expected = record.get("spawn_tool_use_id_hash")
-    if expected is None and _session_id_hash(payload) in _read_abandoned_owner_hashes(root):
-        # After an owner abort, an uncorrelated late spawn result could be
-        # mistaken for a fresh reservation in the same native session.
+    if expected is not None:
+        return expected == _identity_hash(payload.get("tool_use_id"))
+    if _session_id_hash(payload) not in _read_abandoned_owner_hashes(root):
+        return True
+    # A result without a native call ID must match the exact reserving turn
+    # and handoff after an owner abort. Older reservations without a turn
+    # remain uncorrelatable in the reused session.
+    turn = record.get("spawn_turn_id_hash")
+    handoff = _delegation_text(_delegation_input(payload))
+    if turn is None or turn != _turn_id_hash(payload) or not isinstance(handoff, str):
         return False
-    return expected is None or expected == _identity_hash(payload.get("tool_use_id"))
+    if record.get("payload_hash") != hashlib.sha256(handoff.encode("utf-8")).hexdigest():
+        return False
+    if record.get("expected_agent_type", record.get("agent_type")) != _native_spawn_agent_type(payload):
+        return False
+    return not _matches_abandoned_spawn(root, payload)
 
 
 def _bound_child_record(state: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -1804,6 +1823,7 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any], expected_task_id
                 "depth": 2 if parent else 1,
                 "root_handoff_id": parent["handoff_id"] if parent else handoff_id,
                 "spawn_tool_use_id_hash": _identity_hash(payload.get("tool_use_id")) if isinstance(payload.get("tool_use_id"), str) else None,
+                "spawn_turn_id_hash": _turn_id_hash(payload),
             }
             state["pending_spawn_terminal_evidence"] = None
             state["stall"] = None
@@ -1935,7 +1955,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
                 "terminal_state": "RUNNING",
                 "native_terminal_status": None,
                 "task_name_hash": pending.get("task_name_hash") if bound else None,
-                **{key: pending.get(key) if bound else None for key in ("parent_agent_id_hash", "parent_role", "parent_turn_id_hash", "depth", "root_handoff_id", "spawn_tool_use_id_hash")},
+                **{key: pending.get(key) if bound else None for key in ("parent_agent_id_hash", "parent_role", "parent_turn_id_hash", "depth", "root_handoff_id", "spawn_tool_use_id_hash", "spawn_turn_id_hash")},
             })
             if bound:
                 state["pending_authorized_spawn"] = None
@@ -3356,6 +3376,50 @@ def _read_abandoned_owner_hashes(root: Path) -> set[str]:
     return set(owners)
 
 
+def _read_abandoned_spawn_provenance(root: Path) -> tuple[set[str], list[dict[str, Any]]]:
+    """Read exact old reservations; absent legacy provenance remains unknown."""
+    path = _abandoned_child_fence_path(root)
+    if not path.is_file():
+        return set(), []
+    value = json.loads(path.read_text(encoding="utf-8"))
+    complete = value.get("owner_spawn_provenance_complete", [])
+    records = value.get("owner_spawn_provenance", [])
+    if not isinstance(complete, list) or not isinstance(records, list):
+        raise ValueError("invalid abandoned spawn provenance")
+    if any(not isinstance(item, str) or re.fullmatch(r"[0-9a-f]{64}", item) is None for item in complete):
+        raise ValueError("invalid abandoned spawn provenance")
+    required = {"session_id_hash", "turn_id_hash", "payload_hash", "agent_type", "parent_agent_id_hash"}
+    if any(not isinstance(item, dict) or set(item) != required or
+           not isinstance(item["session_id_hash"], str) or
+           re.fullmatch(r"[0-9a-f]{64}", item["session_id_hash"]) is None or
+           any(value is not None and (not isinstance(value, str) or not value)
+               for key, value in item.items() if key != "session_id_hash")
+           for item in records):
+        raise ValueError("invalid abandoned spawn provenance")
+    return set(complete), records
+
+
+def _matches_abandoned_spawn(root: Path, payload: dict[str, Any]) -> bool:
+    session = _session_id_hash(payload)
+    if session not in _read_abandoned_owner_hashes(root):
+        return False
+    complete, records = _read_abandoned_spawn_provenance(root)
+    if session not in complete:
+        return True
+    text = _delegation_text(_delegation_input(payload))
+    if not isinstance(text, str):
+        return True
+    current = {
+        "turn_id_hash": _turn_id_hash(payload),
+        "payload_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "agent_type": _native_spawn_agent_type(payload),
+        "parent_agent_id_hash": _identity_hash(payload.get("agent_id")),
+    }
+    return any(item["session_id_hash"] == session and
+               all(item[key] is None or item[key] == current[key] for key in current)
+               for item in records)
+
+
 def _abandoned_child_fenced(root: Path, payload: dict[str, Any]) -> bool:
     identity = {
         "agent_id_hash": _identity_hash(payload.get("agent_id")),
@@ -3458,8 +3522,21 @@ def task_abandon(
             raise ValueError("task-abandon recovery session has old task activity evidence")
         child_fence = _read_abandoned_child_fence(root)
         owner_fence = _read_abandoned_owner_hashes(root)
+        provenance_complete, spawn_provenance = _read_abandoned_spawn_provenance(root)
         if owner_abort:
+            previously_fenced = recovery_session_hash in owner_fence
             owner_fence.add(recovery_session_hash)
+            if not previously_fenced:
+                provenance_complete.add(recovery_session_hash)
+            for child in lifecycle_state.get("children", []):
+                if isinstance(child, dict) and child.get("managed") is True and child.get("session_id_hash") == recovery_session_hash:
+                    spawn_provenance.append({
+                        "session_id_hash": recovery_session_hash,
+                        "turn_id_hash": child.get("spawn_turn_id_hash"),
+                        "payload_hash": child.get("payload_hash"),
+                        "agent_type": child.get("agent_type"),
+                        "parent_agent_id_hash": child.get("parent_agent_id_hash"),
+                    })
         old_child_count = 0
         for child in lifecycle_state.get("children", []):
             if not isinstance(child, dict) or child.get("managed") is not True:
@@ -3507,8 +3584,9 @@ def task_abandon(
         _write_capture(_session_fence_path(root), {"version": 1, "session_id_hashes": sorted(fence)})
         if _read_session_fence(root) != fence:
             raise ValueError("task-abandon session fence verification failed")
-        _write_capture(_abandoned_child_fence_path(root), {"version": 1, "children": child_fence, "owner_session_id_hashes": sorted(owner_fence)})
-        if _read_abandoned_child_fence(root) != child_fence or _read_abandoned_owner_hashes(root) != owner_fence:
+        _write_capture(_abandoned_child_fence_path(root), {"version": 1, "children": child_fence, "owner_session_id_hashes": sorted(owner_fence), "owner_spawn_provenance_complete": sorted(provenance_complete), "owner_spawn_provenance": spawn_provenance})
+        if (_read_abandoned_child_fence(root) != child_fence or _read_abandoned_owner_hashes(root) != owner_fence
+                or _read_abandoned_spawn_provenance(root) != (provenance_complete, spawn_provenance)):
             raise ValueError("task-abandon child fence verification failed")
         state_path.unlink()
     return {"ok": True, "status": "ABANDONED", "task_id": task_id, "revision": revision, "archive": str(archive.relative_to(root)).replace("\\", "/"), "lifecycle_status": "RECOVERED_INCOMPLETE"}

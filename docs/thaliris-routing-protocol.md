@@ -154,6 +154,9 @@ identity-checked installed route; ordinary project commands remain blocked by
 the managed role boundary. When `codex-uninstall` is invoked through its own
 Windows runner, the runner is retained inert after manifest removal and is
 reported as such. Direct uninstall or reinstall can remove or replace it later.
+The previous exact runner template has no self-invocation marker, so uninstall
+also retains it on the first call while its manifest exists. A later direct
+call removes the inert runner.
 
 An owner may explicitly abort an incomplete ACTIVE task with its exact
 recovery packet. The original state and lifecycle bytes remain archived as
@@ -163,6 +166,12 @@ that reservation. An unknown child identity cannot be fenced. Pending-spawn
 recovery accepts a name-bound native `interrupted`, `errored`, or `shutdown`
 observation, or an exact spawn failure callback; `not_found`, successful
 completion, absent callbacks, and timeouts do not release the reservation.
+After owner abort, a spawn callback without a native tool call ID attaches a
+name only when its session, reserving turn, agent type, and handoff match the
+new reservation and differ from every recorded old spawn. Missing old
+provenance or an identical old and new spawn remains uncorrelatable and fails
+closed. A native tool call ID, when present on both events, remains the exact
+correlation key.
 
 `SubagentStart` is lifecycle-only. It validates the authorized native Codex child and binds
 identity, role, session, start time, provenance, handoff ID, and payload hash.

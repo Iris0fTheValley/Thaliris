@@ -294,9 +294,41 @@ def test_owner_abort_fences_bound_old_child_identity_but_retains_owner(tmp_path)
     assert lifecycle.handle_hook(tmp_path, "PreToolUse", spawn) == ""
     fresh_path = lifecycle._lifecycle_path(tmp_path, fresh["task_id"])
     before = fresh_path.read_bytes()
-    # A late result without native tool identity cannot attach its old name
-    # to a new reservation in the owner's reused session.
-    lifecycle.handle_hook(tmp_path, "PostToolUse", {**spawn, "tool_response": {"task_name": "/root/old-child"}})
+    # The old callback keeps its original turn and handoff. It cannot attach
+    # an old native name to the fresh reservation in the reused owner session.
+    old_spawn = {**spawn, "turn_id": "turn", "tool_input": {**spawn["tool_input"], "message": "old handoff"}}
+    lifecycle.handle_hook(tmp_path, "PostToolUse", {**old_spawn, "tool_response": {"task_name": "/root/old-child"}})
+    assert fresh_path.read_bytes() == before
+    fresh_child = {"session_id": "old-controller-session", "turn_id": "fresh-child-turn", "agent_id": "fresh-child-id", "agent_type": "thaliris-implementer"}
+    assert lifecycle.handle_hook(tmp_path, "SubagentStart", fresh_child) == ""
+    lifecycle.handle_hook(tmp_path, "PostToolUse", {**spawn, "tool_response": {"task_name": "/root/fresh-child"}})
+    current = json.loads(fresh_path.read_text(encoding="utf-8"))
+    assert current["children"][-1]["task_name_hash"] == lifecycle._identity_hash("/root/fresh-child")
+    assert lifecycle.handle_hook(tmp_path, "SubagentStop", fresh_child) == ""
+    lifecycle.handle_hook(tmp_path, "PostToolUse", {
+        "session_id": "old-controller-session", "turn_id": "fresh-turn", "tool_name": "list_agents",
+        "tool_response": {"agents": [{"agent_name": "/root/fresh-child", "agent_status": {"completed": "done"}}]},
+    })
+    child_state = json.loads(fresh_path.read_text(encoding="utf-8"))["children"][-1]
+    assert child_state["native_terminal_status"] == "completed"
+
+
+def test_owner_abort_same_turn_and_handoff_fails_closed_without_native_call_id(tmp_path):
+    expected, _, _ = _fixture(tmp_path)
+    path = lifecycle._lifecycle_path(tmp_path, expected["task_id"])
+    lifecycle.record_task_start_owner(tmp_path, expected["task_id"], hashlib.sha256(b"old-controller-session").hexdigest())
+    old_child = {"session_id": "old-controller-session", "turn_id": "old-child-turn", "agent_id": "old-child", "agent_type": "thaliris-implementer"}
+    assert lifecycle.handle_hook(tmp_path, "SubagentStart", old_child) == ""
+    expected["lifecycle_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    _abandon(tmp_path, expected, _proof(tmp_path, "old-controller-session"))
+    fresh = core.task_start(tmp_path, "fresh task", None, None)
+    lifecycle.record_task_start_owner(tmp_path, fresh["task_id"], hashlib.sha256(b"old-controller-session").hexdigest())
+    spawn = {"session_id": "old-controller-session", "turn_id": "turn", "tool_name": "spawn_agent",
+             "tool_input": {"fork_turns": "none", "agent_type": "thaliris-implementer", "message": "old handoff"}}
+    assert lifecycle.handle_hook(tmp_path, "PreToolUse", spawn) == ""
+    fresh_path = lifecycle._lifecycle_path(tmp_path, fresh["task_id"])
+    before = fresh_path.read_bytes()
+    lifecycle.handle_hook(tmp_path, "PostToolUse", {**spawn, "tool_response": {"task_name": "/root/ambiguous"}})
     assert fresh_path.read_bytes() == before
 
 

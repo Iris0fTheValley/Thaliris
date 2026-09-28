@@ -137,6 +137,26 @@ def test_self_invoked_uninstall_retains_inert_runner_for_direct_cleanup_or_reins
     assert (home / runtime_identity.MANIFEST_NAME).exists()
 
 
+def test_previous_runner_without_self_marker_is_retained_until_direct_cleanup(tmp_path: Path, monkeypatch, pinned_test_thaliris) -> None:
+    home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    assert codex_adapter.codex_install()["ok"] is True
+    runner = home / lifecycle.HOST_RUN_SCRIPT_NAME
+    manifest = (home / runtime_identity.MANIFEST_NAME).read_bytes()
+    record = runtime_identity.validate_manifest_record(manifest)
+    old_runner = lifecycle._previous_host_run_script_bytes(Path(record["executable"]), runtime_identity.manifest_identity(manifest))
+    runner.write_bytes(old_runner)
+    monkeypatch.delenv("THALIRIS_RUN_SCRIPT", raising=False)
+    removed = codex_adapter.codex_uninstall()
+    assert removed["ok"] is True
+    assert removed["retained_inert_runner"] is True
+    assert runner.read_bytes() == old_runner
+    assert not (home / runtime_identity.MANIFEST_NAME).exists()
+    cleaned = codex_adapter.codex_uninstall()
+    assert cleaned["ok"] is True
+    assert not runner.exists()
+
+
 def test_separate_host_checkout_stays_available_when_project_is_active(tmp_path: Path) -> None:
     from thaliris import core
     active = tmp_path / "active-project"

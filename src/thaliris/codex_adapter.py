@@ -1921,19 +1921,26 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
             manual.append(str(run_script_path))
         else:
             try:
+                prior_runner = False
                 if manifest_path.is_file():
                     prior = manifest_path.read_bytes()
                     record = runtime_identity.validate_manifest_record(prior)
                     expected = host_run_script_bytes(Path(record["executable"]), runtime_identity.manifest_identity(prior))
-                    owned = run_script_path.read_bytes() in {
+                    prior_bytes = lifecycle._previous_host_run_script_bytes(Path(record["executable"]), runtime_identity.manifest_identity(prior))
+                    runner_bytes = run_script_path.read_bytes()
+                    prior_runner = runner_bytes == prior_bytes
+                    owned = runner_bytes in {
                         expected,
-                        lifecycle._previous_host_run_script_bytes(Path(record["executable"]), runtime_identity.manifest_identity(prior)),
+                        prior_bytes,
                     }
                 else:
                     owned = lifecycle.installed_run_script_identity(run_script_path.read_bytes()) is not None
                 if not owned:
                     manual.append(str(run_script_path))
-                elif self_invoked:
+                elif self_invoked or prior_runner:
+                    # The previous exact runner did not set THALIRIS_RUN_SCRIPT.
+                    # It may be executing this uninstall; preserve it until a
+                    # later direct call after its manifest has been removed.
                     retained_inert_runner = True
                 else:
                     run_script_path.unlink()

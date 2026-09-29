@@ -187,6 +187,31 @@ for _profile_name, _profile_hash in _99A58FC_FOCUSED_PROFILE_HASHES.items():
         _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
         | frozenset({_profile_hash})
     )
+# Exact SHA-256 identities of all eleven generated profiles rendered by the
+# immutable 210782b1d652e8266859e2999e558be8e061d46f revision. Its packaged
+# roles.py and codex_adapter.py were byte-identical to those source files; the
+# renderer output was independently matched against the prior immutable
+# installed runtime and all eleven effective Host profiles. The focused test
+# re-renders these bytes from that source revision. These filename-bound hashes
+# establish historical generated ownership only.
+_210782B1_GENERATED_AGENT_PROFILE_HASHES = {
+    "thaliris-curator.toml": "828ff942256ffe8c1507023db6940069e7d88ef740edcd8ba01ad72fc4a0b115",
+    "thaliris-focused-implementer-astra-medium.toml": "2bbcd612c4697025a5ca3948e0b07215995c9e5e0886e78e168c7a483a81882e",
+    "thaliris-focused-implementer-xhigh.toml": "957d4bee345c4ad4dc9f65deabfdc87a1a8b8d32cf8d33da90846504af6b8300",
+    "thaliris-focused-implementer.toml": "0f408384609c2a2217d7268a8c29afa28560299130c8de072d3bdd2cadcc0b1a",
+    "thaliris-implementer.toml": "74bd3a8a9cfdc7d69c19060c0666dcc398a220f36955214a02121786c705becc",
+    "thaliris-investigator.toml": "cc6cde5de4260746b590b6d8c603f69f4c2b9479a77505bc0d3631ae51510ad4",
+    "thaliris-reasoning-specialist-astra-medium.toml": "e747753a31408500bb7f4eddf44348b5096e0d1d946163395edf4012fa2dbcea",
+    "thaliris-reasoning-specialist-xhigh.toml": "9bbf7a90b54d5d850e262682128aa787d0c974f12c397fcb8e2c8b03f4ad1eb3",
+    "thaliris-reasoning-specialist.toml": "4533322a06ee4b3bba7fb9d07e8eb2252b6a686884333324ebef3af6bf651a3e",
+    "thaliris-reviewer.toml": "f0998da30f8029536151fdb155a80548b6093e1866b387d0dd98b459c9f0b3b2",
+    "thaliris-verifier.toml": "81a9e2a9526962c0facf064e40b22b9ec261b1af9d2a6545bb41da21b1033f90",
+}
+for _profile_name, _profile_hash in _210782B1_GENERATED_AGENT_PROFILE_HASHES.items():
+    _KNOWN_GENERATED_AGENT_PROFILE_HASHES[_profile_name] = (
+        _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
+        | frozenset({_profile_hash})
+    )
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "7009fc69d97ca403404c57d739e354cc3ebf7656fdca690c0fd60b2cfa9f6267",  # 9b5bcf2
     # 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31, blob 7dfd7ab321c4ec1f1c32bd02b1d87f1b88d2aef7.

@@ -380,6 +380,61 @@ def test_8a3fe930_changed_profiles_upgrade_exact_bytes_and_preserve_edits(
         assert f"agents/{name}" in result["files"]
 
 
+def test_210782b1_all_profiles_migrate_and_unknown_modifications_stay_manual(
+    tmp_path: Path, monkeypatch, pinned_test_thaliris,
+) -> None:
+    expected = {
+        "thaliris-curator.toml": "828ff942256ffe8c1507023db6940069e7d88ef740edcd8ba01ad72fc4a0b115",
+        "thaliris-focused-implementer-astra-medium.toml": "2bbcd612c4697025a5ca3948e0b07215995c9e5e0886e78e168c7a483a81882e",
+        "thaliris-focused-implementer-xhigh.toml": "957d4bee345c4ad4dc9f65deabfdc87a1a8b8d32cf8d33da90846504af6b8300",
+        "thaliris-focused-implementer.toml": "0f408384609c2a2217d7268a8c29afa28560299130c8de072d3bdd2cadcc0b1a",
+        "thaliris-implementer.toml": "74bd3a8a9cfdc7d69c19060c0666dcc398a220f36955214a02121786c705becc",
+        "thaliris-investigator.toml": "cc6cde5de4260746b590b6d8c603f69f4c2b9479a77505bc0d3631ae51510ad4",
+        "thaliris-reasoning-specialist-astra-medium.toml": "e747753a31408500bb7f4eddf44348b5096e0d1d946163395edf4012fa2dbcea",
+        "thaliris-reasoning-specialist-xhigh.toml": "9bbf7a90b54d5d850e262682128aa787d0c974f12c397fcb8e2c8b03f4ad1eb3",
+        "thaliris-reasoning-specialist.toml": "4533322a06ee4b3bba7fb9d07e8eb2252b6a686884333324ebef3af6bf651a3e",
+        "thaliris-reviewer.toml": "f0998da30f8029536151fdb155a80548b6093e1866b387d0dd98b459c9f0b3b2",
+        "thaliris-verifier.toml": "81a9e2a9526962c0facf064e40b22b9ec261b1af9d2a6545bb41da21b1033f90",
+    }
+    assert codex_adapter._210782B1_GENERATED_AGENT_PROFILE_HASHES == expected
+    assert set(expected) == set(roles.agent_profiles())
+
+    historical = {
+        name: _historical_profile("210782b1", name)
+        for name in expected
+    }
+    for name, value in historical.items():
+        assert hashlib.sha256(value).hexdigest() == expected[name]
+        assert codex_adapter._agent_profile_state(value, name) == "legacy"
+        assert codex_adapter._agent_profile_state(value + b"\nuser edit\n", name) == "user"
+
+    host_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(host_home))
+    _initialized_repo(tmp_path)
+    agents = host_home / "agents"
+    agents.mkdir(parents=True)
+    for name, value in historical.items():
+        (agents / name).write_bytes(value)
+
+    edited_name = "thaliris-reviewer.toml"
+    edited = historical[edited_name] + b"\nunknown modification\n"
+    (agents / edited_name).write_bytes(edited)
+
+    result = codex_adapter.codex_install()
+
+    assert (agents / edited_name).read_bytes() == edited
+    assert codex_adapter._agent_profile_state(edited, edited_name) == "user"
+    assert str(agents / edited_name) in result["manual_action_required"]
+    assert f"agents/{edited_name}" not in result["files"]
+    assert {
+        item.removeprefix("agents/")
+        for item in result["files"]
+        if item.startswith("agents/")
+    } == set(expected) - {edited_name}
+    for name in set(expected) - {edited_name}:
+        assert codex_adapter._agent_profile_state((agents / name).read_bytes(), name) == "current"
+
+
 def test_child_communication_and_slice_routing_contract_is_shared() -> None:
     communication = (
         "ordinary progress, heartbeat, or partial-completion messages",

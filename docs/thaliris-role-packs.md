@@ -28,6 +28,11 @@ each explicit user goal has been addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic rule, not a mechanical checklist
 or state machine.
 
+When completed Investigator discovery is selected for a later semantic slice,
+the Controller handoff carries confirmed facts, exact source locations and
+affected surfaces, relevant unknowns or contradictions, and covered and
+uncovered scope. The next implementation role starts from that selected map.
+
 ## Shared Role Result
 
 Return a distilled result by default:
@@ -128,7 +133,12 @@ focused working set. They make local code decisions within their accepted packet
 assigned slices. Once the slice goal, authority, and boundary are known, batch
 the relevant source, test, generation, and documentation reads, form a plan, and
 make coherent edits. Avoid per-patch, per-read, or per-grep reasoning rounds
-unless new information could change direction. Keep the working set focused.
+unless new information could change direction. For selected discovery from an
+earlier slice, directly reopen decision-critical originals, call chains, diffs,
+and tests as needed. Do not reconstruct the covered broad inventory or delegate
+a Scanner over that same surface. A new Scanner may collect only a genuinely
+uncovered decision-changing evidence gap needing independent broad discovery.
+Keep the working set focused.
 Read known, decision-critical sources directly. Use Scanner work to discover over
 a larger or unknown evidence surface, or to compress a clearly large,
 low-reasoning-density collection when delegation removes an independent

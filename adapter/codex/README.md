@@ -80,6 +80,14 @@ low-reasoning-density collection that can be compressed independently. Small
 local searches may be direct. There is no per-read delegation deliberation or
 file, token, or search-count threshold. Delegate when doing so removes an
 independent working set.
+When completed Investigator discovery is selected for a later slice, the
+Controller handoff supplies its facts, exact source locations and affected
+surfaces, relevant unknowns or contradictions, and covered and uncovered
+scope. The implementation role starts from that map and directly reopens
+decision-critical originals, call chains, diffs, and tests as needed. It does
+not repeat the covered broad inventory or delegate a Scanner over that surface.
+A fresh Scanner can collect a genuinely uncovered decision-changing evidence
+gap that needs independent broad discovery, limited to that gap.
 Focused Implementer continues complex implementation within its assigned slice
 when it still benefits from focused reasoning, closing the slice when its
 accepted semantic and implementation work is complete. A deterministic

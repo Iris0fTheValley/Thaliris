@@ -19,6 +19,11 @@ thresholds. Prefer slices that can each be independently understood,
 implemented, verified, committed, and closed. A completed slice returns
 distilled state, its commit reference, and verification evidence; discard its
 working set when closed.
+When completed Investigator discovery is selected for a later semantic slice,
+the Controller handoff carries its confirmed facts, exact source locations and
+affected surfaces, relevant unknowns or contradictions, and covered and
+uncovered scope. This lets the next implementation role use the selected map
+without reconstructing the same broad inventory.
 Before choosing an opportunistic discovered slice, the Controller confirms that
 each explicit user goal has been addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic rule, not a mechanical checklist
@@ -31,6 +36,14 @@ does not perform broad repository scans, implementation, or the full task test
 suite. The Investigator role gathers broad evidence, including through the
 Scanner working pattern. Local code decisions and implementation within the
 accepted packet belong to Implementer or Focused Implementer.
+When an implementation handoff selects completed Investigator discovery from
+an earlier slice, Implementer or Focused Implementer starts from that evidence
+map. Reopen decision-critical originals, call chains, diffs, and tests as needed
+for implementation; do not repeat broad discovery or delegate a Scanner over
+the covered surface. A fresh Scanner may collect only a genuinely uncovered
+decision-changing evidence gap needing independent broad discovery, limited to
+that gap. Apply this by judgment about evidence coverage, without a cache,
+threshold, state machine, or new evidence system.
 The Focused Implementer can complete complex implementation as well as
 focused judgment. It directly inspects known, decision-critical sources, including
 source code, relevant call chains, the current diff, failed tests, and raw

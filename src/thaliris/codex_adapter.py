@@ -233,7 +233,20 @@ for _profile_name, _profile_hash in _DDE3D0F_GENERATED_AGENT_PROFILE_HASHES.item
         _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
         | frozenset({_profile_hash})
     )
+# Exact focused profiles committed in immutable 8eb1707; each was independently
+# re-rendered from that revision's roles and adapter source and matched bytewise.
+_8EB1707_FOCUSED_PROFILE_HASHES = {
+    "thaliris-focused-implementer.toml": "3b19e5d8a0e72e794f76883ad3242c83bb4d542388c076ffacf9a28e377bf86a",
+    "thaliris-focused-implementer-astra-medium.toml": "7ae1bef593fc06fa4d8e5ee40a009718b0ca31358ed1a9de362dc3cfb65055e3",
+    "thaliris-focused-implementer-xhigh.toml": "fe996dfb59c467d173d7da754bbe73ee9659d88b7bb27ff09cc32c730a6fd2e9",
+}
+for _profile_name, _profile_hash in _8EB1707_FOCUSED_PROFILE_HASHES.items():
+    _KNOWN_GENERATED_AGENT_PROFILE_HASHES[_profile_name] = (
+        _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
+        | frozenset({_profile_hash})
+    )
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
+    "4f6f4a41baedc5bc0b01fa8a37b86d3bdee2384846e260bf8f896cff12b650f4",  # e4b6975 committed generated role pack
     "7009fc69d97ca403404c57d739e354cc3ebf7656fdca690c0fd60b2cfa9f6267",  # 9b5bcf2
     # 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31, blob 7dfd7ab321c4ec1f1c32bd02b1d87f1b88d2aef7.
     "0a51833bf936b14053c08a6502a6a1d27ecd1518263e7eea5c4e43f53fa1c5f1",
@@ -262,6 +275,7 @@ _KNOWN_GENERATED_ROLE_REGISTRY_DOC_HASHES = frozenset({
 # renderer equality test. A marker alone never establishes generated ownership.
 # 3485ec4 is the predecessor release, not the candidate's generated output.
 _KNOWN_GENERATED_MANAGED_INSTRUCTION_HASHES = frozenset({
+    "df7c8832a47f59fac6ba2692bb54166a629cc4bdbc4b58661582a42bc04fb152",  # e4b6975 committed managed span
     "d249d418ccf38ca3f159065715c3930d492682e93402025d067e99e2225b91fd",  # 3485ec4
     "1b1cb7331dddc504a0908af91e32fba2b72cced74af1b56007099bb088b36c56",  # a33db5b
     "c0072af2e11ee5ed315712c301a33c39a993af13d6243816b319700b432ef2ed",  # 729809f
@@ -639,6 +653,11 @@ thresholds. Prefer slices that can each be independently understood,
 implemented, verified, committed, and closed. A completed slice returns
 distilled state, its commit reference, and verification evidence; discard its
 working set when closed.
+When completed Investigator discovery is selected for a later semantic slice,
+the Controller handoff carries its confirmed facts, exact source locations and
+affected surfaces, relevant unknowns or contradictions, and covered and
+uncovered scope. This lets the next implementation role use the selected map
+without reconstructing the same broad inventory.
 Before choosing an opportunistic discovered slice, the Controller confirms that
 each explicit user goal has been addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic rule, not a mechanical checklist
@@ -651,6 +670,14 @@ does not perform broad repository scans, implementation, or the full task test
 suite. The Investigator role gathers broad evidence, including through the
 Scanner working pattern. Local code decisions and implementation within the
 accepted packet belong to Implementer or Focused Implementer.
+When an implementation handoff selects completed Investigator discovery from
+an earlier slice, Implementer or Focused Implementer starts from that evidence
+map. Reopen decision-critical originals, call chains, diffs, and tests as needed
+for implementation; do not repeat broad discovery or delegate a Scanner over
+the covered surface. A fresh Scanner may collect only a genuinely uncovered
+decision-changing evidence gap needing independent broad discovery, limited to
+that gap. Apply this by judgment about evidence coverage, without a cache,
+threshold, state machine, or new evidence system.
 The Focused Implementer can complete complex implementation as well as
 focused judgment. It directly inspects known, decision-critical sources, including
 source code, relevant call chains, the current diff, failed tests, and raw
@@ -1039,6 +1066,11 @@ each explicit user goal has been addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic rule, not a mechanical checklist
 or state machine.
 
+When completed Investigator discovery is selected for a later semantic slice,
+the Controller handoff carries confirmed facts, exact source locations and
+affected surfaces, relevant unknowns or contradictions, and covered and
+uncovered scope. The next implementation role starts from that selected map.
+
 ## Shared Role Result
 
 Return a distilled result by default:
@@ -1139,7 +1171,12 @@ focused working set. They make local code decisions within their accepted packet
 assigned slices. Once the slice goal, authority, and boundary are known, batch
 the relevant source, test, generation, and documentation reads, form a plan, and
 make coherent edits. Avoid per-patch, per-read, or per-grep reasoning rounds
-unless new information could change direction. Keep the working set focused.
+unless new information could change direction. For selected discovery from an
+earlier slice, directly reopen decision-critical originals, call chains, diffs,
+and tests as needed. Do not reconstruct the covered broad inventory or delegate
+a Scanner over that same surface. A new Scanner may collect only a genuinely
+uncovered decision-changing evidence gap needing independent broad discovery.
+Keep the working set focused.
 Read known, decision-critical sources directly. Use Scanner work to discover over
 a larger or unknown evidence surface, or to compress a clearly large,
 low-reasoning-density collection when delegation removes an independent
@@ -1793,6 +1830,16 @@ Before choosing an opportunistic discovered slice, the Controller confirms
 every explicit user goal is addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic instruction, not a mechanical
 checklist or state machine.
+When completed Investigator discovery is selected for a later semantic slice,
+the Controller handoff carries confirmed facts, exact source locations and
+affected surfaces, relevant unknowns or contradictions, and covered and
+uncovered scope. Implementer and Focused Implementer start from this selected
+map and directly reopen decision-critical originals, call chains, diffs, and
+tests as needed. They do not reconstruct the covered broad inventory or
+delegate a Scanner over that same surface. A new Scanner may collect only a
+genuinely uncovered decision-changing evidence gap needing independent broad
+discovery, limited to that gap. Use judgment about evidence coverage without
+a cache, threshold, state machine, or new evidence system.
 <!-- thaliris:global:end -->
 """.encode("utf-8")
 

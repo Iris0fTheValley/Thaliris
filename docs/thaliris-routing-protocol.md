@@ -90,6 +90,18 @@ implemented, verified, committed, and closed. A completed slice returns
 distilled state, its commit reference, and verification evidence; discard its
 working set when closed.
 
+When completed Investigator discovery is selected for a later semantic slice,
+the Controller handoff carries confirmed facts, exact source locations and
+affected surfaces, relevant unknowns or contradictions, and covered and
+uncovered scope. Implementer or Focused Implementer starts from this selected
+map, directly reopening decision-critical originals, call chains, diffs, and
+tests as needed for implementation. It does not reconstruct the same broad
+inventory or delegate a Scanner over the covered surface. A fresh Scanner may
+collect only a genuinely uncovered decision-changing evidence gap needing
+independent broad discovery, limited to that gap. Evidence coverage is judged
+semantically; it does not create a cache, threshold, state machine, or new
+evidence system.
+
 Before choosing an opportunistic discovered slice, the Controller confirms that
 each explicit user goal has been addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic rule, not a mechanical checklist

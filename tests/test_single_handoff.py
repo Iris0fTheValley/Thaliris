@@ -258,6 +258,11 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     assert b"Targeted" in expected and b"reopening of relevant originals is useful" in expected
     assert b"current-task user" in expected and b"authorization" in expected
     assert b"small local searches may be direct" in expected
+    assert b"completed Investigator discovery is selected for a later semantic slice" in expected
+    assert b"covered and\nuncovered scope" in expected
+    assert b"directly reopen decision-critical originals, call chains, diffs, and\ntests" in expected
+    assert b"do not reconstruct the covered broad inventory" in expected
+    assert b"genuinely uncovered decision-changing evidence gap" in expected
     assert b"Focused Implementer completes accepted semantic and implementation work" in expected
     assert b"every explicit user goal is addressed, explicitly deferred, or has a\ndecision-changing blocker" in expected
     assert b"semantic instruction, not a mechanical\nchecklist or state machine" in expected

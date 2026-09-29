@@ -504,6 +504,66 @@ def test_scanner_batches_related_evidence_and_stops_at_sufficiency() -> None:
         assert all(phrase in rendered for phrase in controller_required)
 
 
+def test_selected_investigator_discovery_is_reused_across_semantic_slices() -> None:
+    # Example: the Investigator already covered the role/profile, D11, and
+    # global-policy inventory. The Executor may reopen a named original, and a
+    # fresh Scanner is reserved for a genuinely uncovered D evidence gap.
+    executor_required = (
+        "completed investigator discovery",
+        "confirmed facts, exact source locations and affected surfaces",
+        "relevant unknowns or contradictions",
+        "covered and uncovered scope",
+        "reopen decision-critical originals, call chains, diffs, and tests",
+        "do not reconstruct the same broad inventory",
+        "delegate a scanner over the covered surface",
+        "genuinely uncovered decision-changing evidence gap",
+    )
+    for role_name in ("implementer", "focused-implementer"):
+        profile = " ".join(roles.get_role(role_name).instructions.lower().split())
+        assert all(phrase in profile for phrase in executor_required)
+    for profile_name in (
+        "thaliris-focused-implementer",
+        "thaliris-focused-implementer-astra-medium",
+        "thaliris-focused-implementer-xhigh",
+    ):
+        profile = " ".join(roles.profile_instructions("focused-implementer", profile_name).lower().split())
+        assert all(phrase in profile for phrase in executor_required)
+
+    policy_sources = (
+        codex_adapter.render_managed(),
+        codex_adapter.render_role_packs(),
+        Path("AGENTS.md").read_text(encoding="utf-8"),
+        Path("docs/thaliris-role-packs.md").read_text(encoding="utf-8"),
+        Path("docs/thaliris-routing-protocol.md").read_text(encoding="utf-8"),
+        Path("adapter/codex/README.md").read_text(encoding="utf-8"),
+        codex_adapter._global_agents_block().decode("utf-8"),
+    )
+    for source in policy_sources:
+        policy = " ".join(source.lower().split())
+        assert "completed investigator discovery" in policy
+        assert "covered and uncovered scope" in policy
+        assert "decision-critical originals, call chains, diffs, and tests" in policy
+        assert "delegate a scanner over" in policy
+        assert "genuinely uncovered decision-changing evidence gap" in policy
+
+
+def test_pre_reuse_generated_outputs_remain_upgradeable_by_exact_identity() -> None:
+    revision = "e4b6975"
+    historical = subprocess.check_output(["git", "show", f"{revision}:AGENTS.md"])
+    start = historical.index(codex_adapter.MANAGED_START.encode())
+    end = historical.index(codex_adapter.MANAGED_END.encode(), start) + len(codex_adapter.MANAGED_END)
+    assert codex_adapter._managed_agents_state(historical[start:end].decode()) == "legacy"
+    role_pack = subprocess.check_output(["git", "show", f"{revision}:docs/thaliris-role-packs.md"])
+    assert codex_adapter._role_pack_state(role_pack) == "legacy"
+    for name in (
+        "thaliris-focused-implementer.toml",
+        "thaliris-focused-implementer-astra-medium.toml",
+        "thaliris-focused-implementer-xhigh.toml",
+    ):
+        historical_profile = subprocess.check_output(["git", "show", f"8eb1707:.codex/agents/{name}"])
+        assert codex_adapter._agent_profile_state(historical_profile, name) == "legacy"
+
+
 def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> None:
     profile = " ".join(roles.get_role("focused-implementer").instructions.split()).lower()
     required = (

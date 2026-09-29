@@ -47,7 +47,10 @@ cross-role evidence exists.
 
 ## Review convergence
 
-Every fresh Reviewer returns either a bounded READY verdict or a bounded Review
+Review is conditional on the Controller selecting an independent challenge.
+When no Reviewer was selected, the benchmark records that absence and does
+not require review attestations. Every selected fresh Reviewer returns either
+a bounded READY verdict or a bounded Review
 Packet. A Review Packet contains:
 
 ```text
@@ -81,22 +84,24 @@ review correctness is the unchanged-candidate transaction proof.
 The host harness computes an append-only stage attestation immediately at
 runtime-final, review-start, review-end, verification-start, evaluator-start,
 and seal.
-The same immutable candidate identity must be observed at every stage; a later
-mutation invalidates the chain. Reviewer sandbox mode is a native session fact,
+The same immutable candidate identity must be observed at each applicable
+stage; review-start and review-end apply only when Reviewer was selected. A
+later mutation invalidates the chain. Reviewer sandbox mode is a native session fact,
 not a candidate attestation field.
 
 Telemetry reports observed-all invocations, including failed or orphaned child
-sessions. Cost uses model-specific uncached input (`input-cached_input`) plus
-cached input and output; reasoning tokens are diagnostic only. Waiting is
+sessions. Model identity and token usage remain raw observations. Cost uses
+model-specific uncached input (`input-cached_input`) plus cached input and
+output only when provenance-backed rates exist for every invoked model;
+otherwise current cost is `NOT_OBSERVED`. Historical gpt-5.6 rates do not
+price gpt-6 sessions. Reasoning tokens are diagnostic only. Waiting is
 reported separately from model-driven polling.
 
 ## Fast path
 
-A simple task uses one fresh Implementer, deterministic verification, and no
-Investigator, Sol, Curator, or Reviewer unless a recorded semantic risk,
-ambiguity, or verification failure causes escalation. The result records the
-routing, sessions, calls, cost, quality, evidence requirement, and escalation
-reason.
+A simple task can use one fresh Implementer and deterministic verification.
+The result records routing, sessions, calls, observed usage, cost status,
+quality, and evidence requirement.
 
 ## Documentation consistency
 

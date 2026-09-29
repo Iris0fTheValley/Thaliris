@@ -99,7 +99,7 @@ def test_profile_defaults_and_static_astra_selection_are_fixed() -> None:
         value = tomllib.loads(codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort).decode())
         assert (value["name"], value["model"], value["model_reasoning_effort"]) == (name.removesuffix(".toml"), model, effort)
         assert roles.resolve_native_profile(value["name"]).id == role
-        assert value["developer_instructions"] == roles.get_role(role).instructions
+        assert value["developer_instructions"] == roles.profile_instructions(role, name.removesuffix(".toml"))
         assert "Never select your own model or reasoning effort" not in value["developer_instructions"]
         assert "model choice follows the current semantic slice" not in value["developer_instructions"]
         assert "Facts unknown route to Investigator" not in value["developer_instructions"]
@@ -438,15 +438,15 @@ def test_210782b1_all_profiles_migrate_and_unknown_modifications_stay_manual(
 def test_child_communication_and_slice_routing_contract_is_shared() -> None:
     communication = (
         "ordinary progress, heartbeat, or partial-completion messages",
-        "wake the parent only when completed, blocked and requiring a parent decision",
-        "genuine decision-changing information, with no automatic wake filter",
+        "decision-changing unknown",
+        "final",
     )
     routing = (
         "choose one model/profile for the current implementation slice from its work shape, not as a ladder",
         "standard implementer on luna is the default for a stable problem structure and direction",
         "choose focused implementer on sol when the problem model and direction are stable enough",
-        "choose a focused implementer astra profile when the solution path is unstable",
-        "sol failure is not a prerequisite",
+        "current-task user authorization",
+        "automatic routing stops at sol",
         "importance, file count, cross-module scope, or ordinary alternatives alone do not determine the choice",
     )
     for name, (model, effort, role) in roles.agent_profiles().items():
@@ -462,7 +462,7 @@ def test_child_communication_and_slice_routing_contract_is_shared() -> None:
         Path("docs/thaliris-routing-protocol.md").read_text(encoding="utf-8"),
     ):
         normalized = " ".join(rendered.split()).lower()
-        assert all(" ".join(phrase.split()).lower() in normalized for phrase in communication)
+        assert "decision-changing unknown" in normalized and "final" in normalized
         assert all(" ".join(phrase.split()).lower() in normalized for phrase in routing)
 
 
@@ -522,8 +522,8 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
         "file, token, or search-count threshold",
         "small local searches may be direct",
         "removes the discovery working set",
-        "wait for the scanner's distilled result",
-        "do not repeat its discovery pass",
+        "wait only while the scanner is known unfinished",
+        "do not wait on that scanner again or repeat its discovery pass",
         "continue complex implementation within the assigned slice",
         "close the focused slice when its accepted semantic and implementation work is complete",
     )
@@ -532,7 +532,7 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
     focused_only = (
         "a sufficiently stable problem model and direction can still call for focused implementer",
         "when the solution path remains unstable and framing, exploration",
-        "wait for the scanner's distilled result",
+        "wait only while the scanner is known unfinished",
         "close the focused slice when its accepted semantic and implementation work is complete",
     )
     assert all(phrase not in standard for phrase in focused_only)
@@ -550,8 +550,8 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
         "file, token, or search-count threshold",
         "small local searches may be direct",
         "removes an independent working set",
-        "after delegating, wait for the distilled result",
-        "do not repeat its discovery pass",
+        "wait only while the scanner is known unfinished",
+        "do not wait on it again or repeat its discovery pass",
         "continue complex implementation within the assigned slice",
         "close the focused slice when its accepted semantic and implementation work is complete",
     )
@@ -594,8 +594,25 @@ def test_current_focused_profile_bytes_remain_upgradeable_by_exact_identity() ->
     for name in expected:
         model, effort, role = profiles[name]
         value = tomllib.loads(codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort).decode())
-        assert value["developer_instructions"] == roles.get_role("focused-implementer").instructions
+        assert value["developer_instructions"] == roles.profile_instructions("focused-implementer", name.removesuffix(".toml"))
         assert "continue complex implementation within the assigned slice" in value["developer_instructions"].lower()
+
+
+def test_pre_split_host_profiles_migrate_by_exact_historical_identity() -> None:
+    for name, digest in codex_adapter._DDE3D0F_GENERATED_AGENT_PROFILE_HASHES.items():
+        historical = _historical_profile("dde3d0f", name)
+        assert hashlib.sha256(historical).hexdigest() == digest
+        assert codex_adapter._agent_profile_state(historical, name) == "legacy"
+        assert codex_adapter._agent_profile_state(historical + b"\nuser edit\n", name) == "user"
+    old_agents = subprocess.check_output(["git", "show", "dde3d0f:AGENTS.md"]).decode("utf-8")
+    start = old_agents.index("<!-- thaliris:begin -->")
+    end = old_agents.index("<!-- thaliris:end -->") + len("<!-- thaliris:end -->")
+    old_managed = old_agents[start:end]
+    old_packs = subprocess.check_output(["git", "show", "dde3d0f:docs/thaliris-role-packs.md"])
+    assert codex_adapter._managed_agents_state(old_managed) == "legacy"
+    assert codex_adapter._managed_agents_state(old_managed.replace("<!-- thaliris:end -->", "user edit\n<!-- thaliris:end -->")) == "user"
+    assert codex_adapter._role_pack_state(old_packs) == "legacy"
+    assert codex_adapter._role_pack_state(old_packs + b"\nuser edit") == "user"
 
 
 def test_pre_update_managed_and_role_pack_outputs_remain_upgradeable() -> None:
@@ -614,14 +631,34 @@ def test_model_choice_follows_the_current_slice() -> None:
         "choose one model/profile for the current implementation slice from its work shape, not as a ladder",
         "standard implementer on luna is the default for a stable problem structure and direction",
         "choose focused implementer on sol when the problem model and direction are stable enough",
-        "choose a focused implementer astra profile when the solution path is unstable",
-        "sol failure is not a prerequisite and there is no need to prove sol inadequate",
+        "current-task user authorization",
+        "automatic routing stops at sol",
         "importance, file count, cross-module scope, or ordinary alternatives alone do not determine the choice",
     )
     for rendered in _normalized_contract_sources():
         assert all(phrase in rendered for phrase in required)
     profile = " ".join(roles.get_role("focused-implementer").instructions.split()).lower()
     assert all(phrase not in profile for phrase in required[:3])
+
+
+def test_focused_suffixes_and_wait_handoff_rules_are_profile_specific() -> None:
+    base = roles.get_role("focused-implementer").instructions
+    sol = roles.profile_instructions("focused-implementer", "thaliris-focused-implementer")
+    astra = roles.profile_instructions("focused-implementer", "thaliris-focused-implementer-astra-medium")
+    assert "With the Sol Focused Implementer profile" not in base
+    assert "With an explicitly user-authorized Astra" not in base
+    assert "With the Sol Focused Implementer profile" in sol
+    assert "With an explicitly user-authorized Astra" not in sol
+    assert "With an explicitly user-authorized Astra" in astra
+    assert "With the Sol Focused Implementer profile" not in astra
+    for instructions in (sol, astra):
+        assert "Wait only while the Scanner is known unfinished" in instructions
+        assert "After its FINAL" in instructions and "do not wait on that Scanner again" in instructions
+        assert "return it in FINAL" in instructions
+        assert "Do not send MESSAGE and remain ACTIVE for a wait" in instructions
+    managed = codex_adapter.MANAGED
+    assert "Repeat a timed-out\nwait only while that child remains unfinished and necessary" in managed
+    assert "Call `wait_agent` only\nfor a known unfinished child" in managed
 
 
 def test_routing_ontology_keeps_roles_profiles_and_work_patterns_distinct() -> None:
@@ -729,12 +766,15 @@ def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence()
         "file, token, or search-count threshold",
         "small local searches may be direct",
         "delegate when doing so removes the discovery working set",
-        "with the sol focused implementer profile, consider offloading",
-        "with an astra focused implementer profile, explore evidence needed for the current slice directly",
         "continue complex implementation within the assigned slice",
     )
     focused = roles.get_role("focused-implementer").instructions.lower()
     assert all(phrase in focused for phrase in focused_required)
+    sol = roles.profile_instructions("focused-implementer", "thaliris-focused-implementer").lower()
+    astra = roles.profile_instructions("focused-implementer", "thaliris-focused-implementer-xhigh").lower()
+    assert "with the sol focused implementer profile, consider offloading" in sol
+    assert "with an explicitly user-authorized astra focused implementer profile" in astra
+    assert "explicitly user-authorized astra" not in sol
 
     rendered = " ".join(codex_adapter.render_role_packs().lower().split())
     assert all(phrase in rendered for phrase in reviewer_required)

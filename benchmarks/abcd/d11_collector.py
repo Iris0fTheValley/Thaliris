@@ -779,7 +779,7 @@ def collect_evidence(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, 
     state = _state(root)
     ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
     roles = {str(event.get("role") or event.get("consumer_role")) for event in ordered if event.get("role") or event.get("consumer_role")}
-    downstream_roles = {"controller", "reasoning-specialist", "implementer", "reviewer", "terra", "sol"}
+    downstream_roles = {"controller", "reasoning-specialist", "implementer", "focused-implementer", "reviewer"}
     producer_roles = {
         str(ref.get("producer_role") or ref.get("producer"))
         for ref in state.get("artifact_refs", [])
@@ -993,17 +993,25 @@ def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]], *, pol
         values[f"{field}_provenance"] = _provenance(matches[-1]) if matches else None
     ready_orders = [event for event in ordered if _kind(event) == "review_verdict" and event.get("verdict") == "READY" and isinstance(event.get("session_id"), str) and any(att.get("stage") == "review-start" and att.get("session_id") == event.get("session_id") and att.get("candidate_identity") == actual and _before(att, event) for att in attestations)]
     values["review_verdict"] = "READY" if ready_orders else None
+    values["review_selected"] = bool(stage_counts["review-start"] or stage_counts["review-end"] or any(
+        _kind(event) == "review_verdict" or (
+            _kind(event) in {"native_session_started", "SubagentStart"} and event.get("role") == "reviewer"
+        )
+        for event in ordered
+    ))
     ready_order = ready_orders[-1] if ready_orders else None
     values["source_mutations_after_ready"] = bool(ready_order and any(_before(ready_order, event) and _kind(event) == "source_mutation" for event in ordered))
     values["computed_candidate"] = actual
     values["stage_counts"] = stage_counts
     # Stream indexes are local only. Each stage transition must be same-source
     # ordered or have the exact typed caused_by identity of its predecessor.
-    values["stage_order_valid"] = len(stage_events) == len(stages) and all(
+    required_stages = len(stages) if values["review_selected"] else len(stages) - 2
+    values["stage_order_valid"] = len(stage_events) == required_stages and all(
         _before(left, right) for left, right in zip(stage_events, stage_events[1:])
     )
     values["formal_collection"] = formal
-    values["stage_provenance_complete"] = all(values.get(f"{field}_provenance") for field in stages.values())
+    required_fields = stages.values() if values["review_selected"] else (field for stage, field in stages.items() if stage not in {"review-start", "review-end"})
+    values["stage_provenance_complete"] = all(values.get(f"{field}_provenance") for field in required_fields)
     values["review_verdict_provenance"] = _provenance(ready_order)
     values["review_verdict_collector_backed"] = bool(ready_order and ready_order.get("_trusted_source") == "codex_rollout")
     return values

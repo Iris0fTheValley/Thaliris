@@ -114,7 +114,9 @@ active or pending descendants. Scanner completion does not replace it.
 Controller has no fixed model or effort. Default model/profile facts are in
 the generated [role registry](../../docs/thaliris-role-registry.md). The two
 static Astra medium and xhigh profiles for Focused Implementer and Reasoning
-Specialist let only Controller choose before spawn, retaining the same
+Specialist let only Controller choose before spawn with current-task user
+authorization. Automatic routing stops at Sol, including cross-surface
+uncertainty. These profiles retain the same
 semantic role identities and Luna or Sol defaults. Astra medium and xhigh are
 execution profiles of a semantic role, never separate roles. Per-spawn
 model/effort overrides are denied; no dynamic role exists.
@@ -126,13 +128,10 @@ code judgment, tests, synchronization, and mechanical consistency, regardless
 of task size. Choose Focused Implementer on Sol when the problem model and
 direction are stable enough, but implementation needs sustained reasoning
 across coupled invariants, nonlocal effects, or constraints. Choose a Focused
-Implementer Astra profile when the solution path is unstable and understanding,
-exploration, implementation, runtime feedback, and remodeling are coupled; it
-may own the bounded explore-understand-implement-run-observe-revise loop within
-the Controller's goal, hard invariants, scope, and acceptance. Sol failure is
-not a prerequisite and there is no need to prove Sol inadequate. Importance,
-file count, cross-module scope, or ordinary alternatives alone do not determine
-the choice.
+Astra medium and xhigh remain exceptional profiles of the same Focused
+Implementer role, available only with current-task user authorization.
+Importance, file count, cross-module scope, or ordinary alternatives alone do
+not determine the choice.
 
 When native event-driven continuation is unavailable, `wait_agent` is
 automatically normalized to a long wait only when an actual pending reservation
@@ -140,6 +139,10 @@ or managed native Codex child exists and a current-session effective maximum is 
 verified. When that maximum is unavailable, the requested timeout is preserved;
 there is no automatic expansion. Thaliris provides no scheduler or polling
 loop.
+Call `wait_agent` only for a known unfinished child whose result remains
+necessary. After Scanner FINAL, the parent uses its result and does not wait
+on that Scanner again. A decision-changing unknown ends the child slice in
+FINAL for Controller decision.
 
 The installed pinned `thaliris-run.cmd --root <repo> codex-bootstrap` command is
 the one-shot project startup boundary for substantive Git work. It checks task

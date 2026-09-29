@@ -53,7 +53,8 @@ Controller 的 model、effort、native profile 均无固定值，由 Host/用户
 Investigator、Curator 和标准 Implementer 默认 `gpt-6-luna/xhigh`；Focused
 Implementer、Reasoning Specialist 和 Reviewer 默认 `gpt-6-sol/high`；兼容 Verifier
 为 `gpt-6-luna/xhigh`。只有 Controller 可以在 spawn 前为特殊推理明确选择固定的
-Astra medium 或 xhigh profile，子角色不能自行选择 model/effort。
+Astra medium 或 xhigh profile，但必须获得当前任务的用户授权；自动路由止于 Sol，
+跨领域不确定性也不会自动启用 Astra。子角色不能自行选择 model/effort。
 这些 profile 仍映射至相同 role ID；不允许
 通过每次 spawn 的 model/effort 参数覆盖 profile。
 

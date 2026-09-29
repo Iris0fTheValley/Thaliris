@@ -397,7 +397,7 @@ def test_untrusted_dict_cannot_enter_collector_and_missing_artifact_stays_requir
         d11_collector.collect_evidence(root, [{"event": "role_dispatch", "role": "investigator"}])
     facts = d11_collector.collect_evidence(root, trusted_events(tmp_path / "events", [
         {"event": "role_dispatch", "role": "investigator"},
-        {"event": "role_dispatch", "role": "reasoning-specialist"},
+        {"event": "role_dispatch", "role": "focused-implementer"},
     ]))
     assert facts["evidence_required"] == "REQUIRED"
     assert d11_protocol.validate_collected_evidence(facts)["code"] == "EVIDENCE_COLLECTOR_MISSING"
@@ -405,25 +405,25 @@ def test_untrusted_dict_cannot_enter_collector_and_missing_artifact_stays_requir
 
 def test_session_collector_counts_completed_failed_and_orphaned_once(tmp_path: Path) -> None:
     sessions = d11_collector.collect_sessions(trusted_events(tmp_path, [
-        {"event": "session_usage", "session_id": "root", "role": "controller", "model": "gpt-5.6-luna", "usage": {"input": 10, "cached_input": 2, "output": 3}, "status": "COMPLETED"},
-        {"event": "session_usage", "session_id": "failed", "role": "implementer", "model": "gpt-5.6-terra", "usage": {"input": 20, "cached_input": 0, "output": 4}, "status": "FAILED"},
-        {"event": "session_usage", "session_id": "orphan", "role": "reviewer", "model": "gpt-5.6-terra", "usage": {"input": 30, "cached_input": 5, "output": 6}, "status": "ORPHANED"},
+        {"event": "session_usage", "session_id": "root", "role": "controller", "model": "gpt-6-sol", "usage": {"input": 10, "cached_input": 2, "output": 3}, "status": "COMPLETED"},
+        {"event": "session_usage", "session_id": "failed", "role": "implementer", "model": "gpt-6-luna", "usage": {"input": 20, "cached_input": 0, "output": 4}, "status": "FAILED"},
+        {"event": "session_usage", "session_id": "orphan", "role": "reviewer", "model": "gpt-6-sol", "usage": {"input": 30, "cached_input": 5, "output": 6}, "status": "ORPHANED"},
     ]))
     assert [item["session_id"] for item in sessions] == ["failed", "orphan", "root"]
     cost = d11_protocol.calculate_cost(sessions)
-    assert cost["status"] == "PASS" and cost["by_model"]["gpt-5.6-terra"]["input"] == 50
+    assert cost["status"] == "NOT_OBSERVED" and cost["by_model"]["gpt-6-sol"]["input"] == 40
 
 
 def test_session_collector_uses_native_rollout_session_identity_and_cumulative_usage(tmp_path: Path) -> None:
     sessions = d11_collector.collect_sessions(trusted_events(tmp_path, [
-        {"type": "session_meta", "payload": {"id": "native-1", "agent_role": "implementer", "base_instructions": {"provenance": {"model": "gpt-5.6-terra"}}}},
+        {"type": "session_meta", "payload": {"id": "native-1", "agent_role": "implementer", "base_instructions": {"provenance": {"model": "gpt-6-luna"}}}},
         {"type": "token_usage_record", "payload": {"thread_token_usage": {"input_tokens": 10, "cached_input_tokens": 2, "output_tokens": 3}}},
         {"type": "token_usage_record", "payload": {"thread_token_usage": {"input_tokens": 25, "cached_input_tokens": 5, "output_tokens": 7}}},
     ]))
     assert len(sessions) == 1
     assert sessions[0]["session_id"] == "native-1"
     assert sessions[0]["role"] == "implementer"
-    assert sessions[0]["model"] == "gpt-5.6-terra"
+    assert sessions[0]["model"] == "gpt-6-luna"
     assert sessions[0]["input"] == 25 and sessions[0]["cached_input"] == 5 and sessions[0]["output"] == 7
 
 
@@ -897,10 +897,7 @@ def test_frozen_formal_manifest_accepts_only_injected_host_registry(tmp_path: Pa
     adapter_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
     base_candidate = candidate_manifest.build_manifest(base)
     gold_candidate = candidate_manifest.build_manifest(gold)
-    pricing = {"version": "fixture", "models": {
-        model: {field: 0.0 for field in fields}
-        for model, fields in d11_preflight.PRICING_MODELS.items()
-    }}
+    pricing = {"version": "fixture", "status": "NOT_OBSERVED", "models": {}}
     gold_result, base_result = {"status": "PASS"}, {"status": "FAIL"}
     calibration = {
         "attestation_id": "fixture-calibration", "status": "PASS",

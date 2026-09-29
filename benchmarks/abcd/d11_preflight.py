@@ -532,7 +532,7 @@ def run_smoke_probe(
             [
                 str(codex_executable), "exec", "--ephemeral", "--json", "--sandbox", "workspace-write",
                 "-C", str(candidate_root),
-                "-m", "gpt-5.6-luna", prompt,
+                "-m", "gpt-6-luna", prompt,
             ],
             cwd=candidate_root,
             env=environment,
@@ -748,14 +748,25 @@ PRICING_MODELS = {
     "gpt-5.6-luna": ("uncached_input", "cached_input", "output"),
     "gpt-5.6-terra": ("uncached_input", "cached_input", "output"),
     "gpt-5.6-sol": ("uncached_input", "cached_input", "output"),
+    "gpt-6-luna": ("uncached_input", "cached_input", "output"),
+    "gpt-6-sol": ("uncached_input", "cached_input", "output"),
+    "gpt-6-astra": ("uncached_input", "cached_input", "output"),
 }
 
 
 def validate_pricing_snapshot(value: dict[str, Any]) -> bool:
-    if not isinstance(value, dict) or not isinstance(value.get("version"), str) or not value["version"] or set(value.get("models", {})) != set(PRICING_MODELS):
+    if not isinstance(value, dict) or not isinstance(value.get("version"), str) or not value["version"] or not isinstance(value.get("models"), dict):
         return False
-    for model, fields in PRICING_MODELS.items():
-        rates = value["models"].get(model)
+    if value.get("status") == "NOT_OBSERVED":
+        return not value["models"]
+    if not value["models"] or not set(value["models"]) <= set(PRICING_MODELS):
+        return False
+    if any(model.startswith("gpt-6-") for model in value["models"]) and not (
+        isinstance(value.get("source"), str) and value["source"] and isinstance(value.get("retrieved_at"), str) and value["retrieved_at"]
+    ):
+        return False
+    for model, rates in value["models"].items():
+        fields = PRICING_MODELS[model]
         if not isinstance(rates, dict) or set(rates) != set(fields) or any(not isinstance(rates[field], (int, float)) or isinstance(rates[field], bool) or not math.isfinite(float(rates[field])) or rates[field] < 0 for field in fields):
             return False
     return True

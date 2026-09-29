@@ -212,6 +212,27 @@ for _profile_name, _profile_hash in _210782B1_GENERATED_AGENT_PROFILE_HASHES.ite
         _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
         | frozenset({_profile_hash})
     )
+# Exact output from immutable dde3d0f872d7b1b9ecb97d2aa59049ae104f6363.
+# Re-rendered from that revision's source and matched byte-for-byte against
+# all eleven effective Host profiles before changing their instructions.
+_DDE3D0F_GENERATED_AGENT_PROFILE_HASHES = {
+    "thaliris-investigator.toml": "96a633af50c1ddf32c8be39e744536a7c0f7368dd536400aa5a87b3766f065cf",
+    "thaliris-curator.toml": "3740fdbedb75b7196aa4d5ce64afd6a46626ef5cd6128c7c80d58030e2615f42",
+    "thaliris-reasoning-specialist.toml": "f74fb5f14bcd0addab1aa3c854ff1a89d319152b2e274293aea94c0cb8d478ad",
+    "thaliris-implementer.toml": "bc01341e1380d7677e6404a4329b06e2412daf300b50b11ba45a983e5ea33039",
+    "thaliris-focused-implementer.toml": "07402540f774fb554843915c104383eedb6646d14c51b41dc32f1e9a87a40883",
+    "thaliris-verifier.toml": "2e7d71453611cfcfd956dc82c9727bb4f055492b417fce608264386f2d11c99d",
+    "thaliris-reviewer.toml": "f94e08afe5021d1284839465964a91b2b550d392029725b6d6d6ba7ee991b699",
+    "thaliris-reasoning-specialist-astra-medium.toml": "1f66a702a5dd8c58f5ccbade5e3cabeb8790cf29e1463ae072f0af41dfaebacc",
+    "thaliris-reasoning-specialist-xhigh.toml": "bc9c4c5eb8a8b39015a9664728f1f16eeef516269b0d856408ff8071b5107e88",
+    "thaliris-focused-implementer-astra-medium.toml": "2472c64230f3315c55a084d504c57cd117e9d743314cd6bd61c8d1a06e9fb9a7",
+    "thaliris-focused-implementer-xhigh.toml": "0fa1303f77009d11f8e4932081b5a99f25ca9e025b2954a14065b4436511d855",
+}
+for _profile_name, _profile_hash in _DDE3D0F_GENERATED_AGENT_PROFILE_HASHES.items():
+    _KNOWN_GENERATED_AGENT_PROFILE_HASHES[_profile_name] = (
+        _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
+        | frozenset({_profile_hash})
+    )
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "7009fc69d97ca403404c57d739e354cc3ebf7656fdca690c0fd60b2cfa9f6267",  # 9b5bcf2
     # 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31, blob 7dfd7ab321c4ec1f1c32bd02b1d87f1b88d2aef7.
@@ -228,6 +249,7 @@ _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "df6daef7e33c0032179c462f25afdc9af8883d2677c3d34c98b735039c0ad3e0",
     "4ee70a3c36b2c76d74c03179359181dfd34c96bbfae5bf1e5e7ee1c71b6f13d7",  # 8a3fe930, blob 3253fc8
     "d2b3a1c5a776f6a1dbb3be52a907c1704903f64a92d2388f64dc2171096e92e8",  # 99a58fc renderer output before focused-work guidance update
+    "44fad20e3e751dcaaa4d055d567bf3875242b158e62c58f312c4ea0bfdcb025c",  # dde3d0f exact committed generated role pack
 })
 # Exact SHA-256 identity of the mechanical role-registry document emitted by
 # the first registry generator.  This is historical install metadata captured
@@ -251,6 +273,7 @@ _KNOWN_GENERATED_MANAGED_INSTRUCTION_HASHES = frozenset({
     "3c1e3475797d0c9270d9adafa210492b8b305748f5e7bd7fc9411752f74d959d",  # 11e0cc9:AGENTS.md, exact published managed span
     "adebcedf67d1e3aa3e33d42da1174ea36d9e4199beb8453d8076a1de72cd638a",  # 9b5bcf2 renderer output
     "9b3ae3c7edbfc74255a3c743dc9a1c430c6c936ea3101b3f0777f2a78eb4c7b8",  # 99a58fc managed span before focused-work guidance update
+    "3787a539d15224a357bc2703215dea7a474b43f8b3fe85f43f43b30cea854807",  # dde3d0f exact committed managed span
 })
 _KNOWN_HOST_WAIT_CAPABILITIES = {
     # These are release-pinned observations, not a cross-version assumption.
@@ -270,7 +293,7 @@ def _agent_profile(name: str, role: str, model: str, effort: str) -> bytes:
     binding = roles.get_codex_binding(role)
     if spec is None or binding is None or not binding.generated_profile:
         raise ValueError(f"unknown generated role: {role}")
-    instructions = spec.instructions
+    instructions = roles.profile_instructions(role, name)
     return (
         f'name = "{name}"\n'
         f'description = "Thaliris {role} execution role"\n'
@@ -651,9 +674,8 @@ without the Focused model's reasoning.
 The Controller makes each child handoff decision-complete enough to close one
 semantic slice without routine steering. Do not keep a child as a long-lived
 interactive workspace. If new decision-changing information invalidates the
-slice, let the child close with distilled state and decide whether a fresh
-correction slice is needed. `send_message` remains available for genuinely new
-decision-changing information.
+slice, the child closes with a distilled FINAL containing the unknown, and the
+Controller decides whether a fresh correction slice is needed.
 Use the Investigator role for missing facts, large working sets, broad scans,
 and factual compression, without transferring architecture decisions. Its
 Scanner working pattern batches related searches and reads, returns compact
@@ -693,14 +715,16 @@ and Artifact bodies never enter {_native_role_names_text(final_conjunction="or",
 Child sessions keep their working set private by default. Do not send ordinary
 progress, heartbeat, or partial-completion messages to the parent. Proactively
 wake the parent only when completed, blocked and requiring a parent decision, or
-when new decision-changing information arrives. Direct `send_message` remains
-available for genuine decision-changing information, with no automatic wake
-filter.
+when new decision-changing information arrives. A decision-changing unknown
+requiring a Controller decision ends the child slice in FINAL. Do not send a
+MESSAGE and stay ACTIVE for a wait.
 
 The persistent root Controller has no fixed model, reasoning effort, or native
 profile; Host/user selection applies. {_native_profile_facts()}
 Only Controller may explicitly select static Astra medium or xhigh profiles for
-Focused Implementer or Reasoning Specialist before spawn. Each profile retains
+Focused Implementer or Reasoning Specialist before spawn, and only with current-task
+user authorization. Automatic routing stops at Sol, including when uncertainty
+crosses surfaces. Each profile retains
 the same semantic role identity and does not create another role.
 These fixed profiles retain the same stable role IDs; default profiles remain
 on Luna or Sol. Per-spawn model/effort overrides are denied;
@@ -726,14 +750,11 @@ stable problem structure and direction, including remaining execution, local
 code judgment, tests, synchronization, and mechanical consistency, regardless
 of task size. Choose Focused Implementer on Sol when the problem model and
 direction are stable enough, but implementation needs sustained reasoning
-across coupled invariants, nonlocal effects, or constraints. Choose a Focused
-Implementer Astra profile when the solution path is unstable and understanding,
-exploration, implementation, runtime feedback, and remodeling are coupled; it
-may own a bounded explore-understand-implement-run-observe-revise loop within
-the Controller's goal, hard invariants, scope, and acceptance. Astra medium and
-xhigh are exceptional execution profiles of the same Focused Implementer role.
-Choose the profile once for the slice; Sol failure is not a prerequisite and
-there is no need to prove Sol inadequate. Importance, file count, cross-module
+across coupled invariants, nonlocal effects, or constraints. Astra medium and
+xhigh remain exceptional profiles of
+the same Focused Implementer role, available only with current-task user
+authorization. Cross-surface uncertainty alone does not authorize Astra.
+Choose the profile once for the slice. Importance, file count, cross-module
 scope, or ordinary alternatives alone do not determine the choice.
 
 Keep the working set focused. Directly read known, decision-critical sources.
@@ -911,14 +932,17 @@ The identity binding and fail-closed mechanics above are unchanged.
 Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
 mechanical. SubagentStop alone is not success; only an explicitly observed
-native Completed status can satisfy lifecycle completion. When blocked on an
-authorized managed child, use one blocking `wait_agent` call with `timeout_ms`
+native Completed status can satisfy lifecycle completion. Call `wait_agent` only
+for a known unfinished child whose result is necessary to proceed. When blocked
+on that child, use one blocking `wait_agent` call with `timeout_ms`
 equal to the maximum advertised in the current turn's `wait_agent` tool
 definition. The current turn's tool definition is the authority; never infer a
 maximum from release defaults, configuration, history, or capability tables.
-If that blocking wait returns early, continue only when it delivered new,
-decision-changing information; otherwise resume the same wait without
-re-reasoning. Do not periodically wake the Controller to poll. If no usable
+After a child FINAL, use its result and do not wait on it again. Repeat a timed-out
+wait only while that child remains unfinished and necessary. A child reporting a
+decision-changing unknown must end its slice in FINAL for Controller decision,
+not send MESSAGE and remain ACTIVE for another wait. Do not periodically wake
+the Controller to poll. If no usable
 current maximum is advertised, do not invent one.
 After a child finishes, call `list_agents` once before `task-close` to obtain
 its exact native name and Completed status. A `wait_agent` result that only
@@ -1004,7 +1028,9 @@ role and does not create another role.
 The persistent root Controller has no fixed model, effort, or native profile;
 Host/user selection applies. {_native_profile_facts()}
 Only Controller may select static Astra medium or xhigh profiles for Focused
-Implementer or Reasoning Specialist before spawn. These fixed profiles map to
+Implementer or Reasoning Specialist before spawn, only with current-task user
+authorization. Automatic routing stops at Sol, including cross-surface
+uncertainty. These fixed profiles map to
 the same stable roles; defaults remain on Luna or
 Sol. Per-spawn model/effort overrides are denied. Role sessions never
 override their own model or effort.
@@ -1030,8 +1056,8 @@ unless the Controller explicitly requested that content.
 Child sessions do not send ordinary progress, heartbeat, or partial-completion
 messages. They proactively wake the parent only when completed, blocked and
 requiring a parent decision, or when new decision-changing information arrives.
-Direct `send_message` to the exact bound parent remains available for genuine
-decision-changing information, with no automatic wake filter. Follow-up and
+A decision-changing unknown requiring a Controller decision ends the slice in
+FINAL. Do not send MESSAGE and remain ACTIVE for another wait. Follow-up and
 input tools remain denied for managed children.
 
 ## Investigator
@@ -1151,8 +1177,9 @@ result, targeted reopening of relevant originals to verify findings is useful.
 There is no per-read delegation deliberation or file, token, or search-count
 threshold; small local searches may be direct. Delegate when doing so removes
 an independent discovery working set and leaves reasoning and implementation with
-the Focused Implementer. After delegating, wait for the distilled result and
-do not repeat its discovery pass. Continue complex
+the Focused Implementer. Wait only while the Scanner is known unfinished and
+its result is necessary. After its FINAL, use the distilled result and do not
+wait on it again or repeat its discovery pass. Continue complex
 implementation within the assigned slice when it still benefits from focused
 reasoning. Close the Focused slice when its accepted semantic and implementation
 work is complete; route a deterministic remainder only when it is outside the
@@ -1164,14 +1191,11 @@ stable problem structure and direction, including remaining execution, local
 code judgment, tests, synchronization, and mechanical consistency, regardless
 of task size. Choose Focused Implementer on Sol when the problem model and
 direction are stable enough, but implementation needs sustained reasoning
-across coupled invariants, nonlocal effects, or constraints. Choose a Focused
-Implementer Astra profile when the solution path is unstable and understanding,
-exploration, implementation, runtime feedback, and remodeling are coupled; it
-may own a bounded explore-understand-implement-run-observe-revise loop within
-the Controller's goal, hard invariants, scope, and acceptance. Astra medium and
-xhigh are exceptional execution profiles of the same Focused Implementer role.
-Choose the profile once for the slice; Sol failure is not a prerequisite and
-there is no need to prove Sol inadequate. Importance, file count, cross-module
+across coupled invariants, nonlocal effects, or constraints. Astra medium and
+xhigh remain exceptional profiles of
+the same Focused Implementer role, available only with current-task user
+authorization. Cross-surface uncertainty alone does not authorize Astra.
+Choose the profile once for the slice. Importance, file count, cross-module
 scope, or ordinary alternatives alone do not determine the choice.
 Use Reasoning Specialist on Sol when an independent challenge may materially
 change direction, including when framing appears coherent or an outcome is
@@ -1745,14 +1769,11 @@ stable problem structure and direction, including remaining execution, local
 code judgment, tests, synchronization, and mechanical consistency, regardless
 of task size. Choose Focused Implementer on Sol when the problem model and
 direction are stable enough, but implementation needs sustained reasoning
-across coupled invariants, nonlocal effects, or constraints. Choose a Focused
-Implementer Astra profile when the solution path is unstable and understanding,
-exploration, implementation, runtime feedback, and remodeling are coupled; it
-may own the bounded explore-understand-implement-run-observe-revise loop within
-the Controller's goal, hard invariants, scope, and acceptance. Astra medium and
-xhigh are exceptional execution profiles of the same Focused Implementer role.
-Choose the profile once for the slice; Sol failure is not a prerequisite and
-there is no need to prove Sol inadequate. Importance, file count, cross-module
+across coupled invariants, nonlocal effects, or constraints. Astra medium and
+xhigh remain exceptional profiles of
+the same Focused Implementer role, available only with current-task user
+authorization. Cross-surface uncertainty alone does not authorize Astra.
+Choose the profile once for the slice. Importance, file count, cross-module
 scope, or ordinary alternatives alone do not determine the choice.
 
 A Scanner batches related searches and reads, then stops as soon as evidence is

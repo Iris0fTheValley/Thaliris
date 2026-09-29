@@ -17,7 +17,9 @@ role and does not create another role.
 The persistent root Controller has no fixed model, effort, or native profile;
 Host/user selection applies. The native child profiles are Investigator (`gpt-6-luna`, `xhigh`), Curator (`gpt-6-luna`, `xhigh`), Reasoning Specialist (`gpt-6-sol`, `high`), Implementer (`gpt-6-luna`, `xhigh`), Focused Implementer (`gpt-6-sol`, `high`), Verifier (`gpt-6-luna`, `xhigh`), and Reviewer (`gpt-6-sol`, `high`).
 Only Controller may select static Astra medium or xhigh profiles for Focused
-Implementer or Reasoning Specialist before spawn. These fixed profiles map to
+Implementer or Reasoning Specialist before spawn, only with current-task user
+authorization. Automatic routing stops at Sol, including cross-surface
+uncertainty. These fixed profiles map to
 the same stable roles; defaults remain on Luna or
 Sol. Per-spawn model/effort overrides are denied. Role sessions never
 override their own model or effort.
@@ -43,8 +45,8 @@ unless the Controller explicitly requested that content.
 Child sessions do not send ordinary progress, heartbeat, or partial-completion
 messages. They proactively wake the parent only when completed, blocked and
 requiring a parent decision, or when new decision-changing information arrives.
-Direct `send_message` to the exact bound parent remains available for genuine
-decision-changing information, with no automatic wake filter. Follow-up and
+A decision-changing unknown requiring a Controller decision ends the slice in
+FINAL. Do not send MESSAGE and remain ACTIVE for another wait. Follow-up and
 input tools remain denied for managed children.
 
 ## Investigator
@@ -164,8 +166,9 @@ result, targeted reopening of relevant originals to verify findings is useful.
 There is no per-read delegation deliberation or file, token, or search-count
 threshold; small local searches may be direct. Delegate when doing so removes
 an independent discovery working set and leaves reasoning and implementation with
-the Focused Implementer. After delegating, wait for the distilled result and
-do not repeat its discovery pass. Continue complex
+the Focused Implementer. Wait only while the Scanner is known unfinished and
+its result is necessary. After its FINAL, use the distilled result and do not
+wait on it again or repeat its discovery pass. Continue complex
 implementation within the assigned slice when it still benefits from focused
 reasoning. Close the Focused slice when its accepted semantic and implementation
 work is complete; route a deterministic remainder only when it is outside the
@@ -177,14 +180,11 @@ stable problem structure and direction, including remaining execution, local
 code judgment, tests, synchronization, and mechanical consistency, regardless
 of task size. Choose Focused Implementer on Sol when the problem model and
 direction are stable enough, but implementation needs sustained reasoning
-across coupled invariants, nonlocal effects, or constraints. Choose a Focused
-Implementer Astra profile when the solution path is unstable and understanding,
-exploration, implementation, runtime feedback, and remodeling are coupled; it
-may own a bounded explore-understand-implement-run-observe-revise loop within
-the Controller's goal, hard invariants, scope, and acceptance. Astra medium and
-xhigh are exceptional execution profiles of the same Focused Implementer role.
-Choose the profile once for the slice; Sol failure is not a prerequisite and
-there is no need to prove Sol inadequate. Importance, file count, cross-module
+across coupled invariants, nonlocal effects, or constraints. Astra medium and
+xhigh remain exceptional profiles of
+the same Focused Implementer role, available only with current-task user
+authorization. Cross-surface uncertainty alone does not authorize Astra.
+Choose the profile once for the slice. Importance, file count, cross-module
 scope, or ordinary alternatives alone do not determine the choice.
 Use Reasoning Specialist on Sol when an independent challenge may materially
 change direction, including when framing appears coherent or an outcome is

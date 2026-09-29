@@ -82,6 +82,27 @@ def test_candidate_chain_and_cost_are_fail_closed():
     assert cost["status"] == "PASS" and cost["usd"] == 14.2
 
 
+def test_current_model_usage_remains_observed_without_verified_prices():
+    sessions = [{"model": "gpt-6-sol", "usage": {"input": 200, "cached_input": 50, "output": 20}}]
+    cost = calculate_cost(sessions)
+    assert cost["status"] == "NOT_OBSERVED" and cost["usd"] is None
+    assert cost["by_model"]["gpt-6-sol"]["input"] == 200
+    assert _MODULE.validate_cost_gate(cost)["status"] == "NOT_OBSERVED"
+
+
+def test_unselected_review_is_valid_but_selected_incomplete_review_fails():
+    chain = {key: "candidate" for key in ("runtime_candidate", "verified_candidate", "evaluator_candidate", "sealed_candidate")}
+    chain.update({
+        "formal_collection": True, "stage_provenance_complete": True,
+        "review_selected": False, "stage_order_valid": True,
+        "stage_counts": {"runtime-final": 1, "review-start": 0, "review-end": 0,
+                         "verification-start": 1, "evaluator-start": 1, "seal": 1},
+    })
+    assert validate_candidate_chain(chain)["status"] == "PASS"
+    assert _MODULE.validate_review_graph({"review_rounds": []}, final_candidate="candidate", required=False)["status"] == "PASS"
+    assert _MODULE.validate_review_graph({"review_rounds": []}, final_candidate="candidate", required=True)["code"] == "REVIEW_MISSING"
+
+
 def test_fast_path_and_documentation_gate():
     assert validate_fast_path({"evidence_required": "NOT_REQUIRED", "sessions": ["implementer"], "escalation_reason": None, "quality": "PASS"})["status"] == "PASS"
     root = Path(__file__).parents[1]

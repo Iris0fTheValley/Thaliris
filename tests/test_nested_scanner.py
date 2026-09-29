@@ -527,4 +527,4 @@ def test_profile_quotes_remain_valid_toml():
     import tomllib
     for name, (model, effort, role) in roles.agent_profiles().items():
         parsed = tomllib.loads(codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort).decode())
-        assert parsed["developer_instructions"] == roles.get_role(role).instructions
+        assert parsed["developer_instructions"] == roles.profile_instructions(role, name.removesuffix(".toml"))

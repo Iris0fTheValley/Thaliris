@@ -121,11 +121,17 @@ def validate_collected_evidence(ledger: dict[str, Any]) -> dict[str, Any]:
     return {"status": "PASS", "required": "REQUIRED", "produced": len(artifacts), "consumed": sum(len(item.get("consumer_roles", [])) for item in artifacts)}
 
 
-def validate_review_graph(ledger: dict[str, Any], *, final_candidate: str) -> dict[str, Any]:
+def validate_review_graph(ledger: dict[str, Any], *, final_candidate: str, required: bool = True) -> dict[str, Any]:
     """Validate fresh native Reviewer sessions against their own candidates."""
     rounds = ledger.get("review_rounds")
-    if not isinstance(rounds, list) or not rounds:
-        return _fail("REVIEW_MISSING", "collector observed no review verdict")
+    if not isinstance(rounds, list):
+        return _fail("REVIEW_COLLECTOR_SCHEMA", "review rounds are malformed")
+    if not rounds:
+        if required:
+            return _fail("REVIEW_MISSING", "selected review has no verdict")
+        if ledger.get("correction_edges") or ledger.get("native_reviewer_sessions") or ledger.get("no_progress_cycles"):
+            return _fail("REVIEW_SELECTION_INCONSISTENT", "review activity exists without a selected review")
+        return {"status": "PASS", "rounds": 0, "sessions": [], "selection": "NOT_SELECTED"}
     seen: set[str] = set()
     edges = ledger.get("correction_edges", [])
     if not isinstance(edges, list):
@@ -190,7 +196,10 @@ def validate_review_convergence(ledger: dict[str, Any], *, expected_candidate: s
 def validate_candidate_chain(chain: dict[str, Any]) -> dict[str, Any]:
     if chain.get("formal_collection") is not True:
         return _fail("CANDIDATE_CHAIN_NONFORMAL", "TEST_ONLY or unregistered candidate provenance is diagnostic only")
-    fields = ("runtime_candidate", "reviewed_candidate", "verified_candidate", "evaluator_candidate", "sealed_candidate")
+    review_selected = chain.get("review_selected", True)
+    if not isinstance(review_selected, bool):
+        return _fail("REVIEW_SELECTION_INVALID", "review selection must be observed")
+    fields = ("runtime_candidate", "reviewed_candidate", "verified_candidate", "evaluator_candidate", "sealed_candidate") if review_selected else ("runtime_candidate", "verified_candidate", "evaluator_candidate", "sealed_candidate")
     values = [chain.get(field) for field in fields]
     if any(not isinstance(value, str) or not value for value in values):
         return _fail("CANDIDATE_IDENTITY_MISSING", "candidate identity is missing from the provenance chain")
@@ -201,22 +210,25 @@ def validate_candidate_chain(chain: dict[str, Any]) -> dict[str, Any]:
         return _fail("CANDIDATE_IDENTITY_MISMATCH", "runtime, review, verification, evaluator, and seal identities differ")
     counts = chain.get("stage_counts")
     if isinstance(counts, dict):
-        expected_stages = {"runtime-final", "review-start", "review-end", "verification-start", "evaluator-start", "seal"}
-        if set(counts) != expected_stages or any(counts.get(stage) != 1 for stage in expected_stages):
+        expected_stages = {"runtime-final", "verification-start", "evaluator-start", "seal"}
+        review_stages = {"review-start", "review-end"}
+        if set(counts) != expected_stages | review_stages or any(counts.get(stage) != 1 for stage in expected_stages) or any(counts.get(stage) != (1 if review_selected else 0) for stage in review_stages):
             return _fail("CANDIDATE_STAGE_DUPLICATE", "candidate provenance stages must each have one host attestation")
     if chain.get("stage_order_valid") is False:
         return _fail("CANDIDATE_STAGE_ORDER", "candidate provenance stages are not causally ordered")
     if chain.get("stage_provenance_complete") is not True:
         return _fail("CANDIDATE_STAGE_PROVENANCE", "every candidate stage requires collector-backed attestation provenance")
-    if chain.get("review_verdict_collector_backed") is not True or not isinstance(chain.get("review_verdict_provenance"), dict):
+    if review_selected and (chain.get("review_verdict_collector_backed") is not True or not isinstance(chain.get("review_verdict_provenance"), dict)):
         return _fail("FINAL_REVIEW_PROVENANCE", "final Reviewer READY lacks collector-backed native provenance")
-    if chain.get("review_verdict") != "READY":
+    if review_selected and chain.get("review_verdict") != "READY":
         return _fail("FINAL_REVIEW_NOT_READY", "the exact sealed candidate lacks final Reviewer READY")
     if chain.get("source_mutations_after_ready"):
         return _fail("FINAL_REVIEW_INVALIDATED", "source mutation occurred after READY")
-    return {"status": "PASS", "candidate_identity": values[0]}
+    return {"status": "PASS", "candidate_identity": values[0], "review_selected": review_selected}
 
 
+# Historical gpt-5.6 comparison rates only; these never price current gpt-6
+# invocations. Current rates require independent provenance before use.
 PRICES = {
     "gpt-5.6-luna": (0.20, 0.02, 1.20),
     "gpt-5.6-terra": (2.00, 0.20, 12.00),
@@ -225,12 +237,14 @@ PRICES = {
 
 
 def calculate_cost(sessions: list[dict[str, Any]]) -> dict[str, Any]:
+    if not sessions:
+        return {"status": "NOT_OBSERVED", "usd": None, "by_model": {}, "unpriced_models": []}
     total = 0.0
     by_model: dict[str, dict[str, float]] = {}
     for session in sessions:
         model = session.get("model")
         usage = session.get("usage") if isinstance(session.get("usage"), dict) else session
-        if model not in PRICES or not isinstance(usage, dict):
+        if not isinstance(model, str) or not model or not isinstance(usage, dict):
             return _fail("COST_TELEMETRY_INVALID", "model or usage is absent")
         try:
             input_tokens = int(usage["input"])
@@ -241,18 +255,24 @@ def calculate_cost(sessions: list[dict[str, Any]]) -> dict[str, Any]:
         if not 0 <= cached_tokens <= input_tokens:
             return _fail("COST_TELEMETRY_INVALID", "cached input exceeds input")
         uncached = input_tokens - cached_tokens
-        uncached_price, cached_price, output_price = PRICES[model]
-        cost = uncached / 1_000_000 * uncached_price + cached_tokens / 1_000_000 * cached_price + output_tokens / 1_000_000 * output_price
-        item = by_model.setdefault(model, {"input": 0, "cached_input": 0, "output": 0, "usd": 0.0})
+        item = by_model.setdefault(model, {"input": 0, "cached_input": 0, "output": 0, "usd": 0.0 if model in PRICES else None})
         item["input"] += input_tokens
         item["cached_input"] += cached_tokens
         item["output"] += output_tokens
-        item["usd"] += cost
-        total += cost
+        if model in PRICES:
+            uncached_price, cached_price, output_price = PRICES[model]
+            cost = uncached / 1_000_000 * uncached_price + cached_tokens / 1_000_000 * cached_price + output_tokens / 1_000_000 * output_price
+            item["usd"] += cost
+            total += cost
+    unpriced = sorted(model for model in by_model if model not in PRICES)
+    if unpriced:
+        return {"status": "NOT_OBSERVED", "usd": None, "by_model": by_model, "unpriced_models": unpriced}
     return {"status": "PASS", "usd": round(total, 6), "by_model": by_model}
 
 
 def validate_cost_gate(cost: dict[str, Any], *, d6b_ceiling: float = 5.49, d10c_reference: float = 8.79) -> dict[str, Any]:
+    if cost.get("status") == "NOT_OBSERVED":
+        return {"status": "NOT_OBSERVED", "code": "COST_NOT_OBSERVED", "usd": None, "by_model": cost.get("by_model", {}), "unpriced_models": cost.get("unpriced_models", [])}
     if cost.get("status") != "PASS":
         return _fail("COST_TELEMETRY_INVALID", "cost telemetry did not validate")
     usd = cost.get("usd")
@@ -270,8 +290,6 @@ def validate_fast_path(report: dict[str, Any]) -> dict[str, Any]:
         return _fail("FAST_PATH_EVIDENCE", "simple task did not declare evidence not required")
     if report.get("sessions") != ["implementer"]:
         return _fail("FAST_PATH_ROUTING", "simple task used roles beyond one Implementer")
-    if report.get("escalation_reason") is not None:
-        return _fail("FAST_PATH_ESCALATED", "simple task escalated without a recorded reason")
     if report.get("quality") != "PASS":
         return _fail("FAST_PATH_QUALITY", "simple task quality did not pass")
     return {"status": "PASS", "sessions": report["sessions"], "evidence_required": "NOT_REQUIRED"}
@@ -309,8 +327,9 @@ def validate_report(report: dict[str, Any], *, protocol_path: Path, generated_te
         ),
     }
     expected_candidate = checks["candidate_provenance"].get("candidate_identity")
-    checks["review_convergence"] = validate_review_graph(collected.get("reviews", {}), final_candidate=expected_candidate) if isinstance(expected_candidate, str) else _fail("REVIEW_FINAL_CANDIDATE", "candidate identity is not collector-backed")
-    status = "PASS" if all(item.get("status") == "PASS" for item in checks.values()) else "FAIL"
+    checks["review_convergence"] = validate_review_graph(collected.get("reviews", {}), final_candidate=expected_candidate, required=checks["candidate_provenance"].get("review_selected", True)) if isinstance(expected_candidate, str) else _fail("REVIEW_FINAL_CANDIDATE", "candidate identity is not collector-backed")
+    statuses = {item.get("status") for item in checks.values()}
+    status = "PASS" if statuses == {"PASS"} else "NOT_OBSERVED" if "NOT_OBSERVED" in statuses and "FAIL" not in statuses else "FAIL"
     return {"status": status, "checks": checks}
 
 
@@ -426,13 +445,12 @@ def validate_target(
     checks["evidence_source_provenance"] = _observed_status(collected.get("evidence_source_provenance"), name="evidence_source_provenance")
     checks["evidence_consumption"] = _observed_status(collected.get("evidence_consumption"), name="evidence_consumption")
     checks["supersession"] = _observed_status(collected.get("supersession"), name="supersession")
-    checks["bounded_sol"] = _observed_status(collected.get("bounded_sol"), name="bounded_sol")
     chain = collected.get("candidate_chain")
     chain_check = validate_candidate_chain(chain) if isinstance(chain, dict) else _observed_status(None, name="candidate_chain")
     checks["candidate_chain"] = chain_check
     final_candidate = chain_check.get("candidate_identity") if chain_check.get("status") == "PASS" else None
     reviews = collected.get("reviews")
-    review_check = validate_review_graph(reviews, final_candidate=final_candidate) if isinstance(reviews, dict) and isinstance(final_candidate, str) else _observed_status(None, name="review_graph")
+    review_check = validate_review_graph(reviews, final_candidate=final_candidate, required=chain_check.get("review_selected", True)) if isinstance(reviews, dict) and isinstance(final_candidate, str) else _observed_status(None, name="review_graph")
     checks["review_graph"] = review_check
     checks["review_transaction_integrity"] = review_check
     # Native sandbox support is a host capability diagnostic.  The hard
@@ -443,9 +461,10 @@ def validate_target(
     checks["documentation_consistency"] = validate_documentation(protocol_path=protocol_path, generated_text=generated_text or "", tests_passed=None, runtime_consistency=None) if protocol_path is not None else _observed_status(None, name="documentation_consistency")
     checks["tests"] = _observed_status(tests, name="tests")
     checks["cost"] = validate_cost_gate(calculate_cost(collected.get("sessions", []))) if isinstance(collected.get("sessions"), list) else _observed_status(None, name="cost")
-    checks["fast_path"] = validate_fast_path(fast_path) if isinstance(fast_path, dict) else _observed_status(None, name="fast_path")
+    if isinstance(fast_path, dict):
+        checks["fast_path"] = validate_fast_path(fast_path)
     statuses = {item.get("status") for key, item in checks.items() if key != "reviewer_native_readonly"}
-    status = "PASS" if statuses == {"PASS"} else ("NOT_OBSERVED" if "NOT_OBSERVED" in statuses else "FAIL")
+    status = "PASS" if statuses == {"PASS"} else ("FAIL" if "FAIL" in statuses else "NOT_OBSERVED")
     return {"status": status, "checks": checks}
 
 

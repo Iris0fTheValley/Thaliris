@@ -130,9 +130,8 @@ _SHARED_INSTRUCTIONS = (
     "memory, milestone, Artifact, finding, decision, or review content. Keep repository "
     "reads, tool output, test logs, and intermediate exploration in your private working set. "
     "Do not send ordinary progress, heartbeat, or partial-completion messages to the parent. "
-    "Wake the parent only when completed, blocked and requiring a parent decision, or when new "
-    "decision-changing information arrives. Direct send_message remains available for genuine "
-    "decision-changing information, with no automatic wake filter. "
+    "A decision-changing unknown that requires a Controller decision ends this slice: return it "
+    "in FINAL. Do not send MESSAGE and remain ACTIVE for a wait. "
     "Work only within the responsibility and scope stated in the handoff. Preserve its stated "
     "invariants and boundaries; do not guess when missing or conflicting information could "
     "change direction. Report that dependency as a decision-changing unknown. Keep role "
@@ -178,34 +177,40 @@ _FOCUSED_SCANNER_INSTRUCTIONS = (
     "stronger profile is not limited to deciding. Directly inspect known, decision-critical "
     "sources, including source code, relevant call chains, the current diff, failed tests, and "
     "raw evidence that bears on the decision. When the target is known, read it directly. "
-    "A sufficiently stable problem model and direction can still call for Focused Implementer "
-    "when implementation needs sustained reasoning across coupled invariants, nonlocal effects, "
-    "or constraints. When the solution path remains unstable and framing, exploration, "
-    "implementation, runtime feedback, and remodeling are coupled, work through the bounded "
-    "explore-understand-implement-run-observe-revise loop within the Controller's goal, hard "
-    "invariants, scope, and acceptance. This does not change those boundaries. "
+    "Focused Implementer handles sustained reasoning across coupled invariants, nonlocal effects, "
+    "or constraints within the Controller's goal, hard invariants, scope, and acceptance. "
     "Delegate one independent discovery working set to a fresh Investigator session using the "
     "Scanner working pattern when a larger or unknown evidence surface must be discovered, "
     "enumerated, filtered, or classified, or when a clearly large low-reasoning-density collection "
     "can be compressed independently. "
-    "Use discovery according to the selected Focused Implementer execution profile: with the "
-    "Sol Focused Implementer profile, consider offloading broad or exhaustive peripheral call-site, rollout/log, and "
-    "residual-reference collections when it removes an independent working set. With an Astra "
-    "Focused Implementer profile, explore evidence needed for the current slice directly and delegate only a clearly "
-    "large, low-reasoning-density collection that can be compressed independently. These are "
-    "working choices within the same Focused Implementer role. "
     "Ask it for key conclusions, exceptions, UNKNOWNs, and accurate raw locations. The Scanner "
     "narrows a collection; its choice of collection does not predetermine which evidence is "
     "relevant, and it does not replace reasoning-coupled reading. After it returns, "
     "targeted reopening of relevant originals to verify findings is useful. There is no per-read "
     "delegation deliberation or file, token, or search-count threshold; small local searches may "
     "be direct. Delegate when doing so removes the discovery working set and leaves "
-    "reasoning and implementation with you. After delegating, wait for the Scanner's distilled "
-    "result and do not repeat its discovery pass. Continue complex implementation within the "
+    "reasoning and implementation with you. Wait only while the Scanner is known unfinished and "
+    "its result is necessary for this slice. After its FINAL, use the distilled result and do not "
+    "wait on that Scanner again or repeat its discovery pass. Continue complex implementation within the "
     "assigned slice when it still benefits from focused reasoning. Close the Focused slice when "
     "its accepted semantic and implementation work is complete; report a deterministic remainder "
     "for Controller routing only when it is outside this slice or independently closable without "
     "the Focused model's reasoning."
+)
+
+_FOCUSED_SOL_INSTRUCTIONS = (
+    " With the Sol Focused Implementer profile, consider offloading broad or exhaustive "
+    "peripheral call-site, rollout/log, and residual-reference collections when it removes "
+    "an independent working set."
+)
+
+_FOCUSED_ASTRA_INSTRUCTIONS = (
+    " With an explicitly user-authorized Astra Focused Implementer profile, explore evidence "
+    "needed for the current slice directly. Delegate only a clearly large, low-reasoning-density "
+    "collection that can be compressed independently. When the solution path is unstable and "
+    "framing, exploration, implementation, runtime feedback, and remodeling are coupled, own "
+    "the bounded explore-understand-implement-run-observe-revise loop within the Controller's "
+    "goal, hard invariants, scope, and acceptance. This does not change those boundaries."
 )
 
 _REVIEWER_SCANNER_INSTRUCTIONS = (
@@ -319,6 +324,20 @@ def _instructions(role: str) -> str:
     elif role == "reviewer":
         result += _REVIEWER_SCANNER_INSTRUCTIONS
     return result
+
+
+def profile_instructions(role: str, profile_name: str) -> str:
+    """Add working-style guidance only to the matching Focused profile."""
+    spec = get_role(role)
+    if spec is None:
+        raise ValueError(f"unknown role: {role}")
+    if role != "focused-implementer":
+        return spec.instructions
+    if profile_name == "thaliris-focused-implementer":
+        return spec.instructions + _FOCUSED_SOL_INSTRUCTIONS
+    if profile_name in {"thaliris-focused-implementer-astra-medium", "thaliris-focused-implementer-xhigh"}:
+        return spec.instructions + _FOCUSED_ASTRA_INSTRUCTIONS
+    raise ValueError(f"unknown focused profile: {profile_name}")
 
 
 # Exact SHA-256 identities of bytes emitted by earlier Thaliris adapters.

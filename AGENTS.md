@@ -54,9 +54,8 @@ without the Focused model's reasoning.
 The Controller makes each child handoff decision-complete enough to close one
 semantic slice without routine steering. Do not keep a child as a long-lived
 interactive workspace. If new decision-changing information invalidates the
-slice, let the child close with distilled state and decide whether a fresh
-correction slice is needed. `send_message` remains available for genuinely new
-decision-changing information.
+slice, the child closes with a distilled FINAL containing the unknown, and the
+Controller decides whether a fresh correction slice is needed.
 Use the Investigator role for missing facts, large working sets, broad scans,
 and factual compression, without transferring architecture decisions. Its
 Scanner working pattern batches related searches and reads, returns compact
@@ -96,14 +95,16 @@ and Artifact bodies never enter an Investigator, Curator, Reasoning Specialist, 
 Child sessions keep their working set private by default. Do not send ordinary
 progress, heartbeat, or partial-completion messages to the parent. Proactively
 wake the parent only when completed, blocked and requiring a parent decision, or
-when new decision-changing information arrives. Direct `send_message` remains
-available for genuine decision-changing information, with no automatic wake
-filter.
+when new decision-changing information arrives. A decision-changing unknown
+requiring a Controller decision ends the child slice in FINAL. Do not send a
+MESSAGE and stay ACTIVE for a wait.
 
 The persistent root Controller has no fixed model, reasoning effort, or native
 profile; Host/user selection applies. The native child profiles are Investigator (`gpt-6-luna`, `xhigh`), Curator (`gpt-6-luna`, `xhigh`), Reasoning Specialist (`gpt-6-sol`, `high`), Implementer (`gpt-6-luna`, `xhigh`), Focused Implementer (`gpt-6-sol`, `high`), Verifier (`gpt-6-luna`, `xhigh`), and Reviewer (`gpt-6-sol`, `high`).
 Only Controller may explicitly select static Astra medium or xhigh profiles for
-Focused Implementer or Reasoning Specialist before spawn. Each profile retains
+Focused Implementer or Reasoning Specialist before spawn, and only with current-task
+user authorization. Automatic routing stops at Sol, including when uncertainty
+crosses surfaces. Each profile retains
 the same semantic role identity and does not create another role.
 These fixed profiles retain the same stable role IDs; default profiles remain
 on Luna or Sol. Per-spawn model/effort overrides are denied;
@@ -129,14 +130,11 @@ stable problem structure and direction, including remaining execution, local
 code judgment, tests, synchronization, and mechanical consistency, regardless
 of task size. Choose Focused Implementer on Sol when the problem model and
 direction are stable enough, but implementation needs sustained reasoning
-across coupled invariants, nonlocal effects, or constraints. Choose a Focused
-Implementer Astra profile when the solution path is unstable and understanding,
-exploration, implementation, runtime feedback, and remodeling are coupled; it
-may own a bounded explore-understand-implement-run-observe-revise loop within
-the Controller's goal, hard invariants, scope, and acceptance. Astra medium and
-xhigh are exceptional execution profiles of the same Focused Implementer role.
-Choose the profile once for the slice; Sol failure is not a prerequisite and
-there is no need to prove Sol inadequate. Importance, file count, cross-module
+across coupled invariants, nonlocal effects, or constraints. Astra medium and
+xhigh remain exceptional profiles of
+the same Focused Implementer role, available only with current-task user
+authorization. Cross-surface uncertainty alone does not authorize Astra.
+Choose the profile once for the slice. Importance, file count, cross-module
 scope, or ordinary alternatives alone do not determine the choice.
 
 Keep the working set focused. Directly read known, decision-critical sources.
@@ -314,14 +312,17 @@ The identity binding and fail-closed mechanics above are unchanged.
 Spawn authorization, native identity binding,
 SubagentStart/Stop, missing-stop reconciliation, and explicit blocking waits are
 mechanical. SubagentStop alone is not success; only an explicitly observed
-native Completed status can satisfy lifecycle completion. When blocked on an
-authorized managed child, use one blocking `wait_agent` call with `timeout_ms`
+native Completed status can satisfy lifecycle completion. Call `wait_agent` only
+for a known unfinished child whose result is necessary to proceed. When blocked
+on that child, use one blocking `wait_agent` call with `timeout_ms`
 equal to the maximum advertised in the current turn's `wait_agent` tool
 definition. The current turn's tool definition is the authority; never infer a
 maximum from release defaults, configuration, history, or capability tables.
-If that blocking wait returns early, continue only when it delivered new,
-decision-changing information; otherwise resume the same wait without
-re-reasoning. Do not periodically wake the Controller to poll. If no usable
+After a child FINAL, use its result and do not wait on it again. Repeat a timed-out
+wait only while that child remains unfinished and necessary. A child reporting a
+decision-changing unknown must end its slice in FINAL for Controller decision,
+not send MESSAGE and remain ACTIVE for another wait. Do not periodically wake
+the Controller to poll. If no usable
 current maximum is advertised, do not invent one.
 After a child finishes, call `list_agents` once before `task-close` to obtain
 its exact native name and Completed status. A `wait_agent` result that only

@@ -133,7 +133,9 @@ its model. Investigator, Curator, and standard Implementer use
 `gpt-6-luna/xhigh`; Focused Implementer, Reasoning Specialist, and Reviewer use
 `gpt-6-sol/high`. Verifier remains read-only `gpt-6-luna/xhigh` for
 compatibility and is not recommended. Only Controller may explicitly choose
-static Astra medium or xhigh profiles before spawn. Each profile maps to the
+static Astra medium or xhigh profiles before spawn, only with current-task user
+authorization. Automatic routing stops at Sol, including cross-surface
+uncertainty. Each profile maps to the
 same stable semantic role identity; defaults remain Luna or Sol. Per-spawn
 model/effort overrides are denied. Role sessions cannot choose their own
 model/effort. Reasoning Specialist independently challenges selected framing
@@ -154,14 +156,11 @@ code judgment, tests, synchronization, and mechanical consistency, regardless
 of task size. Choose Focused Implementer on Sol when the problem model and
 direction are stable enough, but implementation needs sustained reasoning
 across coupled invariants, nonlocal effects, or constraints. Choose a Focused
-Implementer Astra profile when the solution path is unstable and understanding,
-exploration, implementation, runtime feedback, and remodeling are coupled; it
-may own the bounded explore-understand-implement-run-observe-revise loop within
-the Controller's goal, hard invariants, scope, and acceptance. Astra medium and
-xhigh are exceptional execution profiles of the same Focused Implementer role.
-Choose the profile once for the slice; Sol failure is not a prerequisite and
-there is no need to prove Sol inadequate. Importance, file count, cross-module
-scope, or ordinary alternatives alone do not determine the choice.
+Astra medium and xhigh remain exceptional profiles of the same Focused
+Implementer role, available only with current-task user authorization.
+Cross-surface uncertainty alone does not authorize Astra. Choose the profile
+once for the slice. Importance, file count, cross-module scope, or ordinary
+alternatives alone do not determine the choice.
 Use Reasoning Specialist on Sol when an independent challenge may materially
 change direction. It reports the strongest challenge, material alternatives,
 and critical missing facts for the Controller to route; it does not make the
@@ -260,9 +259,10 @@ set does not automatically re-enter the Controller.
 Child sessions do not send ordinary progress, heartbeat, or partial-completion
 messages to the parent. They proactively wake the parent only when completed,
 blocked and requiring a parent decision, or when new decision-changing
-information arrives. Direct `send_message` to the exact bound parent remains
-available for genuine decision-changing information, with no automatic wake
-filter. Follow-up and input tools remain denied for managed children.
+information arrives. A decision-changing unknown requiring a Controller
+decision ends the slice in FINAL. The child does not send MESSAGE and remain
+ACTIVE for another wait. Follow-up and input tools remain denied for managed
+children.
 Scanner results return to their requesting Implementer, Focused Implementer,
 or Reviewer.
 
@@ -315,6 +315,10 @@ The identity binding and fail-closed mechanics above are unchanged.
 
 A Codex Desktop probe on 2026-09-28 observed `wait_agent` return
 `{"message":"Wait completed.","timed_out":false}` after the child completed.
+Call `wait_agent` only for a known unfinished child whose result remains
+necessary. After Scanner FINAL, its parent uses the result and does not wait
+on that Scanner again. Repeat a timed-out wait only while the same dependency
+remains unfinished and necessary.
 That response contains no child identity or terminal status. Desktop
 `list_agents` responses have supplied an exact `agent_name` and an
 `agent_status` with a `completed` result. After a child finishes, the

@@ -63,8 +63,10 @@ Controller has no fixed model, effort, or native profile; Host/user selection
 applies. Investigator, Curator, and standard Implementer default to
 `gpt-6-luna/xhigh`; Focused Implementer, Reasoning Specialist, and Reviewer to
 `gpt-6-sol/high`; compatibility Verifier to `gpt-6-luna/xhigh`.
-Only Controller may select static Astra medium or xhigh profiles before spawn
-for exceptional reasoning. Those profiles map to the same stable role IDs. Per-spawn
+Only Controller may select static Astra medium or xhigh profiles before spawn,
+and only with current-task user authorization. Automatic routing stops at Sol,
+including cross-surface uncertainty. Those profiles map to the same stable
+role IDs. Per-spawn
 model/effort overrides are denied.
 
 Role sessions keep intermediate work private and normally return only a

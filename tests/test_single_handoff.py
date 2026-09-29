@@ -248,19 +248,17 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     assert b"--controller-bridge-sha256" not in expected
     assert b"bootstrap-check" not in expected and b" --root <repo> init" not in expected
     assert b"Get-FileHash" not in expected and b"read-only work" in expected and b"this session" in expected
-    assert b"Choose the model for the current semantic slice, not the whole parent task" in expected
-    assert b"default to the standard Luna Implementer" in expected
+    assert b"Choose one model/profile for the current implementation slice" in expected
+    assert b"Standard Implementer on Luna is the default" in expected
     assert b"A Scanner batches related searches and reads" in expected
     assert b"stops as soon as evidence is\nsufficient" in expected
     assert b"do not expand a scan for one more confirmation" in expected
-    assert b"Focused Implementer directly reads known, decision-critical sources" in expected
-    assert b"larger or unknown evidence surface" in expected
-    assert b"key conclusions, exceptions, UNKNOWNs, and accurate raw locations" in expected
-    assert b"without replacing reasoning-coupled reading" in expected
-    assert b"reopening of relevant originals after its result is useful" in expected
-    assert b"no per-read delegation deliberation" in expected
-    assert b"file/token/search-count threshold" in expected
-    assert b"may\ncomplete complex implementation within its assigned slice" in expected
+    assert b"Focused Implementer directly read known, decision-critical sources" in expected
+    assert b"independent working set" in expected
+    assert b"Targeted" in expected and b"reopening of relevant originals is useful" in expected
+    assert b"current-task user" in expected and b"authorization" in expected
+    assert b"small local searches may be direct" in expected
+    assert b"Focused Implementer completes accepted semantic and implementation work" in expected
     assert b"every explicit user goal is addressed, explicitly deferred, or has a\ndecision-changing blocker" in expected
     assert b"semantic instruction, not a mechanical\nchecklist or state machine" in expected
 
@@ -1205,6 +1203,32 @@ def test_blocking_wait_is_normalized_only_with_a_managed_dependency(tmp_path: Pa
     assert rewritten["hookSpecificOutput"]["updatedInput"] == {
         **original_input, "timeout_ms": 120_000,
     }
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="wait_agent", tool_input={"timeout_ms": 120_000},
+        tool_response={"timed_out": True},
+    )) == ""
+    repeated = json.loads(codex_adapter.audit_hook(root, "PreToolUse", wait))
+    assert repeated["hookSpecificOutput"]["updatedInput"]["timeout_ms"] == 120_000
+
+
+def test_completed_child_does_not_trigger_another_managed_wait(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    _owned_task_start(root, "completed wait dependency", None, None)
+    monkeypatch.setattr(codex_adapter, "selected_continuation_mode", lambda _root: "BLOCKING_WAIT")
+    monkeypatch.setattr(codex_adapter, "host_explicit_blocking_wait", lambda: {
+        "status": "PASS", "effective_max_wait_timeout_ms": 120_000,
+    })
+    task_name, agent_id = "/root/completed-child", "native-completed-child"
+    spawn_start_with_host_task_name(root, task_name, agent_id)
+    stop(root, agent_id)
+    assert handle_hook(root, "PostToolUse", hook_payload(
+        tool_name="list_agents",
+        tool_response=json.dumps({"agents": [
+            {"agent_name": task_name, "agent_status": {"completed": "FINAL"}},
+        ]}),
+    )) == ""
+    wait = hook_payload(tool_name="wait_agent", tool_input={"timeout_ms": 30_000})
+    assert codex_adapter.audit_hook(root, "PreToolUse", wait) == ""
 
 
 def test_unavailable_effective_wait_maximum_preserves_legal_timeout(tmp_path: Path, monkeypatch) -> None:
@@ -2422,14 +2446,15 @@ def test_role_profiles_keep_routing_and_model_choice_with_the_controller(tmp_pat
     assert "For divisible work, the Controller chooses bounded semantic slices" in codex_adapter.MANAGED
     assert "not by token, file, or task-count\nthresholds" in codex_adapter.MANAGED
     assert "Choose one model/profile for the current implementation slice from its work\nshape, not as a ladder." in codex_adapter.MANAGED
-    assert "Astra medium and\nxhigh are exceptional execution profiles of the same Focused Implementer role." in codex_adapter.MANAGED
+    assert "Astra medium and\nxhigh remain exceptional profiles of" in codex_adapter.MANAGED
+    assert "current-task user\nauthorization" in codex_adapter.MANAGED
     assert "Importance, file count, cross-module\nscope, or ordinary alternatives alone do not determine the choice." in codex_adapter.MANAGED
     assert "Before choosing an opportunistic discovered slice" in codex_adapter.MANAGED
     managed = " ".join(codex_adapter.MANAGED.split())
     assert "Use Reasoning Specialist on Sol when an independent challenge may materially change direction" in managed
     assert "framing appears coherent or an outcome is unexpected" in managed
     assert "difficulty alone is not a trigger" in managed
-    assert "Sol failure is not a prerequisite and there is no need to prove Sol inadequate" in managed
+    assert "Automatic routing stops at Sol" in managed
     assert "Saved Host registration alone does not prove\ncurrent-session activation" in codex_adapter.MANAGED
     assert "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE" in codex_adapter.MANAGED
     assert "Before another correction packet, distinguish a local implementation defect" in codex_adapter.MANAGED

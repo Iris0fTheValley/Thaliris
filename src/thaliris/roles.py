@@ -240,7 +240,12 @@ def _instructions(role: str) -> str:
             "pattern, not a second role. Investigate facts, scan large working sets, and "
             "compress evidence, without making architecture decisions. Batch related searches "
             "and reads, return compact facts, and once evidence is sufficient stop immediately; "
-            "do not expand the scan for one more confirmation. Do not delegate. "
+            "do not expand the scan for one more confirmation. Return a distilled selection map "
+            "with confirmed facts and exact source locations and affected surfaces, relevant "
+            "unknowns or contradictions, and the scope covered and left uncovered, so the "
+            "Controller can select later work. For inventories grouped into areas such as A, B, "
+            "and C, state covered and uncovered scope by area. "
+            "Do not delegate. "
             "You may save detailed reusable material as a "
             "repo-relative Artifact; return only its pointer and the distilled result by default."
         ),
@@ -354,7 +359,9 @@ def profile_instructions(role: str, profile_name: str) -> str:
 # legacy when the Curator instructions change; the historical renderer is
 # independently exercised in tests/test_roles.py.
 _LEGACY_PROFILE_HASHES = {
-    "investigator": frozenset("0720619c1d0b85b80a2981597fcd60086a1bddc7f03f48f88cc8f75c1128d872 199d7b9cb1fb8d1a3536df07395a420b9476ee66d13a4a9ca6d6442215d9e7b8 44781edb6a654db482adafdc20b16f75cdebded2e62e8d86376aefc577a3ae55 f5623ba40d585b1760511344488d71c53e8c08a8c0ad8cbd1b76b268ae02c70f 55ef42ac18d46ed5fe2c624ed0be2c16956ab4fe91dd1e64b6ef3a07bae01cb1 307a3e90b32cf7dcde3cac3c683b3e16f5e13c147191e82e45109a75a6984ff4 188e8cc62bfd8e1f37f3068193deb37431c5ea49356adc99b8873a47e817fbdd caa08fc96fdcff0a47fa05cb8ebba32d93a3336fec64b0a9c93d5467cc3009be c917f0b601dcd689afbb443b98c6b12733d5738ed908a112a5c7948f3321edf9 4fe5345865638896c3cc042a66e1853d5d969763d64b6e9076b6d3bc25fe3091".split()),
+    # Exact Investigator profile emitted by ec1ad7b immediately before the
+    # result-contract update; tests re-render it from that immutable revision.
+    "investigator": frozenset("0720619c1d0b85b80a2981597fcd60086a1bddc7f03f48f88cc8f75c1128d872 199d7b9cb1fb8d1a3536df07395a420b9476ee66d13a4a9ca6d6442215d9e7b8 44781edb6a654db482adafdc20b16f75cdebded2e62e8d86376aefc577a3ae55 f5623ba40d585b1760511344488d71c53e8c08a8c0ad8cbd1b76b268ae02c70f 55ef42ac18d46ed5fe2c624ed0be2c16956ab4fe91dd1e64b6ef3a07bae01cb1 307a3e90b32cf7dcde3cac3c683b3e16f5e13c147191e82e45109a75a6984ff4 188e8cc62bfd8e1f37f3068193deb37431c5ea49356adc99b8873a47e817fbdd caa08fc96fdcff0a47fa05cb8ebba32d93a3336fec64b0a9c93d5467cc3009be c917f0b601dcd689afbb443b98c6b12733d5738ed908a112a5c7948f3321edf9 4fe5345865638896c3cc042a66e1853d5d969763d64b6e9076b6d3bc25fe3091 ee818487dd21dacd9040e710d0fa3b4ca32524407d70981e03d11a600dcb81a6".split()),
     "curator": frozenset("8026959290edeb86d66ee86f9b5db286e7fb31c28c95ec2c42ec8be7f2cda515 f6827c30074554b809b50414bde31146354ec6898fe8bd13a43402134c8b6476 a98489c08e6af01165629b6848667700956d749bf8a676a30ac479c729d916fa 64fece15a4e47b77641039abbf9f7c9a1daab4581b9faa0c066fd7d0c7cab4d4 d11534e931c1c17b51bd846a487ac6609b56db018f5abb6b5ed6991b5b6a71b3 b902b77ca7f0f77f6305cb8bec3e7bf1c8386805a312b816e2a99e1794e9a1f7 0467fdaba8aeefb76b52d10995778e4e01a2f98c7dec05da58134abad0feccff 7779da9180597f1235f2c3893088743b0baafa55b4edad1e9319774f88ae8e6a".split()),
     "reasoning-specialist": frozenset("7e596a38e95606b684b17f25cc0eecb3163aef7d65d36110f6496b3ab7d53692 960190bb4b67b02e7616bcf6dbd71192bcc79327fb0ed72e6f23b3815819afd0 d2191d59621e2765ae7642ca1648d96b4dbfb1a82293a8a02bf8642328fb58a7 60a87a06e97602f10f7f3842061c6eba551e78f76a8fa99b17ba377f48d22117 13b3283ad629bb6d32fe3613462694be14fba3a24c547aa791e1e651c0b3106d 17616dddc351c20f5c98a30a0506253322d0cc5f6480d89690c7a08a70592557 5a22321413193d571a4a3b9189d45951ffda93cefde26f2f3999982233d17a01 813b16ca10985e8e602ee3295eb093115de4505db9cdc9cc6cbd9ef9ad192efd 708bee8d038cdd44bc8b75ee399ff8de09fa9a65e9d46f7060d75a82f04c19aa 1fa5af05b543d22efc20cc8eb7813da51e63a63c58b02bea6c2109918aa5d9d9 b7a6c8ae5655205dbb16a7d90af09a06a21daad78170cc8e55509304770d5b10".split()),
     "focused-implementer": frozenset("b4ff152b4a3978f31c7b80891a839bf1bd8408336fe19b2c8c27d42bf88d0311 9b412596980063afae0a4678043e09ca6f3509735e55f373119c3da3655831ef 501fc4fc95c883f9249c649e6477a7d98babd97e41942b036da94e0086c3f662".split()),

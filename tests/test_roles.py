@@ -504,6 +504,53 @@ def test_scanner_batches_related_evidence_and_stops_at_sufficiency() -> None:
         assert all(phrase in rendered for phrase in controller_required)
 
 
+def test_investigator_result_is_a_selection_map_for_a_b_c_inventories() -> None:
+    required = (
+        "distilled selection map",
+        "confirmed facts and exact source locations and affected surfaces",
+        "relevant unknowns or contradictions",
+        "scope covered and left uncovered",
+        "so the controller can select later work",
+        "areas such as a, b, and c",
+        "covered and uncovered scope by area",
+        "may save detailed reusable material as a repo-relative artifact",
+    )
+    profile = " ".join(roles.get_role("investigator").instructions.lower().split())
+    assert all(phrase in profile for phrase in required)
+
+    generated_profile = tomllib.loads(
+        codex_adapter._agent_profile(
+            "thaliris-investigator",
+            "investigator",
+            "gpt-6-luna",
+            "xhigh",
+        ).decode("utf-8")
+    )
+    assert all(phrase in generated_profile["developer_instructions"].lower() for phrase in required)
+
+    rendered_packs = codex_adapter.render_role_packs()
+    checked_in_packs = Path("docs/thaliris-role-packs.md").read_text(encoding="utf-8")
+    assert rendered_packs == checked_in_packs
+    normalized_packs = " ".join(rendered_packs.lower().split())
+    assert all(phrase in normalized_packs for phrase in required[:-1])
+    assert "optional repo-relative artifact" in normalized_packs
+
+
+def test_ec1ad7b_investigator_generated_outputs_remain_upgradeable() -> None:
+    old_profile = _historical_profile("ec1ad7b", "thaliris-investigator.toml")
+    profile_digest = hashlib.sha256(old_profile).hexdigest()
+    assert profile_digest == "ee818487dd21dacd9040e710d0fa3b4ca32524407d70981e03d11a600dcb81a6"
+    assert codex_adapter._agent_profile_state(old_profile, "thaliris-investigator.toml") == "legacy"
+
+    old_role_packs = subprocess.check_output(
+        ["git", "show", "ec1ad7b:docs/thaliris-role-packs.md"],
+    )
+    role_pack_digest = hashlib.sha256(old_role_packs).hexdigest()
+    assert role_pack_digest == "4e4a1af986df48f8c9e0e632506ef13636531dba163fa7ae7032a7d18ab2c36a"
+    assert role_pack_digest in codex_adapter._KNOWN_GENERATED_ROLE_PACK_HASHES
+    assert codex_adapter._role_pack_state(old_role_packs) == "legacy"
+
+
 def test_selected_investigator_discovery_is_reused_across_semantic_slices() -> None:
     # Example: the Investigator already covered the role/profile, D11, and
     # global-policy inventory. The Executor may reopen a named original, and a
@@ -989,10 +1036,7 @@ def _historical_profile(revision: str, name: str) -> bytes:
     )
     namespace: dict[str, object] = {
         "json": json,
-        "roles": types.SimpleNamespace(
-            get_role=module.get_role,
-            get_codex_binding=module.get_codex_binding,
-        ),
+        "roles": module,
     }
     exec(
         compile(ast.Module([function], type_ignores=[]), "historical_adapter.py", "exec"),

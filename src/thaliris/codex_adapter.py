@@ -246,6 +246,7 @@ for _profile_name, _profile_hash in _8EB1707_FOCUSED_PROFILE_HASHES.items():
         | frozenset({_profile_hash})
     )
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
+    "4e4a1af986df48f8c9e0e632506ef13636531dba163fa7ae7032a7d18ab2c36a",  # ec1ad7b committed generated role pack
     "4f6f4a41baedc5bc0b01fa8a37b86d3bdee2384846e260bf8f896cff12b650f4",  # e4b6975 committed generated role pack
     "7009fc69d97ca403404c57d739e354cc3ebf7656fdca690c0fd60b2cfa9f6267",  # 9b5bcf2
     # 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31, blob 7dfd7ab321c4ec1f1c32bd02b1d87f1b88d2aef7.
@@ -1099,9 +1100,13 @@ factual compression, not architecture decisions. Scanner names its nested
 discovery working pattern. Scanner
 work batches related searches and reads, returns compact facts, and once
 evidence is sufficient stops immediately; do not expand the scan for one more
-confirmation. It cannot delegate.
-Investigate the task in the handoff. Save detailed reusable evidence as
-an optional repo-relative Artifact and return its pointer with a short result.
+confirmation. Return a distilled selection map with confirmed facts and exact
+source locations and affected surfaces, relevant unknowns or contradictions,
+and the scope covered and left uncovered, so the Controller can select later
+work. For inventories grouped into areas such as A, B, and C, state covered
+and uncovered scope by area. It cannot
+delegate. Investigate the task in the handoff. Save detailed reusable evidence
+as an optional repo-relative Artifact and return its pointer with a short result.
 
 ## Curator
 

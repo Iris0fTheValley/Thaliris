@@ -61,9 +61,13 @@ factual compression, not architecture decisions. Scanner names its nested
 discovery working pattern. Scanner
 work batches related searches and reads, returns compact facts, and once
 evidence is sufficient stops immediately; do not expand the scan for one more
-confirmation. It cannot delegate.
-Investigate the task in the handoff. Save detailed reusable evidence as
-an optional repo-relative Artifact and return its pointer with a short result.
+confirmation. Return a distilled selection map with confirmed facts and exact
+source locations and affected surfaces, relevant unknowns or contradictions,
+and the scope covered and left uncovered, so the Controller can select later
+work. For inventories grouped into areas such as A, B, and C, state covered
+and uncovered scope by area. It cannot
+delegate. Investigate the task in the handoff. Save detailed reusable evidence
+as an optional repo-relative Artifact and return its pointer with a short result.
 
 ## Curator
 

@@ -50,7 +50,7 @@ unless the Controller explicitly requested that content.
 Child sessions do not send ordinary progress, heartbeat, or partial-completion
 messages. They proactively wake the parent only when completed, blocked and
 requiring a parent decision, or when new decision-changing information arrives.
-A decision-changing unknown requiring a Controller decision ends the slice in
+A decision-changing unknown requiring a Controller decision ends the Workstream in
 FINAL. Do not send MESSAGE and remain ACTIVE for another wait. Follow-up and
 input tools remain denied for managed children.
 
@@ -134,7 +134,29 @@ Executor is a category for the two implementation roles, not a role to route
 or spawn. Implementer is the general implementation role; Focused
 Implementer handles focused judgment and complex implementation within a
 focused working set. They make local code decisions within their accepted packets and
-assigned slices. Once the slice goal, authority, and boundary are known, batch
+assigned Workstreams. Root routes workstreams. Executors close local loops
+inside them. A semantic checkpoint is not necessarily a scheduling checkpoint.
+The Workstream is a semantic routing unit held by Root and executed by one
+authorized child; it is not a role or second semantic Controller.
+
+Within a stable Workstream, the same Implementer session may complete multiple
+local closures: batch reads, plan, implement, run focused verification, fix
+ordinary in-scope failures, synchronize generated output and documentation, run
+needed integration verification, inspect diff and status, and complete assigned
+Git closure. A local verification PASS does not require returning to Root.
+Ordinary test fixes, generated or documentation synchronization, integration
+checks, and assigned Git closure do not create separate semantic routing
+boundaries. Root regains control at the semantic Workstream boundary. If new
+evidence changes task direction, ownership, observable semantics, a hard
+invariant, compatibility contract, acceptance, or reveals an unverified
+external dependency that can change the decision, the child stops and returns
+the concrete unknown in FINAL. Execution authority remains limited to the
+assigned goal, scope, invariants, and acceptance; it cannot expand Controller
+scope. Do not use file, tool, token, time, or local-closure counts to end a
+Workstream or choose the executor profile. No child acts as a second semantic
+Controller.
+
+Once the Workstream goal, authority, and boundary are known, batch
 the relevant source, test, generation, and documentation reads, form a plan, and
 make coherent edits. Avoid per-patch, per-read, or per-grep reasoning rounds
 unless new information could change direction. For selected discovery from an
@@ -147,20 +169,21 @@ Read known, decision-critical sources directly. Use Scanner work to discover ove
 a larger or unknown evidence surface, or to compress a clearly large,
 low-reasoning-density collection when delegation removes an independent
 working set. Use Scanner output as evidence; retain responsibility for
-implementation decisions. Work only within the assigned semantic slice and
+implementation decisions. Work only within the assigned semantic Workstream and
 preserve Controller decisions and invariants; return a decision-changing unknown
 instead of changing them. Delegate Scanner work only to a fresh Investigator
 role session with `fork_turns="none"`.
 Synchronize formal project documentation, including product/protocol docs and
-README, for behavior changed within the assigned slice; report any
+README, for behavior changed within the assigned Workstream; report any
 documentation boundary that needs a Controller decision.
 Match verification to the changed behavior and its concrete regression surface.
 Start with focused checks for the changed contract, generated output, and
 acceptance. If they pass without a failure, anomaly, or new broader-risk
-evidence, stop. Broaden only for a concrete compatibility or integration risk.
-After a test fix, rerun the smallest acceptance-relevant range. A commit, push,
-or final report alone does not call for another test run. Do not use counts,
-time, file or token limits, or a stopping state machine.
+evidence, continue any remaining assigned local closures within the Workstream.
+Broaden only for a concrete compatibility or integration risk. After a test
+fix, rerun the smallest acceptance-relevant range and continue the Workstream.
+A commit, push, or final report alone does not call for another test run. Do not
+use counts, time, file or token limits, or a stopping state machine.
 
 Focused Implementer directly inspects known, decision-critical source code,
 relevant call chains, the current diff, failed tests, and decision-critical raw
@@ -171,7 +194,7 @@ collection can be compressed independently. With the Sol Focused Implementer
 profile, consider offloading broad or exhaustive peripheral call-site,
 rollout/log, and residual-reference collections when that removes an
 independent working set. With an Astra Focused Implementer profile, explore
-evidence needed for the current slice directly and use Scanner work only for a
+evidence needed for the current Workstream directly and use Scanner work only for a
 clearly large, low-reasoning-density collection that can be compressed
 independently. The collection choice does not predetermine relevant evidence. Ask for key
 conclusions, exceptions, UNKNOWNs, and accurate raw locations. The Scanner
@@ -182,28 +205,32 @@ threshold; small local searches may be direct. Delegate when doing so removes
 an independent discovery working set and leaves reasoning and implementation with
 the Focused Implementer. Wait only while the Scanner is known unfinished and
 its result is necessary. After its FINAL, use the distilled result and do not
-wait on it again or repeat its discovery pass. Continue complex
-implementation within the assigned slice when it still benefits from focused
-reasoning. Close the Focused slice when its accepted semantic and implementation
-work is complete; route a deterministic remainder only when it is outside the
-slice or independently closable without the Focused model's reasoning.
+wait on it again or repeat its discovery pass. Continue complex implementation
+within the assigned Workstream across local checkpoints when it still benefits
+from focused reasoning. A local verification PASS does not require returning to
+Root. Close the Focused Workstream only at its semantic boundary or when its
+assigned acceptance is complete; route a deterministic remainder only when it
+is outside the Workstream or independently closable without the Focused model's
+reasoning.
 
-Choose one model/profile for the current implementation slice from its work
+Choose one model/profile for the current Workstream from its work
 shape, not as a ladder. The standard Implementer on Luna is the default for a
 stable problem structure and direction, including remaining execution, local
 code judgment, tests, synchronization, and mechanical consistency, regardless
-of task size. Choose Focused Implementer on Sol when the problem model and
-direction are stable enough, but implementation needs sustained reasoning
-across coupled invariants, nonlocal effects, or constraints. Astra medium and
+of task size. Choose Focused Implementer on Sol when the smallest coherent
+Workstream has a stable direction but inherently needs sustained reasoning
+across coupled invariants, nonlocal effects, or constraints. Routine local
+closures do not trigger a new role or profile choice. Astra medium and
 xhigh remain exceptional profiles of
 the same Focused Implementer role, available only with current-task user
 authorization. Cross-surface uncertainty alone does not authorize Astra.
-Choose the profile once for the slice. Importance, file count, cross-module
-scope, or ordinary alternatives alone do not determine the choice.
+Choose the profile once for the Workstream. Importance, file count, cross-module
+scope, number of local closures, or ordinary alternatives alone do not determine
+the choice.
 Use Reasoning Specialist on Sol when an independent challenge may materially
 change direction, including when framing appears coherent or an outcome is
 unexpected; difficulty alone is not a trigger. It does not make the final task
-decision. After implementation, close the slice with
+decision. At the Workstream boundary, close with
 distilled state, its commit reference, and verification evidence, then discard
 its detailed working set.
 
@@ -218,7 +245,7 @@ For a straightforward, bounded task with confirmed facts, perform necessary
 bounded local reading, implementation, and deterministic verification in this
 fresh session; an Investigator is needed only when missing facts could change
 how to implement. Preserve stated constraints and report verification as
-observations. Close the assigned slice with distilled state, its commit
+observations. Close the assigned Workstream with distilled state, its commit
 reference, and verification evidence, then discard its detailed working set.
 If an assigned correction cannot be completed without an
 unverified external fact, an invalidating accepted invariant, or changing the

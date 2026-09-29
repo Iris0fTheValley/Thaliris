@@ -248,7 +248,7 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     assert b"--controller-bridge-sha256" not in expected
     assert b"bootstrap-check" not in expected and b" --root <repo> init" not in expected
     assert b"Get-FileHash" not in expected and b"read-only work" in expected and b"this session" in expected
-    assert b"Choose one model/profile for the current implementation slice" in expected
+    assert b"Choose one model/profile for the current Workstream" in expected
     assert b"Standard Implementer on Luna is the default" in expected
     assert b"A Scanner batches related searches and reads" in expected
     assert b"stops as soon as evidence is\nsufficient" in expected
@@ -258,12 +258,12 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     assert b"Targeted" in expected and b"reopening of relevant originals is useful" in expected
     assert b"current-task user" in expected and b"authorization" in expected
     assert b"small local searches may be direct" in expected
-    assert b"completed Investigator discovery is selected for a later semantic slice" in expected
+    assert b"completed Investigator discovery is selected for a later semantic Workstream" in expected
     assert b"covered and\nuncovered scope" in expected
     assert b"directly reopen decision-critical originals, call chains, diffs, and\ntests" in expected
     assert b"do not reconstruct the covered broad inventory" in expected
     assert b"genuinely uncovered decision-changing evidence gap" in expected
-    assert b"Focused Implementer completes accepted semantic and implementation work" in expected
+    assert b"Focused Implementer continues accepted implementation across local checkpoints" in expected
     assert b"every explicit user goal is addressed, explicitly deferred, or has a\ndecision-changing blocker" in expected
     assert b"semantic instruction, not a mechanical\nchecklist or state machine" in expected
 
@@ -2448,12 +2448,15 @@ def test_role_profiles_keep_routing_and_model_choice_with_the_controller(tmp_pat
     assert "Roles are capabilities, not mandatory workflow stages" in codex_adapter.MANAGED
     assert "Controller -> fresh\nImplementer -> done" in codex_adapter.MANAGED
     assert "degraded mode does not define a separate role\nsequence" in codex_adapter.MANAGED
-    assert "For divisible work, the Controller chooses bounded semantic slices" in codex_adapter.MANAGED
+    assert "For divisible work, Root routes by semantic Workstream" in codex_adapter.MANAGED
+    normalized_managed = " ".join(codex_adapter.MANAGED.split())
+    assert "A semantic checkpoint is not necessarily a scheduling checkpoint." in normalized_managed
+    assert "Root routes workstreams. Executors close local loops inside them." in normalized_managed
     assert "not by token, file, or task-count\nthresholds" in codex_adapter.MANAGED
-    assert "Choose one model/profile for the current implementation slice from its work\nshape, not as a ladder." in codex_adapter.MANAGED
+    assert "Choose one model/profile for the current Workstream from its work\nshape, not as a ladder." in codex_adapter.MANAGED
     assert "Astra medium and\nxhigh remain exceptional profiles of" in codex_adapter.MANAGED
     assert "current-task user\nauthorization" in codex_adapter.MANAGED
-    assert "Importance, file count, cross-module\nscope, or ordinary alternatives alone do not determine the choice." in codex_adapter.MANAGED
+    assert "Importance, file count, cross-module\nscope, number of local closures, or ordinary alternatives alone do not determine\nthe choice." in codex_adapter.MANAGED
     assert "Before choosing an opportunistic discovered slice" in codex_adapter.MANAGED
     managed = " ".join(codex_adapter.MANAGED.split())
     assert "Use Reasoning Specialist on Sol when an independent challenge may materially change direction" in managed
@@ -2462,14 +2465,14 @@ def test_role_profiles_keep_routing_and_model_choice_with_the_controller(tmp_pat
     assert "Automatic routing stops at Sol" in managed
     assert "Saved Host registration alone does not prove\ncurrent-session activation" in codex_adapter.MANAGED
     assert "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE" in codex_adapter.MANAGED
-    assert "Before another correction packet, distinguish a local implementation defect" in codex_adapter.MANAGED
+    assert "Before another semantic correction Workstream, distinguish a local implementation" in codex_adapter.MANAGED
     assert "overturns an accepted invariant" in codex_adapter.MANAGED
     assert "depends on an unverified external capability" in codex_adapter.MANAGED
     assert "makes feasibility uncertain" in codex_adapter.MANAGED
     assert "changes a Controller boundary or contract" in codex_adapter.MANAGED
     assert "Missing factual information routes to the Investigator role" in managed
     assert "When an independent challenge could materially change direction, route the selected framing and evidence to a fresh Reasoning Specialist" in managed
-    assert "accepted design is unchanged and the defect is local, route to a fresh Implementer correction" in managed
+    assert "accepted design is unchanged and the defect is outside the active Workstream, Root may route a fresh Implementer Workstream" in managed
     assert "Do not use it for broad fact gathering, implementation, routine review, or ordinary hard-problem solving" in managed
     assert "Do not use counters, thresholds, risk scores, classifiers, or a state machine" in managed
     assert "check and synchronize both the repository-managed" in codex_adapter.MANAGED

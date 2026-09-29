@@ -104,7 +104,7 @@ def test_profile_defaults_and_static_astra_selection_are_fixed() -> None:
         assert "model choice follows the current semantic slice" not in value["developer_instructions"]
         assert "Facts unknown route to Investigator" not in value["developer_instructions"]
         if role in {"implementer", "focused-implementer"}:
-            assert "Work only within the assigned semantic slice" in value["developer_instructions"]
+            assert "Work only within the assigned semantic Workstream" in value["developer_instructions"]
             assert "return a decision-changing unknown instead of changing them" in value["developer_instructions"]
             assert "its commit reference, and verification evidence" in value["developer_instructions"]
     for role in ("focused-implementer", "reasoning-specialist"):
@@ -435,19 +435,19 @@ def test_210782b1_all_profiles_migrate_and_unknown_modifications_stay_manual(
         assert codex_adapter._agent_profile_state((agents / name).read_bytes(), name) == "current"
 
 
-def test_child_communication_and_slice_routing_contract_is_shared() -> None:
+def test_child_communication_and_workstream_routing_contract_is_shared() -> None:
     communication = (
         "ordinary progress, heartbeat, or partial-completion messages",
         "decision-changing unknown",
         "final",
     )
     routing = (
-        "choose one model/profile for the current implementation slice from its work shape, not as a ladder",
+        "choose one model/profile for the current workstream from its work shape, not as a ladder",
         "standard implementer on luna is the default for a stable problem structure and direction",
-        "choose focused implementer on sol when the problem model and direction are stable enough",
+        "choose focused implementer on sol when the smallest coherent workstream has a stable direction but inherently needs sustained reasoning",
         "current-task user authorization",
         "automatic routing stops at sol",
-        "importance, file count, cross-module scope, or ordinary alternatives alone do not determine the choice",
+        "importance, file count, cross-module scope, number of local closures, or ordinary alternatives alone do not determine the choice",
     )
     for name, (model, effort, role) in roles.agent_profiles().items():
         instructions = tomllib.loads(
@@ -466,10 +466,51 @@ def test_child_communication_and_slice_routing_contract_is_shared() -> None:
         assert all(" ".join(phrase.split()).lower() in normalized for phrase in routing)
 
 
+def test_workstream_scheduling_granularity_acceptance_is_explicit() -> None:
+    documents = (
+        codex_adapter.MANAGED,
+        codex_adapter.ROLE_PACKS,
+        codex_adapter._global_agents_block().decode("utf-8"),
+        Path("AGENTS.md").read_text(encoding="utf-8"),
+        Path("adapter/codex/README.md").read_text(encoding="utf-8"),
+        Path("docs/thaliris-role-packs.md").read_text(encoding="utf-8"),
+        Path("docs/thaliris-routing-protocol.md").read_text(encoding="utf-8"),
+    )
+    normalized_documents = tuple(" ".join(document.split()).lower() for document in documents)
+    for document in normalized_documents:
+        assert "a semantic checkpoint is not necessarily a scheduling checkpoint" in document
+        assert "root routes workstreams. executors close local loops inside them" in document
+
+    contract = " ".join(normalized_documents)
+    acceptance = (
+        "within a stable workstream, the same implementer session may complete multiple local closures",
+        "a local verification pass does not require returning to root",
+        "ordinary test fixes",
+        "generated or documentation synchronization",
+        "integration checks",
+        "assigned git closure",
+        "do not create separate semantic routing boundaries",
+        "if new evidence changes task direction, ownership, observable semantics",
+        "the child stops and returns the concrete unknown in final",
+        "execution authority",
+        "cannot expand controller-assigned scope",
+        "no child acts as a second semantic controller",
+        "do not use file, tool, token, time, or local-closure counts to end a workstream",
+    )
+    assert all(phrase in contract for phrase in acceptance)
+
+    for role in ("implementer", "focused-implementer"):
+        instructions = " ".join(roles.get_role(role).instructions.split()).lower()
+        assert "same authorized implementer session" in instructions
+        assert "a local verification pass does not require returning to root" in instructions
+        assert "only within the assigned semantic workstream" in instructions
+        assert "do not use file, tool, token, time, or local-closure counts" in instructions
+
+
 def test_role_cost_and_goal_coverage_contract_is_shared() -> None:
     test_scanner_batches_related_evidence_and_stops_at_sufficiency()
     test_focused_implementer_reads_known_sources_and_delegates_discovery()
-    test_model_choice_follows_the_current_slice()
+    test_model_choice_follows_the_current_workstream()
     test_controller_covers_goals_before_an_opportunistic_slice()
 
 
@@ -631,8 +672,8 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
         "removes the discovery working set",
         "wait only while the scanner is known unfinished",
         "do not wait on that scanner again or repeat its discovery pass",
-        "continue complex implementation within the assigned slice",
-        "close the focused slice when its accepted semantic and implementation work is complete",
+        "continue complex implementation within the assigned workstream across local execution checkpoints",
+        "close the focused workstream only at its semantic boundary or when its assigned acceptance is complete",
     )
     assert all(phrase in profile for phrase in required)
     standard = " ".join(roles.get_role("implementer").instructions.split()).lower()
@@ -640,7 +681,7 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
         "a sufficiently stable problem model and direction can still call for focused implementer",
         "when the solution path remains unstable and framing, exploration",
         "wait only while the scanner is known unfinished",
-        "close the focused slice when its accepted semantic and implementation work is complete",
+        "close the focused workstream only at its semantic boundary or when its assigned acceptance is complete",
     )
     assert all(phrase not in standard for phrase in focused_only)
     docs_required = (
@@ -659,8 +700,8 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
         "removes an independent working set",
         "wait only while the scanner is known unfinished",
         "do not wait on it again or repeat its discovery pass",
-        "continue complex implementation within the assigned slice",
-        "close the focused slice when its accepted semantic and implementation work is complete",
+        "continue complex implementation within the assigned workstream across local checkpoints",
+        "close the focused workstream only at its semantic boundary or when its assigned acceptance is complete",
     )
     for rendered in _normalized_contract_sources()[1:2] + _normalized_contract_sources()[-2:-1]:
         assert all(phrase in rendered for phrase in docs_required)
@@ -702,7 +743,7 @@ def test_current_focused_profile_bytes_remain_upgradeable_by_exact_identity() ->
         model, effort, role = profiles[name]
         value = tomllib.loads(codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort).decode())
         assert value["developer_instructions"] == roles.profile_instructions("focused-implementer", name.removesuffix(".toml"))
-        assert "continue complex implementation within the assigned slice" in value["developer_instructions"].lower()
+        assert "continue complex implementation within the assigned workstream across local execution checkpoints" in value["developer_instructions"].lower()
 
 
 def test_pre_split_host_profiles_migrate_by_exact_historical_identity() -> None:
@@ -752,14 +793,14 @@ def test_pre_update_managed_and_role_pack_outputs_remain_upgradeable() -> None:
     assert codex_adapter._role_pack_state(role_packs) == "legacy"
 
 
-def test_model_choice_follows_the_current_slice() -> None:
+def test_model_choice_follows_the_current_workstream() -> None:
     required = (
-        "choose one model/profile for the current implementation slice from its work shape, not as a ladder",
+        "choose one model/profile for the current workstream from its work shape, not as a ladder",
         "standard implementer on luna is the default for a stable problem structure and direction",
-        "choose focused implementer on sol when the problem model and direction are stable enough",
+        "choose focused implementer on sol when the smallest coherent workstream has a stable direction but inherently needs sustained reasoning",
         "current-task user authorization",
         "automatic routing stops at sol",
-        "importance, file count, cross-module scope, or ordinary alternatives alone do not determine the choice",
+        "importance, file count, cross-module scope, number of local closures, or ordinary alternatives alone do not determine the choice",
     )
     for rendered in _normalized_contract_sources():
         assert all(phrase in rendered for phrase in required)
@@ -859,7 +900,7 @@ def test_shared_child_instructions_exclude_controller_routing_and_model_choice()
     for role in ("implementer", "focused-implementer"):
         instructions = " ".join(roles.get_role(role).instructions.split()).lower()
         assert "local implementation decisions" in instructions
-        assert "within the assigned semantic slice" in instructions
+        assert "within the assigned semantic workstream" in instructions
 
 
 def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence() -> None:
@@ -892,7 +933,7 @@ def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence()
         "file, token, or search-count threshold",
         "small local searches may be direct",
         "delegate when doing so removes the discovery working set",
-        "continue complex implementation within the assigned slice",
+        "continue complex implementation within the assigned workstream across local execution checkpoints",
     )
     focused = roles.get_role("focused-implementer").instructions.lower()
     assert all(phrase in focused for phrase in focused_required)
@@ -921,28 +962,29 @@ def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence()
         "file, token, or search-count threshold",
         "small local searches may be direct",
         "with the sol focused implementer profile, consider offloading",
-        "with an astra focused implementer profile, explore evidence needed for the current slice directly",
-        "continue complex implementation within the assigned slice",
+        "with an astra focused implementer profile, explore evidence needed for the current workstream directly",
+        "continue complex implementation within the assigned workstream across local checkpoints",
     )
     assert all(phrase in rendered for phrase in docs_required)
     assert "remaining execution, local code judgment, tests, synchronization, and mechanical consistency" in rendered
     assert "standard implementer on luna is the default" in rendered
 
 
-def test_executors_batch_slice_work_and_scale_verification() -> None:
+def test_executors_batch_workstream_and_scale_verification() -> None:
     executor_phrases = (
-        "once the slice goal, authority, and boundary are known",
+        "once the workstream goal, authority, and boundary are known",
         "batch the relevant source, test, generation, and documentation reads",
         "make coherent edits",
         "avoid per-patch, per-read, or per-grep reasoning rounds",
         "match verification to the changed behavior and its concrete regression surface",
         "focused checks for the changed contract, generated output, and acceptance",
-        "without a failure, anomaly, or new broader-risk evidence, stop",
+        "without a failure, anomaly, or new broader-risk evidence, continue any remaining assigned local closures within the workstream",
         "broaden",
         "concrete compatibility or integration risk",
         "rerun the smallest acceptance-relevant range",
         "a commit, push, or final report alone does not call for another test run",
-        "do not use counts, time, file or token limits, or a stopping state machine",
+        "file, tool, token, time, or local-closure count",
+        "end a workstream",
     )
     for role in ("implementer", "focused-implementer"):
         prompt = " ".join(roles.get_role(role).instructions.lower().split())

@@ -43,13 +43,23 @@ of child results, and task-level decisions to reopen, review, continue, or end.
 It may do bounded reading to frame a handoff and interpret evidence, but does
 not perform broad repository scans, implementation, or the full task test
 suite. The Investigator role gathers broad evidence, including through the
-Scanner working pattern. Implementer and Focused Implementer make local code decisions within their
-accepted packets and slices. Each child handoff is decision-complete enough to
-close one semantic slice without routine Controller steering. If
-decision-changing information invalidates the slice, let the child return a
-distilled state and let the Controller decide whether to create a fresh
-correction slice. Reviewers challenge converged slices after implementation
-stops; their findings return to Controller, which decides on follow-on work.
+Scanner working pattern. Implementer and Focused Implementer make local code
+decisions within their accepted packets and Workstreams. Root routes workstreams.
+Executors close local loops inside them. A semantic checkpoint is not
+necessarily a scheduling checkpoint. A Workstream is the semantic routing unit,
+not a role or second Controller, and one authorized child session owns its
+execution. Within a stable Workstream, that same session may perform relevant
+reads, plan, implement, verify, fix ordinary in-scope failures, synchronize
+generated output and docs, run needed integration checks, inspect diff/status,
+and complete assigned Git closure. A local verification PASS does not require
+returning to Root; these local closures do not create semantic routing boundaries.
+Root regains control at a semantic Workstream boundary. If evidence changes task
+direction, ownership, observable semantics, a hard invariant, compatibility,
+acceptance, or reveals an unverified external dependency that could change the
+decision, the child stops and returns the concrete unknown in FINAL. Execution
+authority cannot expand Controller-assigned scope. Reviewers challenge
+converged candidates after implementation stops; their findings return to
+Controller, which decides on follow-on work.
 Use Reasoning Specialist when an independent challenge may materially change
 direction, including when framing appears coherent or an outcome is unexpected.
 It tests hidden assumptions, causal models, decomposition, boundaries, decision
@@ -75,12 +85,12 @@ decision-critical sources. With the Sol Focused Implementer profile, consider
 offloading broad or exhaustive peripheral call-site, rollout/log, and
 residual-reference collections when this removes an independent working set.
 With an Astra Focused Implementer profile, explore evidence needed for the
-current slice directly and use Scanner work only for a clearly large,
+current Workstream directly and use Scanner work only for a clearly large,
 low-reasoning-density collection that can be compressed independently. Small
 local searches may be direct. There is no per-read delegation deliberation or
 file, token, or search-count threshold. Delegate when doing so removes an
 independent working set.
-When completed Investigator discovery is selected for a later slice, the
+When completed Investigator discovery is selected for a later Workstream, the
 Controller handoff supplies its facts, exact source locations and affected
 surfaces, relevant unknowns or contradictions, and covered and uncovered
 scope. The implementation role starts from that map and directly reopens
@@ -88,22 +98,24 @@ decision-critical originals, call chains, diffs, and tests as needed. It does
 not repeat the covered broad inventory or delegate a Scanner over that surface.
 A fresh Scanner can collect a genuinely uncovered decision-changing evidence
 gap that needs independent broad discovery, limited to that gap.
-Focused Implementer continues complex implementation within its assigned slice
-when it still benefits from focused reasoning, closing the slice when its
-accepted semantic and implementation work is complete. A deterministic
-remainder goes to Controller routing only when it is outside the slice or
-independently closable without the Focused model's reasoning. A Scanner batches
+Focused Implementer continues complex implementation within its assigned
+Workstream across local checkpoints when it still benefits from focused
+reasoning. A local verification PASS does not force a return to Root. Close the
+Workstream at its semantic boundary or when assigned acceptance is complete. A
+deterministic remainder goes to Controller routing only when it is outside the
+Workstream or independently closable without the Focused model's reasoning. A Scanner batches
 related searches and reads, returns compact facts, and once evidence is
 sufficient stops immediately; do not expand the scan for one more confirmation.
-Once the slice goal, authority, and boundary are known, Implementer and Focused Implementer batch the
+Once the Workstream goal, authority, and boundary are known, Implementer and Focused Implementer batch the
 relevant source, test, generation, and documentation reads, form a plan, and
 make coherent edits. Avoid per-patch, per-read, or per-grep reasoning rounds
 unless new information could change direction. Match verification to the changed
 behavior and its concrete regression surface; start with focused checks for
 the changed contract, generated output, and acceptance. If those pass without
-a failure, anomaly, or new broader-risk evidence, stop. Broaden only for a
-concrete compatibility or integration risk. After a test fix, rerun the
-smallest acceptance-relevant range. A commit, push, or final report alone does
+a failure, anomaly, or new broader-risk evidence, continue any remaining assigned
+local closures within the Workstream. Broaden only for a concrete compatibility or
+integration risk. After a test fix, rerun the smallest acceptance-relevant
+range and continue the Workstream. A commit, push, or final report alone does
 not call for another test run. Do not use counts, time, file or token limits,
 or a stopping state machine.
 
@@ -129,17 +141,19 @@ semantic role identities and Luna or Sol defaults. Astra medium and xhigh are
 execution profiles of a semantic role, never separate roles. Per-spawn
 model/effort overrides are denied; no dynamic role exists.
 
-Choose one model/profile for the current implementation slice from its work
-shape, not as a ladder. Standard Implementer on Luna is the default for a
+Choose one model/profile for the current Workstream from its work shape, not as
+a ladder. Standard Implementer on Luna is the default for a
 stable problem structure and direction, including remaining execution, local
 code judgment, tests, synchronization, and mechanical consistency, regardless
-of task size. Choose Focused Implementer on Sol when the problem model and
-direction are stable enough, but implementation needs sustained reasoning
-across coupled invariants, nonlocal effects, or constraints. Choose a Focused
+of task size. Choose Focused Implementer on Sol when the smallest coherent
+Workstream has a stable direction but inherently needs sustained reasoning
+across coupled invariants, nonlocal effects, or constraints. Routine local
+closures do not trigger another role or profile choice. Choose a Focused
 Astra medium and xhigh remain exceptional profiles of the same Focused
 Implementer role, available only with current-task user authorization.
-Importance, file count, cross-module scope, or ordinary alternatives alone do
-not determine the choice.
+Importance, file count, cross-module scope, number of local closures, or ordinary
+alternatives alone do not determine the choice.
+Do not use file, tool, token, time, or local-closure counts to end a Workstream.
 
 When native event-driven continuation is unavailable, `wait_agent` is
 automatically normalized to a long wait only when an actual pending reservation
@@ -149,7 +163,7 @@ there is no automatic expansion. Thaliris provides no scheduler or polling
 loop.
 Call `wait_agent` only for a known unfinished child whose result remains
 necessary. After Scanner FINAL, the parent uses its result and does not wait
-on that Scanner again. A decision-changing unknown ends the child slice in
+on that Scanner again. A decision-changing unknown ends the child Workstream in
 FINAL for Controller decision.
 
 The installed pinned `thaliris-run.cmd --root <repo> codex-bootstrap` command is

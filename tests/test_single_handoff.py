@@ -2368,14 +2368,17 @@ def test_invalid_v1_active_state_admits_init_then_exact_recovery(tmp_path: Path,
     assert current["schema_version"] == core._STATE_SCHEMA_VERSION
 
 
-def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_path: Path) -> None:
+def test_role_profiles_keep_routing_and_model_choice_with_the_controller(tmp_path: Path) -> None:
     del tmp_path
     for name, (model, effort, role) in codex_adapter._AGENT_PROFILES.items():
         profile = codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort).decode()
         assert "sole task-specific input" in profile
         assert "distilled result" in profile
         assert "another native Codex child session" not in profile
-        assert "Never select your own model or reasoning effort" in profile
+        assert "Never select your own model or reasoning effort" not in profile
+        assert "Facts unknown route to Investigator" not in profile
+        assert "model choice follows the current semantic slice" not in profile
+        assert "Only the Controller decides task direction" in profile
         assert "sandbox_mode" not in profile
         for removed in ("context prepare --role", "REVALIDATION_REQUIRED", "MECHANICAL or LOCAL_SEMANTIC"):
             assert removed not in profile
@@ -2417,8 +2420,11 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "Choose the model per handoff and semantic slice difficulty; model choice follows\nthe current semantic slice, not the whole parent task. Deterministic\ndocumentation, test, configuration, or reference cleanup and small, bounded\nmodifications with a confirmed direction and no complex semantic uncertainty" in codex_adapter.MANAGED
     assert "Do not select Focused Implementer from the parent task or topic" in " ".join(codex_adapter.MANAGED.split())
     assert "Before choosing an opportunistic discovered slice" in codex_adapter.MANAGED
-    assert "Use Reasoning Specialist on Sol only when problem framing or slice decomposition\nis unclear; it does not implement." in codex_adapter.MANAGED
-    assert "already small,\nunusually demanding slice or an evidenced Sol failure" in codex_adapter.MANAGED
+    managed = " ".join(codex_adapter.MANAGED.split())
+    assert "Use Reasoning Specialist on Sol when an independent challenge may materially change direction" in managed
+    assert "framing appears coherent or an outcome is unexpected" in managed
+    assert "difficulty alone is not a trigger" in managed
+    assert "already small, unusually demanding slice or an evidenced Sol failure" in managed
     assert "Saved Host registration alone does not prove\ncurrent-session activation" in codex_adapter.MANAGED
     assert "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE" in codex_adapter.MANAGED
     assert "Before another correction packet, distinguish a local implementation defect" in codex_adapter.MANAGED
@@ -2426,12 +2432,11 @@ def test_role_profiles_define_distilled_results_without_semantic_workflow(tmp_pa
     assert "depends on an unverified external capability" in codex_adapter.MANAGED
     assert "makes feasibility uncertain" in codex_adapter.MANAGED
     assert "changes a Controller boundary or contract" in codex_adapter.MANAGED
-    assert "facts are missing, route to a fresh Investigator" in codex_adapter.MANAGED
-    assert "relevant facts are known\nbut the problem needs reframing, route to a fresh Reasoning\nSpecialist" in codex_adapter.MANAGED
-    assert "accepted design is unchanged and the defect is local, route\nto a fresh Implementer correction" in codex_adapter.MANAGED
-    assert "Reasoning Specialist is not for fact\ngathering, implementation, or routine review" in codex_adapter.MANAGED
-    assert "difficulty alone is\ninsufficient when the Controller can decide confidently from established facts" in codex_adapter.MANAGED
-    assert "Do not use counters, thresholds, risk scores, classifiers, or a state machine" in codex_adapter.MANAGED
+    assert "Missing factual information routes to Investigator" in managed
+    assert "When an independent challenge could materially change direction, route the selected framing and evidence to a fresh Reasoning Specialist" in managed
+    assert "accepted design is unchanged and the defect is local, route to a fresh Implementer correction" in managed
+    assert "Do not use it for broad fact gathering, implementation, routine review, or ordinary hard-problem solving" in managed
+    assert "Do not use counters, thresholds, risk scores, classifiers, or a state machine" in managed
     assert "check and synchronize both the repository-managed" in codex_adapter.MANAGED
     implementer = codex_adapter._agent_profile(
         "thaliris-implementer", "implementer", "gpt-5.6-luna", "xhigh"

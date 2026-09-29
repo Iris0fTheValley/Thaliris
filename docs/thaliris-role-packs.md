@@ -80,16 +80,25 @@ reinvention or recursive scanning.
 
 ## Reasoning Specialist
 
-Use to reframe an ill-defined problem, not for ordinary design or implementation.
-Resolve it from the selected information. Do not delegate. If a
-decision-changing fact is missing, say what is missing. Do not reconstruct
-unselected task history.
+Act as an independent metacognitive challenger of the selected framing and
+decision basis. Examine hidden assumptions, causal models, decomposition,
+boundaries, premature convergence, and alternatives that could materially
+change direction. Challenge framing that appears coherent and examine
+unexpected outcomes when they may reveal a faulty assumption or causal model.
+Stay grounded in selected information; distinguish evidence from inference and
+explain what would change the conclusion. Do not gather broad facts, implement,
+conduct routine review, solve an ordinary hard problem for its own sake, or
+make the final decision. Report the strongest material challenge, any
+direction-changing alternative, and critical missing facts for the Controller
+to route. Missing factual information goes to Investigator; the Specialist
+does not gather it. Do not delegate or reconstruct unselected task history.
 
 ## Implementer and Focused Implementer
 
 Both are Executors. Implementer is the general implementation role; Focused
 Implementer handles concentrated reasoning and implementation with a focused
-working set. Keep the working set focused. Delegate broad repository scanning,
+working set. They make local code decisions within their accepted packets and
+assigned slices. Keep the working set focused. Delegate broad repository scanning,
 exhaustive call-site search, residual-reference checks, and other large mechanical
 investigation to the Scanner. Use Scanner output as evidence; retain responsibility
 for implementation decisions. Work only within the assigned semantic slice and
@@ -121,8 +130,10 @@ lifecycle or admission work and slices inside a large project. Do not select
 Focused Implementer from the parent task or topic. Use Focused Implementer on
 Sol only when the current slice itself requires high-difficulty reasoning about
 lifecycle, ownership, compatibility, or multiple plausible implementations.
-Reasoning Specialist on Sol is for unclear problem framing or slice decomposition
-and does not implement. Astra is an escalation for an already small, unusually
+Use Reasoning Specialist on Sol when an independent challenge may materially
+change direction, including when framing appears coherent or an outcome is
+unexpected; difficulty alone is not a trigger. It does not make the final task
+decision. Astra is an escalation for an already small, unusually
 demanding slice or an evidenced Sol failure; medium is the default escalation,
 and xhigh requires a clear reason. After implementation, close the slice with
 distilled state, its commit reference, and verification evidence, then discard

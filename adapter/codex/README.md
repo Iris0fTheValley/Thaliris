@@ -30,14 +30,27 @@ fresh Implementer and then finish. Decision-changing investigation belongs to
 Investigator; bounded local reading needed for implementation may stay inside
 Implementer. Reviewer is an optional independent semantic check, not a default
 gate. Curator and Reasoning Specialist are likewise used only when valuable.
-An Executor handoff should close one decision-complete semantic slice without
-routine Controller steering. If decision-changing information invalidates the
-slice, let the child return a distilled state and create a fresh correction
-slice. Reviewers challenge converged slices after implementation stops; their
-findings return to Controller, which decides on fresh correction work.
-Decision-changing uncertainty routes to Investigator; broad grep and exhaustive
-call-site or residual-reference scans route to Scanner under an Executor or
-Reviewer.
+The Controller owns the complete user objective, its decomposition, role and
+context choice, overall invariants, boundaries and acceptance, interpretation
+of child results, and task-level decisions to reopen, review, continue, or end.
+It may do bounded reading to frame a handoff and interpret evidence, but does
+not perform broad repository scans, implementation, or the full task test
+suite. Children gather broad evidence through Investigator/Scanner work;
+Implementer and Focused Implementer make local code decisions within their
+accepted packets and slices. Each child handoff is decision-complete enough to
+close one semantic slice without routine Controller steering. If
+decision-changing information invalidates the slice, let the child return a
+distilled state and let the Controller decide whether to create a fresh
+correction slice. Reviewers challenge converged slices after implementation
+stops; their findings return to Controller, which decides on follow-on work.
+Use Reasoning Specialist when an independent challenge may materially change
+direction, including when framing appears coherent or an outcome is unexpected.
+It tests hidden assumptions, causal models, decomposition, boundaries, decision
+basis, premature convergence, and direction-changing alternatives. Difficulty
+alone is not a trigger; the Specialist does not gather broad facts, implement,
+conduct routine review, or make the final decision. Missing factual information
+goes to Investigator; broad grep and exhaustive call-site or residual-reference scans
+go to Scanner under an Executor or Reviewer.
 Before choosing an opportunistic discovered slice, the Controller confirms that
 each explicit user goal has been addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic rule, not a mechanical checklist

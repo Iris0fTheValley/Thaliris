@@ -99,7 +99,10 @@ def test_profile_defaults_and_static_astra_selection_are_fixed() -> None:
         value = tomllib.loads(codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort).decode())
         assert (value["name"], value["model"], value["model_reasoning_effort"]) == (name.removesuffix(".toml"), model, effort)
         assert roles.resolve_native_profile(value["name"]).id == role
-        assert "Never select your own model or reasoning effort" in value["developer_instructions"]
+        assert value["developer_instructions"] == roles.get_role(role).instructions
+        assert "Never select your own model or reasoning effort" not in value["developer_instructions"]
+        assert "model choice follows the current semantic slice" not in value["developer_instructions"]
+        assert "Facts unknown route to Investigator" not in value["developer_instructions"]
         if role in {"implementer", "focused-implementer"}:
             assert "Work only within the assigned semantic slice" in value["developer_instructions"]
             assert "return a decision-changing unknown instead of changing them" in value["developer_instructions"]
@@ -380,7 +383,7 @@ def test_8a3fe930_changed_profiles_upgrade_exact_bytes_and_preserve_edits(
 def test_child_communication_and_slice_routing_contract_is_shared() -> None:
     communication = (
         "ordinary progress, heartbeat, or partial-completion messages",
-        "proactively wake the parent only when completed, blocked and requiring a parent decision",
+        "wake the parent only when completed, blocked and requiring a parent decision",
         "genuine decision-changing information, with no automatic wake filter",
     )
     routing = (
@@ -395,6 +398,7 @@ def test_child_communication_and_slice_routing_contract_is_shared() -> None:
         )["developer_instructions"]
         normalized_instructions = instructions.lower()
         assert all(phrase.lower() in normalized_instructions for phrase in communication)
+        assert all(phrase.lower() not in normalized_instructions for phrase in routing[:2])
     for rendered in (
         codex_adapter.MANAGED,
         codex_adapter.ROLE_PACKS,
@@ -470,7 +474,7 @@ def test_model_choice_follows_the_current_slice() -> None:
     for rendered in _normalized_contract_sources():
         assert all(phrase in rendered for phrase in required)
     profile = " ".join(roles.get_role("focused-implementer").instructions.split()).lower()
-    assert all(phrase in profile for phrase in required)
+    assert all(phrase not in profile for phrase in required)
 
 
 def test_controller_covers_goals_before_an_opportunistic_slice() -> None:
@@ -483,14 +487,52 @@ def test_controller_covers_goals_before_an_opportunistic_slice() -> None:
         assert all(phrase in rendered for phrase in required)
 
 
-def test_unclear_slice_does_not_force_investigator_before_reasoning_specialist() -> None:
-    old_rule = "semantic slice is unclear starts with a standard luna investigator"
-    old_rule_other = "unclear semantic slice, the controller first selects"
-    assert old_rule not in " ".join(roles.get_role("investigator").instructions.split()).lower()
+def test_reasoning_specialist_is_an_independent_metacognitive_challenger() -> None:
+    specialist = " ".join(roles.get_role("reasoning-specialist").instructions.split()).lower()
+    specialist_required = (
+        "independent metacognitive challenger",
+        "hidden assumptions",
+        "causal model",
+        "decomposition",
+        "boundaries",
+        "premature convergence",
+        "alternatives that could materially change direction",
+        "challenge a framing even when it appears coherent",
+        "unexpected outcomes",
+        "do not gather broad facts",
+        "conduct routine review",
+        "make the final task decision",
+        "critical missing facts for the controller to route",
+    )
+    assert all(phrase in specialist for phrase in specialist_required)
+    controller_required = (
+        "independent challenge may materially change direction",
+        "framing appears coherent or an outcome is unexpected",
+        "difficulty alone is not a trigger",
+        "final decision",
+        "missing factual information",
+    )
     for rendered in _normalized_contract_sources():
-        assert old_rule not in rendered
-        assert old_rule_other not in rendered
-    assert "problem framing or slice decomposition is unclear" in _normalized_contract_sources()[-1]
+        assert all(phrase in rendered for phrase in controller_required)
+
+
+def test_shared_child_instructions_exclude_controller_routing_and_model_choice() -> None:
+    shared = roles._SHARED_INSTRUCTIONS.lower()
+    assert "your authorized parent's explicit native spawn message" in shared
+    assert "work only within the responsibility and scope stated in the handoff" in shared
+    assert "decision-changing unknown" in shared
+    assert "return a distilled result" in shared
+    for forbidden in (
+        "facts unknown route to investigator",
+        "model choice follows",
+        "difficulty determines the profile",
+        "select focused implementer",
+    ):
+        assert forbidden not in shared
+    for role in ("implementer", "focused-implementer"):
+        instructions = " ".join(roles.get_role(role).instructions.split()).lower()
+        assert "local implementation decisions" in instructions
+        assert "within the assigned semantic slice" in instructions
 
 
 def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence() -> None:

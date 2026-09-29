@@ -578,31 +578,48 @@ Before choosing an opportunistic discovered slice, the Controller confirms that
 each explicit user goal has been addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic rule, not a mechanical checklist
 or state machine.
+The Controller owns the complete user objective, its decomposition, role and
+context choice, overall invariants, boundaries and acceptance, interpretation
+of child results, and task-level decisions to reopen, review, continue, or end.
+It may do bounded reading needed to frame a handoff and interpret evidence, but
+does not perform broad repository scans, implementation, or the full task test
+suite. Children gather broad evidence through Investigator/Scanner work. Local
+code decisions and implementation within the accepted packet belong to
+Implementer or Focused Implementer.
 After a Focused Implementer delegates broad collection, it waits for the
 Scanner's distilled result and reads only bounded immediate files; it does not
 duplicate the Scanner's broad scan. Once difficult semantic uncertainty is closed, end the
 Focused slice; the Focused Implementer reports the deterministic patch, test,
 format, documentation, and residual-reference tail to the Controller. The
 Controller routes that deterministic tail to a fresh standard Luna Implementer.
-Make each Executor handoff decision-complete enough to close one semantic slice
-without routine Controller steering. Do not keep an Executor as a long-lived
+The Controller makes each child handoff decision-complete enough to close one
+semantic slice without routine steering. Do not keep a child as a long-lived
 interactive workspace. If new decision-changing information invalidates the
-slice, let the child close with distilled state and create a fresh correction
-slice. `send_message` remains available for genuinely new decision-changing
-information.
+slice, let the child close with distilled state and decide whether a fresh
+correction slice is needed. `send_message` remains available for genuinely new
+decision-changing information.
 Use Investigator/Scanner for missing facts, large working sets, broad scans,
 and factual compression, without transferring architecture decisions. A Scanner
 batches related searches and reads, returns compact facts, and once evidence is
 sufficient stops immediately; do not expand the scan for one more confirmation.
 Use a Reviewer only when independent semantic review adds real
-value; it is not a default gate. Curator and Reasoning Specialist remain
-optional and are selected only when they add actual value.
+value; it is not a default gate. Use Reasoning Specialist as an optional,
+independent metacognitive challenger when a challenge may materially change
+direction. Test framing, hidden assumptions, causal models, decomposition,
+boundaries, decision basis, and premature convergence; this includes apparently
+coherent framing and unexpected outcomes when a challenge could change direction.
+The Specialist grounds critique in selected information, reports material
+alternatives and critical missing facts, and does not make the final decision.
+It does not perform broad fact gathering, implementation, routine review, or
+ordinary hard-problem solving. Curator is optional and selected only when it adds
+actual value.
 At task end, make one short semantic judgment about knowledge that could
 change a future decision. Select a fresh Curator only when that knowledge
 needs durable maintenance; pass a concise selected handoff. Do not turn
 every task result into memory. Keep detailed evidence in Artifacts, Git,
-or rollout records. Executors synchronize formal project documentation for
-behavior changed within their slice; Reviewer challenges semantic drift when selected.
+or rollout records. Implementer roles synchronize formal project documentation
+for behavior changed within their slice; Reviewer challenges semantic drift
+when selected.
 
 When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
 contracts change, check and synchronize both the repository-managed
@@ -637,21 +654,23 @@ and slices inside a large project. Do not select Focused Implementer from the
 parent task or topic. Use Focused Implementer on Sol only when the current slice
 itself requires high-difficulty reasoning about lifecycle, ownership, compatibility,
 or multiple plausible implementations.
-Use Reasoning Specialist on Sol only when problem framing or slice decomposition
-is unclear; it does not implement. Astra is an escalation for an already small,
-unusually demanding slice or an evidenced Sol failure. Astra medium is the
-default escalation; xhigh requires a clear reason.
-Implementer and Focused Implementer both execute implementation work. Reasoning
-Specialist reframes ill-defined problems; ordinary design and implementation
-remain with the Executors. Verifier is retained read-only for compatibility
-and is not recommended as a workflow stage.
+Use Reasoning Specialist on Sol when an independent challenge may materially
+change direction, including when the framing appears coherent or an outcome is
+unexpected; difficulty alone is not a trigger. It challenges the decision basis
+and reports its analysis without making the final decision. Astra is an
+escalation for an already small, unusually demanding slice or an evidenced Sol
+failure. Astra medium is the default escalation; xhigh requires a clear reason.
+Implementer and Focused Implementer make local code decisions and execute
+implementation within their assigned packets. Verifier is retained read-only
+for compatibility and is not recommended as a workflow stage.
 
 Keep the working set focused. Delegate broad repository scanning, exhaustive
 call-site search, residual-reference checks, and other large mechanical
-investigation to the Scanner. Use Scanner output as evidence; retain
-responsibility for implementation decisions.
-Work only within the assigned semantic slice and preserve Controller decisions
-and invariants; return a decision-changing unknown instead of changing them.
+investigation to Investigator/Scanner. Use its output as evidence when making
+task-level decisions. Children work only within their assigned semantic slice,
+preserve Controller decisions and invariants, and return a decision-changing
+unknown instead of changing them. Local code decisions belong to Implementer or
+Focused Implementer.
 Controller may spawn registered roles. Implementer, Focused Implementer, and
 Reviewer may each spawn only a fresh Investigator/Scanner. Investigator,
 Reasoning Specialist, Curator, and Verifier cannot delegate. Maximum managed
@@ -669,17 +688,23 @@ Before another correction packet, distinguish a local implementation defect
 from a decision-basis failure. If review overturns an accepted invariant,
 depends on an unverified external capability, makes feasibility uncertain, or
 changes a Controller boundary or contract, reopen the Controller decision. If
-facts are missing, route to a fresh Investigator; if relevant facts are known
-but the problem needs reframing, route to a fresh Reasoning
-Specialist; if the accepted design is unchanged and the defect is local, route
-to a fresh Implementer correction. Reasoning Specialist is not for fact
-gathering, implementation, or routine review, and difficulty alone is
-insufficient when the Controller can decide confidently from established facts.
-Do not use counters, thresholds, risk scores, classifiers, or a state machine
-for this routing.
-Semantic uncertainty that can change a decision routes to Investigator;
-broad grep, exhaustive residual references, and call-site scans route to a
-Scanner under an Executor or Reviewer.
+facts are missing, route to a fresh Investigator. When an independent challenge
+could materially change direction, route the selected framing and evidence to a
+fresh Reasoning Specialist, even if the current framing appears coherent or an
+outcome was unexpected. The Specialist challenges hidden assumptions, causal
+models, decomposition, boundaries, decision basis, premature convergence, and
+direction-changing alternatives; it reports critical missing facts for the
+Controller to route and does not decide the task. Do not use it for broad fact
+gathering, implementation, routine review, or ordinary hard-problem solving.
+Difficulty alone is not a trigger when the Controller can decide confidently
+from established facts. If the accepted design is unchanged and the defect is
+local, route to a fresh Implementer correction. Do not use counters, thresholds,
+risk scores, classifiers, or a state machine for this routing.
+Missing factual information routes to Investigator; broad grep, exhaustive
+residual references, and call-site scans route to a Scanner under an Executor
+or Reviewer. The Controller interprets findings,
+decides whether to reopen the basis, selects any review, and decides when work
+continues or ends.
 Reviewer challenges a converged implementation slice; do not start it against
 a still-mutating Executor to obtain parallel progress. Findings return to the
 Controller, which decides whether a fresh correction slice is needed.
@@ -949,16 +974,25 @@ reinvention or recursive scanning.
 
 ## Reasoning Specialist
 
-Use to reframe an ill-defined problem, not for ordinary design or implementation.
-Resolve it from the selected information. Do not delegate. If a
-decision-changing fact is missing, say what is missing. Do not reconstruct
-unselected task history.
+Act as an independent metacognitive challenger of the selected framing and
+decision basis. Examine hidden assumptions, causal models, decomposition,
+boundaries, premature convergence, and alternatives that could materially
+change direction. Challenge framing that appears coherent and examine
+unexpected outcomes when they may reveal a faulty assumption or causal model.
+Stay grounded in selected information; distinguish evidence from inference and
+explain what would change the conclusion. Do not gather broad facts, implement,
+conduct routine review, solve an ordinary hard problem for its own sake, or
+make the final decision. Report the strongest material challenge, any
+direction-changing alternative, and critical missing facts for the Controller
+to route. Missing factual information goes to Investigator; the Specialist
+does not gather it. Do not delegate or reconstruct unselected task history.
 
 ## Implementer and Focused Implementer
 
 Both are Executors. Implementer is the general implementation role; Focused
 Implementer handles concentrated reasoning and implementation with a focused
-working set. Keep the working set focused. Delegate broad repository scanning,
+working set. They make local code decisions within their accepted packets and
+assigned slices. Keep the working set focused. Delegate broad repository scanning,
 exhaustive call-site search, residual-reference checks, and other large mechanical
 investigation to the Scanner. Use Scanner output as evidence; retain responsibility
 for implementation decisions. Work only within the assigned semantic slice and
@@ -990,8 +1024,10 @@ lifecycle or admission work and slices inside a large project. Do not select
 Focused Implementer from the parent task or topic. Use Focused Implementer on
 Sol only when the current slice itself requires high-difficulty reasoning about
 lifecycle, ownership, compatibility, or multiple plausible implementations.
-Reasoning Specialist on Sol is for unclear problem framing or slice decomposition
-and does not implement. Astra is an escalation for an already small, unusually
+Use Reasoning Specialist on Sol when an independent challenge may materially
+change direction, including when framing appears coherent or an outcome is
+unexpected; difficulty alone is not a trigger. It does not make the final task
+decision. Astra is an escalation for an already small, unusually
 demanding slice or an evidenced Sol failure; medium is the default escalation,
 and xhigh requires a clear reason. After implementation, close the slice with
 distilled state, its commit reference, and verification evidence, then discard

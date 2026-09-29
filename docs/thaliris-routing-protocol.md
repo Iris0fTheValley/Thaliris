@@ -12,9 +12,16 @@ Implementer / Focused Implementer / Reviewer --explicit fresh handoff--> Investi
 Scanner --distilled evidence--> requesting Executor / Reviewer
 ```
 
-The Controller owns task-specific semantic routing. It chooses the Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, or Reviewer,
-task, facts, constraints, decisions, unknowns, and pointers to send. A missing
-fact is a Controller/model error; Core must not infer or append it.
+The Controller owns the complete user objective, its decomposition, role and
+context choice, overall invariants, boundaries and acceptance, interpretation
+of child results, and task-level decisions to reopen, review, continue, or end.
+It chooses the minimum necessary fresh role and supplies the task, facts,
+constraints, decisions, unknowns, and pointers to send. It may do bounded
+reading to frame a handoff and interpret evidence, but does not perform broad
+repository scans, implementation, or the full task test suite. Children gather
+broad evidence through Investigator/Scanner work; Implementer and Focused
+Implementer make local code decisions within their accepted packets and slices.
+A missing fact is a Controller/model error; Core must not infer or append it.
 
 For every task, the Controller selects the minimum necessary fresh role
 sessions. One top-level child may delegate one Scanner at a time, at maximum
@@ -32,7 +39,11 @@ for architecture or cross-module changes, lifecycle, Host, identity, or
 authority boundaries, compatibility invariants, multiple plausible
 implementations, complex semantic repairs, or remaining correctness
 uncertainty. Curator and Reasoning Specialist are optional and selected only
-when they add actual value.
+when they add actual value. Use Reasoning Specialist when an independent
+challenge may materially change direction, including when framing appears
+coherent or an outcome is unexpected. It tests hidden assumptions, causal
+models, decomposition, boundaries, decision basis, premature convergence, and
+direction-changing alternatives. Difficulty alone is not a trigger.
 
 With INVALID_STATE, the PreToolUse guard denies only mechanically recognized
 Controller-owned state mutations: direct Thaliris task/lifecycle mutations and
@@ -84,8 +95,9 @@ compatibility and is not recommended. Only Controller may explicitly choose
 static Astra medium or xhigh profiles before spawn for exceptional reasoning.
 These profiles map to the same stable IDs; defaults remain Luna or Sol. Per-spawn
 model/effort overrides are denied. Role sessions cannot choose their own
-model/effort. Reasoning Specialist reframes ill-defined
-problems; normal design and implementation belong to the Executors.
+model/effort. Reasoning Specialist independently challenges selected framing
+and its decision basis; local implementation decisions belong to Implementer
+and Focused Implementer.
 Choose the model per handoff and semantic slice difficulty; model choice follows
 the current semantic slice, not the whole parent task. Deterministic
 documentation, test, configuration, or reference cleanup and small, bounded
@@ -95,17 +107,21 @@ lifecycle or admission work and slices inside a large project. Do not select
 Focused Implementer from the parent task or topic. Use Focused Implementer on Sol
 only when the current slice itself requires high-difficulty reasoning about
 lifecycle, ownership, compatibility, or multiple plausible implementations.
-Use Reasoning Specialist on Sol only when problem framing or slice decomposition
-is unclear; it does not implement. Astra is an escalation for an already small,
-unusually demanding slice or an evidenced Sol failure. Astra medium is the
-default escalation; xhigh requires a clear reason.
+Use Reasoning Specialist on Sol when an independent challenge may materially
+change direction. It reports the strongest challenge, material alternatives,
+and critical missing facts for the Controller to route; it does not make the
+final decision or implement. It does not gather broad facts, conduct routine
+review, or solve an ordinary hard problem for its own sake. Astra is an
+escalation for an already small, unusually demanding slice or an evidenced Sol
+failure. Astra medium is the default escalation; xhigh requires a clear reason.
 
 Keep the working set focused. Delegate broad repository scanning, exhaustive
 call-site search, residual-reference checks, and other large mechanical
-investigation to the Scanner. Use Scanner output as evidence; retain
-responsibility for implementation decisions. A Scanner batches related searches
-and reads, returns compact facts, and once evidence is sufficient stops immediately;
-do not expand the scan for one more confirmation.
+investigation to the Scanner. Use Scanner output as evidence for task-level
+interpretation; local code decisions belong to Implementer or Focused
+Implementer. A Scanner batches related searches and reads, returns compact
+facts, and once evidence is sufficient stops immediately; do not expand the
+scan for one more confirmation.
 Only Implementer, Focused
 Implementer, and Reviewer may delegate Investigator. The remaining child roles
 cannot delegate. Fresh children always use `fork_turns="none"`. Executors work
@@ -259,9 +275,15 @@ authority; current managed work requires version 12 records.
 Correction routing is semantic and Controller-owned. A Reviewer finding that
 overturns an accepted invariant, depends on an unproved external capability,
 makes feasibility uncertain, or changes a Controller boundary/contract first
-reopens the decision; the Controller then chooses Investigator for missing
-facts or Reasoning Specialist to reframe an ill-defined problem from known facts. Only
-a local implementation defect with the accepted design unchanged may go
+reopens the decision. Missing factual information goes to Investigator. When an
+independent challenge may materially change direction, the Controller can route
+the selected framing and evidence to Reasoning Specialist, including coherent
+framing, hidden assumptions, causal models, decomposition, boundaries, decision
+basis, premature convergence, and unexpected outcomes. The Specialist reports
+critical missing facts for the Controller to route and does not make the final
+task decision. Do not select it for broad fact gathering, implementation,
+routine review, or ordinary hard-problem solving; difficulty alone is not a
+trigger. Only a local implementation defect with the accepted design unchanged may go
 directly to a fresh Implementer. An Implementer that encounters an unverified
 external fact, an invalidated invariant, or a changed decision basis returns it
 as a decision-changing unknown without expanding scope.

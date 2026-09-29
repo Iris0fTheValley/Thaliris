@@ -8,8 +8,8 @@
 Controller --explicit native handoff--> Investigator / Curator / Reasoning Specialist / Implementer / Focused Implementer / Verifier / Reviewer
 Role session --distilled result + optional Artifact pointer--> Controller
 Controller --next explicit handoff--> next selected role session
-Implementer / Focused Implementer / Reviewer --explicit fresh handoff--> Investigator (Scanner)
-Scanner --distilled evidence--> requesting Executor / Reviewer
+Implementer / Focused Implementer / Reviewer --explicit fresh handoff--> Investigator (Scanner working pattern)
+Scanner working pattern --distilled evidence--> requesting role
 ```
 
 The Controller owns the complete user objective, its decomposition, role and
@@ -18,22 +18,25 @@ of child results, and task-level decisions to reopen, review, continue, or end.
 It chooses the minimum necessary fresh role and supplies the task, facts,
 constraints, decisions, unknowns, and pointers to send. It may do bounded
 reading to frame a handoff and interpret evidence, but does not perform broad
-repository scans, implementation, or the full task test suite. Children gather
-broad evidence through Investigator/Scanner work; Implementer and Focused
-Implementer make local code decisions within their accepted packets and slices.
+repository scans, implementation, or the full task test suite. The Investigator
+role gathers broad evidence, including through the Scanner working pattern.
+Implementer and Focused Implementer make local code decisions within their
+accepted packets and slices.
 A missing fact is a Controller/model error; Core must not infer or append it.
 
-For every task, the Controller selects the minimum necessary fresh role
-sessions. One top-level child may delegate one Scanner at a time, at maximum
+For every task, the Controller selects the minimum necessary fresh semantic
+roles. One top-level child may delegate one nested Investigator session doing
+Scanner work at a time, at maximum
 managed depth two. Roles are capabilities, not mandatory workflow stages.
 This policy is identical for ACTIVE and degraded work; degraded mode does not
 define a second routing flow. A straightforward, bounded, low-risk task with
 confirmed facts may take the Controller -> fresh Implementer -> done path: the
 Implementer may do necessary bounded local reading, implementation, and
-deterministic verification. Decision-changing investigation belongs to
-Investigator/Scanner also handles broad scanning and factual compression of
-large working sets, without architecture decisions. Bounded local reading
-needed for implementation may stay inside either Executor. Reviewer is conditional, not a mechanical post-implementation gate;
+deterministic verification. Decision-changing investigation belongs to the
+Investigator role, which also handles broad scanning and factual compression
+of large working sets, without architecture decisions. Bounded local reading
+needed for implementation may stay inside Implementer or Focused Implementer.
+Reviewer is conditional, not a mechanical post-implementation gate;
 select it only when independent semantic review adds real value, such as
 for architecture or cross-module changes, lifecycle, Host, identity, or
 authority boundaries, compatibility invariants, multiple plausible
@@ -79,7 +82,7 @@ request revalidation when a decision depends on changed evidence and has
 become unreliable.
 
 For divisible work, the Controller chooses bounded semantic slices instead of
-handing an entire multi-slice stage to a higher-capability Executor. Define
+handing an entire multi-slice stage to one implementation role. Define
 slice boundaries by semantic dependencies, decision coupling, implementation
 uncertainty, and independent closure, not by token, file, or task-count
 thresholds. Prefer slices that can each be independently understood,
@@ -91,59 +94,96 @@ Before choosing an opportunistic discovered slice, the Controller confirms that
 each explicit user goal has been addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic rule, not a mechanical checklist
 or state machine. Focused Implementer can complete complex implementation as
-well as focused reasoning. It directly inspects known, decision-critical
-sources, including source code, relevant call chains, the current diff, failed
-tests, and raw evidence. If a larger or unknown evidence surface needs
-discovery, one Scanner can discover, enumerate, filter, and classify the
-relevant sources, returning key conclusions, exceptions, UNKNOWNs, and accurate
-raw locations. The Scanner narrows the search space; it does not replace
-reasoning-coupled reading, and targeted reopening of relevant originals after
-its result is useful. There is no per-read delegation deliberation or
-file/token/search-count threshold; small local searches may be direct.
+well as focused reasoning. Implementer and Focused Implementer directly inspect
+known, decision-critical sources, including source code, relevant call chains,
+the current diff, failed tests, and raw evidence. Scanner is a nested
+Investigator discovery working pattern, not a separate role. Scanner work
+discovers over a larger or unknown evidence surface, or compresses a clearly
+large, low-reasoning-density collection that can be handled independently. It
+returns key conclusions, exceptions, UNKNOWNs, and accurate raw locations. The
+collection choice does not predetermine which evidence is relevant and does
+not replace reasoning-coupled reading; targeted rereading of relevant
+originals is useful. With the Sol Focused Implementer profile, consider
+offloading broad or exhaustive peripheral call-site, rollout/log, and
+residual-reference collections when doing so removes an independent working
+set. With an Astra Focused Implementer profile, explore evidence needed for
+the current slice directly and use Scanner work only for a clearly large,
+low-reasoning-density collection that can be compressed independently. Small
+local searches may be direct.
 Focused Implementer continues complex implementation within its assigned slice
 when it still benefits from focused reasoning, and closes the slice when its
 accepted semantic and implementation work is complete. A deterministic
 remainder goes to Controller routing only when it is outside the slice or
 independently closable without the Focused model's reasoning.
 
+Once the slice goal, authority, and boundary are known, Implementer and Focused Implementer batch the
+relevant source, test, generation, and documentation reads, form a plan, and
+make coherent edits. Avoid per-patch, per-read, or per-grep reasoning rounds
+unless new information could change direction. Match verification to the changed
+behavior and its concrete regression surface. Start with focused checks for
+the changed contract, generated output, and acceptance. If those pass without
+a failure, anomaly, or new broader-risk evidence, stop. Broaden checks only
+for a concrete compatibility or integration risk. After a test fix, rerun the
+smallest acceptance-relevant range. A commit, push, or final report alone does
+not call for another test run. Do not use counts, time, file or token limits,
+or a stopping state machine.
+
 Controller has no fixed model, effort, or native profile. The Host/user selects
 its model. Investigator, Curator, and standard Implementer use
 `gpt-6-luna/xhigh`; Focused Implementer, Reasoning Specialist, and Reviewer use
 `gpt-6-sol/high`. Verifier remains read-only `gpt-6-luna/xhigh` for
 compatibility and is not recommended. Only Controller may explicitly choose
-static Astra medium or xhigh profiles before spawn for exceptional reasoning.
-These profiles map to the same stable IDs; defaults remain Luna or Sol. Per-spawn
+static Astra medium or xhigh profiles before spawn. Each profile maps to the
+same stable semantic role identity; defaults remain Luna or Sol. Per-spawn
 model/effort overrides are denied. Role sessions cannot choose their own
 model/effort. Reasoning Specialist independently challenges selected framing
 and its decision basis; local implementation decisions belong to Implementer
 and Focused Implementer.
-Choose the model per handoff and semantic slice difficulty; model choice follows
-the current semantic slice, not the whole parent task. Deterministic
-documentation, test, configuration, or reference cleanup and small, bounded
-modifications with a confirmed direction and no complex semantic uncertainty
-default to standard Implementer on Luna, including
-lifecycle or admission work and slices inside a large project. Do not select
-Focused Implementer from the parent task or topic. Use Focused Implementer on Sol
-only when the current slice itself requires high-difficulty reasoning about
-lifecycle, ownership, compatibility, or multiple plausible implementations.
+
+Routing terms: Investigator, Implementer, and Focused Implementer are semantic
+roles. Scanner is a nested Investigator discovery working pattern, not a
+separate role. Executor is a category covering Implementer and Focused
+Implementer, not a selectable or spawnable role; route by the actual role name.
+A native execution profile selects model and effort for a semantic role and
+does not create another role.
+
+Choose one model/profile for the current implementation slice from its work
+shape, not as a ladder. Standard Implementer on Luna is the default for a
+stable problem structure and direction, including remaining execution, local
+code judgment, tests, synchronization, and mechanical consistency, regardless
+of task size. Choose Focused Implementer on Sol when the problem model and
+direction are stable enough, but implementation needs sustained reasoning
+across coupled invariants, nonlocal effects, or constraints. Choose a Focused
+Implementer Astra profile when the solution path is unstable and understanding,
+exploration, implementation, runtime feedback, and remodeling are coupled; it
+may own the bounded explore-understand-implement-run-observe-revise loop within
+the Controller's goal, hard invariants, scope, and acceptance. Astra medium and
+xhigh are exceptional execution profiles of the same Focused Implementer role.
+Choose the profile once for the slice; Sol failure is not a prerequisite and
+there is no need to prove Sol inadequate. Importance, file count, cross-module
+scope, or ordinary alternatives alone do not determine the choice.
 Use Reasoning Specialist on Sol when an independent challenge may materially
 change direction. It reports the strongest challenge, material alternatives,
 and critical missing facts for the Controller to route; it does not make the
 final decision or implement. It does not gather broad facts, conduct routine
-review, or solve an ordinary hard problem for its own sake. Astra is an
-escalation for an already small, unusually demanding slice or an evidenced Sol
-failure. Astra medium is the default escalation; xhigh requires a clear reason.
+review, or solve an ordinary hard problem for its own sake.
 
-Keep the working set focused. Delegate broad repository scanning, exhaustive
-call-site search, residual-reference checks, and other large mechanical
-investigation to the Scanner. Use Scanner output as evidence for task-level
-interpretation; local code decisions belong to Implementer or Focused
-Implementer. A Scanner batches related searches and reads, returns compact
-facts, and once evidence is sufficient stops immediately; do not expand the
-scan for one more confirmation.
+Keep the working set focused. Implementer and Focused Implementer directly read known,
+decision-critical sources. Use Scanner work for discovery over a larger or
+unknown evidence surface, or to compress a clearly large, low-reasoning-density
+collection. With the Sol Focused Implementer profile, consider offloading broad
+or exhaustive peripheral call-site, rollout/log, and residual-reference
+collections when this removes an independent working set. With an Astra Focused
+Implementer profile, explore evidence needed for the current slice directly and
+use Scanner work only for a clearly large, low-reasoning-density collection
+that can be compressed independently. The collection choice does not
+predetermine which evidence is relevant. Small local searches may be direct.
+A Scanner batches related searches and reads, returns compact facts, and once
+evidence is sufficient stops immediately; do not expand the scan for one more
+confirmation.
 Only Implementer, Focused
-Implementer, and Reviewer may delegate Investigator. The remaining child roles
-cannot delegate. Fresh children always use `fork_turns="none"`. Executors work
+Implementer, and Reviewer may delegate a fresh Investigator for Scanner work. The remaining child roles
+cannot delegate. Fresh children always use `fork_turns="none"`. Implementer and Focused Implementer work
 only within their assigned semantic slice, preserve Controller decisions and
 invariants, and return a decision-changing unknown rather than changing them.
 They synchronize formal project documentation, including product/protocol docs
@@ -212,8 +252,8 @@ It does not construct a role packet or inject task state.
 
 ## Private work and return
 
-The Scanner absorbs large mechanical working sets; Executors and Reviewer
-retain a focused private working set. The default result is a concise
+The Scanner working pattern absorbs large mechanical working sets; Implementer,
+Focused Implementer, and Reviewer retain a focused private working set. The default result is a concise
 conclusion, key findings, decision-changing unknowns, contradictions,
 verification performed, and optional Artifact references. The detailed working
 set does not automatically re-enter the Controller.
@@ -223,7 +263,8 @@ blocked and requiring a parent decision, or when new decision-changing
 information arrives. Direct `send_message` to the exact bound parent remains
 available for genuine decision-changing information, with no automatic wake
 filter. Follow-up and input tools remain denied for managed children.
-Scanner results return to their requesting Executor/Reviewer.
+Scanner results return to their requesting Implementer, Focused Implementer,
+or Reviewer.
 
 When detailed material should survive, the selected role session writes a free-form Markdown or
 JSON Artifact and returns its pointer. Registration records path and content

@@ -387,10 +387,12 @@ def test_child_communication_and_slice_routing_contract_is_shared() -> None:
         "genuine decision-changing information, with no automatic wake filter",
     )
     routing = (
-        "per handoff and semantic slice difficulty",
-        "small, bounded modifications with a confirmed direction and no complex semantic uncertainty default",
-        "current slice",
-        "multiple plausible implementations",
+        "choose one model/profile for the current implementation slice from its work shape, not as a ladder",
+        "standard implementer on luna is the default for a stable problem structure and direction",
+        "choose focused implementer on sol when the problem model and direction are stable enough",
+        "choose a focused implementer astra profile when the solution path is unstable",
+        "sol failure is not a prerequisite",
+        "importance, file count, cross-module scope, or ordinary alternatives alone do not determine the choice",
     )
     for name, (model, effort, role) in roles.agent_profiles().items():
         instructions = tomllib.loads(
@@ -458,7 +460,8 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
         "larger or unknown evidence surface",
         "discovered, enumerated, filtered, or classified",
         "key conclusions, exceptions, unknowns, and accurate raw locations",
-        "narrows the search space; it does not replace reasoning-coupled reading",
+        "narrows a collection; its choice of collection does not predetermine which evidence is relevant",
+        "does not replace reasoning-coupled reading",
         "targeted reopening of relevant originals to verify findings is useful",
         "there is no per-read delegation deliberation",
         "file, token, or search-count threshold",
@@ -471,21 +474,27 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
     )
     assert all(phrase in profile for phrase in required)
     standard = " ".join(roles.get_role("implementer").instructions.split()).lower()
-    assert all(phrase not in standard for phrase in required[:14])
+    focused_only = (
+        "a sufficiently stable problem model and direction can still call for focused implementer",
+        "when the solution path remains unstable and framing, exploration",
+        "wait for the scanner's distilled result",
+        "close the focused slice when its accepted semantic and implementation work is complete",
+    )
+    assert all(phrase not in standard for phrase in focused_only)
     docs_required = (
         "focused implementer handles focused judgment and complex implementation",
         "directly inspects known, decision-critical",
         "current diff, failed tests",
         "decision-critical raw evidence",
         "larger or unknown evidence surface",
-        "must be discovered, enumerated, filtered, or classified",
+        "needs discovery or a clearly large, low-reasoning-density collection",
         "key conclusions, exceptions, unknowns, and accurate raw locations",
         "does not replace reasoning-coupled reading",
         "targeted reopening of relevant originals",
         "there is no per-read delegation deliberation",
         "file, token, or search-count threshold",
         "small local searches may be direct",
-        "removes the discovery working set",
+        "removes an independent working set",
         "after delegating, wait for the distilled result",
         "do not repeat its discovery pass",
         "continue complex implementation within the assigned slice",
@@ -495,14 +504,12 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
         assert all(phrase in rendered for phrase in docs_required)
     propagated = (
         "focused implementer can complete complex implementation",
-        "directly inspects known, decision-critical sources",
-        "current diff, failed tests, and raw evidence",
+        "current diff, failed tests",
         "larger or unknown evidence surface",
         "key conclusions, exceptions, unknowns, and accurate raw locations",
         "does not replace reasoning-coupled reading",
-        "targeted reopening of relevant originals",
-        "there is no per-read delegation deliberation",
-        "search-count threshold",
+        "sol focused implementer profile",
+        "astra focused implementer profile",
         "continues complex implementation within",
     )
     for rendered in _normalized_contract_sources()[0:1] + _normalized_contract_sources()[2:4] + _normalized_contract_sources()[-1:]:
@@ -549,14 +556,34 @@ def test_pre_update_managed_and_role_pack_outputs_remain_upgradeable() -> None:
 
 def test_model_choice_follows_the_current_slice() -> None:
     required = (
-        "model choice follows the current semantic slice, not the whole parent task",
-        "small, bounded modifications with a confirmed direction and no complex semantic uncertainty",
-        "do not select focused implementer from the parent task or topic",
+        "choose one model/profile for the current implementation slice from its work shape, not as a ladder",
+        "standard implementer on luna is the default for a stable problem structure and direction",
+        "choose focused implementer on sol when the problem model and direction are stable enough",
+        "choose a focused implementer astra profile when the solution path is unstable",
+        "sol failure is not a prerequisite and there is no need to prove sol inadequate",
+        "importance, file count, cross-module scope, or ordinary alternatives alone do not determine the choice",
     )
     for rendered in _normalized_contract_sources():
         assert all(phrase in rendered for phrase in required)
     profile = " ".join(roles.get_role("focused-implementer").instructions.split()).lower()
-    assert all(phrase not in profile for phrase in required)
+    assert all(phrase not in profile for phrase in required[:3])
+
+
+def test_routing_ontology_keeps_roles_profiles_and_work_patterns_distinct() -> None:
+    required = (
+        "investigator, implementer, and focused implementer are semantic roles",
+        "scanner is a nested investigator discovery working pattern, not a separate role",
+        "executor is a category covering implementer and focused implementer, not a selectable or spawnable role",
+        "a native execution profile selects model and effort for a semantic role",
+    )
+    for rendered in _normalized_contract_sources():
+        assert all(phrase in rendered for phrase in required)
+
+    choices = set(roles.role_choices())
+    assert "scanner" not in choices
+    assert "executor" not in choices
+    assert "astra" not in choices
+    assert roles.resolve_native_profile("thaliris-focused-implementer-astra-medium").id == "focused-implementer"
 
 
 def test_controller_covers_goals_before_an_opportunistic_slice() -> None:
@@ -626,7 +653,7 @@ def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence()
         "call-site enumeration",
         "residual checks",
         "large mechanical evidence collection",
-        "fresh investigator/scanner",
+        "fresh investigator role session",
         "do not routinely perform those broad collections yourself merely because you can",
     )
     reviewer = roles.get_role("reviewer").instructions.lower()
@@ -639,12 +666,16 @@ def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence()
         "when the target is known, read it directly",
         "larger or unknown evidence surface",
         "discovered, enumerated, filtered, or classified",
+        "clearly large low-reasoning-density collection",
         "key conclusions, exceptions, unknowns, and accurate raw locations",
         "targeted reopening of relevant originals to verify findings is useful",
+        "collection does not predetermine which evidence is relevant",
         "there is no per-read delegation deliberation",
         "file, token, or search-count threshold",
         "small local searches may be direct",
         "delegate when doing so removes the discovery working set",
+        "with the sol focused implementer profile, consider offloading",
+        "with an astra focused implementer profile, explore evidence needed for the current slice directly",
         "continue complex implementation within the assigned slice",
     )
     focused = roles.get_role("focused-implementer").instructions.lower()
@@ -653,23 +684,51 @@ def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence()
     rendered = " ".join(codex_adapter.render_role_packs().lower().split())
     assert all(phrase in rendered for phrase in reviewer_required)
     docs_required = (
+        "investigator, implementer, and focused implementer are semantic roles",
+        "scanner is a nested investigator discovery working pattern",
+        "executor is a category covering implementer and focused implementer",
         "directly inspects known, decision-critical",
         "current diff, failed tests",
         "decision-critical raw evidence",
         "larger or unknown evidence surface",
-        "must be discovered, enumerated, filtered, or classified",
+        "clearly large, low-reasoning-density collection",
         "key conclusions, exceptions, unknowns, and accurate raw locations",
+        "does not predetermine relevant evidence",
         "does not replace reasoning-coupled reading",
         "targeted reopening of relevant originals to verify findings is useful",
         "there is no per-read delegation deliberation",
         "file, token, or search-count threshold",
         "small local searches may be direct",
-        "delegate when doing so removes the discovery working set",
+        "with the sol focused implementer profile, consider offloading",
+        "with an astra focused implementer profile, explore evidence needed for the current slice directly",
         "continue complex implementation within the assigned slice",
     )
     assert all(phrase in rendered for phrase in docs_required)
-    assert "deterministic documentation, test, configuration, or reference cleanup" in rendered
-    assert "default to standard implementer on luna" in rendered
+    assert "remaining execution, local code judgment, tests, synchronization, and mechanical consistency" in rendered
+    assert "standard implementer on luna is the default" in rendered
+
+
+def test_executors_batch_slice_work_and_scale_verification() -> None:
+    executor_phrases = (
+        "once the slice goal, authority, and boundary are known",
+        "batch the relevant source, test, generation, and documentation reads",
+        "make coherent edits",
+        "avoid per-patch, per-read, or per-grep reasoning rounds",
+        "match verification to the changed behavior and its concrete regression surface",
+        "focused checks for the changed contract, generated output, and acceptance",
+        "without a failure, anomaly, or new broader-risk evidence, stop",
+        "broaden",
+        "concrete compatibility or integration risk",
+        "rerun the smallest acceptance-relevant range",
+        "a commit, push, or final report alone does not call for another test run",
+        "do not use counts, time, file or token limits, or a stopping state machine",
+    )
+    for role in ("implementer", "focused-implementer"):
+        prompt = " ".join(roles.get_role(role).instructions.lower().split())
+        assert all(phrase in prompt for phrase in executor_phrases)
+
+    for rendered in _normalized_contract_sources():
+        assert all(phrase in rendered for phrase in executor_phrases)
 
 
 def test_exact_phase_two_profile_bytes_are_recognized_only_for_own_role() -> None:

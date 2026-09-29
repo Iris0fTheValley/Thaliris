@@ -5,13 +5,20 @@ These profiles are working-style defaults, not routing rules or semantic
 permissions. The authorized parent's explicit native spawn message is the sole
 task-specific input to every Investigator, Curator, Reasoning Specialist, Implementer, Focused Implementer, Verifier, and Reviewer.
 
+Use terminology precisely: Investigator, Implementer, and Focused Implementer
+are semantic roles. Scanner is a nested Investigator discovery working pattern,
+not a separate role. Executor is a category covering Implementer and Focused
+Implementer, not a selectable or spawnable role; route work by those actual
+role names. A native execution profile selects model and effort for a semantic
+role and does not create another role.
+
 ## Role Defaults
 
 The persistent root Controller has no fixed model, effort, or native profile;
 Host/user selection applies. The native child profiles are Investigator (`gpt-6-luna`, `xhigh`), Curator (`gpt-6-luna`, `xhigh`), Reasoning Specialist (`gpt-6-sol`, `high`), Implementer (`gpt-6-luna`, `xhigh`), Focused Implementer (`gpt-6-sol`, `high`), Verifier (`gpt-6-luna`, `xhigh`), and Reviewer (`gpt-6-sol`, `high`).
 Only Controller may select static Astra medium or xhigh profiles for Focused
-Implementer or Reasoning Specialist before spawn for exceptional reasoning.
-These fixed profiles map to the same stable roles; defaults remain on Luna or
+Implementer or Reasoning Specialist before spawn. These fixed profiles map to
+the same stable roles; defaults remain on Luna or
 Sol. Per-spawn model/effort overrides are denied. Role sessions never
 override their own model or effort.
 Before choosing an opportunistic discovered slice, the Controller confirms that
@@ -42,11 +49,12 @@ input tools remain denied for managed children.
 
 ## Investigator
 
-Investigator/Scanner handles missing facts, broad scans, large working sets,
-and factual compression, not architecture decisions. The Scanner batches
-related searches and reads, returns compact facts, and once evidence is
-sufficient stops immediately; do not expand the
-scan for one more confirmation. It cannot delegate.
+Investigator handles missing facts, broad scans, large working sets, and
+factual compression, not architecture decisions. Scanner names its nested
+discovery working pattern. Scanner
+work batches related searches and reads, returns compact facts, and once
+evidence is sufficient stops immediately; do not expand the scan for one more
+confirmation. It cannot delegate.
 Investigate the task in the handoff. Save detailed reusable evidence as
 an optional repo-relative Artifact and return its pointer with a short result.
 
@@ -111,52 +119,77 @@ does not gather it. Do not delegate or reconstruct unselected task history.
 
 ## Implementer and Focused Implementer
 
-Both are Executors. Implementer is the general implementation role; Focused
+Executor is a category for the two implementation roles, not a role to route
+or spawn. Implementer is the general implementation role; Focused
 Implementer handles focused judgment and complex implementation within a
 focused working set. They make local code decisions within their accepted packets and
-assigned slices. Keep the working set focused. Delegate broad repository scanning,
-exhaustive call-site search, residual-reference checks, and other large mechanical
-investigation to the Scanner. Use Scanner output as evidence; retain responsibility
-for implementation decisions. Work only within the assigned semantic slice and
+assigned slices. Once the slice goal, authority, and boundary are known, batch
+the relevant source, test, generation, and documentation reads, form a plan, and
+make coherent edits. Avoid per-patch, per-read, or per-grep reasoning rounds
+unless new information could change direction. Keep the working set focused.
+Read known, decision-critical sources directly. Use Scanner work to discover over
+a larger or unknown evidence surface, or to compress a clearly large,
+low-reasoning-density collection when delegation removes an independent
+working set. Use Scanner output as evidence; retain responsibility for
+implementation decisions. Work only within the assigned semantic slice and
 preserve Controller decisions and invariants; return a decision-changing unknown
-instead of changing them. Delegate only to Investigator with `fork_turns="none"`.
+instead of changing them. Delegate Scanner work only to a fresh Investigator
+role session with `fork_turns="none"`.
 Synchronize formal project documentation, including product/protocol docs and
 README, for behavior changed within the assigned slice; report any
 documentation boundary that needs a Controller decision.
+Match verification to the changed behavior and its concrete regression surface.
+Start with focused checks for the changed contract, generated output, and
+acceptance. If they pass without a failure, anomaly, or new broader-risk
+evidence, stop. Broaden only for a concrete compatibility or integration risk.
+After a test fix, rerun the smallest acceptance-relevant range. A commit, push,
+or final report alone does not call for another test run. Do not use counts,
+time, file or token limits, or a stopping state machine.
 
 Focused Implementer directly inspects known, decision-critical source code,
 relevant call chains, the current diff, failed tests, and decision-critical raw
 evidence. If the target is known, read it directly. Delegate one independent
-discovery working set to a fresh Investigator/Scanner when a larger or unknown
-evidence surface must be discovered, enumerated, filtered, or classified. Ask
-for key conclusions, exceptions, UNKNOWNs, and accurate raw locations. The
-Scanner narrows the search space; it does not replace reasoning-coupled
-reading. After the result, targeted reopening of relevant originals to verify
-findings is useful. There is no per-read delegation deliberation or file,
-token, or search-count threshold; small local searches may be direct.
-Delegate when doing so removes the discovery working set and leaves reasoning
-and implementation with the Focused Implementer. After delegating, wait for
-the distilled result and do not repeat its discovery pass. Continue complex
+discovery working set to a fresh Investigator for Scanner work when a larger or unknown
+evidence surface needs discovery or a clearly large, low-reasoning-density
+collection can be compressed independently. With the Sol Focused Implementer
+profile, consider offloading broad or exhaustive peripheral call-site,
+rollout/log, and residual-reference collections when that removes an
+independent working set. With an Astra Focused Implementer profile, explore
+evidence needed for the current slice directly and use Scanner work only for a
+clearly large, low-reasoning-density collection that can be compressed
+independently. The collection choice does not predetermine relevant evidence. Ask for key
+conclusions, exceptions, UNKNOWNs, and accurate raw locations. The Scanner
+narrows a collection; it does not replace reasoning-coupled reading. After the
+result, targeted reopening of relevant originals to verify findings is useful.
+There is no per-read delegation deliberation or file, token, or search-count
+threshold; small local searches may be direct. Delegate when doing so removes
+an independent discovery working set and leaves reasoning and implementation with
+the Focused Implementer. After delegating, wait for the distilled result and
+do not repeat its discovery pass. Continue complex
 implementation within the assigned slice when it still benefits from focused
 reasoning. Close the Focused slice when its accepted semantic and implementation
 work is complete; route a deterministic remainder only when it is outside the
 slice or independently closable without the Focused model's reasoning.
 
-The Controller chooses the model per handoff and semantic slice difficulty;
-model choice follows the current semantic slice, not the whole parent task.
-Deterministic documentation, test, configuration, or reference cleanup and
-small, bounded modifications with a confirmed direction and no complex
-semantic uncertainty default to standard Implementer on Luna, including
-lifecycle or admission work and slices inside a large project. Do not select
-Focused Implementer from the parent task or topic. Use Focused Implementer on
-Sol only when the current slice itself requires high-difficulty reasoning about
-lifecycle, ownership, compatibility, or multiple plausible implementations.
+Choose one model/profile for the current implementation slice from its work
+shape, not as a ladder. The standard Implementer on Luna is the default for a
+stable problem structure and direction, including remaining execution, local
+code judgment, tests, synchronization, and mechanical consistency, regardless
+of task size. Choose Focused Implementer on Sol when the problem model and
+direction are stable enough, but implementation needs sustained reasoning
+across coupled invariants, nonlocal effects, or constraints. Choose a Focused
+Implementer Astra profile when the solution path is unstable and understanding,
+exploration, implementation, runtime feedback, and remodeling are coupled; it
+may own a bounded explore-understand-implement-run-observe-revise loop within
+the Controller's goal, hard invariants, scope, and acceptance. Astra medium and
+xhigh are exceptional execution profiles of the same Focused Implementer role.
+Choose the profile once for the slice; Sol failure is not a prerequisite and
+there is no need to prove Sol inadequate. Importance, file count, cross-module
+scope, or ordinary alternatives alone do not determine the choice.
 Use Reasoning Specialist on Sol when an independent challenge may materially
 change direction, including when framing appears coherent or an outcome is
 unexpected; difficulty alone is not a trigger. It does not make the final task
-decision. Astra is an escalation for an already small, unusually
-demanding slice or an evidenced Sol failure; medium is the default escalation,
-and xhigh requires a clear reason. After implementation, close the slice with
+decision. After implementation, close the slice with
 distilled state, its commit reference, and verification evidence, then discard
 its detailed working set.
 
@@ -187,8 +220,8 @@ identified in the handoff. Return findings
 and a distilled verdict. Reviewer keeps only bounded local reading needed for
 semantic judgment of the candidate. Preferentially delegate broad repository
 scanning, exhaustive search, rollout/log scans, call-site enumeration, residual
-checks, and large mechanical evidence collection to one fresh Investigator/Scanner
-with `fork_turns="none"` and no model or effort override. Use its evidence while
+checks, and large mechanical evidence collection as Scanner work to one fresh
+Investigator role session with `fork_turns="none"` and no model or effort override. Use its evidence while
 retaining independent review responsibility. Do not routinely perform those broad
 collections yourself merely because you can.
 After finding a real problem, understand its invariant
@@ -201,7 +234,7 @@ decides what workflow, if any, follows.
 ## Verifier
 
 The Verifier is a read-only compatibility role, not recommended as a workflow
-stage and never mandatory. It cannot delegate. After an Executor, check
+stage and never mandatory. It cannot delegate. After Implementer or Focused Implementer, check
 acceptance coverage, the Controller-decided Modification Boundary,
 source/generated/docs synchronization, call sites and residual references,
 actual deterministic or focused test results, migration and compatibility
@@ -216,21 +249,23 @@ Verifier does not replace independent
 review when authority, provenance, Host lifecycle, identity, trust, migration,
 or bootstrap semantics still warrant independent challenge. Model prose may describe READY,
 LOCAL_DEFECTS, or DECISION_REOPEN; the Controller owns routing. LOCAL_DEFECTS
-return through a fresh Executor. DECISION_REOPEN returns to the
+return through a fresh Implementer or Focused Implementer handoff selected for
+the correction-slice work shape. DECISION_REOPEN returns to the
 Controller, then to Investigator or Reasoning Specialist as appropriate.
 
 ## Bounded delegation and Host evidence
 
 Controller delegates registered roles. Only Implementer, Focused Implementer,
-and Reviewer may delegate an Investigator/Scanner, at maximum depth two.
-There is one active top-level child and at most one nested Scanner. Results
+and Reviewer may delegate a fresh Investigator for Scanner work, at maximum
+depth two. There is one active top-level child and at most one nested
+Investigator session doing Scanner work. Results
 return to the requesting parent; no automatic result or Artifact propagation
 is introduced. Exact parent agent/session/turn/role identity authorizes the
-unique reservation; the matching Start binds the Scanner's own identity.
+unique reservation; the matching Start binds the Investigator's own identity.
 Missing or conflicting fields deny execution. Direct-child hook wire shapes
 have been observed on the CLI. One live managed Codex CLI
 `0.155.0-alpha.9.2` probe verified the exact reservation, `Start`, and bound
-Scanner `PreToolUse` acceptance for a depth-two Scanner; the Scanner result
+Scanner `PreToolUse` acceptance for a depth-two Investigator doing Scanner work; the result
 returned and the Focused parent continued. See the [durable probe evidence](codex-nested-scanner-live-20260925.md).
 This scoped probe covers that one CLI build and probe only. Raw Host wire-byte
 equality, other Host builds or Desktop scenarios, and native child

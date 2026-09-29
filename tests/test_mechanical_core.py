@@ -168,11 +168,11 @@ def test_authoritative_prose_uses_role_names_or_explicit_native_child_context() 
     assert "For every task,\nwhether ACTIVE or degraded, it selects the minimum necessary fresh roles." in generated
     assert "Roles are capabilities, not mandatory workflow stages." in generated
     assert "Controller -> fresh\nImplementer -> done" in generated
-    assert "Use Investigator/Scanner for missing facts, large working sets, broad scans," in generated
+    assert "Use the Investigator role for missing facts, large working sets, broad scans," in generated
     assert "Use a Reviewer only when independent semantic review adds real\nvalue; it is not a default gate." in generated
     assert "apply the same minimum-role\nrouting policy defined above" in generated
     assert "degraded mode does not define a separate role\nsequence" in generated
-    assert "Decision-changing investigation belongs to Investigator. Bounded local reading\nneeded for implementation may stay inside either Executor." in generated
+    assert "Decision-changing investigation belongs to the Investigator role. Bounded local reading\nneeded for implementation may stay inside Implementer or Focused Implementer." in generated
     assert "Repository investigation belongs to fresh Investigator sessions" not in generated
     assert "fresh serial Investigator, Implementer, and Reviewer sessions" not in generated
     assert "belong to fresh\nthose roles" not in generated
@@ -185,7 +185,7 @@ def test_routing_guidance_permits_the_bounded_implementer_only_path() -> None:
     protocol = (root / "docs" / "thaliris-routing-protocol.md").read_text(encoding="utf-8")
     role_packs = (root / "docs" / "thaliris-role-packs.md").read_text(encoding="utf-8")
     normalized_protocol = " ".join(protocol.split())
-    assert "For every task, the Controller selects the minimum necessary fresh role" in protocol
+    assert "For every task, the Controller selects the minimum necessary fresh semantic\nroles" in protocol
     assert "Roles are capabilities, not mandatory workflow stages." in protocol
     assert "policy is identical for ACTIVE and degraded work" in protocol
     assert "Controller -> fresh Implementer -> done" in protocol
@@ -193,11 +193,11 @@ def test_routing_guidance_permits_the_bounded_implementer_only_path() -> None:
     assert "Curator and Reasoning Specialist are optional" in protocol
     assert "For divisible work, the Controller chooses bounded semantic slices" in protocol
     assert "not by token, file, or task-count thresholds" in normalized_protocol
-    assert "small, bounded modifications with a confirmed direction and no complex semantic uncertainty" in normalized_protocol.lower()
+    assert "Standard Implementer on Luna is the default for a stable problem structure and direction" in normalized_protocol
     assert "Before choosing an opportunistic discovered slice" in normalized_protocol
-    assert "already small, unusually demanding" in normalized_protocol
-    assert "Decision-changing investigation belongs to\nInvestigator" in protocol
-    assert "Bounded local reading\nneeded for implementation may stay inside either Executor" in protocol
+    assert "Choose one model/profile for the current implementation slice from its work" in normalized_protocol
+    assert "Decision-changing investigation belongs to the\nInvestigator role" in protocol
+    assert "needed for implementation may stay inside Implementer or Focused Implementer" in protocol
     assert "bounded local reading, implementation, and deterministic verification" in role_packs.replace("\n", " ")
     assert "an Investigator is needed only when missing facts could change" in role_packs
     assert "Work only within the assigned semantic slice" in role_packs
@@ -218,7 +218,7 @@ def test_nested_scanner_probe_guidance_is_scoped_and_linked() -> None:
         assert "One live managed Codex CLI `0.155.0-alpha.9.2` probe" in normalized
         assert "exact reservation" in normalized
         assert "bound Scanner `PreToolUse` acceptance" in normalized
-        assert "Scanner result returned" in normalized
+        assert "result returned" in normalized
         assert (
             "Focused parent continued" in normalized
             or "Focused Implementer parent continued" in normalized

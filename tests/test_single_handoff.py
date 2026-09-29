@@ -2421,14 +2421,15 @@ def test_role_profiles_keep_routing_and_model_choice_with_the_controller(tmp_pat
     assert "degraded mode does not define a separate role\nsequence" in codex_adapter.MANAGED
     assert "For divisible work, the Controller chooses bounded semantic slices" in codex_adapter.MANAGED
     assert "not by token, file, or task-count\nthresholds" in codex_adapter.MANAGED
-    assert "Choose the model per handoff and semantic slice difficulty; model choice follows\nthe current semantic slice, not the whole parent task. Deterministic\ndocumentation, test, configuration, or reference cleanup and small, bounded\nmodifications with a confirmed direction and no complex semantic uncertainty" in codex_adapter.MANAGED
-    assert "Do not select Focused Implementer from the parent task or topic" in " ".join(codex_adapter.MANAGED.split())
+    assert "Choose one model/profile for the current implementation slice from its work\nshape, not as a ladder." in codex_adapter.MANAGED
+    assert "Astra medium and\nxhigh are exceptional execution profiles of the same Focused Implementer role." in codex_adapter.MANAGED
+    assert "Importance, file count, cross-module\nscope, or ordinary alternatives alone do not determine the choice." in codex_adapter.MANAGED
     assert "Before choosing an opportunistic discovered slice" in codex_adapter.MANAGED
     managed = " ".join(codex_adapter.MANAGED.split())
     assert "Use Reasoning Specialist on Sol when an independent challenge may materially change direction" in managed
     assert "framing appears coherent or an outcome is unexpected" in managed
     assert "difficulty alone is not a trigger" in managed
-    assert "already small, unusually demanding slice or an evidenced Sol failure" in managed
+    assert "Sol failure is not a prerequisite and there is no need to prove Sol inadequate" in managed
     assert "Saved Host registration alone does not prove\ncurrent-session activation" in codex_adapter.MANAGED
     assert "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE" in codex_adapter.MANAGED
     assert "Before another correction packet, distinguish a local implementation defect" in codex_adapter.MANAGED
@@ -2436,7 +2437,7 @@ def test_role_profiles_keep_routing_and_model_choice_with_the_controller(tmp_pat
     assert "depends on an unverified external capability" in codex_adapter.MANAGED
     assert "makes feasibility uncertain" in codex_adapter.MANAGED
     assert "changes a Controller boundary or contract" in codex_adapter.MANAGED
-    assert "Missing factual information routes to Investigator" in managed
+    assert "Missing factual information routes to the Investigator role" in managed
     assert "When an independent challenge could materially change direction, route the selected framing and evidence to a fresh Reasoning Specialist" in managed
     assert "accepted design is unchanged and the defect is local, route to a fresh Implementer correction" in managed
     assert "Do not use it for broad fact gathering, implementation, routine review, or ordinary hard-problem solving" in managed

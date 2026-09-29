@@ -52,26 +52,42 @@ an optional repo-relative Artifact and return its pointer with a short result.
 
 ## Curator
 
-Use only when the Controller identifies genuinely reusable knowledge and
-explicitly supplies the material to curate. Do not automatically summarize a
-task, select a next role, or route a result. Curator output is an ordinary
-result or Artifact; Core has no Curator state machine.
+Use only when the Controller's end-of-task judgment finds durable maintenance
+useful. Task size alone never triggers Curator, and Curator is not a mandatory
+stage. The fresh handoff supplies selected durable facts and exact relevant
+prior knowledge/documents. Do not automatically summarize a task, select a
+next role, or route a result. Curator output is an ordinary result or Artifact;
+Core has no Curator state machine.
 
-Maintain only selected documents and their relevant index links. Keep the
-corpus small, current, non-conflicting, and traceable: modify, merge, split,
-supersede, or delete entries as evidence warrants. Do not scan the whole
-corpus or decide architecture. Memory holds concise future decision-changing
-conclusions; detailed evidence belongs in Artifacts, Git, or rollout records.
+Maintain only Controller-selected durable knowledge files under
+`.agent-memory/` and their relevant links in `.agent-memory/INDEX.md`. Preserve
+provenance and scope for each retained claim. New evidence may update or
+supersede an earlier conclusion; retain its original scope and historical
+applicability where relevant. Keep the corpus small, current, non-conflicting,
+and traceable by modifying, merging, splitting, superseding, or deleting only
+selected entries as evidence warrants. Exclude task chronology, implementation
+logs, ordinary commit histories, transient test outputs, and momentary failures
+unless they establish stable knowledge that could affect a future decision.
+If consistency depends on durable material the Controller did not select, stop
+and report the missing knowledge area for the Controller to select; do not scan
+the corpus. Product/protocol documentation and README changes aligned with
+current behavior belong to Implementer or Focused Implementer. Curator does not
+scan broadly, make architecture decisions, or delegate. Memory holds concise
+future decision-changing conclusions; detailed evidence belongs in Artifacts,
+Git, or rollout records.
 
 ## Durable knowledge loop
 
 At task start, the Controller reads the root INDEX map and then makes an exact
-`document-get` request for the selected linked entries. At task end it makes
-one short semantic judgment: whether a concise conclusion could change a
-future decision and needs durable maintenance. A fresh Curator is selected
-only when useful, never as an automatic step. `CHANGED` is an evidence change,
-not semantic invalidation; the Controller may request revalidation when a
-decision depends on changed evidence and has become unreliable. If the
+`document-get` request for the selected linked entries. At task end, before
+`task-close`, it makes one short semantic judgment: did the task add, change, or
+overturn durable knowledge that could affect a future decision and would
+otherwise require reinvestigation? If no, it silently skips Curator. If yes, it
+selects a fresh Curator with selected durable facts and exact relevant prior
+knowledge/documents. Curator is optional, never selected by task size, and not
+a mandatory stage. `CHANGED` is an evidence change, not semantic invalidation;
+the Controller may request revalidation when a decision depends on changed
+evidence and has become unreliable. If the
 Controller promotes a selected record that changes durable navigation, it
 supplies the model-authored INDEX CAS update in that
 same promotion. Otherwise it leaves INDEX bytes unchanged. A fresh later task
@@ -104,9 +120,9 @@ investigation to the Scanner. Use Scanner output as evidence; retain responsibil
 for implementation decisions. Work only within the assigned semantic slice and
 preserve Controller decisions and invariants; return a decision-changing unknown
 instead of changing them. Delegate only to Investigator with `fork_turns="none"`.
-Synchronize formal project documentation for behavior changed within the
-assigned slice and report any documentation boundary that needs a Controller
-decision.
+Synchronize formal project documentation, including product/protocol docs and
+README, for behavior changed within the assigned slice; report any
+documentation boundary that needs a Controller decision.
 
 Focused Implementer uses only bounded local reading needed for semantic judgment
 within the assigned slice. Preferentially delegate broad repository scanning,

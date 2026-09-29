@@ -55,13 +55,20 @@ including when framing appears coherent or an outcome is unexpected. It tests
 hidden assumptions, causal models, decomposition, boundaries, decision basis,
 premature convergence, and direction-changing alternatives. Difficulty alone
 is not a trigger.
-At task end, make one short semantic judgment about knowledge that could
-change a future decision. Select a fresh Curator only when that knowledge
-needs durable maintenance; pass a concise selected handoff. Do not turn
-every task result into memory. Keep detailed evidence in Artifacts, Git,
-or rollout records. Implementer roles synchronize formal project documentation
-for behavior changed within their slice; Reviewer challenges semantic drift
-when selected.
+At task end, before `task-close`, make one short semantic judgment: did the task
+add, change, or overturn durable knowledge that could affect a future decision
+and would otherwise require reinvestigation? If no, silently skip Curator. If
+yes, select a fresh Curator and provide the selected durable facts plus exact
+relevant prior knowledge/documents. Curator is optional, never triggered by
+task size, and not a mandatory stage. It maintains selected `.agent-memory/`
+knowledge and relevant index links, preserving provenance and scope. Do not
+preserve task chronology, implementation logs, ordinary commit histories,
+transient test outputs, or momentary failures unless they establish stable
+knowledge that could affect a future decision. If consistency depends on
+unselected durable material, report the missing knowledge area for Controller
+selection rather than scanning the corpus. Implementer roles keep formal
+product/protocol documentation and README aligned with behavior changed within
+their slice; Reviewer challenges semantic drift when selected.
 
 When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
 contracts change, check and synchronize both the repository-managed

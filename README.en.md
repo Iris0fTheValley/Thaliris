@@ -42,8 +42,15 @@ challenges the result. Complex implementation may use a more focused,
 higher-capability execution binding, while implementation decisions stay with
 the executor. Reasoning Specialist is reserved for reframing the problem when
 the problem definition, abstraction, or assumptions are themselves unclear.
-Curator turns explicitly selected material into reusable knowledge. Compatibility
-or specialized profiles may exist without becoming mandatory workflow stages.
+At task end, before `task-close`, the Controller makes one short judgment about
+whether the task added, changed, or overturned durable knowledge that could
+affect a future decision and otherwise require reinvestigation. Only then does
+it select a fresh Curator with selected facts and relevant prior knowledge.
+Curator maintains only selected `.agent-memory/` knowledge and index links.
+Task size alone never triggers it, and it is not a mandatory stage. Implementers
+keep product and protocol documentation and the README aligned with current
+behavior. Compatibility or specialized profiles may exist without becoming
+mandatory workflow stages.
 
 Both Implementer and Focused Implementer execute implementation work. Keep the
 working set focused. Investigator may carry a large private working set and

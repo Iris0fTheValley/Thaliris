@@ -122,13 +122,16 @@ Memory 默认不注入。模型自行维护 `.agent-memory/INDEX.md` 和
 `Status` 是有界的记录标签。旧文档中的其它 metadata 仍可读取，但只作为不透明兼容字段，
 不是传播权限。
 
-Milestone 是普通长期文档。Curator 是按需的知识增强角色，不是任务必经阶段。
-任务结束时 Controller 只做一次简短语义判断：若某个精简结论可能影响未来决策，且需要
-长期维护，才向新的 Curator 提供已选材料。Curator 只维护这些文档及相关 INDEX 链接，
-通过修改、合并、拆分、取代或删除保持知识精简、现时、无冲突且可追溯；详细证据保留在
-Artifact、Git 或 rollout 记录。`CHANGED` 仅表示证据变化；当依赖该证据的决策不再
-可靠时，Controller 可要求重新验证。Implementer 在负责的 slice 内同步正式项目文档，
-Reviewer 被选用时检查文档与实现的语义偏差。
+Milestone 是普通长期文档。任务结束、`task-close` 前，Controller 只做一次简短语义判断：
+任务是否新增、改变或推翻了可能影响未来决策、且若不保留就需要重新调查的 durable knowledge？
+若否，静默跳过 Curator；若是，再向新的 Curator 提供已选事实与相关旧知识/文档。Curator
+是可选角色，任务规模不会触发它，也不是必经阶段。Curator 只维护 Controller 选定的
+`.agent-memory/` 知识文件和相关 INDEX 链接，保留每条结论的来源与适用范围；新证据更新或
+取代旧结论时，在相关情况下保留旧结论的历史适用性。除非任务过程或失败能证明稳定且会影响
+未来决策的知识，否则不把任务时间线、实现日志、普通提交历史、临时测试输出或瞬时失败写入
+Memory。正式产品/协议文档和 README 的行为同步由 Implementer 或 Focused Implementer 负责。
+详细证据保留在 Artifact、Git 或 rollout 记录。`CHANGED` 仅表示证据变化；当依赖该证据的决策不再
+可靠时，Controller 可要求重新验证。Reviewer 被选用时检查文档与实现的语义偏差。
 `task-promote` 保存 Controller 明确选择的记录；Core 不裁决其 epistemic legitimacy。
 当一次 promotion 会改变 durable navigation 时，Controller 应在同一次
 `task-promote` 中提供自己写好的 optional `index_update`。Core 不生成 INDEX

@@ -673,6 +673,45 @@ def _historical_profile(revision: str, name: str) -> bytes:
     return namespace["_agent_profile"](name.removesuffix(".toml"), role, model, effort)
 
 
+def _historical_managed(revision: str) -> str:
+    """Render the managed instruction span from an immutable adapter revision."""
+    module_name = f"historical_roles_{revision}"
+    module = sys.modules.get(module_name)
+    if module is None:
+        module = types.ModuleType(module_name)
+        module.__dict__["__name__"] = module_name
+        sys.modules[module_name] = module
+        source = subprocess.check_output(
+            ["git", "show", f"{revision}:src/thaliris/roles.py"],
+        )
+        exec(compile(source, f"{module_name}.py", "exec"), module.__dict__)
+    adapter_source = subprocess.check_output(
+        ["git", "show", f"{revision}:src/thaliris/codex_adapter.py"],
+    )
+    tree = ast.parse(adapter_source)
+    required = {
+        "_native_role_labels", "_native_profile_facts",
+        "_native_role_names_text", "_render_managed",
+    }
+    functions = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in required
+    ]
+    constants = {
+        target.id: ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name) and target.id in {"MANAGED_START", "MANAGED_END"}
+    }
+    namespace: dict[str, object] = {"roles": module, **constants}
+    exec(
+        compile(ast.Module(functions, type_ignores=[]), "historical_adapter.py", "exec"),
+        namespace,
+    )
+    return namespace["_render_managed"]().removesuffix("\n")
+
+
 def _historical_registry_document() -> bytes:
     # Fixed LF/UTF-8 bytes captured from immutable commit b1d517f (blob
     # 9c410a4d2af5d3780f4b415429227150d08626bd), not regenerated at test time.
@@ -842,12 +881,65 @@ def test_knowledge_maintenance_and_formal_docs_stay_in_instruction_sources() -> 
     focused = roles.get_role("focused-implementer").instructions
     reviewer = roles.get_role("reviewer").instructions
 
-    assert "At task end, make one short semantic judgment" in managed
+    normalized_managed = " ".join(managed.split())
+    assert "before `task-close`, make one short semantic judgment" in normalized_managed
+    assert "If no, silently skip Curator" in normalized_managed
+    assert "exact relevant prior knowledge/documents" in normalized_managed
     assert "`CHANGED` records an evidence change, not semantic invalidation" in managed
-    assert "one short semantic judgment" in packs
-    assert "modify, merge, split,\nsupersede, or delete" in packs
-    assert "Do not scan" in curator
+    normalized_packs = " ".join(packs.split())
+    assert "before `task-close`, it makes one short semantic judgment" in normalized_packs
+    assert "If no, it silently skips Curator" in normalized_packs
+    assert "modifying, merging, splitting, superseding, or deleting only selected entries" in normalized_packs
+    normalized_curator = " ".join(curator.split()).lower()
+    assert "under `.agent-memory/`" in normalized_curator
+    assert "preserve provenance and scope" in normalized_curator
+    assert "historical applicability where relevant" in normalized_curator
+    assert "ordinary commit histories" in normalized_curator
+    assert "report the missing knowledge area" in normalized_curator
+    assert "product or protocol documentation and readme changes" in normalized_curator
+    assert "do not scan broadly, make architecture decisions, or delegate" in normalized_curator
     assert "formal project documentation" in implementer
     assert "formal project documentation" in focused
+    assert "README" in implementer
+    assert "README" in focused
     assert "semantic drift" in reviewer
     assert "semantic drift" in packs
+    for path in ("AGENTS.md", "docs/thaliris-routing-protocol.md"):
+        documented = " ".join(Path(path).read_text(encoding="utf-8").split()).lower()
+        assert "add, change, or overturn durable knowledge" in documented
+        assert "ordinary commit histories" in documented
+        assert "product/protocol" in documented
+
+
+def test_9b5bcf2_curator_profile_is_recognized_as_legacy() -> None:
+    name = "thaliris-curator.toml"
+    value = _historical_profile("9b5bcf2", name)
+    digest = hashlib.sha256(value).hexdigest()
+
+    assert digest == "7779da9180597f1235f2c3893088743b0baafa55b4edad1e9319774f88ae8e6a"
+    assert digest in roles.get_codex_binding("curator").legacy_profile_hashes
+    assert codex_adapter._agent_profile_state(value, name) == "legacy"
+    assert codex_adapter._agent_profile_state(value + b"\nuser edit\n", name) == "user"
+    binding = roles.get_codex_binding("curator")
+    current = codex_adapter._agent_profile(name.removesuffix(".toml"), "curator", binding.model, binding.reasoning_effort)
+    assert current != value
+    assert codex_adapter._agent_profile_state(current, name) == "current"
+
+
+def test_9b5bcf2_managed_and_role_pack_outputs_are_recognized_as_legacy() -> None:
+    managed = _historical_managed("9b5bcf2")
+    managed_digest = hashlib.sha256(managed.encode("utf-8")).hexdigest()
+    role_packs = subprocess.check_output(
+        ["git", "show", "9b5bcf2:docs/thaliris-role-packs.md"],
+    )
+    role_pack_digest = hashlib.sha256(role_packs).hexdigest()
+
+    assert managed_digest == "adebcedf67d1e3aa3e33d42da1174ea36d9e4199beb8453d8076a1de72cd638a"
+    assert managed_digest in codex_adapter._KNOWN_GENERATED_MANAGED_INSTRUCTION_HASHES
+    assert codex_adapter._managed_agents_state(managed) == "legacy"
+    edited_managed = managed.replace(codex_adapter.MANAGED_END, "user edit\n" + codex_adapter.MANAGED_END)
+    assert codex_adapter._managed_agents_state(edited_managed) == "user"
+    assert role_pack_digest == "7009fc69d97ca403404c57d739e354cc3ebf7656fdca690c0fd60b2cfa9f6267"
+    assert role_pack_digest in codex_adapter._KNOWN_GENERATED_ROLE_PACK_HASHES
+    assert codex_adapter._role_pack_state(role_packs) == "legacy"
+    assert codex_adapter._role_pack_state(role_packs + b"\nuser edit") == "user"

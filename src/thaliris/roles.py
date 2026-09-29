@@ -193,13 +193,23 @@ def _instructions(role: str) -> str:
             "repo-relative Artifact; return only its pointer and the distilled result by default."
         ),
         "curator": (
-            "Maintain only the Controller-selected durable knowledge and linked index entries. "
-            "Use the supplied material and exact selected documents to keep the corpus small, "
-            "current, non-conflicting, and traceable; modify, merge, split, supersede, or delete "
-            "entries when justified. Keep concise conclusions useful for future decisions in "
-            "memory; leave detailed evidence in Artifacts, Git, or rollout records. Do not scan "
-            "the full corpus, make architecture decisions, or delegate. Your output is an "
-            "ordinary result or Artifact; there is no Curator Core state."
+            "Maintain only Controller-selected durable knowledge files under `.agent-memory/` "
+            "and their relevant links in `.agent-memory/INDEX.md`. Use the supplied durable facts "
+            "and exact selected prior documents. Preserve provenance and scope for each retained "
+            "claim; when new evidence updates or supersedes a conclusion, retain its original "
+            "scope and historical applicability where relevant. Keep the corpus small, current, "
+            "non-conflicting, and traceable; modify, merge, split, supersede, or delete only "
+            "selected entries when justified. Do not preserve task chronology, implementation "
+            "logs, ordinary commit histories, transient test outputs, or momentary failures unless "
+            "they establish stable knowledge that could change a future decision. If consistency "
+            "depends on durable material the Controller did not select, stop and report the missing "
+            "knowledge area for the Controller to select; do not scan the corpus. Product or "
+            "protocol documentation and README changes aligned with current behavior belong to "
+            "Implementer or Focused Implementer. Curator is optional and is selected only when "
+            "the Controller's end-of-task judgment finds durable maintenance useful; it is never "
+            "triggered by task size or mandatory. Do not scan broadly, make architecture decisions, "
+            "or delegate. Leave detailed evidence in Artifacts, Git, or rollout records. Your output "
+            "is an ordinary result or Artifact; there is no Curator Core state."
         ),
         "reasoning-specialist": (
             "Act as an independent metacognitive challenger of the selected framing and decision "
@@ -225,8 +235,9 @@ def _instructions(role: str) -> str:
             "Core does not supply semantic completion authority. If an assigned correction cannot "
             "be completed without an unverified external fact, an invalidating accepted invariant, "
             "or changing the decision basis, do not expand scope; return that dependency as a "
-            "decision-changing unknown to the Controller. Keep formal project documentation "
-            "within the assigned slice synchronized with verified behavior."
+            "decision-changing unknown to the Controller. Keep formal project documentation, "
+            "including product/protocol docs and README, within the assigned slice synchronized "
+            "with verified behavior."
         ),
         "verifier": (
             "Retained for compatibility only, not recommended as a workflow stage. Do not delegate. "
@@ -272,9 +283,12 @@ def _instructions(role: str) -> str:
 # Exact SHA-256 identities of bytes emitted by earlier Thaliris adapters.
 # These are role-owned installation metadata, not a current-HEAD ownership
 # claim.  Keeping them with the profile definitions preserves safe migration.
+# The 9b5bcf2 Curator profile is pinned below because its exact bytes become
+# legacy when the Curator instructions change; the historical renderer is
+# independently exercised in tests/test_roles.py.
 _LEGACY_PROFILE_HASHES = {
     "investigator": frozenset("0720619c1d0b85b80a2981597fcd60086a1bddc7f03f48f88cc8f75c1128d872 199d7b9cb1fb8d1a3536df07395a420b9476ee66d13a4a9ca6d6442215d9e7b8 44781edb6a654db482adafdc20b16f75cdebded2e62e8d86376aefc577a3ae55 f5623ba40d585b1760511344488d71c53e8c08a8c0ad8cbd1b76b268ae02c70f 55ef42ac18d46ed5fe2c624ed0be2c16956ab4fe91dd1e64b6ef3a07bae01cb1 307a3e90b32cf7dcde3cac3c683b3e16f5e13c147191e82e45109a75a6984ff4 188e8cc62bfd8e1f37f3068193deb37431c5ea49356adc99b8873a47e817fbdd caa08fc96fdcff0a47fa05cb8ebba32d93a3336fec64b0a9c93d5467cc3009be c917f0b601dcd689afbb443b98c6b12733d5738ed908a112a5c7948f3321edf9 4fe5345865638896c3cc042a66e1853d5d969763d64b6e9076b6d3bc25fe3091".split()),
-    "curator": frozenset("8026959290edeb86d66ee86f9b5db286e7fb31c28c95ec2c42ec8be7f2cda515 f6827c30074554b809b50414bde31146354ec6898fe8bd13a43402134c8b6476 a98489c08e6af01165629b6848667700956d749bf8a676a30ac479c729d916fa 64fece15a4e47b77641039abbf9f7c9a1daab4581b9faa0c066fd7d0c7cab4d4 d11534e931c1c17b51bd846a487ac6609b56db018f5abb6b5ed6991b5b6a71b3 b902b77ca7f0f77f6305cb8bec3e7bf1c8386805a312b816e2a99e1794e9a1f7 0467fdaba8aeefb76b52d10995778e4e01a2f98c7dec05da58134abad0feccff".split()),
+    "curator": frozenset("8026959290edeb86d66ee86f9b5db286e7fb31c28c95ec2c42ec8be7f2cda515 f6827c30074554b809b50414bde31146354ec6898fe8bd13a43402134c8b6476 a98489c08e6af01165629b6848667700956d749bf8a676a30ac479c729d916fa 64fece15a4e47b77641039abbf9f7c9a1daab4581b9faa0c066fd7d0c7cab4d4 d11534e931c1c17b51bd846a487ac6609b56db018f5abb6b5ed6991b5b6a71b3 b902b77ca7f0f77f6305cb8bec3e7bf1c8386805a312b816e2a99e1794e9a1f7 0467fdaba8aeefb76b52d10995778e4e01a2f98c7dec05da58134abad0feccff 7779da9180597f1235f2c3893088743b0baafa55b4edad1e9319774f88ae8e6a".split()),
     "reasoning-specialist": frozenset("7e596a38e95606b684b17f25cc0eecb3163aef7d65d36110f6496b3ab7d53692 960190bb4b67b02e7616bcf6dbd71192bcc79327fb0ed72e6f23b3815819afd0 d2191d59621e2765ae7642ca1648d96b4dbfb1a82293a8a02bf8642328fb58a7 60a87a06e97602f10f7f3842061c6eba551e78f76a8fa99b17ba377f48d22117 13b3283ad629bb6d32fe3613462694be14fba3a24c547aa791e1e651c0b3106d 17616dddc351c20f5c98a30a0506253322d0cc5f6480d89690c7a08a70592557 5a22321413193d571a4a3b9189d45951ffda93cefde26f2f3999982233d17a01 813b16ca10985e8e602ee3295eb093115de4505db9cdc9cc6cbd9ef9ad192efd 708bee8d038cdd44bc8b75ee399ff8de09fa9a65e9d46f7060d75a82f04c19aa 1fa5af05b543d22efc20cc8eb7813da51e63a63c58b02bea6c2109918aa5d9d9 b7a6c8ae5655205dbb16a7d90af09a06a21daad78170cc8e55509304770d5b10".split()),
     "implementer": frozenset("a91e41c67930071db4d6eb45342526cbbf67af6d4fda13d1c847d18f28816a35 a1c7a46981512c7e8067dd5e40e193a0b54e34384aefc2b28950d5c6ccb5af9a d24ee0de8a22409bd5a3c9f1359079c4d6c7ccfbb14f65842e84f21ab0a5aa96 360d49c46afe280f85d6857575a12a9eeeff93d1f9aedb4b00ef2a2aa7c8b078 4028038b2153e56881140dabdc9165d2d1866fa737635e33599dc4d3cef0342f a463ea49f2cc308b6457ab63612a5f6b257f7462470118537961315b8e757ed1 fd0e28d2f1cce4f639a34b123bd647c9cd64d8b90fd5fb54a1e8353ecde924ad 7f85c22eb8ca508622b39bb8708e6bd617de3139f9de012ee29d166d4a3aad1e 3fcfcf2a04a8ef9e3a5c52f7414664b3a0d0fbc7f036c2558da1cb8baf955d95 0780f180cd71a9b6a73fef0eb61ca42f32fd048ccd12b0564f2afd68e7ed6143 55c1ea16853dcc4f5a4617005e57a939cd4dcd773e2fd24c5e0911ea3c9e90c0".split()),
     "verifier": frozenset("df6b0e82979329f15318356d060c2321095a2de7941539dfa0e007f08f2c2ff4 fa1585e8df2c9136eed055f22e85594805c62a0cec0d6387700dd4959fe9dc19".split()),

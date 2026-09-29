@@ -55,13 +55,24 @@ the managed failure, read the evidence needed for that diagnosis, coordinate,
 and report; it does not take over substantial repository investigation,
 implementation, or testing.
 
-At task end, the Controller makes one short semantic judgment about whether
-a concise conclusion could change a future decision and needs durable
-maintenance. It selects a fresh Curator only for that purpose and supplies
-the selected material in a concise handoff. Curator maintains the selected
-documents and relevant index links as a small, current, non-conflicting,
-traceable corpus. It may modify, merge, split, supersede, or delete entries;
-it does not scan the full corpus or decide architecture. Detailed evidence
+At task end, before `task-close`, the Controller makes one short semantic
+judgment: did the task add, change, or overturn durable knowledge that could
+affect a future decision and would otherwise require reinvestigation? If no,
+it silently skips Curator. If yes, it selects a fresh Curator and supplies the
+selected durable facts and exact relevant prior knowledge/documents. Curator
+is optional, never selected by task size, and not a mandatory stage. Curator
+maintains only Controller-selected durable knowledge under `.agent-memory/`
+and relevant links in `.agent-memory/INDEX.md`. Preserve provenance and scope
+for each retained claim; when new evidence updates or supersedes a conclusion,
+preserve its original scope and historical applicability where relevant. Keep
+the corpus small, current, non-conflicting, and traceable. Exclude task
+chronology, implementation logs, ordinary commit histories, transient test
+outputs, and momentary failures unless they establish stable knowledge that
+could affect a future decision. If consistency depends on durable material the
+Controller did not select, stop and report the missing knowledge area for the
+Controller to select; do not scan the corpus. Product/protocol docs and README
+aligned with current behavior belong to Implementer or Focused Implementer.
+Curator does not make architecture decisions or delegate. Detailed evidence
 stays in Artifacts, Git, or rollout records rather than memory. `CHANGED`
 reports an evidence change, not semantic invalidation. The Controller may
 request revalidation when a decision depends on changed evidence and has
@@ -127,8 +138,9 @@ Implementer, and Reviewer may delegate Investigator. The remaining child roles
 cannot delegate. Fresh children always use `fork_turns="none"`. Executors work
 only within their assigned semantic slice, preserve Controller decisions and
 invariants, and return a decision-changing unknown rather than changing them.
-They synchronize formal project documentation for behavior changed within
-their slice. Focused Implementer: after delegating, wait for the Scanner's
+They synchronize formal project documentation, including product/protocol docs
+and README, for behavior changed within their slice. Focused Implementer: after
+delegating, wait for the Scanner's
 distilled result and read only bounded immediate files; do not duplicate the
 Scanner's broad scan. Once difficult
 semantic uncertainty is closed, end the Focused slice and report the deterministic

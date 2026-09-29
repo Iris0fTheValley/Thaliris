@@ -253,10 +253,14 @@ def test_codex_install_updates_and_uninstall_removes_only_global_owned_span(tmp_
     assert b"A Scanner batches related searches and reads" in expected
     assert b"stops as soon as evidence is\nsufficient" in expected
     assert b"do not expand a scan for one more confirmation" in expected
-    assert b"waits for its distilled result" in expected
-    assert b"avoids\nduplicating the broad scan" in expected
-    assert b"End the Focused slice immediately once semantic\nuncertainty closes" in expected
-    assert b"fresh standard Luna Implementer" in expected
+    assert b"Focused Implementer directly reads known, decision-critical sources" in expected
+    assert b"larger or unknown evidence surface" in expected
+    assert b"key conclusions, exceptions, UNKNOWNs, and accurate raw locations" in expected
+    assert b"without replacing reasoning-coupled reading" in expected
+    assert b"reopening of relevant originals after its result is useful" in expected
+    assert b"no per-read delegation deliberation" in expected
+    assert b"file/token/search-count threshold" in expected
+    assert b"may\ncomplete complex implementation within its assigned slice" in expected
     assert b"every explicit user goal is addressed, explicitly deferred, or has a\ndecision-changing blocker" in expected
     assert b"semantic instruction, not a mechanical\nchecklist or state machine" in expected
 
@@ -2454,8 +2458,8 @@ def test_role_profiles_keep_routing_and_model_choice_with_the_controller(tmp_pat
     role_packs = Path("docs/thaliris-role-packs.md").read_bytes()
     role_packs = role_packs.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     assert role_packs == codex_adapter.ROLE_PACKS.encode("utf-8")
-    assert "whether a concise conclusion could change a\nfuture decision and needs durable maintenance" in codex_adapter.ROLE_PACKS
-    assert "A fresh Curator is selected\nonly when useful, never as an automatic step." in codex_adapter.ROLE_PACKS
+    assert "it makes one short semantic judgment: did the task add, change, or\noverturn durable knowledge" in codex_adapter.ROLE_PACKS
+    assert "a fresh Curator with selected durable facts and exact relevant prior\nknowledge/documents" in codex_adapter.ROLE_PACKS
     assert "only after Reviewer PASS" not in codex_adapter.ROLE_PACKS
     assert "read-only compatibility role, not recommended" in codex_adapter.ROLE_PACKS
     assert "workspace anomaly as an observation" in codex_adapter.ROLE_PACKS

@@ -90,13 +90,21 @@ working set when closed.
 Before choosing an opportunistic discovered slice, the Controller confirms that
 each explicit user goal has been addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic rule, not a mechanical checklist
-or state machine. After a Focused Implementer delegates broad collection, it
-waits for the Scanner's distilled result and reads only bounded immediate files;
-it does not duplicate the
-Scanner's broad scan. Once difficult semantic uncertainty is closed, end the
-Focused slice; the Focused Implementer reports the deterministic patch, test,
-format, documentation, and residual-reference tail to the Controller. The
-Controller routes that deterministic tail to a fresh standard Luna Implementer.
+or state machine. Focused Implementer can complete complex implementation as
+well as focused reasoning. It directly inspects known, decision-critical
+sources, including source code, relevant call chains, the current diff, failed
+tests, and raw evidence. If a larger or unknown evidence surface needs
+discovery, one Scanner can discover, enumerate, filter, and classify the
+relevant sources, returning key conclusions, exceptions, UNKNOWNs, and accurate
+raw locations. The Scanner narrows the search space; it does not replace
+reasoning-coupled reading, and targeted reopening of relevant originals after
+its result is useful. There is no per-read delegation deliberation or
+file/token/search-count threshold; small local searches may be direct.
+Focused Implementer continues complex implementation within its assigned slice
+when it still benefits from focused reasoning, and closes the slice when its
+accepted semantic and implementation work is complete. A deterministic
+remainder goes to Controller routing only when it is outside the slice or
+independently closable without the Focused model's reasoning.
 
 Controller has no fixed model, effort, or native profile. The Host/user selects
 its model. Investigator, Curator, and standard Implementer use
@@ -139,15 +147,12 @@ cannot delegate. Fresh children always use `fork_turns="none"`. Executors work
 only within their assigned semantic slice, preserve Controller decisions and
 invariants, and return a decision-changing unknown rather than changing them.
 They synchronize formal project documentation, including product/protocol docs
-and README, for behavior changed within their slice. Focused Implementer: after
-delegating, wait for the Scanner's
-distilled result and read only bounded immediate files; do not duplicate the
-Scanner's broad scan. Once difficult
-semantic uncertainty is closed, end the Focused slice and report the deterministic
-patch, test, format, documentation, and residual-reference
-tail to the Controller. The Controller routes that deterministic tail to a fresh
-standard Luna Implementer. Reviewer challenges semantic drift between a candidate and its
-formal project documentation when selected.
+and README, for behavior changed within their slice. Focused Implementer waits
+for a delegated Scanner's distilled discovery result and does not repeat its
+discovery pass; after that, it may reopen relevant originals to verify the
+evidence while retaining implementation responsibility. Reviewer challenges
+semantic drift between a candidate and its formal project documentation when
+selected.
 
 When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
 contracts change, check and synchronize both the repository-managed instruction

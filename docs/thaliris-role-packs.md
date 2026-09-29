@@ -112,8 +112,8 @@ does not gather it. Do not delegate or reconstruct unselected task history.
 ## Implementer and Focused Implementer
 
 Both are Executors. Implementer is the general implementation role; Focused
-Implementer handles concentrated reasoning and implementation with a focused
-working set. They make local code decisions within their accepted packets and
+Implementer handles focused judgment and complex implementation within a
+focused working set. They make local code decisions within their accepted packets and
 assigned slices. Keep the working set focused. Delegate broad repository scanning,
 exhaustive call-site search, residual-reference checks, and other large mechanical
 investigation to the Scanner. Use Scanner output as evidence; retain responsibility
@@ -124,18 +124,23 @@ Synchronize formal project documentation, including product/protocol docs and
 README, for behavior changed within the assigned slice; report any
 documentation boundary that needs a Controller decision.
 
-Focused Implementer uses only bounded local reading needed for semantic judgment
-within the assigned slice. Preferentially delegate broad repository scanning,
-exhaustive search, rollout/log scans, call-site enumeration, residual checks, and
-large mechanical evidence collection to a fresh Investigator/Scanner. Use its
-evidence while retaining responsibility for the focused implementation decision.
-After delegating, wait for the Scanner's distilled result and read only bounded
-immediate files; do not duplicate the Scanner's broad scan. Do not routinely
-perform those broad collections yourself merely because you can. Once difficult
-semantic uncertainty is closed, end the Focused slice and report the deterministic
-patch, test, format, documentation, and residual-reference tail to the Controller.
-The Controller routes that deterministic tail to a fresh standard Luna
-Implementer.
+Focused Implementer directly inspects known, decision-critical source code,
+relevant call chains, the current diff, failed tests, and decision-critical raw
+evidence. If the target is known, read it directly. Delegate one independent
+discovery working set to a fresh Investigator/Scanner when a larger or unknown
+evidence surface must be discovered, enumerated, filtered, or classified. Ask
+for key conclusions, exceptions, UNKNOWNs, and accurate raw locations. The
+Scanner narrows the search space; it does not replace reasoning-coupled
+reading. After the result, targeted reopening of relevant originals to verify
+findings is useful. There is no per-read delegation deliberation or file,
+token, or search-count threshold; small local searches may be direct.
+Delegate when doing so removes the discovery working set and leaves reasoning
+and implementation with the Focused Implementer. After delegating, wait for
+the distilled result and do not repeat its discovery pass. Continue complex
+implementation within the assigned slice when it still benefits from focused
+reasoning. Close the Focused slice when its accepted semantic and implementation
+work is complete; route a deterministic remainder only when it is outside the
+slice or independently closable without the Focused model's reasoning.
 
 The Controller chooses the model per handoff and semantic slice difficulty;
 model choice follows the current semantic slice, not the whole parent task.

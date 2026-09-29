@@ -174,6 +174,19 @@ for _profile_name, _profile_hash in _8A3FE930_GENERATED_AGENT_PROFILE_HASHES.ite
         _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
         | frozenset({_profile_hash})
     )
+# Exact Focused Implementer profile bytes rendered by the immutable 99a58fc
+# revision immediately before the focused-work guidance update. Keep each
+# identity bound to its exact filename, including both exceptional profiles.
+_99A58FC_FOCUSED_PROFILE_HASHES = {
+    "thaliris-focused-implementer.toml": "b4ff152b4a3978f31c7b80891a839bf1bd8408336fe19b2c8c27d42bf88d0311",
+    "thaliris-focused-implementer-astra-medium.toml": "9b412596980063afae0a4678043e09ca6f3509735e55f373119c3da3655831ef",
+    "thaliris-focused-implementer-xhigh.toml": "501fc4fc95c883f9249c649e6477a7d98babd97e41942b036da94e0086c3f662",
+}
+for _profile_name, _profile_hash in _99A58FC_FOCUSED_PROFILE_HASHES.items():
+    _KNOWN_GENERATED_AGENT_PROFILE_HASHES[_profile_name] = (
+        _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
+        | frozenset({_profile_hash})
+    )
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "7009fc69d97ca403404c57d739e354cc3ebf7656fdca690c0fd60b2cfa9f6267",  # 9b5bcf2
     # 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31, blob 7dfd7ab321c4ec1f1c32bd02b1d87f1b88d2aef7.
@@ -189,6 +202,7 @@ _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "5d798d5a45e522db623a4d22b618e1e674905aa46da95acba6733a51f9d63a9d",
     "df6daef7e33c0032179c462f25afdc9af8883d2677c3d34c98b735039c0ad3e0",
     "4ee70a3c36b2c76d74c03179359181dfd34c96bbfae5bf1e5e7ee1c71b6f13d7",  # 8a3fe930, blob 3253fc8
+    "d2b3a1c5a776f6a1dbb3be52a907c1704903f64a92d2388f64dc2171096e92e8",  # 99a58fc renderer output before focused-work guidance update
 })
 # Exact SHA-256 identity of the mechanical role-registry document emitted by
 # the first registry generator.  This is historical install metadata captured
@@ -211,6 +225,7 @@ _KNOWN_GENERATED_MANAGED_INSTRUCTION_HASHES = frozenset({
     "96102e74cd2812e2f06382173807939c79e856371180f94c1413ba8e26e8facb",  # 8a3fe930, blob 93d73da
     "3c1e3475797d0c9270d9adafa210492b8b305748f5e7bd7fc9411752f74d959d",  # 11e0cc9:AGENTS.md, exact published managed span
     "adebcedf67d1e3aa3e33d42da1174ea36d9e4199beb8453d8076a1de72cd638a",  # 9b5bcf2 renderer output
+    "9b3ae3c7edbfc74255a3c743dc9a1c430c6c936ea3101b3f0777f2a78eb4c7b8",  # 99a58fc managed span before focused-work guidance update
 })
 _KNOWN_HOST_WAIT_CAPABILITIES = {
     # These are release-pinned observations, not a cross-version assumption.
@@ -588,12 +603,26 @@ does not perform broad repository scans, implementation, or the full task test
 suite. Children gather broad evidence through Investigator/Scanner work. Local
 code decisions and implementation within the accepted packet belong to
 Implementer or Focused Implementer.
-After a Focused Implementer delegates broad collection, it waits for the
-Scanner's distilled result and reads only bounded immediate files; it does not
-duplicate the Scanner's broad scan. Once difficult semantic uncertainty is closed, end the
-Focused slice; the Focused Implementer reports the deterministic patch, test,
-format, documentation, and residual-reference tail to the Controller. The
-Controller routes that deterministic tail to a fresh standard Luna Implementer.
+The Focused Implementer can complete complex implementation as well as
+focused judgment. It directly inspects known, decision-critical sources, including
+source code, relevant call chains, the current diff, failed tests, and raw
+evidence that bears on the decision. When the target is known, read it
+directly. Delegate one independent discovery working set to a fresh
+Investigator/Scanner when a larger or unknown evidence surface must be
+discovered, enumerated, filtered, or classified. Ask the Scanner for key
+conclusions, exceptions, UNKNOWNs, and accurate raw locations. The Scanner
+narrows the search space; it does not replace reasoning-coupled reading. After
+it returns, targeted reopening of relevant originals to verify findings is
+useful. There is no per-read delegation deliberation or file, token, or
+search-count threshold; small local searches may be direct. Delegate when
+doing so removes the discovery working set and leaves reasoning and
+implementation with the Focused Implementer. After delegating, it waits for the
+distilled result and does not repeat the discovery pass. It continues complex
+implementation within the assigned slice when that work still benefits from
+focused reasoning. Close the Focused slice when its accepted semantic and
+implementation work is complete; report a deterministic remainder for
+Controller routing only when it is outside the slice or independently closable
+without the Focused model's reasoning.
 The Controller makes each child handoff decision-complete enough to close one
 semantic slice without routine steering. Do not keep a child as a long-lived
 interactive workspace. If new decision-changing information invalidates the
@@ -1010,8 +1039,8 @@ does not gather it. Do not delegate or reconstruct unselected task history.
 ## Implementer and Focused Implementer
 
 Both are Executors. Implementer is the general implementation role; Focused
-Implementer handles concentrated reasoning and implementation with a focused
-working set. They make local code decisions within their accepted packets and
+Implementer handles focused judgment and complex implementation within a
+focused working set. They make local code decisions within their accepted packets and
 assigned slices. Keep the working set focused. Delegate broad repository scanning,
 exhaustive call-site search, residual-reference checks, and other large mechanical
 investigation to the Scanner. Use Scanner output as evidence; retain responsibility
@@ -1022,18 +1051,23 @@ Synchronize formal project documentation, including product/protocol docs and
 README, for behavior changed within the assigned slice; report any
 documentation boundary that needs a Controller decision.
 
-Focused Implementer uses only bounded local reading needed for semantic judgment
-within the assigned slice. Preferentially delegate broad repository scanning,
-exhaustive search, rollout/log scans, call-site enumeration, residual checks, and
-large mechanical evidence collection to a fresh Investigator/Scanner. Use its
-evidence while retaining responsibility for the focused implementation decision.
-After delegating, wait for the Scanner's distilled result and read only bounded
-immediate files; do not duplicate the Scanner's broad scan. Do not routinely
-perform those broad collections yourself merely because you can. Once difficult
-semantic uncertainty is closed, end the Focused slice and report the deterministic
-patch, test, format, documentation, and residual-reference tail to the Controller.
-The Controller routes that deterministic tail to a fresh standard Luna
-Implementer.
+Focused Implementer directly inspects known, decision-critical source code,
+relevant call chains, the current diff, failed tests, and decision-critical raw
+evidence. If the target is known, read it directly. Delegate one independent
+discovery working set to a fresh Investigator/Scanner when a larger or unknown
+evidence surface must be discovered, enumerated, filtered, or classified. Ask
+for key conclusions, exceptions, UNKNOWNs, and accurate raw locations. The
+Scanner narrows the search space; it does not replace reasoning-coupled
+reading. After the result, targeted reopening of relevant originals to verify
+findings is useful. There is no per-read delegation deliberation or file,
+token, or search-count threshold; small local searches may be direct.
+Delegate when doing so removes the discovery working set and leaves reasoning
+and implementation with the Focused Implementer. After delegating, wait for
+the distilled result and do not repeat its discovery pass. Continue complex
+implementation within the assigned slice when it still benefits from focused
+reasoning. Close the Focused slice when its accepted semantic and implementation
+work is complete; route a deterministic remainder only when it is outside the
+slice or independently closable without the Focused model's reasoning.
 
 The Controller chooses the model per handoff and semantic slice difficulty;
 model choice follows the current semantic slice, not the whole parent task.
@@ -1610,11 +1644,18 @@ Small, bounded changes with a confirmed direction and no complex semantic
 uncertainty default to the standard Luna Implementer, even within a large task.
 A Scanner batches related searches and reads, then stops as soon as evidence is
 sufficient; do not expand a scan for one more confirmation.
-The Focused Implementer delegates broad evidence collection to a Scanner,
-waits for its distilled result, reads only bounded immediate files, and avoids
-duplicating the broad scan. End the Focused slice immediately once semantic
-uncertainty closes; the Controller routes any deterministic patch, test,
-format, documentation, or reference tail to a fresh standard Luna Implementer.
+The Focused Implementer directly reads known, decision-critical sources and may
+complete complex implementation within its assigned slice. It delegates one
+independent discovery working set when a larger or unknown evidence surface
+must be discovered, enumerated, filtered, or classified. The Scanner returns
+key conclusions, exceptions, UNKNOWNs, and accurate raw locations; it narrows
+the search space without replacing reasoning-coupled reading. Targeted
+reopening of relevant originals after its result is useful. Delegation removes
+a discovery working set; there is no per-read delegation deliberation or
+file/token/search-count threshold. The Focused Implementer completes accepted semantic
+and implementation work, and reports a deterministic remainder for Controller
+routing only when it is outside the slice or independently closable without
+focused reasoning.
 Before choosing an opportunistic discovered slice, the Controller confirms
 every explicit user goal is addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic instruction, not a mechanical

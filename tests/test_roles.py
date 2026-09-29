@@ -411,7 +411,7 @@ def test_child_communication_and_slice_routing_contract_is_shared() -> None:
 
 def test_role_cost_and_goal_coverage_contract_is_shared() -> None:
     test_scanner_batches_related_evidence_and_stops_at_sufficiency()
-    test_focused_implementer_waits_and_routes_deterministic_tail_to_luna()
+    test_focused_implementer_reads_known_sources_and_delegates_discovery()
     test_model_choice_follows_the_current_slice()
     test_controller_covers_goals_before_an_opportunistic_slice()
 
@@ -447,22 +447,104 @@ def test_scanner_batches_related_evidence_and_stops_at_sufficiency() -> None:
         assert all(phrase in rendered for phrase in controller_required)
 
 
-def test_focused_implementer_waits_and_routes_deterministic_tail_to_luna() -> None:
+def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> None:
     profile = " ".join(roles.get_role("focused-implementer").instructions.split()).lower()
     required = (
+        "handles complex implementation as well as focused judgment",
+        "directly inspect known, decision-critical sources",
+        "source code, relevant call chains, the current diff, failed tests",
+        "raw evidence that bears on the decision",
+        "when the target is known, read it directly",
+        "larger or unknown evidence surface",
+        "discovered, enumerated, filtered, or classified",
+        "key conclusions, exceptions, unknowns, and accurate raw locations",
+        "narrows the search space; it does not replace reasoning-coupled reading",
+        "targeted reopening of relevant originals to verify findings is useful",
+        "there is no per-read delegation deliberation",
+        "file, token, or search-count threshold",
+        "small local searches may be direct",
+        "removes the discovery working set",
         "wait for the scanner's distilled result",
-        "do not duplicate the scanner's broad scan",
-        "once difficult semantic uncertainty is closed, end the focused slice",
-        "deterministic patch, test, format, documentation, and residual-reference tail",
-        "fresh standard luna implementer",
+        "do not repeat its discovery pass",
+        "continue complex implementation within the assigned slice",
+        "close the focused slice when its accepted semantic and implementation work is complete",
     )
     assert all(phrase in profile for phrase in required)
     standard = " ".join(roles.get_role("implementer").instructions.split()).lower()
-    assert all(phrase not in standard for phrase in required)
-    for rendered in _normalized_contract_sources()[1:2] + _normalized_contract_sources()[-2:]:
-        assert all(phrase in rendered for phrase in required)
-    protocol = _normalized_contract_sources()[-1]
-    assert "their slice. focused implementer: after delegating, wait for the scanner's distilled result" in protocol
+    assert all(phrase not in standard for phrase in required[:14])
+    docs_required = (
+        "focused implementer handles focused judgment and complex implementation",
+        "directly inspects known, decision-critical",
+        "current diff, failed tests",
+        "decision-critical raw evidence",
+        "larger or unknown evidence surface",
+        "must be discovered, enumerated, filtered, or classified",
+        "key conclusions, exceptions, unknowns, and accurate raw locations",
+        "does not replace reasoning-coupled reading",
+        "targeted reopening of relevant originals",
+        "there is no per-read delegation deliberation",
+        "file, token, or search-count threshold",
+        "small local searches may be direct",
+        "removes the discovery working set",
+        "after delegating, wait for the distilled result",
+        "do not repeat its discovery pass",
+        "continue complex implementation within the assigned slice",
+        "close the focused slice when its accepted semantic and implementation work is complete",
+    )
+    for rendered in _normalized_contract_sources()[1:2] + _normalized_contract_sources()[-2:-1]:
+        assert all(phrase in rendered for phrase in docs_required)
+    propagated = (
+        "focused implementer can complete complex implementation",
+        "directly inspects known, decision-critical sources",
+        "current diff, failed tests, and raw evidence",
+        "larger or unknown evidence surface",
+        "key conclusions, exceptions, unknowns, and accurate raw locations",
+        "does not replace reasoning-coupled reading",
+        "targeted reopening of relevant originals",
+        "there is no per-read delegation deliberation",
+        "search-count threshold",
+        "continues complex implementation within",
+    )
+    for rendered in _normalized_contract_sources()[0:1] + _normalized_contract_sources()[2:4] + _normalized_contract_sources()[-1:]:
+        assert all(phrase in rendered for phrase in propagated)
+
+
+def test_current_focused_profile_bytes_remain_upgradeable_by_exact_identity() -> None:
+    expected = {
+        "thaliris-focused-implementer.toml": "b4ff152b4a3978f31c7b80891a839bf1bd8408336fe19b2c8c27d42bf88d0311",
+        "thaliris-focused-implementer-astra-medium.toml": "9b412596980063afae0a4678043e09ca6f3509735e55f373119c3da3655831ef",
+        "thaliris-focused-implementer-xhigh.toml": "501fc4fc95c883f9249c649e6477a7d98babd97e41942b036da94e0086c3f662",
+    }
+    binding = roles.get_codex_binding("focused-implementer")
+    assert {hashlib.sha256(_historical_profile("99a58fc", name)).hexdigest() for name in expected} == set(expected.values())
+    assert set(expected.values()) <= binding.legacy_profile_hashes
+    assert all(
+        digest in codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES[name]
+        for name, digest in expected.items()
+    )
+    for name in expected:
+        value = _historical_profile("99a58fc", name)
+        assert codex_adapter._agent_profile_state(value, name) == "legacy"
+        assert codex_adapter._agent_profile_state(value + b"\nuser edit\n", name) == "user"
+
+    profiles = roles.agent_profiles()
+    assert {name for name, (_, _, role) in profiles.items() if role == "focused-implementer"} == set(expected)
+    for name in expected:
+        model, effort, role = profiles[name]
+        value = tomllib.loads(codex_adapter._agent_profile(name.removesuffix(".toml"), role, model, effort).decode())
+        assert value["developer_instructions"] == roles.get_role("focused-implementer").instructions
+        assert "continue complex implementation within the assigned slice" in value["developer_instructions"].lower()
+
+
+def test_pre_update_managed_and_role_pack_outputs_remain_upgradeable() -> None:
+    managed = _historical_managed("99a58fc")
+    role_packs = subprocess.check_output(
+        ["git", "show", "99a58fc:docs/thaliris-role-packs.md"],
+    )
+    assert hashlib.sha256(managed.encode("utf-8")).hexdigest() == "9b3ae3c7edbfc74255a3c743dc9a1c430c6c936ea3101b3f0777f2a78eb4c7b8"
+    assert hashlib.sha256(role_packs).hexdigest() == "d2b3a1c5a776f6a1dbb3be52a907c1704903f64a92d2388f64dc2171096e92e8"
+    assert codex_adapter._managed_agents_state(managed) == "legacy"
+    assert codex_adapter._role_pack_state(role_packs) == "legacy"
 
 
 def test_model_choice_follows_the_current_slice() -> None:
@@ -536,7 +618,7 @@ def test_shared_child_instructions_exclude_controller_routing_and_model_choice()
 
 
 def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence() -> None:
-    required = (
+    reviewer_required = (
         "bounded local reading needed for semantic judgment",
         "preferentially delegate broad repository scanning",
         "exhaustive search",
@@ -547,12 +629,45 @@ def test_focused_roles_keep_local_judgment_bounded_and_prefer_scanner_evidence()
         "fresh investigator/scanner",
         "do not routinely perform those broad collections yourself merely because you can",
     )
-    for role in ("focused-implementer", "reviewer"):
-        instructions = roles.get_role(role).instructions.lower()
-        assert all(phrase in instructions for phrase in required), role
+    reviewer = roles.get_role("reviewer").instructions.lower()
+    assert all(phrase in reviewer for phrase in reviewer_required)
+
+    focused_required = (
+        "directly inspect known, decision-critical sources",
+        "source code, relevant call chains, the current diff, failed tests",
+        "raw evidence that bears on the decision",
+        "when the target is known, read it directly",
+        "larger or unknown evidence surface",
+        "discovered, enumerated, filtered, or classified",
+        "key conclusions, exceptions, unknowns, and accurate raw locations",
+        "targeted reopening of relevant originals to verify findings is useful",
+        "there is no per-read delegation deliberation",
+        "file, token, or search-count threshold",
+        "small local searches may be direct",
+        "delegate when doing so removes the discovery working set",
+        "continue complex implementation within the assigned slice",
+    )
+    focused = roles.get_role("focused-implementer").instructions.lower()
+    assert all(phrase in focused for phrase in focused_required)
 
     rendered = " ".join(codex_adapter.render_role_packs().lower().split())
-    assert all(phrase in rendered for phrase in required)
+    assert all(phrase in rendered for phrase in reviewer_required)
+    docs_required = (
+        "directly inspects known, decision-critical",
+        "current diff, failed tests",
+        "decision-critical raw evidence",
+        "larger or unknown evidence surface",
+        "must be discovered, enumerated, filtered, or classified",
+        "key conclusions, exceptions, unknowns, and accurate raw locations",
+        "does not replace reasoning-coupled reading",
+        "targeted reopening of relevant originals to verify findings is useful",
+        "there is no per-read delegation deliberation",
+        "file, token, or search-count threshold",
+        "small local searches may be direct",
+        "delegate when doing so removes the discovery working set",
+        "continue complex implementation within the assigned slice",
+    )
+    assert all(phrase in rendered for phrase in docs_required)
     assert "deterministic documentation, test, configuration, or reference cleanup" in rendered
     assert "default to standard implementer on luna" in rendered
 
@@ -907,8 +1022,9 @@ def test_knowledge_maintenance_and_formal_docs_stay_in_instruction_sources() -> 
     for path in ("AGENTS.md", "docs/thaliris-routing-protocol.md"):
         documented = " ".join(Path(path).read_text(encoding="utf-8").split()).lower()
         assert "add, change, or overturn durable knowledge" in documented
-        assert "ordinary commit histories" in documented
         assert "product/protocol" in documented
+    routing_protocol = Path("docs/thaliris-routing-protocol.md").read_text(encoding="utf-8").lower()
+    assert "ordinary commit histories" in routing_protocol
 
 
 def test_9b5bcf2_curator_profile_is_recognized_as_legacy() -> None:

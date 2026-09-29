@@ -54,16 +54,24 @@ go to Scanner under an Executor or Reviewer.
 Before choosing an opportunistic discovered slice, the Controller confirms that
 each explicit user goal has been addressed, explicitly deferred, or has a
 decision-changing blocker. This is a semantic rule, not a mechanical checklist
-or state machine. After a Focused Implementer delegates broad collection, it
-waits for the Scanner's distilled result and reads only bounded immediate files;
-it does not duplicate
-the Scanner's broad scan. Once difficult semantic uncertainty is closed, end the
-Focused slice; the Focused Implementer reports the deterministic patch, test,
-format, documentation, and residual-reference tail to the Controller.
-The Controller routes that deterministic tail to a fresh standard Luna
-Implementer. A Scanner batches related searches and reads, returns compact
-facts, and once evidence is sufficient stops immediately; do not expand the
-scan for one more confirmation.
+or state machine. Focused Implementer can complete complex implementation as
+well as focused reasoning. It directly inspects known, decision-critical
+sources, including source code, relevant call chains, the current diff, failed
+tests, and raw evidence. When the target is known, it reads it directly. One
+Scanner can discover, enumerate, filter, and classify relevant sources when a
+larger or unknown evidence surface needs discovery, returning key conclusions,
+exceptions, UNKNOWNs, and accurate raw locations. The Scanner narrows the
+search space; it does not replace reasoning-coupled reading. Targeted reopening
+of relevant originals after its result is useful. Delegation removes a
+discovery working set; there is no per-read delegation deliberation or
+file/token/search-count threshold, and small local searches may be direct.
+Focused Implementer continues complex implementation within its assigned slice
+when it still benefits from focused reasoning, closing the slice when its
+accepted semantic and implementation work is complete. A deterministic
+remainder goes to Controller routing only when it is outside the slice or
+independently closable without the Focused model's reasoning. A Scanner batches
+related searches and reads, returns compact facts, and once evidence is
+sufficient stops immediately; do not expand the scan for one more confirmation.
 
 The ACTIVE root Controller uses only bounded control-plane commands and
 explicit retrieval. Execution, mutation, and testing belong to fresh

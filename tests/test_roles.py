@@ -722,6 +722,25 @@ def test_pre_split_host_profiles_migrate_by_exact_historical_identity() -> None:
     assert codex_adapter._role_pack_state(old_packs + b"\nuser edit") == "user"
 
 
+def test_e4b6975_host_profiles_are_recognized_only_by_exact_identity() -> None:
+    expected = {
+        "thaliris-implementer.toml": "88ea13ad079412a4569a2360731d4bb377d9b20cb313cc9a882065cdd5861f29",
+        "thaliris-focused-implementer.toml": "1eb28a0b74e72fcf4e03f63ec3ddba12d4972ab3f7cfb71bd02efc1b748cbd45",
+        "thaliris-focused-implementer-astra-medium.toml": "37dacbc67a27f3551d6e60b26bc520113c274d233c01fd85c2d507806f62e625",
+        "thaliris-focused-implementer-xhigh.toml": "c66aa6e934a6fdc354eda44d60145d6e92a4e7c4b65be796a18094ce03817a3e",
+    }
+    assert codex_adapter._E4B6975_GENERATED_AGENT_PROFILE_HASHES == expected
+
+    for name, digest in expected.items():
+        historical = _historical_profile("e4b6975889ef348e13e94521dc300f1e572b42a3", name)
+        assert hashlib.sha256(historical).hexdigest() == digest
+        assert digest in codex_adapter._KNOWN_GENERATED_AGENT_PROFILE_HASHES[name]
+        assert codex_adapter._agent_profile_state(historical, name) == "legacy"
+        assert codex_adapter._agent_profile_state(historical + b"\nuser edit\n", name) == "user"
+        other_name = next(candidate for candidate in expected if candidate != name)
+        assert codex_adapter._agent_profile_state(historical, other_name) == "user"
+
+
 def test_pre_update_managed_and_role_pack_outputs_remain_upgradeable() -> None:
     managed = _historical_managed("99a58fc")
     role_packs = subprocess.check_output(

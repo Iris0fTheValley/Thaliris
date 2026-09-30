@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-ROUTING_PROTOCOL_VERSION = "thaliris-routing-v2"
+ROUTING_PROTOCOL_VERSION = "thaliris-routing-v3"
 ROUTING_PROTOCOL_MARKER = f"<!-- thaliris-routing-protocol: {ROUTING_PROTOCOL_VERSION} -->"
 
 CLASSIFICATIONS = {"MECHANICAL", "LOCAL_SEMANTIC", "ARCHITECTURAL"}

@@ -105,6 +105,11 @@ quality, and evidence requirement.
 
 ## Documentation consistency
 
-The benchmark validator checks the authoritative routing-protocol identity and
-its generated runtime projections. Runtime observations are reported
-separately from supported behavior and host limitations.
+The benchmark validator checks the authoritative routing-protocol identity,
+generated project projections, and the effective native profile definitions as
+separate facts. It identifies profiles by TOML `name` in both personal and
+project agent directories. Equivalent definitions preserve both provenance
+records; conflicting definitions with the same name fail closed. Project trust
+configuration alone does not prove that a project-only definition is active.
+Runtime observations are reported separately from supported behavior and host
+limitations.

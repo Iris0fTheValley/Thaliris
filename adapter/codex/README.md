@@ -141,6 +141,14 @@ semantic role identities and Luna or Sol defaults. Astra medium and xhigh are
 execution profiles of a semantic role, never separate roles. Per-spawn
 model/effort overrides are denied; no dynamic role exists.
 
+Personal `~/.codex/agents` and project `.codex/agents` are both legitimate
+definition locations. Native agent identity comes from TOML `name`, not the
+filename. The D11 preflight checks generated project files separately from
+effective Host definitions. It accepts equivalent same-name definitions with
+both source locations recorded and fails closed on conflicting definitions;
+project trust configuration alone does not prove a project-only profile is
+active. The native catalog and selected profile still need Host observation.
+
 Choose one model/profile for the current Workstream from its work shape, not as
 a ladder. Standard Implementer on Luna is the default for a
 stable problem structure and direction, including remaining execution, local
@@ -148,7 +156,7 @@ code judgment, tests, synchronization, and mechanical consistency, regardless
 of task size. Choose Focused Implementer on Sol when the smallest coherent
 Workstream has a stable direction but inherently needs sustained reasoning
 across coupled invariants, nonlocal effects, or constraints. Routine local
-closures do not trigger another role or profile choice. Choose a Focused
+closures do not trigger another role or profile choice.
 Astra medium and xhigh remain exceptional profiles of the same Focused
 Implementer role, available only with current-task user authorization.
 Importance, file count, cross-module scope, number of local closures, or ordinary

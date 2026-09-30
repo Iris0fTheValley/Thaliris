@@ -22,8 +22,55 @@ for name in ("candidate_manifest", "d11_sources", "d11_collector", "d11_protocol
 
 
 def test_routing_protocol_marker_matches_current_document() -> None:
-    assert ROUTING_PROTOCOL_VERSION == "thaliris-routing-v2"
+    assert ROUTING_PROTOCOL_VERSION == "thaliris-routing-v3"
     assert ROUTING_PROTOCOL_MARKER in (ROOT / "docs" / "thaliris-routing-protocol.md").read_text(encoding="utf-8")
+
+
+def test_effective_profiles_use_toml_name_and_keep_equivalent_provenance(tmp_path: Path) -> None:
+    from thaliris import codex_adapter
+
+    filename = "thaliris-implementer.toml"
+    model, effort, role = codex_adapter._AGENT_PROFILES[filename]
+    rendered = codex_adapter._agent_profile(filename.removesuffix(".toml"), role, model, effort)
+    definition = __import__("tomllib").loads(rendered.decode())
+    project = tmp_path / "project"
+    home = tmp_path / "home"
+    (project / ".codex" / "agents").mkdir(parents=True)
+    (home / "agents").mkdir(parents=True)
+    personal = home / "agents" / "different-filename.toml"
+    project_file = project / ".codex" / "agents" / filename
+    personal.write_bytes(rendered)
+    project_file.write_bytes(rendered.replace(b"\nmodel =", b"\n\nmodel ="))
+
+    result = d11_preflight._effective_agent_profiles(project, {filename: definition}, codex_home=home, project_trust="YES")
+    profile = result["profiles"][definition["name"]]
+    assert result["pass"] is True
+    assert profile["code"] == "PASS"
+    assert {item["layer"] for item in profile["provenance"]} == {"personal", "project"}
+    assert {item["path"] for item in profile["provenance"]} == {str(personal), str(project_file)}
+
+    project_file.write_bytes(rendered.replace(b"gpt-6-luna", b"gpt-6-sol"))
+    conflicting = d11_preflight._effective_agent_profiles(project, {filename: definition}, codex_home=home, project_trust="YES")
+    assert conflicting["profiles"][definition["name"]]["code"] == "EFFECTIVE_AGENT_PROFILE_AMBIGUOUS"
+    assert conflicting["pass"] is False
+
+
+def test_project_only_profile_needs_eligibility_evidence(tmp_path: Path) -> None:
+    from thaliris import codex_adapter
+
+    filename = "thaliris-implementer.toml"
+    model, effort, role = codex_adapter._AGENT_PROFILES[filename]
+    rendered = codex_adapter._agent_profile(filename.removesuffix(".toml"), role, model, effort)
+    definition = __import__("tomllib").loads(rendered.decode())
+    project = tmp_path / "project"
+    (project / ".codex" / "agents").mkdir(parents=True)
+    (project / ".codex" / "agents" / "renamed.toml").write_bytes(rendered)
+    home = tmp_path / "home"
+    result = d11_preflight._effective_agent_profiles(project, {filename: definition}, codex_home=home, project_trust="YES")
+    assert result["project_trust_configured"] == "YES"
+    assert result["project_profile_eligibility"] == "UNKNOWN"
+    assert result["profiles"][definition["name"]]["code"] == "PROJECT_PROFILE_ELIGIBILITY_UNPROVEN"
+    assert result["pass"] is False
 
 
 def repo(path: Path) -> Path:

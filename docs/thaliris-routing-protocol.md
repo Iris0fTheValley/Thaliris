@@ -1,6 +1,10 @@
 # Thaliris Routing Protocol
 
-<!-- thaliris-routing-protocol: thaliris-routing-v2 -->
+<!-- thaliris-routing-protocol: thaliris-routing-v3 -->
+
+The marker identifies this routing contract for D11. Version 3 records the
+effective native agent-profile rule below as part of the semantic contract;
+the Codex lifecycle schema is independent of this marker.
 
 ## Single semantic path
 
@@ -177,6 +181,16 @@ model/effort overrides are denied. Role sessions cannot choose their own
 model/effort. Reasoning Specialist independently challenges selected framing
 and its decision basis; local implementation decisions belong to Implementer
 and Focused Implementer.
+
+Native agent definitions may come from personal `~/.codex/agents` or project
+`.codex/agents`. The TOML `name` is the agent identity; the filename is only a
+source location. D11 checks generated project files and effective Host treatment
+separately. For a name defined in both locations, identical parsed definitions
+retain both provenance records. Conflicting definitions fail closed as
+`EFFECTIVE_AGENT_PROFILE_AMBIGUOUS` because their precedence is unverified.
+Project trust in `config.toml` is a separate fact and does not by itself prove
+that a project-only agent definition is active. The active native catalog and
+selected profile still require Host observation.
 
 Routing terms: Investigator, Implementer, and Focused Implementer are semantic
 roles. Scanner is a nested Investigator discovery working pattern, not a

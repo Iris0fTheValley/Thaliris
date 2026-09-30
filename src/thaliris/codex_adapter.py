@@ -262,6 +262,21 @@ for _profile_name, _profile_hash in _E4B6975_GENERATED_AGENT_PROFILE_HASHES.item
         _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
         | frozenset({_profile_hash})
     )
+# The three project-local Focused Implementer files committed at ec1ad7b are
+# exact output of that immutable revision's renderer.  The current files were
+# independently compared byte-for-byte with that renderer.  This evidence is
+# bound to each filename; it does not establish ownership of the other local
+# profiles or of similarly named files in another directory.
+_EC1AD7B_FOCUSED_PROFILE_HASHES = {
+    "thaliris-focused-implementer.toml": "edeb1136eab3d7685552e7a8ec4da70a7cec22085dc236e203a7ef2c7d8f03a4",
+    "thaliris-focused-implementer-astra-medium.toml": "6b255fa51ad04def5bbe248c30d5e247bb17af3913cffd815e283ec9178aae53",
+    "thaliris-focused-implementer-xhigh.toml": "6484ff491175ebf56a63d65d7439c3c661f782e6401c09e43f6bfbf26a3f0ff1",
+}
+for _profile_name, _profile_hash in _EC1AD7B_FOCUSED_PROFILE_HASHES.items():
+    _KNOWN_GENERATED_AGENT_PROFILE_HASHES[_profile_name] = (
+        _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset())
+        | frozenset({_profile_hash})
+    )
 _KNOWN_GENERATED_ROLE_PACK_HASHES = frozenset({
     "4e4a1af986df48f8c9e0e632506ef13636531dba163fa7ae7032a7d18ab2c36a",  # ec1ad7b committed generated role pack
     "4f6f4a41baedc5bc0b01fa8a37b86d3bdee2384846e260bf8f896cff12b650f4",  # e4b6975 committed generated role pack

@@ -746,6 +746,17 @@ def test_current_focused_profile_bytes_remain_upgradeable_by_exact_identity() ->
         assert "continue complex implementation within the assigned workstream across local execution checkpoints" in value["developer_instructions"].lower()
 
 
+def test_ec1ad7b_project_focused_profiles_have_exact_historical_ownership() -> None:
+    for name, digest in codex_adapter._EC1AD7B_FOCUSED_PROFILE_HASHES.items():
+        historical = _historical_profile("ec1ad7b", name)
+        assert hashlib.sha256(historical).hexdigest() == digest
+        assert codex_adapter._agent_profile_state(historical, name) == "legacy"
+        assert codex_adapter._agent_profile_state(historical + b"\nuser edit\n", name) == "user"
+        other_name = next(other for other in codex_adapter._EC1AD7B_FOCUSED_PROFILE_HASHES if other != name)
+        assert codex_adapter._agent_profile_state(historical, other_name) == "user"
+        assert codex_adapter._agent_profile_state(Path(".codex/agents", name).read_bytes(), name) == "current"
+
+
 def test_pre_split_host_profiles_migrate_by_exact_historical_identity() -> None:
     for name, digest in codex_adapter._DDE3D0F_GENERATED_AGENT_PROFILE_HASHES.items():
         historical = _historical_profile("dde3d0f", name)

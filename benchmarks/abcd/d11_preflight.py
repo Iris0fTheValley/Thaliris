@@ -830,10 +830,12 @@ PRICING_MODELS = {
     "gpt-5.6-luna": ("uncached_input", "cached_input", "output"),
     "gpt-5.6-terra": ("uncached_input", "cached_input", "output"),
     "gpt-5.6-sol": ("uncached_input", "cached_input", "output"),
-    "gpt-6-luna": ("uncached_input", "cached_input", "output"),
-    "gpt-6-sol": ("uncached_input", "cached_input", "output"),
-    "gpt-6-astra": ("uncached_input", "cached_input", "output"),
+    "gpt-6-luna": ("uncached_input", "cached_input", "cache_write", "output"),
+    "gpt-6-sol": ("uncached_input", "cached_input", "cache_write", "output"),
+    "gpt-6-astra": ("uncached_input", "cached_input", "cache_write", "output"),
 }
+
+GPT6_STANDARD_SNAPSHOT = json.loads(Path(__file__).with_name("pricing_gpt6_standard_20260930.json").read_text(encoding="utf-8"))
 
 
 def validate_pricing_snapshot(value: dict[str, Any]) -> bool:
@@ -847,6 +849,15 @@ def validate_pricing_snapshot(value: dict[str, Any]) -> bool:
         isinstance(value.get("source"), str) and value["source"] and isinstance(value.get("retrieved_at"), str) and value["retrieved_at"]
     ):
         return False
+    if any(model.startswith("gpt-6-") for model in value["models"]):
+        if value != GPT6_STANDARD_SNAPSHOT:
+            return False
+        if (value.get("tier") != "Standard"
+            or value.get("long_context_threshold") != 272000
+            or value.get("long_context_input_multiplier") != 2
+            or value.get("long_context_output_multiplier") != 1.5
+            or not isinstance(value.get("scope"), str) or not value["scope"]):
+            return False
     for model, rates in value["models"].items():
         fields = PRICING_MODELS[model]
         if not isinstance(rates, dict) or set(rates) != set(fields) or any(not isinstance(rates[field], (int, float)) or isinstance(rates[field], bool) or not math.isfinite(float(rates[field])) or rates[field] < 0 for field in fields):

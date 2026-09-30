@@ -931,17 +931,31 @@ def collect_sessions(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Enumerate every observed model invocation, including failed/orphaned ones."""
     ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
     sessions: dict[str, dict[str, Any]] = {}
+    billing_requests: dict[str, list[dict[str, Any]]] = {}
     for event in ordered:
         if _kind(event) not in {"session_usage", "rollout_session", "model_usage", "token_usage_record"}:
             continue
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         session_id = event.get("session_id") or event.get("_session_identity")
+        # Explicit request billing facts are kept separate from cumulative
+        # session totals.  This branch cannot synthesize a request from native
+        # token_usage_record, which is a thread/session aggregate.
+        if _kind(event) == "model_usage" and isinstance(event.get("billing_request"), dict):
+            if isinstance(session_id, str) and session_id and event.get("_trusted_source") == "codex_rollout" and event.get("_source_run_id") != "TEST_ONLY":
+                request = dict(event["billing_request"])
+                request["provenance"] = {
+                    "kind": "codex_rollout", "source_file": event.get("_source_file"),
+                    "source_line": event.get("_source_line"), "source_sha256": event.get("_source_sha256"),
+                    "native_event_id": event.get("_native_event_id"),
+                }
+                billing_requests.setdefault(session_id, []).append(request)
+            continue
         usage = event.get("usage")
         if _kind(event) == "token_usage_record":
             session_id = session_id or payload.get("session_id")
             usage = payload.get("thread_token_usage") or payload.get("usage")
         if isinstance(usage, dict) and "input" not in usage and "input_tokens" in usage:
-            usage = {"input": usage.get("input_tokens"), "cached_input": usage.get("cached_input_tokens", 0), "output": usage.get("output_tokens")}
+            usage = {"input": usage.get("input_tokens"), "cached_input": usage.get("cached_input_tokens"), "output": usage.get("output_tokens")}
         if not isinstance(session_id, str) or not session_id or not isinstance(usage, dict):
             continue
         item = {
@@ -968,8 +982,12 @@ def collect_sessions(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 sessions[session_id] = item
                 continue
             for field in ("input", "cached_input", "output"):
-                item[field] = int(previous[field] or 0) + int(item[field] or 0)
+                older, newer = previous[field], item[field]
+                item[field] = older + newer if type(older) is int and type(newer) is int else (older if type(older) is not int else newer)
         sessions[session_id] = item
+    for session_id, requests in billing_requests.items():
+        if session_id in sessions:
+            sessions[session_id]["billing_requests"] = requests
     return [sessions[key] for key in sorted(sessions)]
 
 

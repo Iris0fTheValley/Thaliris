@@ -474,6 +474,49 @@ def test_session_collector_uses_native_rollout_session_identity_and_cumulative_u
     assert sessions[0]["input"] == 25 and sessions[0]["cached_input"] == 5 and sessions[0]["output"] == 7
 
 
+def test_collector_does_not_coerce_malformed_additive_token_usage(tmp_path: Path) -> None:
+    sessions = d11_collector.collect_sessions(trusted_events(tmp_path, [
+        {"event": "token_usage_record", "session_id": "native-1", "model": "gpt-6-sol",
+         "payload": {"usage": {"input_tokens": "10", "cached_input_tokens": 2, "output_tokens": 3}}},
+        {"event": "token_usage_record", "session_id": "native-1", "model": "gpt-6-sol",
+         "payload": {"usage": {"input_tokens": 5, "cached_input_tokens": 1, "output_tokens": 2}}},
+    ]))
+    assert sessions[0]["input"] == "10"
+    assert d11_protocol.calculate_cost(sessions)["code"] == "COST_TELEMETRY_INVALID"
+
+
+def test_request_billing_facts_stay_separate_from_cumulative_session_usage() -> None:
+    source = {"_trusted_source": "codex_rollout", "_source_id": "rollout-1",
+              "_registry_identity": "registry-1", "_source_run_id": "run-1",
+              "_source_file": "capture.jsonl", "_source_sha256": "a" * 64}
+    events = [
+        {**source, "_normalized_kind": "token_usage_record", "_ingestion_index": 1,
+         "_source_line": 1, "_native_event_id": "native-1", "session_id": "session-1",
+         "payload": {"thread_token_usage": {"input_tokens": 100, "cached_input_tokens": 10, "output_tokens": 20}},
+         "model": "gpt-6-sol"},
+        {**source, "_normalized_kind": "model_usage", "_ingestion_index": 2,
+         "_source_line": 2, "_native_event_id": "request-1", "session_id": "session-1",
+         "billing_request": {"request_id": "request-1", "model": "gpt-6-sol", "tier": "Standard",
+                             "prompt_tokens": 100, "long_context": False, "cache_write_applies": True,
+                             "usage": {"input": 100, "cached_input": 10, "cache_write": 5, "output": 20}}},
+    ]
+    sessions = d11_collector.collect_sessions(events)
+    assert len(sessions) == 1 and sessions[0]["input"] == 100
+    assert sessions[0]["billing_requests"][0]["provenance"]["native_event_id"] == "request-1"
+    assert d11_protocol.calculate_cost(sessions, pricing_snapshot=d11_protocol.GPT6_STANDARD_SNAPSHOT)["status"] == "PASS"
+    events[1]["_source_run_id"] = "TEST_ONLY"
+    assert d11_collector.collect_sessions(events)[0].get("billing_requests") is None
+
+
+def test_gpt6_snapshot_requires_complete_pinned_standard_rates() -> None:
+    snapshot = d11_preflight.GPT6_STANDARD_SNAPSHOT
+    assert d11_preflight.validate_pricing_snapshot(snapshot)
+    changed = json.loads(json.dumps(snapshot))
+    changed["models"]["gpt-6-sol"]["cache_write"] = 0
+    assert not d11_preflight.validate_pricing_snapshot(changed)
+    assert d11_preflight.validate_pricing_snapshot({"version": "historical", "models": {"gpt-5.6-terra": {"uncached_input": 2, "cached_input": 0.2, "output": 12}}})
+
+
 def test_malformed_artifact_bytes_fail_even_when_registered(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.init(root)

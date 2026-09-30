@@ -90,12 +90,34 @@ later mutation invalidates the chain. Reviewer sandbox mode is a native session 
 not a candidate attestation field.
 
 Telemetry reports observed-all invocations, including failed or orphaned child
-sessions. Model identity and token usage remain raw observations. Cost uses
-model-specific uncached input (`input-cached_input`) plus cached input and
-output only when provenance-backed rates exist for every invoked model;
-otherwise current cost is `NOT_OBSERVED`. Historical gpt-5.6 rates do not
-price gpt-6 sessions. Reasoning tokens are diagnostic only. Waiting is
-reported separately from model-driven polling.
+sessions. Model identity and session token totals remain raw observations.
+Raw usage, API-equivalent cost, benchmark validity, evaluator quality, and
+routing/provenance validity have separate statuses. Missing or malformed cost
+telemetry does not change benchmark correctness; malformed token counts make
+the cost status `FAIL` and missing billing facts make it `NOT_OBSERVED`.
+
+The [GPT-6 Standard pricing snapshot](../benchmarks/abcd/pricing_gpt6_standard_20260930.json)
+records user-supplied official OpenAI API facts dated 2026-09-30 in USD per
+million tokens. It is an API-equivalent metric, not observed Codex ChatGPT-plan
+billing or allowance cost. Actual allowance cost remains `NOT_OBSERVED` without
+direct billing telemetry. Standard rates apply through 272,000 prompt tokens;
+above that threshold, input, cached-input, and cache-write rates double and
+output rates increase by 1.5 for the entire request. Other tiers need their
+own verified snapshot and are currently `NOT_OBSERVED`.
+
+Exact GPT-6 cost requires every session's full request ledger, with each
+request's model, tier, input, cached input, output, cache-write applicability
+and count when applicable, prompt-size context fact, and captured event
+provenance. Request totals must equal the observed session total. The current
+Codex v0.155.1 normalized rollout supplies cumulative session usage but no
+such complete billing ledger, so current formal GPT-6 cost is normally
+`NOT_OBSERVED`. The collector preserves explicit billing request records only
+when they occur in a frozen rollout source; it never reconstructs them from
+cumulative usage. Historical GPT-5.6 replay uses its prior three-rate basis.
+The old D6b/D10c dollar thresholds apply only to that historical basis; no
+current GPT-6 cost threshold is asserted without a comparable current baseline.
+Reasoning tokens are diagnostic only. Waiting is reported separately from
+model-driven polling.
 
 ## Fast path
 

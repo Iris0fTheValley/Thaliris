@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -235,27 +237,97 @@ PRICES = {
     "gpt-5.6-sol": (4.00, 0.40, 20.00),
 }
 
+GPT6_STANDARD_SNAPSHOT = json.loads(Path(__file__).with_name("pricing_gpt6_standard_20260930.json").read_text(encoding="utf-8"))
 
-def calculate_cost(sessions: list[dict[str, Any]]) -> dict[str, Any]:
+
+def _tokens(value: Any) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def _request_provenance(value: Any) -> bool:
+    return (isinstance(value, dict) and value.get("kind") == "codex_rollout"
+            and isinstance(value.get("source_file"), str) and bool(value["source_file"])
+            and type(value.get("source_line")) is int and value["source_line"] > 0
+            and isinstance(value.get("native_event_id"), str) and bool(value["native_event_id"])
+            and isinstance(value.get("source_sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", value["source_sha256"]) is not None)
+
+
+def _gpt6_price(request: dict[str, Any], model: str, pricing_snapshot: dict[str, Any] | None) -> tuple[str, Decimal | None]:
+    """Price only complete, source-bound request facts under a matching tier."""
+    usage = request.get("usage")
+    if not isinstance(usage, dict):
+        return "NOT_OBSERVED", None
+    fields = ("input", "cached_input", "output")
+    if any(field not in usage or usage[field] is None for field in fields):
+        return "NOT_OBSERVED", None
+    counts = [_tokens(usage[field]) for field in fields]
+    if any(value is None for value in counts):
+        return "FAIL", None
+    input_tokens, cached_tokens, output_tokens = counts
+    if cached_tokens > input_tokens:
+        return "FAIL", None
+    if pricing_snapshot != GPT6_STANDARD_SNAPSHOT:
+        return "NOT_OBSERVED", None
+    rates = pricing_snapshot["models"].get(model)
+    if not isinstance(rates, dict):
+        return "NOT_OBSERVED", None
+    if (request.get("model") != model or request.get("tier") != "Standard"
+        or not isinstance(request.get("request_id"), str) or not request["request_id"]
+        or not _request_provenance(request.get("provenance"))):
+        return "NOT_OBSERVED", None
+    if request.get("cache_write_applies") is True:
+        write_tokens = _tokens(usage.get("cache_write"))
+        if write_tokens is None or write_tokens > input_tokens - cached_tokens:
+            return "FAIL" if usage.get("cache_write") is not None else "NOT_OBSERVED", None
+    elif request.get("cache_write_applies") is False:
+        write_tokens = 0
+        if "cache_write" in usage and usage["cache_write"] != 0:
+            return "FAIL", None
+    else:
+        return "NOT_OBSERVED", None
+    prompt_tokens = _tokens(request.get("prompt_tokens"))
+    long_context = request.get("long_context")
+    if "prompt_tokens" in request and prompt_tokens is None:
+        return "FAIL", None
+    if prompt_tokens is None or type(long_context) is not bool:
+        return "NOT_OBSERVED", None
+    if prompt_tokens < input_tokens or long_context != (prompt_tokens > 272000):
+        return "FAIL", None
+    input_multiplier = 2 if long_context else 1
+    output_multiplier = 1.5 if long_context else 1
+    usd = (((input_tokens - cached_tokens - write_tokens) * Decimal(str(rates["uncached_input"]))
+            + cached_tokens * Decimal(str(rates["cached_input"]))
+            + write_tokens * Decimal(str(rates["cache_write"])))
+           * input_multiplier + output_tokens * Decimal(str(rates["output"])) * Decimal(str(output_multiplier))) / 1_000_000
+    return "PASS", usd
+
+
+def calculate_cost(sessions: list[dict[str, Any]], *, pricing_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
     if not sessions:
         return {"status": "NOT_OBSERVED", "usd": None, "by_model": {}, "unpriced_models": []}
-    total = 0.0
-    by_model: dict[str, dict[str, float]] = {}
+    exact_total = Decimal(0)
+    by_model: dict[str, dict[str, Any]] = {}
+    incomplete: set[str] = set()
+    seen_requests: set[str] = set()
+    all_historical = True
     for session in sessions:
+        if not isinstance(session, dict):
+            return _fail("COST_TELEMETRY_INVALID", "session is not an object")
         model = session.get("model")
         usage = session.get("usage") if isinstance(session.get("usage"), dict) else session
         if not isinstance(model, str) or not model or not isinstance(usage, dict):
-            return _fail("COST_TELEMETRY_INVALID", "model or usage is absent")
-        try:
-            input_tokens = int(usage["input"])
-            cached_tokens = int(usage["cached_input"])
-            output_tokens = int(usage["output"])
-        except (KeyError, TypeError, ValueError):
-            return _fail("COST_TELEMETRY_INVALID", "input/cached_input/output are required")
-        if not 0 <= cached_tokens <= input_tokens:
+            return {"status": "NOT_OBSERVED", "usd": None, "by_model": by_model, "unpriced_models": [str(model)] if model else []}
+        fields = ("input", "cached_input", "output")
+        if any(field not in usage or usage[field] is None for field in fields):
+            return {"status": "NOT_OBSERVED", "usd": None, "by_model": by_model, "unpriced_models": [model]}
+        counts = [_tokens(usage[field]) for field in fields]
+        if any(value is None for value in counts):
+            return _fail("COST_TELEMETRY_INVALID", "input/cached_input/output must be nonnegative integer counts")
+        input_tokens, cached_tokens, output_tokens = counts
+        if cached_tokens > input_tokens:
             return _fail("COST_TELEMETRY_INVALID", "cached input exceeds input")
         uncached = input_tokens - cached_tokens
-        item = by_model.setdefault(model, {"input": 0, "cached_input": 0, "output": 0, "usd": 0.0 if model in PRICES else None})
+        item = by_model.setdefault(model, {"input": 0, "cached_input": 0, "output": 0, "usd": 0.0 if model in PRICES or model.startswith("gpt-6-") else None})
         item["input"] += input_tokens
         item["cached_input"] += cached_tokens
         item["output"] += output_tokens
@@ -263,26 +335,79 @@ def calculate_cost(sessions: list[dict[str, Any]]) -> dict[str, Any]:
             uncached_price, cached_price, output_price = PRICES[model]
             cost = uncached / 1_000_000 * uncached_price + cached_tokens / 1_000_000 * cached_price + output_tokens / 1_000_000 * output_price
             item["usd"] += cost
-            total += cost
-    unpriced = sorted(model for model in by_model if model not in PRICES)
-    if unpriced:
-        return {"status": "NOT_OBSERVED", "usd": None, "by_model": by_model, "unpriced_models": unpriced}
-    return {"status": "PASS", "usd": round(total, 6), "by_model": by_model}
+            exact_total += Decimal(uncached) * Decimal(str(uncached_price)) / 1_000_000 + Decimal(cached_tokens) * Decimal(str(cached_price)) / 1_000_000 + Decimal(output_tokens) * Decimal(str(output_price)) / 1_000_000
+        else:
+            all_historical = False
+            if not model.startswith("gpt-6-"):
+                incomplete.add(model)
+                item["usd"] = None
+                continue
+            requests = session.get("billing_requests")
+            if not isinstance(requests, list) or not requests:
+                incomplete.add(model)
+                item["usd"] = None
+                continue
+            request_totals = {"input": 0, "cached_input": 0, "output": 0}
+            request_cost = Decimal(0)
+            for request in requests:
+                if not isinstance(request, dict):
+                    incomplete.add(model)
+                    break
+                result, amount = _gpt6_price(request, model, pricing_snapshot)
+                if result == "FAIL":
+                    return _fail("COST_TELEMETRY_INVALID", "per-request token or context telemetry is malformed")
+                if result != "PASS" or request["request_id"] in seen_requests:
+                    incomplete.add(model)
+                    break
+                seen_requests.add(request["request_id"])
+                for field in request_totals:
+                    request_totals[field] += request["usage"][field]
+                request_cost += amount
+            if model in incomplete or request_totals != {"input": input_tokens, "cached_input": cached_tokens, "output": output_tokens}:
+                incomplete.add(model)
+                item["usd"] = None
+                continue
+            if item["usd"] is not None:
+                item["usd"] += float(request_cost)
+            exact_total += request_cost
+    if incomplete:
+        return {"status": "NOT_OBSERVED", "usd": None, "by_model": by_model, "unpriced_models": sorted(incomplete), "basis": "API-equivalent"}
+    return {"status": "PASS", "usd": float(exact_total), "usd_exact": format(exact_total.normalize(), "f"), "by_model": by_model, "basis": "historical-gpt-5.6" if all_historical else "API-equivalent", "actual_allowance_cost": "NOT_OBSERVED"}
 
 
 def validate_cost_gate(cost: dict[str, Any], *, d6b_ceiling: float = 5.49, d10c_reference: float = 8.79) -> dict[str, Any]:
     if cost.get("status") == "NOT_OBSERVED":
-        return {"status": "NOT_OBSERVED", "code": "COST_NOT_OBSERVED", "usd": None, "by_model": cost.get("by_model", {}), "unpriced_models": cost.get("unpriced_models", [])}
+        return {"status": "NOT_OBSERVED", "code": "COST_NOT_OBSERVED", "usd": None, "by_model": cost.get("by_model", {}), "unpriced_models": cost.get("unpriced_models", []), "actual_allowance_cost": "NOT_OBSERVED"}
     if cost.get("status") != "PASS":
         return _fail("COST_TELEMETRY_INVALID", "cost telemetry did not validate")
     usd = cost.get("usd")
     if not isinstance(usd, (int, float)):
         return _fail("COST_NOT_OBSERVED", "observed cost is absent")
+    if cost.get("basis") not in {"historical-gpt-5.6", "API-equivalent"}:
+        return {"status": "NOT_OBSERVED", "code": "COST_BASIS_NOT_OBSERVED", "usd": None, "actual_allowance_cost": "NOT_OBSERVED"}
+    if cost.get("basis") == "API-equivalent":
+        return {"status": "PASS", "usd": usd, "usd_exact": cost.get("usd_exact"), "basis": "API-equivalent", "comparison": "NO_COMPARABLE_BASELINE", "actual_allowance_cost": "NOT_OBSERVED"}
     if usd > d6b_ceiling:
         return _fail("COST_D6B_THRESHOLD", f"formal cost {usd} exceeds D6b ceiling {d6b_ceiling}")
     if usd >= d10c_reference:
         return _fail("COST_D10C_NOT_BEATEN", f"formal cost {usd} does not beat D10c reference {d10c_reference}")
-    return {"status": "PASS", "usd": usd, "d6b_ceiling": d6b_ceiling, "d10c_reference": d10c_reference}
+    return {"status": "PASS", "usd": usd, "usd_exact": cost.get("usd_exact"), "basis": "historical-gpt-5.6", "d6b_ceiling": d6b_ceiling, "d10c_reference": d10c_reference, "actual_allowance_cost": "NOT_OBSERVED"}
+
+
+def validate_raw_usage(sessions: Any) -> dict[str, Any]:
+    if not isinstance(sessions, list) or not sessions:
+        return {"status": "NOT_OBSERVED", "code": "USAGE_NOT_OBSERVED"}
+    for session in sessions:
+        if not isinstance(session, dict):
+            return _fail("USAGE_TELEMETRY_INVALID", "session is not an object")
+        usage = session.get("usage") if isinstance(session.get("usage"), dict) else session
+        fields = ("input", "cached_input", "output")
+        if any(field not in usage or usage[field] is None for field in fields):
+            return {"status": "NOT_OBSERVED", "code": "USAGE_NOT_OBSERVED"}
+        counts = [_tokens(usage[field]) for field in fields]
+        if any(value is None for value in counts) or counts[1] > counts[0]:
+            return _fail("USAGE_TELEMETRY_INVALID", "session token counts are invalid")
+    return {"status": "PASS", "sessions": len(sessions)}
 
 
 def validate_fast_path(report: dict[str, Any]) -> dict[str, Any]:
@@ -318,7 +443,8 @@ def validate_report(report: dict[str, Any], *, protocol_path: Path, generated_te
     checks = {
         "evidence_protocol": validate_collected_evidence(collected.get("evidence", {})),
         "candidate_provenance": validate_candidate_chain(collected.get("candidate_chain", {})),
-        "cost": validate_cost_gate(calculate_cost(collected.get("sessions", []))),
+        "usage": validate_raw_usage(collected.get("sessions")),
+        "cost": validate_cost_gate(calculate_cost(collected.get("sessions", []), pricing_snapshot=collected.get("pricing_snapshot"))),
         "documentation": validate_documentation(
             protocol_path=protocol_path,
             generated_text=generated_text,
@@ -328,7 +454,7 @@ def validate_report(report: dict[str, Any], *, protocol_path: Path, generated_te
     }
     expected_candidate = checks["candidate_provenance"].get("candidate_identity")
     checks["review_convergence"] = validate_review_graph(collected.get("reviews", {}), final_candidate=expected_candidate, required=checks["candidate_provenance"].get("review_selected", True)) if isinstance(expected_candidate, str) else _fail("REVIEW_FINAL_CANDIDATE", "candidate identity is not collector-backed")
-    statuses = {item.get("status") for item in checks.values()}
+    statuses = {item.get("status") for key, item in checks.items() if key not in {"usage", "cost"}}
     status = "PASS" if statuses == {"PASS"} else "NOT_OBSERVED" if "NOT_OBSERVED" in statuses and "FAIL" not in statuses else "FAIL"
     return {"status": status, "checks": checks}
 
@@ -460,10 +586,11 @@ def validate_target(
     checks["final_evaluator"] = _observed_status(collected.get("final_evaluator"), name="final_evaluator")
     checks["documentation_consistency"] = validate_documentation(protocol_path=protocol_path, generated_text=generated_text or "", tests_passed=None, runtime_consistency=None) if protocol_path is not None else _observed_status(None, name="documentation_consistency")
     checks["tests"] = _observed_status(tests, name="tests")
-    checks["cost"] = validate_cost_gate(calculate_cost(collected.get("sessions", []))) if isinstance(collected.get("sessions"), list) else _observed_status(None, name="cost")
+    checks["usage"] = validate_raw_usage(collected.get("sessions"))
+    checks["cost"] = validate_cost_gate(calculate_cost(collected.get("sessions", []), pricing_snapshot=collected.get("pricing_snapshot"))) if isinstance(collected.get("sessions"), list) else _observed_status(None, name="cost")
     if isinstance(fast_path, dict):
         checks["fast_path"] = validate_fast_path(fast_path)
-    statuses = {item.get("status") for key, item in checks.items() if key != "reviewer_native_readonly"}
+    statuses = {item.get("status") for key, item in checks.items() if key not in {"reviewer_native_readonly", "usage", "cost"}}
     status = "PASS" if statuses == {"PASS"} else ("FAIL" if "FAIL" in statuses else "NOT_OBSERVED")
     return {"status": status, "checks": checks}
 

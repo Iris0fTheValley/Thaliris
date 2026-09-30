@@ -90,6 +90,75 @@ def test_current_model_usage_remains_observed_without_verified_prices():
     assert _MODULE.validate_cost_gate(cost)["status"] == "NOT_OBSERVED"
 
 
+def _gpt6_session(*, input_tokens=1000, cached_tokens=200, write_tokens=100, output_tokens=50, prompt_tokens=1000):
+    request = {
+        "request_id": "request-1", "model": "gpt-6-sol", "tier": "Standard",
+        "prompt_tokens": prompt_tokens, "long_context": prompt_tokens > 272000,
+        "cache_write_applies": True,
+        "usage": {"input": input_tokens, "cached_input": cached_tokens,
+                  "cache_write": write_tokens, "output": output_tokens},
+        "provenance": {"kind": "codex_rollout", "source_file": "capture.jsonl",
+                       "source_line": 7, "source_sha256": "a" * 64,
+                       "native_event_id": "native-request-1"},
+    }
+    return {"model": "gpt-6-sol", "input": input_tokens, "cached_input": cached_tokens,
+            "output": output_tokens, "billing_requests": [request]}
+
+
+def test_gpt6_standard_request_cost_is_exact_and_not_actual_allowance_cost():
+    snapshot = _MODULE.GPT6_STANDARD_SNAPSHOT
+    cost = calculate_cost([_gpt6_session()], pricing_snapshot=snapshot)
+    assert cost["status"] == "PASS"
+    assert cost["usd_exact"] == "0.00219"
+    assert cost["actual_allowance_cost"] == "NOT_OBSERVED"
+    assert _MODULE.validate_cost_gate(cost)["comparison"] == "NO_COMPARABLE_BASELINE"
+    long = _gpt6_session(input_tokens=273000, cached_tokens=1000, write_tokens=2000,
+                         output_tokens=1000, prompt_tokens=273000)
+    assert calculate_cost([long], pricing_snapshot=snapshot)["usd_exact"] == "1.1054"
+
+
+def test_gpt6_missing_billing_facts_do_not_invalidate_benchmark(monkeypatch, tmp_path):
+    snapshot = _MODULE.GPT6_STANDARD_SNAPSHOT
+    for missing in ("tier", "long_context", "prompt_tokens", "cache_write_applies"):
+        session = _gpt6_session()
+        del session["billing_requests"][0][missing]
+        assert calculate_cost([session], pricing_snapshot=snapshot)["status"] == "NOT_OBSERVED"
+    session = _gpt6_session()
+    del session["billing_requests"][0]["usage"]["cache_write"]
+    assert calculate_cost([session], pricing_snapshot=snapshot)["status"] == "NOT_OBSERVED"
+    assert calculate_cost([_gpt6_session()], pricing_snapshot=None)["status"] == "NOT_OBSERVED"
+    other_tier = _gpt6_session()
+    other_tier["billing_requests"][0]["tier"] = "Batch"
+    assert calculate_cost([other_tier], pricing_snapshot=snapshot)["status"] == "NOT_OBSERVED"
+    for name in ("validate_collected_evidence", "validate_review_graph", "validate_documentation"):
+        monkeypatch.setattr(_MODULE, name, lambda *args, **kwargs: {"status": "PASS"})
+    monkeypatch.setattr(_MODULE, "validate_candidate_chain", lambda *args, **kwargs: {"status": "PASS", "candidate_identity": "candidate"})
+    report = {"collector": {"evidence": {"formal_collection": True},
+                            "candidate_chain": {"formal_collection": True},
+                            "reviews": {"formal_collection": True},
+                            "sessions": [_gpt6_session()]}}
+    result = _MODULE.validate_report(report, protocol_path=tmp_path / "unused", generated_text="")
+    assert result["checks"]["cost"]["status"] == "NOT_OBSERVED"
+    assert result["checks"]["usage"]["status"] == "PASS"
+    assert result["status"] == "PASS"
+
+
+def test_malformed_tokens_fail_cost_and_historical_thresholds_remain_historical():
+    bad = _gpt6_session()
+    bad["billing_requests"][0]["usage"]["cached_input"] = "200"
+    assert calculate_cost([bad], pricing_snapshot=_MODULE.GPT6_STANDARD_SNAPSHOT)["code"] == "COST_TELEMETRY_INVALID"
+    assert calculate_cost([bad], pricing_snapshot=None)["code"] == "COST_TELEMETRY_INVALID"
+    historical = calculate_cost([{"model": "gpt-5.6-terra", "usage": {"input": 2_000_000, "cached_input": 1_000_000, "output": 1_000_000}}])
+    assert historical["basis"] == "historical-gpt-5.6"
+    assert _MODULE.validate_cost_gate(historical)["code"] == "COST_D6B_THRESHOLD"
+    large_current = _gpt6_session(input_tokens=1_000_000, cached_tokens=0,
+                                  write_tokens=0, output_tokens=1_000_000,
+                                  prompt_tokens=1_000_000)
+    current = calculate_cost([large_current], pricing_snapshot=_MODULE.GPT6_STANDARD_SNAPSHOT)
+    assert current["usd"] > 8.79
+    assert _MODULE.validate_cost_gate(current)["status"] == "PASS"
+
+
 def test_unselected_review_is_valid_but_selected_incomplete_review_fails():
     chain = {key: "candidate" for key in ("runtime_candidate", "verified_candidate", "evaluator_candidate", "sealed_candidate")}
     chain.update({

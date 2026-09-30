@@ -93,9 +93,11 @@ session、turn 身份，缺失或冲突即拒绝。一个 live managed Codex CLI
 `0.155.0-alpha.9.2` probe 已验证二层 Scanner 的精确 reservation、Start 和绑定的
 PreToolUse 接受，Scanner 结果已返回且 Focused parent 继续执行；详见
 [durable probe evidence](docs/codex-nested-scanner-live-20260925.md)。该证据只覆盖这一个
-CLI 构建与 probe。raw Host wire-byte equality、其他 Host 构建或 Desktop 场景仍为
-UNKNOWN；native child `Completed` 与 `task-close` 也未被观测。`task-close` 仍以最后一个
-Controller 直接 handoff 的完成为准，且不允许 pending 或 active 后代。
+CLI 构建与 probe；raw Host wire-byte equality、其他 Host 构建和其他 Desktop 场景仍为
+UNKNOWN。另一次 2026-09-28 Codex Desktop probe 观察到 `list_agents` 返回精确 child name
+和 native `completed` status；端到端 Desktop `task-close` 尚未观测。`task-close` 要求最后一个
+Controller 直接 handoff 有匹配的 Start、Stop 和 native `Completed` observation，且没有
+pending 或 active 后代。
 
 ## Task ledger
 
@@ -151,9 +153,14 @@ state 与 delta。两者都只提供事实，不成为 correctness、ownership �
 
 ## 命令
 
+Git repository 中的 substantive work 应先运行已安装的
+`thaliris-run.cmd --root <repo> codex-bootstrap`。若返回 READY，在同一 session
+将返回的 bootstrap receipt 传给 `thaliris task-start "goal" --bootstrap-receipt <receipt>`；
+当前 Host Hook 提供一次性的 task-start attestation。
+
 ```text
 thaliris init
-thaliris task-start "goal"
+thaliris task-start "goal" --bootstrap-receipt <receipt>
 thaliris task-status
 thaliris task-get OBJECT_ID
 thaliris task-update --role controller --base-revision N --input update.json

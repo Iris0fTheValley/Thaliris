@@ -6,6 +6,8 @@ finish a task.
 
 > Models own semantics. The mechanical layer executes model decisions.
 
+For runtime drift and offline recovery, see [Runtime drift and recovery](docs/thaliris-runtime-recovery.md).
+
 ## Production flow
 
 ```text
@@ -62,7 +64,7 @@ read-only compatibility role and is not recommended as a workflow stage.
 Controller has no fixed model, effort, or native profile; Host/user selection
 applies. Investigator, Curator, and standard Implementer default to
 `gpt-6-luna/xhigh`; Focused Implementer, Reasoning Specialist, and Reviewer to
-`gpt-6-sol/high`; compatibility Verifier to `gpt-6-luna/xhigh`.
+`gpt-6.1-sol/high`; compatibility Verifier to `gpt-6-luna/xhigh`.
 Only Controller may select static Astra medium or xhigh profiles before spawn,
 and only with current-task user authorization. Automatic routing stops at Sol,
 including cross-surface uncertainty. Those profiles map to the same stable
@@ -97,11 +99,13 @@ agent/session/turn/role identity is required, with missing/conflicting fields
 denied. One live managed Codex CLI `0.155.0-alpha.9.2` probe verified the exact
 reservation, Start, and bound Scanner PreToolUse acceptance for a depth-two
 Scanner; the Scanner result returned and the Focused parent continued. See the
-[durable probe evidence](docs/codex-nested-scanner-live-20260925.md). This is
-scoped to that one CLI build and probe: raw Host wire-byte equality, other Host
-builds or Desktop scenarios, and native child `Completed`/`task-close` were not
-observed and remain UNKNOWN. Task-close still requires the latest
-Controller-direct handoff's successful lifecycle and no pending or active
+[durable probe evidence](docs/codex-nested-scanner-live-20260925.md). That
+evidence covers only this CLI build and probe; raw Host wire-byte equality,
+other Host builds, and other Desktop scenarios remain UNKNOWN. A separate
+Codex Desktop probe on 2026-09-28 observed `list_agents` return an exact child
+name and native `completed` status; end-to-end Desktop `task-close` remains
+unobserved. Task-close requires the latest Controller-direct handoff's matching
+Start, Stop, and native `Completed` observation, with no pending or active
 descendants.
 
 ## Mechanical stores
@@ -135,19 +139,29 @@ If Codex explicitly reports a native spawn failure before `SubagentStart`, the
 Controller may call `thaliris recover-pending-spawn HANDOFF_ID` for that exact
 handoff; Core never infers failure from a missing event, timeout, or retry.
 
-Freshness reports only `FRESH`, `CHANGED`, `MISSING`, or `UNKNOWN` file facts.
+Freshness reports only `FRESH`, `PARTIAL`, `RECORDED`, `CHANGED`, `MISSING`, or
+`UNKNOWN` file facts.
 Verification stores command/tool, outcome, candidate identity, observed files,
 timestamp, and result hash. Task surface stores before, after, and delta.
 Neither verification nor surface attribution determines semantic completion.
 
 ## Commands
 
+For substantive work in a Git repository, run the installed
+`thaliris-run.cmd --root <repo> codex-bootstrap` first. If it returns READY,
+pass its bootstrap receipt to `thaliris task-start "goal" --bootstrap-receipt <receipt>`
+in the same session; the current Host Hook supplies the one-shot task-start
+attestation.
+
 ```text
 thaliris init
-thaliris task-start "goal"
+thaliris task-start "goal" --bootstrap-receipt <receipt>
 thaliris task-status
+thaliris task-get OBJECT_ID
 thaliris task-update --role controller --base-revision N --input update.json
 thaliris task-artifact --base-revision N --id A-001 --path path/to/file.md --summary "..."
+thaliris catalog
+thaliris document-get .agent-memory/model-chosen/a.md .milestones/current/status.md
 thaliris task-promote --role controller --base-revision N --input promotion.json
 thaliris task-close --base-revision N
 thaliris recover-pending-spawn HANDOFF_ID

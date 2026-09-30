@@ -127,9 +127,13 @@ semantic classifier.
 Nested PreToolUse requires the exact bound parent agent, role, session, and
 turn. Start consumes the unique reservation and binds the Scanner's own
 identity. Missing/conflicting fields deny tool execution. Grandchild Host hook
-identity remains UNKNOWN; tests use explicit contract-shaped fixtures. The
-last Controller-direct handoff supplies task-close completion proof, with no
-active or pending descendants. Scanner completion does not replace it.
+identity remains UNKNOWN; tests use explicit contract-shaped fixtures. A
+2026-09-28 Codex Desktop probe observed `list_agents` return an exact child name
+and native `completed` status; end-to-end Desktop `task-close` remains
+unobserved. Lifecycle requires the latest Controller-direct handoff's matching
+Start, Stop, and native `Completed` observation, with no pending or active
+descendants. Scanner completion does not replace it. See the
+[lifecycle evidence](../../docs/thaliris-routing-protocol.md).
 
 Controller has no fixed model or effort. Default model/profile facts are in
 the generated [role registry](../../docs/thaliris-role-registry.md). The two

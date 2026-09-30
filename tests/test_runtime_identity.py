@@ -8,7 +8,19 @@ import subprocess
 
 import pytest
 
-from thaliris import codex_adapter, lifecycle, runtime_identity
+from thaliris import codex_adapter, lifecycle, runtime_identity, host_preflight
+
+
+@pytest.fixture(autouse=True)
+def hypothetical_controller_contract(monkeypatch):
+    """Unit seam for old pin/receipt mechanics, not current Host actor proof.
+
+    Actual 0.159.2 unknown-actor behavior is covered without this seam in
+    test_drift_recovery.py. The installed Host cannot supply this guarantee.
+    """
+    original = lifecycle._controller_actor_assurance
+    monkeypatch.setattr(lifecycle, "_controller_actor_assurance", lambda payload:
+                        "CONTROLLER" if original(payload) == "UNKNOWN" else original(payload))
 
 
 def _pin_installed_hook(monkeypatch, home: Path, executable: Path) -> Path:
@@ -309,17 +321,19 @@ def test_host_command_rejects_tampered_script_before_dispatch(tmp_path: Path, pi
     home = tmp_path / "host home"
     home.mkdir()
     script = home / lifecycle.HOST_HOOK_SCRIPT_NAME
+    (home / host_preflight.NAME).write_bytes(host_preflight.script_bytes())
     script.write_bytes(lifecycle.host_hook_script_bytes() + b"\r\nrem tampered\r\n")
     manifest = runtime_identity.manifest_bytes(launcher)
     (home / runtime_identity.MANIFEST_NAME).write_bytes(manifest)
     command = lifecycle.host_hook_spec(home, launcher, digest, runtime_identity.manifest_identity(manifest))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     (tmp_path / ".codex").mkdir()
     (tmp_path / ".codex" / "thaliris.json").write_bytes(b'{}')
-    result = subprocess.run(command, shell=True, cwd=tmp_path, input=b"{}", capture_output=True, timeout=15)
+    payload = b'{"tool_name":"spawn_agent","tool_input":{}}'
+    result = subprocess.run(command, shell=True, cwd=tmp_path, input=payload, capture_output=True, timeout=15)
     assert result.returncode == 0
     assert json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
     script.write_bytes(lifecycle.host_hook_script_bytes())
-    accepted = subprocess.run(command, shell=True, cwd=tmp_path, input=b"{}", capture_output=True, timeout=15)
+    accepted = subprocess.run(command, shell=True, cwd=tmp_path, input=payload, capture_output=True, timeout=15)
     assert accepted.returncode == 0
     assert b"dispatched" in accepted.stdout, accepted.stderr.decode("utf-8", errors="replace")
 
@@ -335,6 +349,7 @@ def test_installed_command_checks_runtime_before_dispatch(tmp_path: Path, monkey
     identity = runtime_identity.manifest_identity(manifest)
     (home / runtime_identity.MANIFEST_NAME).write_bytes(manifest)
     wrapper = home / lifecycle.HOST_RUN_SCRIPT_NAME
+    (home / host_preflight.NAME).write_bytes(host_preflight.script_bytes())
     wrapper.write_bytes(lifecycle.host_run_script_bytes(launcher, identity))
     monkeypatch.setenv(lifecycle.THALIRIS_EXECUTABLE_ENV, str(launcher))
     monkeypatch.setenv(lifecycle.THALIRIS_EXECUTABLE_SHA256_ENV, hashlib.sha256(launcher.read_bytes()).hexdigest())

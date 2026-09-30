@@ -134,7 +134,7 @@ requiring a Controller decision ends the child Workstream in FINAL. Do not send 
 MESSAGE and stay ACTIVE for a wait.
 
 The persistent root Controller has no fixed model, reasoning effort, or native
-profile; Host/user selection applies. The native child profiles are Investigator (`gpt-6-luna`, `xhigh`), Curator (`gpt-6-luna`, `xhigh`), Reasoning Specialist (`gpt-6-sol`, `high`), Implementer (`gpt-6-luna`, `xhigh`), Focused Implementer (`gpt-6-sol`, `high`), Verifier (`gpt-6-luna`, `xhigh`), and Reviewer (`gpt-6-sol`, `high`).
+profile; Host/user selection applies. The native child profiles are Investigator (`gpt-6-luna`, `xhigh`), Curator (`gpt-6-luna`, `xhigh`), Reasoning Specialist (`gpt-6.1-sol`, `high`), Implementer (`gpt-6-luna`, `xhigh`), Focused Implementer (`gpt-6.1-sol`, `high`), Verifier (`gpt-6-luna`, `xhigh`), and Reviewer (`gpt-6.1-sol`, `high`).
 Only Controller may explicitly select static Astra medium or xhigh profiles for
 Focused Implementer or Reasoning Specialist before spawn, and only with current-task
 user authorization. Automatic routing stops at Sol, including when uncertainty
@@ -278,7 +278,8 @@ own optional `index_update` in the same `task-promote` call. Core does not
 generate INDEX content; it validates the CAS, references, and atomic commit.
 
 With NO_TASK, Thaliris leaves ordinary Codex tool use and spawn behavior
-transparent. During an ACTIVE managed task the persistent Controller uses only
+transparent. With positive Host actor assurance, during an ACTIVE managed task
+the persistent Controller uses only
 native spawn/wait/list/interrupt operations and an explicit allow-set of
 trusted direct `thaliris` runtime commands. `init`, `codex-install`, `uninstall`, `rollback`, a
 second `task-start`, and `task-show` are blocked for ACTIVE Root. `task-status`
@@ -304,9 +305,17 @@ rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
 Codex version, host capability, task schema, git/worktree identity,
 hook/profile presence, and the `task-start` error are allowed reads. Use the
 installed pinned `thaliris-run.cmd` command named by the global startup block;
-its runtime validation runs before Python starts. If that trusted route is
-unavailable, report bootstrap unavailable. Once the cause is known, do not read
-user-task repository source, tests, docs, or search results. If work continues,
+its runtime validation runs before Python starts. Runtime drift is evidence,
+not a global work ban: detect it, diagnose concrete expected/actual differences,
+then let the Controller decide to repair, restore, or explicitly accept a
+legitimate upgrade within existing user authorization. Unknown runtime code
+must not run as trusted. Ordinary source edits, tests, reads, and investigation
+remain available through the assigned roles; report managed assurance UNKNOWN.
+Changes to runtime/manifest/executable/package/hooks/profiles, Host upgrade or
+topology, user configuration, control authority, and unexplained changes have
+different consequences; a hash difference alone does not decide them. Deny
+only unsafe managed control, child identity bypass, control-state writes,
+fenced-session revival, or irreversible evidence replacement. If work continues,
 apply the same minimum-role
 routing policy defined above; degraded mode does not define a separate role
 sequence. The Controller must not take over repository investigation,
@@ -384,6 +393,13 @@ existing task state, and establishes missing project definitions without
 reinstalling Host hooks or profiles. On READY, use only its opaque
 `task_start_receipt` in a direct `task-start --bootstrap-receipt` call in this
 session; the current Host Hook must supply one-shot task-start attestation.
+On DEFINITION_READY_ACTOR_UNKNOWN, definition configuration is ready but managed
+Controller authority is unavailable. Do not retry task-start or manufacture a
+Root receipt. Ordinary reads, source edits, focused tests, investigation, and
+repair continue through the authorized roles with managed assurance UNKNOWN.
+Codex 0.159.2 ThreadSpawn fields positively identify children; built-in Review
+can share the owner session and omit them. Absence or a matching session alone
+is not Controller proof. Known bound child and readonly rules still apply.
 If operating as a managed child inside an ACTIVE task, follow the explicit
 handoff and do not run project bootstrap, task-start, or task-abandon for the
 parent's task; startup, admission, and continuation decisions belong to the
@@ -392,12 +408,26 @@ Do not choose `bootstrap-check` or `init` for normal startup, calculate an
 executable hash in a shell wrapper, or select among internal SHA fields.
 On CURRENT_CONTINUATION, the owner may continue or explicitly abort the
 incomplete task using the exact `task-abandon` packet. An unbound pending spawn
-must have trusted terminal recovery first; otherwise its future child identity
-cannot be fenced. On FOREIGN_RECOVERY_DECISION or UNKNOWN, the Controller
+needs trusted terminal recovery for ordinary task-abandon. The separate reviewed
+repository source runner `tools/thaliris_offline_recovery.py` supports explicit
+user-delegated offline administration while global integration is disconnected.
+It archives exact state/lifecycle bytes, fences every extractable old session or
+agent identity, and releases only the old task slot. Its authority is
+OPERATOR_ASSERTED_USER_DELEGATED_ADMINISTRATION: flags are operator assertions,
+not cryptographic consent, Host receipts, or Controller identity. All automated
+actors, including ambiguous roots, are denied this operation while integration
+is present. Unknown owner, unbound identity, incompatible fields, and Host
+termination remain recorded UNKNOWN. Try native termination/observation for
+known old children; missing death proof does not permanently lock this informed
+recovery. The shared OS is not a privilege separation boundary. On FOREIGN_RECOVERY_DECISION or UNKNOWN, the Controller
 explicitly decides whether to continue old work or use that exact recovery
 packet before starting a fresh task. An abandoned task remains incomplete and its original
 state and lifecycle evidence are preserved. On INVALID_STATE or a definition
-conflict, diagnose before edits; never delete state or invent completion.
+conflict, diagnose the affected surface; never delete evidence or invent completion.
+A configured CLI executable/version, shared daemon, process ancestry, environment,
+or SessionSource does not prove a current Host session or Controller identity.
+Use structured Hook event payloads; record CLI and daemon versions separately,
+and retain UNKNOWN when the daemon version or current role catalog is unproved.
 In user-facing status, describe the work and any concrete blocker in ordinary
 task terms. Keep receipts, hashes, attestations, role/session binding details,
 and lifecycle protocol out of that prose; report blocked work honestly.

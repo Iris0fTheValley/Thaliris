@@ -8,11 +8,11 @@ This file is generated from `thaliris.roles.ROLE_REGISTRY`; design and routing g
 | `controller` | `(host/user)` | `(host/task)` | `(root)` | NO | registered native roles | YES | `(not generated)` |
 | `investigator` | `gpt-6-luna` | `xhigh` | `thaliris-investigator` | YES | NO | NO | `thaliris-investigator.toml` |
 | `curator` | `gpt-6-luna` | `xhigh` | `thaliris-curator` | YES | NO | NO | `thaliris-curator.toml` |
-| `reasoning-specialist` | `gpt-6-sol` | `high` | `thaliris-reasoning-specialist` | YES | NO | NO | `thaliris-reasoning-specialist.toml` |
+| `reasoning-specialist` | `gpt-6.1-sol` | `high` | `thaliris-reasoning-specialist` | YES | NO | NO | `thaliris-reasoning-specialist.toml` |
 | `implementer` | `gpt-6-luna` | `xhigh` | `thaliris-implementer` | YES | investigator | NO | `thaliris-implementer.toml` |
-| `focused-implementer` | `gpt-6-sol` | `high` | `thaliris-focused-implementer` | YES | investigator | NO | `thaliris-focused-implementer.toml` |
+| `focused-implementer` | `gpt-6.1-sol` | `high` | `thaliris-focused-implementer` | YES | investigator | NO | `thaliris-focused-implementer.toml` |
 | `verifier` | `gpt-6-luna` | `xhigh` | `thaliris-verifier` | NO | NO | NO | `thaliris-verifier.toml` |
-| `reviewer` | `gpt-6-sol` | `high` | `thaliris-reviewer` | NO | investigator | NO | `thaliris-reviewer.toml` |
+| `reviewer` | `gpt-6.1-sol` | `high` | `thaliris-reviewer` | NO | investigator | NO | `thaliris-reviewer.toml` |
 
 Controller-only exceptional native profiles (same stable role IDs; defaults above remain unchanged):
 

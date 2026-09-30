@@ -15,7 +15,7 @@ role and does not create another role.
 ## Role Defaults
 
 The persistent root Controller has no fixed model, effort, or native profile;
-Host/user selection applies. The native child profiles are Investigator (`gpt-6-luna`, `xhigh`), Curator (`gpt-6-luna`, `xhigh`), Reasoning Specialist (`gpt-6-sol`, `high`), Implementer (`gpt-6-luna`, `xhigh`), Focused Implementer (`gpt-6-sol`, `high`), Verifier (`gpt-6-luna`, `xhigh`), and Reviewer (`gpt-6-sol`, `high`).
+Host/user selection applies. The native child profiles are Investigator (`gpt-6-luna`, `xhigh`), Curator (`gpt-6-luna`, `xhigh`), Reasoning Specialist (`gpt-6.1-sol`, `high`), Implementer (`gpt-6-luna`, `xhigh`), Focused Implementer (`gpt-6.1-sol`, `high`), Verifier (`gpt-6-luna`, `xhigh`), and Reviewer (`gpt-6.1-sol`, `high`).
 Only Controller may select static Astra medium or xhigh profiles for Focused
 Implementer or Reasoning Specialist before spawn, only with current-task user
 authorization. Automatic routing stops at Sol, including cross-surface

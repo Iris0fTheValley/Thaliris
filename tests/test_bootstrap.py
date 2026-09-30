@@ -8,6 +8,14 @@ from thaliris import codex_adapter, codex_bootstrap as bootstrap, lifecycle, run
 from thaliris import cli, core
 
 
+@pytest.fixture(autouse=True)
+def hypothetical_controller_contract(monkeypatch):
+    """Synthetic receipt unit contract; never evidence about the live Host."""
+    original = lifecycle._controller_actor_assurance
+    monkeypatch.setattr(lifecycle, "_controller_actor_assurance", lambda payload:
+                        "CONTROLLER" if original(payload) == "UNKNOWN" else original(payload))
+
+
 def test_zero_state_rejects_obsolete_executable_protocol_signal(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(bootstrap, "_repo_root", lambda path: tmp_path)
     monkeypatch.setattr(bootstrap, "_trusted_executable", lambda: ["thaliris"])
@@ -114,7 +122,8 @@ def test_initialized_workspace_does_not_init(monkeypatch, tmp_path: Path):
     calls = []
     monkeypatch.setattr(bootstrap, "_invoke", lambda executable, root, command: calls.append(command) or {"ok": True, "project_definition_present": "YES"})
     result = bootstrap.bootstrap(tmp_path)
-    assert result == {"ok": True, "status": "READY", "project_definition_present": "YES", "init_invoked": False, "session_restart_required": False}
+    assert result == {"ok": True, "status": "READY", "project_definition_present": "YES", "init_invoked": False, "session_restart_required": False,
+                      "controller_actor_assurance": "CONTROLLER", "ordinary_workspace_work_allowed": True}
     assert calls == ["bootstrap-check"]
 
 
@@ -315,7 +324,8 @@ def test_no_restart_init_ready_calibrates_false(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(bootstrap, "_invoke", invoke)
     result = bootstrap.bootstrap(tmp_path)
-    assert result == {"ok": True, "status": "READY", "init_invoked": True, "session_restart_required": False}
+    assert result == {"ok": True, "status": "READY", "init_invoked": True, "session_restart_required": False,
+                      "controller_actor_assurance": "CONTROLLER", "ordinary_workspace_work_allowed": True}
 
 
 def test_untrusted_executable_stops_before_probe(monkeypatch, tmp_path: Path):

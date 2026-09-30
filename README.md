@@ -5,6 +5,9 @@ Thaliris 是一个 Git-native 的机械上下文与生命周期层。它不运�
 
 > 模型负责语义。机械层负责执行。
 
+0.4.2 runtime drift, current Host identity limits, and offline recovery:
+[Runtime drift and recovery](docs/thaliris-runtime-recovery.md).
+
 ## 生产信息流
 
 ```text
@@ -51,7 +54,7 @@ Reasoning Specialist 用于重构不明确的问题。Verifier 仅保留只读�
 
 Controller 的 model、effort、native profile 均无固定值，由 Host/用户选择。
 Investigator、Curator 和标准 Implementer 默认 `gpt-6-luna/xhigh`；Focused
-Implementer、Reasoning Specialist 和 Reviewer 默认 `gpt-6-sol/high`；兼容 Verifier
+Implementer、Reasoning Specialist 和 Reviewer 默认 `gpt-6.1-sol/high`；兼容 Verifier
 为 `gpt-6-luna/xhigh`。只有 Controller 可以在 spawn 前为特殊推理明确选择固定的
 Astra medium 或 xhigh profile，但必须获得当前任务的用户授权；自动路由止于 Sol，
 跨领域不确定性也不会自动启用 Astra。子角色不能自行选择 model/effort。

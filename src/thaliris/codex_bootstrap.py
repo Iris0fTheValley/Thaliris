@@ -183,16 +183,22 @@ def _task_preflight(root: Path) -> dict[str, object]:
         return {"status": "INVALID_STATE"}
 
 
-def bootstrap(root: Path, hook_attestation: str | None = None) -> dict[str, object]:
+def _bootstrap(root: Path, hook_attestation: str | None = None) -> dict[str, object]:
     """Perform one bootstrap-check and, only when absent, one init attempt."""
     workspace = _repo_root(root)
     executable = _trusted_executable()
     if executable is None:
+        manifest = lifecycle._host_home_path() / runtime_identity.MANIFEST_NAME
+        diagnosis = (runtime_identity.diagnose_manifest(manifest.read_bytes())
+                     if manifest.is_file() and not manifest.is_symlink() else
+                     {"status": "UNKNOWN", "error": "canonical installed manifest is unavailable", "execution_assurance": "UNKNOWN"})
         return {
             "ok": False,
             "status": "BOOTSTRAP_UNAVAILABLE",
             "manual_action_required": ["canonical_executable_unavailable"],
             "session_restart_required": False,
+            "runtime_drift": diagnosis,
+            "ordinary_workspace_work_allowed": True,
         }
 
     task = _task_preflight(workspace)
@@ -317,6 +323,20 @@ def bootstrap(root: Path, hook_attestation: str | None = None) -> dict[str, obje
         "session_restart_required": False,
         **_bridge_fields(initialized),
     }
+
+
+def bootstrap(root: Path, hook_attestation: str | None = None) -> dict[str, object]:
+    result = _bootstrap(root, hook_attestation)
+    assurance = lifecycle._controller_actor_assurance({})
+    result.update(controller_actor_assurance=assurance, ordinary_workspace_work_allowed=True)
+    if assurance != "CONTROLLER":
+        result["managed_control_authority"] = "UNAVAILABLE"
+        if result.get("status") == "READY":
+            result["status"] = "DEFINITION_READY_ACTOR_UNKNOWN"
+        elif result.get("status") == "CURRENT_CONTINUATION":
+            result["status"] = "UNKNOWN"
+            result["session_owner_hash_match"] = "YES"
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:

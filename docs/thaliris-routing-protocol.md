@@ -171,7 +171,7 @@ or a stopping state machine.
 Controller has no fixed model, effort, or native profile. The Host/user selects
 its model. Investigator, Curator, and standard Implementer use
 `gpt-6-luna/xhigh`; Focused Implementer, Reasoning Specialist, and Reviewer use
-`gpt-6-sol/high`. Verifier remains read-only `gpt-6-luna/xhigh` for
+`gpt-6.1-sol/high`. Verifier remains read-only `gpt-6-luna/xhigh` for
 compatibility and is not recommended. Only Controller may explicitly choose
 static Astra medium or xhigh profiles before spawn, only with current-task user
 authorization. Automatic routing stops at Sol, including cross-surface
@@ -282,7 +282,7 @@ also retains it on the first call while its manifest exists. A later direct
 call removes the inert runner.
 
 An owner may explicitly abort an incomplete ACTIVE task with its exact
-recovery packet. The original state and lifecycle bytes remain archived as
+recovery packet when Controller actor assurance is available. The original state and lifecycle bytes remain archived as
 incomplete, and the owner session can start a new task. A pending unbound
 spawn blocks owner abort until exact trusted native failure evidence recovers
 that reservation. An unknown child identity cannot be fenced. Pending-spawn
@@ -295,6 +295,16 @@ new reservation and differ from every recorded old spawn. Missing old
 provenance or an identical old and new spawn remains uncorrelatable and fails
 closed. A native tool call ID, when present on both events, remains the exact
 correlation key.
+
+Runtime drift does not ban ordinary repository work. Diagnose exact differences
+and let the Controller repair, restore, or explicitly accept a safe upgrade.
+Unknown current Host actor identity denies dangerous control grants narrowly;
+session or environment observations do not establish Root authority. Separate
+offline operator administration can archive/fence/release an obsolete task
+while integration is disconnected, without inventing Host consent or requiring
+child-death proof. It grants no task-start, child binding, or readonly exemption.
+See [runtime drift and recovery](thaliris-runtime-recovery.md) for the current
+Host source contract, platform validation, and operational recovery boundary.
 
 `SubagentStart` is lifecycle-only. It validates the authorized native Codex child and binds
 identity, role, session, start time, provenance, handoff ID, and payload hash.

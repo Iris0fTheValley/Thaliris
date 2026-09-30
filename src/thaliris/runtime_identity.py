@@ -128,8 +128,45 @@ def validate_manifest(contents: bytes, executable: Path, identity: str) -> dict[
     validate_manifest_record(contents)
     current_bytes = manifest_bytes(executable)
     if contents != current_bytes:
-        raise ValueError("installed Thaliris runtime changed")
+        raise ValueError("installed Thaliris runtime changed: " + json.dumps(
+            manifest_diff(record, json.loads(current_bytes)), sort_keys=True, separators=(",", ":")))
     return record
+
+
+def manifest_diff(expected: dict[str, object], actual: dict[str, object]) -> list[dict[str, object]]:
+    """Describe evidence without accepting it or executing either runtime.
+
+    Bytecode is executable input even when its name looks like a Python cache.
+    A new cache therefore has a precise diagnosis, but does not gain trust from
+    its filename. Ordinary workspace files are outside this installed boundary.
+    """
+    differences: list[dict[str, object]] = []
+    for field in ("format", "executable", "executable_sha256", "venv_dir", "package_dir"):
+        if expected.get(field) != actual.get(field):
+            differences.append({"surface": "manifest" if field == "format" else "executable" if field.startswith("executable") else "topology",
+                                "path": field, "expected": expected.get(field), "actual": actual.get(field)})
+    old, new = expected.get("files", {}), actual.get("files", {})
+    for name in sorted(set(old) | set(new)):
+        if old.get(name) == new.get(name):
+            continue
+        surface = "python_bytecode" if name.endswith(".pyc") else "package" if "site-packages/" in name else "runtime"
+        differences.append({"surface": surface, "path": name, "expected": old.get(name, "ABSENT"),
+                            "actual": new.get(name, "ABSENT")})
+    return differences
+
+
+def diagnose_manifest(contents: bytes, executable: Path | None = None) -> dict[str, object]:
+    """Validation-only diagnostics; never launch or import the installed code."""
+    try:
+        expected = validate_manifest_record(contents)
+        actual = json.loads(manifest_bytes(executable or Path(expected["executable"])))
+        differences = manifest_diff(expected, actual)
+        return {"status": "CHANGED" if differences else "MATCH", "differences": differences,
+                "execution_assurance": "UNKNOWN" if differences else "PINNED_BYTES",
+                "decision_required": bool(differences)}
+    except (OSError, ValueError, RuntimeError, TypeError) as exc:
+        return {"status": "UNKNOWN", "error": str(exc), "differences": [],
+                "execution_assurance": "UNKNOWN", "decision_required": True}
 
 
 def validate_manifest_record(contents: bytes) -> dict[str, object]:

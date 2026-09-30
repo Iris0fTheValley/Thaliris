@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import tomllib
 
-from . import codex_app_server, core, lifecycle, roles, runtime_identity
+from . import codex_app_server, core, lifecycle, roles, runtime_identity, host_preflight
 from .lifecycle import (
     MANAGED_HOOKS_DESCRIPTION,
     MANAGED_HOOK_ABI,
@@ -71,6 +71,40 @@ _KNOWN_GENERATED_AGENT_PROFILE_HASHES = {
     for binding in roles.iter_codex_bindings()
     if binding.profile_filename is not None
 }
+# Independently witnessed complete historical renders, not current HEAD's
+# claim about its own output. 28e4297d2e489a8f893cb75aec7291cbb3518dcb:
+# adapter blob443f92a103ba7bfb1e0ad1c14cd4eab7d8960bec; registry
+# blobc3ded0e264771024f7cad71bccee0308a6f009a5. Filename binding is mandatory.
+_HISTORICAL_28E4297_PROFILE_HASHES = {
+    'thaliris-curator.toml': '55aed52f61396de5d75b430fa4a0d03d2487e084b9c54e0ced7c32493ea44cbe',
+    'thaliris-implementer.toml': 'ebb2136a91990dfe855428b568a42b01a470494db14c3d3cc6c818c62fff23be',
+    'thaliris-investigator.toml': '70238f39468e11ebedc5612056e4e11139f9c285cbc1b7c43c8d2da3f639d7ca',
+    'thaliris-reasoning-specialist-astra-medium.toml': 'ef5e1521bedaeba7bb316042d28385700774d78f8d1c798eac308c175c5ba34b',
+    'thaliris-reasoning-specialist-xhigh.toml': 'f42bc785a0c76c516fd0493b24c85d0e381cf6e5ac82808befa4a01e8baab3c0',
+    'thaliris-reasoning-specialist.toml': 'd8a6f94789958424783f6de7154eb51d3fcb76cb4f00f6e7260bf06e3a93d011',
+    'thaliris-reviewer.toml': 'e631e603f87405c5d21a31bfdb07eaf3c7a0553d937b3069e2d7ddea22decc12',
+    'thaliris-verifier.toml': '3c598e8bb39c52682f6021505a8b37b71415ce9016e1b53a6741363e8a16a6e2',
+}
+# 69d9a33 historical renderer/registry witness for the previous current set.
+_HISTORICAL_69D9A33_PROFILE_HASHES = {
+    'thaliris-curator.toml': 'a3665bf571db75df3530fcea172bed154cfb7aac5f88b40bd847109e15459108',
+    'thaliris-focused-implementer-astra-medium.toml': 'd4fef2b7b5e77d027b4d3e0807fdeb3a6bc6d81f3cf8aabf41affce7b912e573',
+    'thaliris-focused-implementer-xhigh.toml': '8f6890bfa3ad76b2a0401a04f33a4e7494ea91b3cb266b749f1d72a7cbf8aba7',
+    'thaliris-focused-implementer.toml': 'cca2ff3bf783baa3c8926efd42e2c5807c9db9ea1a6a64b7e34e30a791274b17',
+    'thaliris-implementer.toml': '3d393a145c900749c33296550e740bf61af64b91d2b4cf3462cb2c44e1d65195',
+    'thaliris-investigator.toml': 'd34b8571689c0ffc5e68cd5fb316ef1b26d41dfa8e2e363e34bf8b465ecca544',
+    'thaliris-reasoning-specialist-astra-medium.toml': '31639f9b001b0b8ba88c6733e6c881f98b817513257c1921b67790c832f37b00',
+    'thaliris-reasoning-specialist-xhigh.toml': '476a79f410a5f68bbae0a8c4257ac69873523f73cb8d4de6fb3de8725a638817',
+    'thaliris-reasoning-specialist.toml': '3f2caaead9fbb239a3dd4d118762efb70a60b9954cfa287954033a4a9694d0fc',
+    'thaliris-reviewer.toml': '58e4dce82be3a5fb2483f86ebc274c306eb8f1ede469a0794fc6b7eb545fa938',
+    'thaliris-verifier.toml': 'fc1d73fec897f250125e3031d8c02ef0e035411467ed0126f62df193e8345188',
+}
+for _historical_profiles in (_HISTORICAL_28E4297_PROFILE_HASHES, _HISTORICAL_69D9A33_PROFILE_HASHES):
+    for _profile_name, _profile_hash in _historical_profiles.items():
+        _KNOWN_GENERATED_AGENT_PROFILE_HASHES[_profile_name] = (
+            _KNOWN_GENERATED_AGENT_PROFILE_HASHES.get(_profile_name, frozenset()) | frozenset({_profile_hash})
+        )
+
 # Exact SHA-256 identities of the complete eleven-profile set rendered by the
 # immutable ba84553 adapter/registry revision (source blobs
 # e1262c3440bdb5f6007a0cab5d78b49141cecbd9 and
@@ -945,7 +979,8 @@ own optional `index_update` in the same `task-promote` call. Core does not
 generate INDEX content; it validates the CAS, references, and atomic commit.
 
 With NO_TASK, Thaliris leaves ordinary Codex tool use and spawn behavior
-transparent. During an ACTIVE managed task the persistent Controller uses only
+transparent. With positive Host actor assurance, during an ACTIVE managed task
+the persistent Controller uses only
 native spawn/wait/list/interrupt operations and an explicit allow-set of
 trusted direct `thaliris` runtime commands. `init`, `codex-install`, `uninstall`, `rollback`, a
 second `task-start`, and `task-show` are blocked for ACTIVE Root. `task-status`
@@ -971,9 +1006,17 @@ rejected, label the run unmanaged/degraded. Diagnose only the bootstrap cause:
 Codex version, host capability, task schema, git/worktree identity,
 hook/profile presence, and the `task-start` error are allowed reads. Use the
 installed pinned `thaliris-run.cmd` command named by the global startup block;
-its runtime validation runs before Python starts. If that trusted route is
-unavailable, report bootstrap unavailable. Once the cause is known, do not read
-user-task repository source, tests, docs, or search results. If work continues,
+its runtime validation runs before Python starts. Runtime drift is evidence,
+not a global work ban: detect it, diagnose concrete expected/actual differences,
+then let the Controller decide to repair, restore, or explicitly accept a
+legitimate upgrade within existing user authorization. Unknown runtime code
+must not run as trusted. Ordinary source edits, tests, reads, and investigation
+remain available through the assigned roles; report managed assurance UNKNOWN.
+Changes to runtime/manifest/executable/package/hooks/profiles, Host upgrade or
+topology, user configuration, control authority, and unexplained changes have
+different consequences; a hash difference alone does not decide them. Deny
+only unsafe managed control, child identity bypass, control-state writes,
+fenced-session revival, or irreversible evidence replacement. If work continues,
 apply the same minimum-role
 routing policy defined above; degraded mode does not define a separate role
 sequence. The Controller must not take over repository investigation,
@@ -1051,6 +1094,13 @@ existing task state, and establishes missing project definitions without
 reinstalling Host hooks or profiles. On READY, use only its opaque
 `task_start_receipt` in a direct `task-start --bootstrap-receipt` call in this
 session; the current Host Hook must supply one-shot task-start attestation.
+On DEFINITION_READY_ACTOR_UNKNOWN, definition configuration is ready but managed
+Controller authority is unavailable. Do not retry task-start or manufacture a
+Root receipt. Ordinary reads, source edits, focused tests, investigation, and
+repair continue through the authorized roles with managed assurance UNKNOWN.
+Codex 0.159.2 ThreadSpawn fields positively identify children; built-in Review
+can share the owner session and omit them. Absence or a matching session alone
+is not Controller proof. Known bound child and readonly rules still apply.
 If operating as a managed child inside an ACTIVE task, follow the explicit
 handoff and do not run project bootstrap, task-start, or task-abandon for the
 parent's task; startup, admission, and continuation decisions belong to the
@@ -1059,12 +1109,26 @@ Do not choose `bootstrap-check` or `init` for normal startup, calculate an
 executable hash in a shell wrapper, or select among internal SHA fields.
 On CURRENT_CONTINUATION, the owner may continue or explicitly abort the
 incomplete task using the exact `task-abandon` packet. An unbound pending spawn
-must have trusted terminal recovery first; otherwise its future child identity
-cannot be fenced. On FOREIGN_RECOVERY_DECISION or UNKNOWN, the Controller
+needs trusted terminal recovery for ordinary task-abandon. The separate reviewed
+repository source runner `tools/thaliris_offline_recovery.py` supports explicit
+user-delegated offline administration while global integration is disconnected.
+It archives exact state/lifecycle bytes, fences every extractable old session or
+agent identity, and releases only the old task slot. Its authority is
+OPERATOR_ASSERTED_USER_DELEGATED_ADMINISTRATION: flags are operator assertions,
+not cryptographic consent, Host receipts, or Controller identity. All automated
+actors, including ambiguous roots, are denied this operation while integration
+is present. Unknown owner, unbound identity, incompatible fields, and Host
+termination remain recorded UNKNOWN. Try native termination/observation for
+known old children; missing death proof does not permanently lock this informed
+recovery. The shared OS is not a privilege separation boundary. On FOREIGN_RECOVERY_DECISION or UNKNOWN, the Controller
 explicitly decides whether to continue old work or use that exact recovery
 packet before starting a fresh task. An abandoned task remains incomplete and its original
 state and lifecycle evidence are preserved. On INVALID_STATE or a definition
-conflict, diagnose before edits; never delete state or invent completion.
+conflict, diagnose the affected surface; never delete evidence or invent completion.
+A configured CLI executable/version, shared daemon, process ancestry, environment,
+or SessionSource does not prove a current Host session or Controller identity.
+Use structured Hook event payloads; record CLI and daemon versions separately,
+and retain UNKNOWN when the daemon version or current role catalog is unproved.
 In user-facing status, describe the work and any concrete blocker in ordinary
 task terms. Keep receipts, hashes, attestations, role/session binding details,
 and lifecycle protocol out of that prose; report blocked work honestly.
@@ -1771,7 +1835,7 @@ def _host_install_executable(
     probe_env["PYTHONDONTWRITEBYTECODE"] = "1"
     try:
         origin = subprocess.run(
-            [str(interpreter), "-I", "-c", "import thaliris; print(thaliris.__file__)"],
+            [str(interpreter), "-I", "-B", "-c", "import thaliris; print(thaliris.__file__)"],
             capture_output=True, timeout=15, check=False, env=probe_env,
         )
         if origin.returncode != 0 or origin.stderr or Path(origin.stdout.decode("utf-8").strip()).resolve(strict=True) != (package_dir / "__init__.py").resolve(strict=True):
@@ -1868,13 +1932,31 @@ task. The owning root Controller handles startup, admission, and continuation
 decisions.
 On READY, pass its `task_start_receipt` as `<receipt>` in {task_route}
 in this session; the current Hook must attest
-task start. Use this installed command for later Thaliris operations. On
+task start. On DEFINITION_READY_ACTOR_UNKNOWN, the definition is ready but
+managed Controller authority is unavailable. Continue ordinary source work,
+reads, investigation, focused tests, and repair through the authorized roles
+with assurance UNKNOWN. Do not retry task-start or invent Root proof from
+absent child fields, a matching owner session, inherited environment, PID,
+process ancestry, or SessionSource. Known bound child/readonly rules remain.
+Use this installed command for later Thaliris operations. On
 CURRENT_CONTINUATION, continue or explicitly abort the owning task using the
 exact `task-abandon` packet. Recover any unbound pending spawn with trusted
-terminal Host evidence first. On FOREIGN_RECOVERY_DECISION or UNKNOWN,
-explicitly decide whether to take over the old task using
-`task-abandon` and the exact recovery packet. On INVALID_STATE or bootstrap
-failure, diagnose before edits.
+terminal Host evidence first for ordinary task-abandon. When the user authorizes
+external repair or forced recovery, disconnect global integration and use the
+separate reviewed source runner `tools/thaliris_offline_recovery.py` with exact
+task/revision/state/lifecycle hashes and a reason. Its authority is
+OPERATOR_ASSERTED_USER_DELEGATED_ADMINISTRATION. The flags assert operator
+intent; they are not cryptographic human consent or a Host attestation. It
+archives original bytes, fences extractable old identities, and releases the
+slot; it grants no task-start, child binding, Controller identity, or readonly
+exemption. Automated actors are denied this operation while integration is
+present. Try native termination/observation of known old children; owner,
+unbound identities, incompatible fields, and unavailable death proof remain
+UNKNOWN. Disk disconnection does not prove the running Host configuration.
+Shared OS shell access supplies governance, not privilege separation. On
+FOREIGN_RECOVERY_DECISION or UNKNOWN, the Controller decides whether to continue
+or recover. On INVALID_STATE or bootstrap failure, diagnose the affected
+surface; ordinary source work remains available with assurance UNKNOWN.
 In user-facing status, describe the work and any concrete blocker in ordinary
 task terms. Keep receipts, hashes, attestations, role/session binding details,
 and lifecycle protocol out of that prose; report blocked work honestly.
@@ -2029,17 +2111,21 @@ def codex_install(
     hooks_path = home / "hooks.json"
     script_path = home / HOST_HOOK_SCRIPT_NAME
     run_script_path = home / HOST_RUN_SCRIPT_NAME
+    preflight_path = home / host_preflight.NAME
     manifest_path = home / runtime_identity.MANIFEST_NAME
     manual: list[str] = []
     files: list[str] = []
     changed = False
 
-    if home.is_symlink():
+    # Host ownership cannot cross a symlink or Windows junction, including an
+    # ancestor of a not-yet-created home. Match installed-runtime path safety.
+    home_safe = not any(runtime_identity._is_link(path) for path in (home, *home.parents))
+    if not home_safe:
         manual.append(str(home))
     if agents.is_symlink() or (agents.exists() and not agents.is_dir()):
         manual.append(str(agents))
     role_writes: list[tuple[Path, bytes]] = []
-    if str(agents) not in manual and not home.is_symlink():
+    if str(agents) not in manual and home_safe:
         for name, (model, effort, role) in _agent_profiles().items():
             path = agents / name
             rendered = _agent_profile(name.removesuffix(".toml"), role, model, effort)
@@ -2060,9 +2146,37 @@ def codex_install(
             elif state != "current":
                 manual.append(str(path))
 
-    executable_path, executable_hash, executable_problem = _host_install_executable(
-        home, executable, executable_sha256
-    )
+    # Diagnose an existing installation before probing/importing its code.
+    # An unchanged launcher hash does not authorize changed package/bytecode.
+    prior_problem = None
+    try:
+        if not home_safe or runtime_identity._is_link(manifest_path):
+            raise ValueError("unsafe installed runtime manifest path")
+        try:
+            manifest_path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            runtime_identity._safe_file(manifest_path)
+    except (OSError, ValueError, RuntimeError) as exc:
+        prior_problem = "installed_runtime_manifest_unavailable:" + str(exc)
+    if prior_problem is None and manifest_path.is_file():
+        try:
+            old_record = runtime_identity.validate_manifest_record(manifest_path.read_bytes())
+            selected = Path(executable).expanduser() if executable is not None else lifecycle._trusted_thaliris_executable()
+            if selected is None:
+                found = shutil.which("thaliris")
+                selected = Path(found) if found else None
+            if selected is not None and selected.resolve() == Path(old_record["executable"]).resolve():
+                diagnosis = runtime_identity.diagnose_manifest(manifest_path.read_bytes())
+                if diagnosis["status"] != "MATCH":
+                    prior_problem = "installed_runtime_changed_in_place:" + json.dumps(diagnosis, sort_keys=True)
+        except (OSError, ValueError, RuntimeError, TypeError) as exc:
+            prior_problem = "installed_runtime_manifest_unavailable:" + str(exc)
+    if prior_problem is None:
+        executable_path, executable_hash, executable_problem = _host_install_executable(home, executable, executable_sha256)
+    else:
+        executable_path, executable_hash, executable_problem = None, None, prior_problem
     if executable_problem is not None:
         manual.append(executable_problem)
     runtime_bytes: bytes | None = None
@@ -2074,9 +2188,10 @@ def codex_install(
             runtime_hash = runtime_identity.manifest_identity(runtime_bytes)
             if json.loads(runtime_bytes)["executable_sha256"] != executable_hash:
                 raise ValueError("Thaliris launcher changed while installing")
-            if manifest_path.is_symlink() or (manifest_path.exists() and not manifest_path.is_file()):
+            if runtime_identity._is_link(manifest_path) or (manifest_path.exists() and not manifest_path.is_file()):
                 raise ValueError("unsafe installed runtime manifest path")
             if manifest_path.exists():
+                runtime_identity._safe_file(manifest_path)
                 previous = manifest_path.read_bytes()
                 old = runtime_identity.validate_manifest_record(previous)
                 old_executable = Path(old["executable"])
@@ -2091,13 +2206,13 @@ def codex_install(
     script_bytes = host_hook_script_bytes()
     run_script_bytes = host_run_script_bytes(executable_path, runtime_hash) if executable_path is not None and runtime_hash is not None else None
     unsafe_script_path = any(character in str(script_path) for character in ('"', "%", "!", "\r", "\n"))
-    script_safe = not home.is_symlink() and not script_path.is_symlink() and not unsafe_script_path
+    script_safe = home_safe and not script_path.is_symlink() and not unsafe_script_path
     if unsafe_script_path:
         manual.append("host_hook_script_path_not_safe_for_cmd_trampoline")
     if script_safe and script_path.exists():
         try:
             existing_script = script_path.read_bytes()
-            if existing_script not in {script_bytes, lifecycle._previous_host_hook_script_bytes(), lifecycle._legacy_host_hook_script_bytes()}:
+            if existing_script not in {script_bytes, lifecycle._v041_host_hook_script_bytes(), lifecycle._previous_host_hook_script_bytes(), lifecycle._legacy_host_hook_script_bytes()}:
                 manual.append(str(script_path))
                 script_safe = False
         except OSError:
@@ -2105,6 +2220,11 @@ def codex_install(
             script_safe = False
     elif script_path.is_symlink():
         manual.append(str(script_path))
+        script_safe = False
+
+    if preflight_path.is_symlink() or (preflight_path.exists() and
+            (not preflight_path.is_file() or preflight_path.read_bytes() != host_preflight.script_bytes())):
+        manual.append(str(preflight_path))
         script_safe = False
 
     if run_script_path.is_symlink() or (run_script_path.exists() and not run_script_path.is_file()):
@@ -2119,6 +2239,7 @@ def codex_install(
                 prior = manifest_path.read_bytes()
                 prior_record = runtime_identity.validate_manifest_record(prior)
                 permitted.add(host_run_script_bytes(Path(prior_record["executable"]), runtime_identity.manifest_identity(prior)))
+                permitted.add(lifecycle._v041_host_run_script_bytes(Path(prior_record["executable"]), runtime_identity.manifest_identity(prior)))
                 permitted.add(lifecycle._previous_host_run_script_bytes(Path(prior_record["executable"]), runtime_identity.manifest_identity(prior)))
             except (OSError, ValueError, TypeError):
                 pass
@@ -2127,7 +2248,7 @@ def codex_install(
             script_safe = False
 
     hook_bytes: bytes | None = None
-    if executable_path is not None and executable_hash is not None and runtime_hash is not None and script_safe and not hooks_path.is_symlink() and not home.is_symlink():
+    if executable_path is not None and executable_hash is not None and runtime_hash is not None and script_safe and not hooks_path.is_symlink() and home_safe:
         try:
             if hooks_path.exists():
                 original = json.loads(hooks_path.read_text(encoding="utf-8"))
@@ -2156,6 +2277,10 @@ def codex_install(
                     changed = True
                     if HOST_HOOK_SCRIPT_NAME not in files:
                         files.append(HOST_HOOK_SCRIPT_NAME)
+                if not preflight_path.exists():
+                    _atomic_host_write(preflight_path, host_preflight.script_bytes())
+                    changed = True
+                    files.append(host_preflight.NAME)
                 if run_script_bytes is not None and (not run_script_path.exists() or run_script_path.read_bytes() != run_script_bytes):
                     _atomic_host_write(run_script_path, run_script_bytes)
                     changed = True
@@ -2178,7 +2303,7 @@ def codex_install(
             manual.append(str(path))
 
     global_instruction_ready = False
-    if runtime_hash is not None and script_safe and run_script_path.is_file() and not home.is_symlink() and not global_agents.is_symlink() and (not global_agents.exists() or global_agents.is_file()):
+    if runtime_hash is not None and script_safe and run_script_path.is_file() and home_safe and not global_agents.is_symlink() and (not global_agents.exists() or global_agents.is_file()):
         try:
             current_agents = global_agents.read_bytes() if global_agents.exists() else b""
             updated_agents = _global_agents_update(
@@ -2315,7 +2440,7 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
         else:
             try:
                 if script_path.read_bytes() in {
-                    host_hook_script_bytes(), lifecycle._previous_host_hook_script_bytes(), lifecycle._legacy_host_hook_script_bytes()
+                    host_hook_script_bytes(), lifecycle._v041_host_hook_script_bytes(), lifecycle._previous_host_hook_script_bytes(), lifecycle._legacy_host_hook_script_bytes()
                 }:
                     script_path.unlink()
                     removed.append(HOST_HOOK_SCRIPT_NAME)
@@ -2339,6 +2464,7 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
                     owned = runner_bytes in {
                         expected,
                         prior_bytes,
+                        lifecycle._v041_host_run_script_bytes(Path(record["executable"]), runtime_identity.manifest_identity(prior)),
                     }
                 else:
                     owned = lifecycle.installed_run_script_identity(run_script_path.read_bytes()) is not None
@@ -2354,6 +2480,13 @@ def codex_uninstall(codex_home: Path | None = None) -> dict[str, object]:
                     removed.append(HOST_RUN_SCRIPT_NAME)
             except (OSError, ValueError, TypeError):
                 manual.append(str(run_script_path))
+    preflight_path = home / host_preflight.NAME
+    if not has_hook_manual and preflight_path.exists() and (not run_script_path.exists() or retained_inert_runner):
+        if not preflight_path.is_symlink() and preflight_path.is_file() and preflight_path.read_bytes() == host_preflight.script_bytes():
+            preflight_path.unlink()
+            removed.append(host_preflight.NAME)
+        else:
+            manual.append(str(preflight_path))
     if not has_hook_manual and not script_path.exists() and (not run_script_path.exists() or retained_inert_runner) and manifest_path.exists():
         if manifest_path.is_symlink() or not manifest_path.is_file():
             manual.append(str(manifest_path))
@@ -2862,6 +2995,36 @@ def doctor(root: Path) -> dict[str, object]:
     from .doctor import report
     root = core._repo_root(root)
     result = report(root)
+    home = _codex_home()
+    manifest = home / runtime_identity.MANIFEST_NAME
+    runtime_drift = (runtime_identity.diagnose_manifest(manifest.read_bytes())
+                     if manifest.is_file() and not manifest.is_symlink()
+                     else {"status": "UNKNOWN", "execution_assurance": "UNKNOWN", "error": "installed manifest unavailable"})
+    definitions = []
+    for name, expected in ((HOST_HOOK_SCRIPT_NAME, host_hook_script_bytes()),
+                           (host_preflight.NAME, host_preflight.script_bytes())):
+        path = home / name
+        actual = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() and not path.is_symlink() else "UNKNOWN"
+        wanted = hashlib.sha256(expected).hexdigest()
+        definitions.append({"surface": "hook", "path": name, "expected": wanted, "actual": actual,
+                            "status": "MATCH" if actual == wanted else "UNKNOWN" if actual == "UNKNOWN" else "CHANGED"})
+    profiles = []
+    for name, (model, effort, role) in _agent_profiles().items():
+        path = home / "agents" / name
+        actual = path.read_bytes() if path.is_file() and not path.is_symlink() else None
+        expected = _agent_profile(name.removesuffix(".toml"), role, model, effort)
+        profiles.append({"surface": "profile", "path": name,
+                         "ownership": _agent_profile_state(actual, name) if actual is not None else "missing",
+                         "expected": hashlib.sha256(expected).hexdigest(),
+                         "actual": hashlib.sha256(actual).hexdigest() if actual is not None else "UNKNOWN"})
+    result["drift_evidence"] = {"installed_runtime": runtime_drift, "hook_definitions": definitions,
+                                "profile_definitions": profiles, "ordinary_workspace_work_allowed": True,
+                                "user_configuration": "PRESERVE_UNLESS_EXPLICITLY_AUTHORIZED",
+                                "cli_version": host_wait_mode().get("version", "UNKNOWN"),
+                                "daemon_version": "UNKNOWN", "daemon_control_authority": "UNKNOWN",
+                                "controller_actor_assurance": lifecycle._controller_actor_assurance({}),
+                                "host_topology": "UNKNOWN",
+                                "decision": "CONTROLLER_REPAIR_RESTORE_OR_ACCEPT_WITHIN_USER_AUTHORIZATION"}
     registry_path = root / "docs" / "thaliris-role-registry.md"
     registry_state = (
         _role_registry_state(registry_path.read_bytes())

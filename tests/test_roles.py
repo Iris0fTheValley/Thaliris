@@ -88,11 +88,11 @@ def test_profile_defaults_and_static_astra_selection_are_fixed() -> None:
         "controller": (None, None),
         "investigator": ("gpt-6-luna", "xhigh"),
         "curator": ("gpt-6-luna", "xhigh"),
-        "reasoning-specialist": ("gpt-6-sol", "high"),
+        "reasoning-specialist": ("gpt-6.1-sol", "high"),
         "implementer": ("gpt-6-luna", "xhigh"),
-        "focused-implementer": ("gpt-6-sol", "high"),
+        "focused-implementer": ("gpt-6.1-sol", "high"),
         "verifier": ("gpt-6-luna", "xhigh"),
-        "reviewer": ("gpt-6-sol", "high"),
+        "reviewer": ("gpt-6.1-sol", "high"),
     }
     assert len(roles.native_codex_role_map()) == len(set(roles.native_codex_role_map()))
     for name, (model, effort, role) in roles.agent_profiles().items():
@@ -1063,6 +1063,8 @@ def test_new_registry_role_flows_through_adapter_inventories_and_cli(monkeypatch
 
 
 def test_new_registry_role_appears_in_active_spawn_isolation_diagnostic(tmp_path: Path, monkeypatch) -> None:
+    # Synthetic Controller unit contract, not current Host Root proof.
+    monkeypatch.setattr(lifecycle, "_controller_actor_assurance", lambda _payload: "CONTROLLER")
     monkeypatch.setitem(roles.ROLE_REGISTRY, "sentinel", _sentinel_definition())
     root = _initialized_repo(tmp_path)
     started = core.task_start(root, "registry diagnostic", None, None)
@@ -1116,6 +1118,20 @@ def _historical_profile(revision: str, name: str) -> bytes:
     )
     model, effort, role = module.agent_profiles()[name]
     return namespace["_agent_profile"](name.removesuffix(".toml"), role, model, effort)
+
+
+@pytest.mark.parametrize("revision,hashes", [
+    ("28e4297d2e489a8f893cb75aec7291cbb3518dcb", codex_adapter._HISTORICAL_28E4297_PROFILE_HASHES),
+    ("69d9a33", codex_adapter._HISTORICAL_69D9A33_PROFILE_HASHES),
+])
+def test_retained_profile_ownership_is_witnessed_by_immutable_renderer(revision, hashes):
+    for name, digest in hashes.items():
+        raw = _historical_profile(revision, name)
+        assert hashlib.sha256(raw).hexdigest() == digest
+        assert codex_adapter._agent_profile_state(raw, name) in {"legacy", "current"}
+        assert codex_adapter._agent_profile_state(raw + b"\nuser change\n", name) == "user"
+    reviewer = Path(__file__).parent / "fixtures/thaliris-reviewer-28e4297.toml"
+    assert reviewer.read_bytes() == _historical_profile("28e4297d2e489a8f893cb75aec7291cbb3518dcb", reviewer.name.replace("-28e4297", ""))
 
 
 def _historical_managed(revision: str) -> str:

@@ -73,6 +73,7 @@ class CodexAppServer:
             raise CodexAppServerError("could not start codex app-server") from exc
         self._responses: queue.Queue[str | None] = queue.Queue()
         self._request_id = 0
+        self.initialize_observation: dict[str, Any] | None = None
         self._reader = threading.Thread(target=self._read_stdout, name="thaliris-codex-app-server", daemon=True)
         self._reader.start()
 
@@ -82,6 +83,7 @@ class CodexAppServer:
                 "initialize",
                 {"clientInfo": {"name": "thaliris-codex-install", "version": "1"}},
             )
+            self.initialize_observation = result
             reported_home = result.get("codexHome") if isinstance(result, dict) else None
             if not _same_path(reported_home, self.codex_home):
                 raise CodexAppServerError("app-server initialized with a different CODEX_HOME")
@@ -90,6 +92,30 @@ class CodexAppServer:
         except BaseException:
             self._close()
             raise
+
+    def connection_facts(self) -> dict[str, object]:
+        """Separate CLI disk/process facts from the responding daemon.
+
+        CODEX_HOME and the launched PID are requests, never evidence that a
+        shared daemon belongs to this client. Only initialize's structured
+        response establishes its observed home. A CLI version cannot establish
+        a daemon version, even when both use the same executable.
+        """
+        try:
+            process = subprocess.run([self.executable, "--version"], capture_output=True, text=True,
+                                     timeout=10, check=False)
+            cli_version = process.stdout.strip() if process.returncode == 0 else "UNKNOWN"
+        except (OSError, subprocess.SubprocessError):
+            cli_version = "UNKNOWN"
+        observation = self.initialize_observation or {}
+        server = observation.get("serverInfo")
+        daemon_version = server.get("version") if isinstance(server, dict) else None
+        return {"cli_version": cli_version or "UNKNOWN", "cli_executable": self.executable,
+                "daemon_version": daemon_version if isinstance(daemon_version, str) and daemon_version else "UNKNOWN",
+                "daemon_version_evidence": "initialize.serverInfo.version" if daemon_version else "UNKNOWN",
+                "daemon_home": observation.get("codexHome", "UNKNOWN"),
+                "daemon_home_matches_requested": "YES" if _same_path(observation.get("codexHome"), self.codex_home) else "NO" if observation.get("codexHome") else "UNKNOWN",
+                "daemon_control_authority": "UNKNOWN", "live_role_catalog": "UNKNOWN"}
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
         self._close()

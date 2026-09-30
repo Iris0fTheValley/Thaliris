@@ -14,6 +14,18 @@ from thaliris.lifecycle import handle_hook, hook_spec
 import thaliris.lifecycle as lifecycle_module
 
 
+@pytest.fixture(autouse=True)
+def hypothetical_controller_contract(monkeypatch):
+    """Synthetic lifecycle unit seam, not an observed Host actor guarantee.
+
+    The current Host actor UNKNOWN cases live in test_drift_recovery.py without
+    this seam. These legacy mechanics test a hypothetical certified Controller.
+    """
+    original = lifecycle_module._controller_actor_assurance
+    monkeypatch.setattr(lifecycle_module, "_controller_actor_assurance", lambda payload:
+                        "CONTROLLER" if original(payload) == "UNKNOWN" else original(payload))
+
+
 def repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     codex_adapter.init(tmp_path)
@@ -2421,11 +2433,11 @@ def test_role_profiles_keep_routing_and_model_choice_with_the_controller(tmp_pat
         "controller": (None, None),
         "investigator": ("gpt-6-luna", "xhigh"),
         "curator": ("gpt-6-luna", "xhigh"),
-        "reasoning-specialist": ("gpt-6-sol", "high"),
+        "reasoning-specialist": ("gpt-6.1-sol", "high"),
         "implementer": ("gpt-6-luna", "xhigh"),
-        "focused-implementer": ("gpt-6-sol", "high"),
+        "focused-implementer": ("gpt-6.1-sol", "high"),
         "verifier": ("gpt-6-luna", "xhigh"),
-        "reviewer": ("gpt-6-sol", "high"),
+        "reviewer": ("gpt-6.1-sol", "high"),
     }
     assert set(codex_adapter._AGENT_PROFILES) == {
         "thaliris-investigator.toml", "thaliris-curator.toml",

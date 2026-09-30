@@ -1,0 +1,7 @@
+{
+  "provenance": "SOURCE_CONTRACT_NOT_LIVE_CAPTURE",
+  "upstream_commit": "ff6aec96948b70d94983af2641a6b67c94faeff5",
+  "source_paths": ["codex-rs/core/src/hook_runtime.rs:188-204,1042-1060", "codex-rs/hooks/src/schema.rs:70-84,278-296", "codex-rs/core/src/tasks/review.rs:99-139", "codex-rs/core/src/codex_delegate.rs:77-120", "codex-rs/core/src/session/session.rs:643-652"],
+  "thread_spawn_pretool": {"session_id": "controller-shared-session", "turn_id": "child-turn", "agent_id": "native-child-thread", "agent_type": "thaliris-reviewer", "tool_name": "Bash", "tool_input": {"command": "git status"}},
+  "builtin_review_pretool": {"session_id": "controller-shared-session", "turn_id": "review-turn", "tool_name": "Bash", "tool_input": {"command": "thaliris task-start goal"}}
+}

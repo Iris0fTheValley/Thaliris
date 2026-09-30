@@ -489,7 +489,11 @@ def test_workstream_scheduling_granularity_acceptance_is_explicit() -> None:
         "generated or documentation synchronization",
         "integration checks",
         "assigned git closure",
-        "do not create separate semantic routing boundaries",
+        "not automatically separate semantic routing boundaries",
+        "not a mandatory bundle",
+        "root chooses the semantic boundary",
+        "very small direct routine operations need no ceremonial child handoff",
+        "accepted architecture, security boundary",
         "if new evidence changes task direction, ownership, observable semantics",
         "the child stops and returns the concrete unknown in final",
         "execution authority",
@@ -673,7 +677,14 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
         "wait only while the scanner is known unfinished",
         "do not wait on that scanner again or repeat its discovery pass",
         "continue complex implementation within the assigned workstream across local execution checkpoints",
-        "close the focused workstream only at its semantic boundary or when its assigned acceptance is complete",
+        "owns semantic convergence of its implementation candidate",
+        "core implementation and hard invariants in place",
+        "a focused-test pass alone does not meet this boundary or trigger a role switch",
+        "exact source locations or diff",
+        "focused evidence and its limits",
+        "explicit remaining tasks",
+        "the escalation boundary",
+        "accepted architecture or causal model, security boundary, hard invariant, compatibility",
     )
     assert all(phrase in profile for phrase in required)
     standard = " ".join(roles.get_role("implementer").instructions.split()).lower()
@@ -681,7 +692,13 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
         "a sufficiently stable problem model and direction can still call for focused implementer",
         "when the solution path remains unstable and framing, exploration",
         "wait only while the scanner is known unfinished",
-        "close the focused workstream only at its semantic boundary or when its assigned acceptance is complete",
+        "owns semantic convergence of its implementation candidate",
+        "core implementation and hard invariants in place",
+        "a focused-test pass alone does not meet this boundary or trigger a role switch",
+        "exact source locations or diff",
+        "focused evidence and its limits",
+        "explicit remaining tasks",
+        "the escalation boundary",
     )
     assert all(phrase not in standard for phrase in focused_only)
     docs_required = (
@@ -700,8 +717,21 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
         "removes an independent working set",
         "wait only while the scanner is known unfinished",
         "do not wait on it again or repeat its discovery pass",
-        "continue complex implementation within the assigned workstream across local checkpoints",
-        "close the focused workstream only at its semantic boundary or when its assigned acceptance is complete",
+        "continue complex implementation within the assigned workstream across local checkpoints when it still benefits from focused reasoning",
+        "owns semantic convergence of its implementation candidate",
+        "a focused-test pass alone does not meet this boundary or trigger a role switch",
+        "core implementation and hard invariants are in place",
+        "decision-changing unknowns are resolved",
+        "focused evidence demonstrates the candidate's core semantics",
+        "remaining work is unlikely to change the causal model, scope, acceptance, or direction",
+        "exact source locations or diff",
+        "focused evidence and its limits",
+        "explicit remaining tasks",
+        "acceptance, and the escalation boundary",
+        "documentation, generated output, configuration, installation, host smoke checks, fixtures, and git closure",
+        "installation or smoke feedback that exposes a semantic defect stays with focused implementer",
+        "after a child returns final, it is complete and cannot be resumed",
+        "accepted architecture or causal model, security boundary, hard invariant",
     )
     for rendered in _normalized_contract_sources()[1:2] + _normalized_contract_sources()[-2:-1]:
         assert all(phrase in rendered for phrase in docs_required)
@@ -713,7 +743,8 @@ def test_focused_implementer_reads_known_sources_and_delegates_discovery() -> No
         "does not replace reasoning-coupled reading",
         "sol focused implementer profile",
         "astra focused implementer profile",
-        "continues complex implementation within",
+        "owns semantic convergence of its implementation candidate",
+        "documentation, generated output, configuration, installation, host smoke checks, fixtures, and git closure",
     )
     for rendered in _normalized_contract_sources()[0:1] + _normalized_contract_sources()[2:4] + _normalized_contract_sources()[-1:]:
         assert all(phrase in rendered for phrase in propagated)

@@ -164,9 +164,14 @@ _EXECUTOR_INSTRUCTIONS = (
     "assigned Git closure. A local verification PASS does not require returning to Root; continue "
     "the assigned work while the next step remains within its goal, scope, invariants, and "
     "acceptance. Ordinary test fixes, generated or documentation sync, integration checks, and "
-    "assigned Git closure are execution checkpoints, not separate semantic routing boundaries. "
+    "assigned Git closure are available execution checkpoints, not a mandatory bundle or separate "
+    "semantic routing boundaries. Root chooses the semantic boundary and may assign a separate "
+    "closure Workstream when its remainder is independently deterministic. A new semantic Workstream "
+    "may use a different role; the profile chosen for one Workstream does not bind the task's "
+    "remaining operational work. A local verification "
+    "PASS alone neither ends the Workstream nor requires further work to stay in it. "
     "Continuous execution authority never expands Controller-assigned scope. Only the Controller "
-    "decides task direction, ownership, observable semantics, hard invariants, compatibility, "
+    "decides task direction, ownership, observable semantics, accepted architecture or security boundaries, hard invariants, compatibility, "
     "acceptance, and the next semantic handoff. If new evidence changes any of those or reveals "
     "an unverified external dependency, stop and return the concrete decision-changing unknown "
     "in FINAL. When the handoff selects completed Investigator "
@@ -220,10 +225,29 @@ _FOCUSED_SCANNER_INSTRUCTIONS = (
     "its result is necessary for this Workstream. After its FINAL, use the distilled result and do not "
     "wait on that Scanner again or repeat its discovery pass. Continue complex implementation within the "
     "assigned Workstream across local execution checkpoints when it still benefits from focused "
-    "reasoning. A local verification PASS does not force a return to Root. Close the Focused "
-    "Workstream only at its semantic boundary or when its assigned acceptance is complete; "
-    "report a deterministic remainder for Controller routing only when it is outside this "
-    "Workstream or independently closable without the Focused model's reasoning."
+    "reasoning. A local verification PASS does not force a return to Root or switch models. "
+    "Focused Implementer owns semantic convergence of its implementation candidate. Return FINAL "
+    "when a coherent candidate has its core implementation and hard invariants in place, "
+    "decision-changing unknowns resolved, focused evidence that "
+    "demonstrates core semantics, and no remaining work likely to change the causal model, scope, "
+    "acceptance, or direction. A focused-test PASS alone does not meet this boundary or trigger "
+    "a role switch. Include in that handoff the "
+    "candidate state and exact source locations or diff, the invariants satisfied, focused evidence "
+    "and its limits, the explicit remaining tasks, acceptance, and the escalation boundary. "
+    "Documentation, generated output, configuration, installation, Host smoke checks, fixtures, "
+    "and Git closure are not automatically required before this boundary; include any check needed "
+    "to prove the candidate's core semantics before returning it. Installation or smoke feedback "
+    "that exposes a semantic defect stays with Focused Implementer while it is needed to establish "
+    "the candidate. The Controller decides whether remaining work still depends on the core model "
+    "and needs a fresh Focused Implementer Workstream or is an independent deterministic closure "
+    "for an ordinary Implementer. Do not assume the tail belongs to either role. Very small direct "
+    "routine operations need no ceremonial child handoff when the Controller is already authorized "
+    "to perform them; this does not change delegated, controller-direct, or single-agent authority. "
+    "A FINAL child is complete and cannot be resumed; any further work uses a fresh session and "
+    "Controller handoff. If semantic evidence changes the accepted architecture or causal model, "
+    "security boundary, hard invariant, compatibility, "
+    "scope, acceptance, or direction, stop and return the decision-changing issue to Root rather "
+    "than redesigning it."
 )
 
 _FOCUSED_SOL_INSTRUCTIONS = (
@@ -390,6 +414,14 @@ _LEGACY_PROFILE_HASHES = {
     "verifier": frozenset("df6b0e82979329f15318356d060c2321095a2de7941539dfa0e007f08f2c2ff4 fa1585e8df2c9136eed055f22e85594805c62a0cec0d6387700dd4959fe9dc19".split()),
     "reviewer": frozenset("ae56701985a1d27a2daea326819fa0e93b4350eb6e65d1a299daf198126a7a9a c43274a3f9cb3f93cd662b6477f1dfd07c170c24324c1364df5f59205851b17b d0f488e226888c6a8f6e39ab1deeb1125d3c0e9474dba47af47ec3eab2da45c2 ae51394874f0b35dc2b39577d471bf2f07533962363cdb7ad56e6e08a3860887 322534fb6f2b2abc312bd04a76e477e3e128cf6a194da5817ecaabd0678aa397 b038486edb2c381631e458adac2bff12fbcdc09233b5b1b8f59aeee9dc0e9774 720ef66c9f6023d961ddc1a3329ec4ae3fdf7fe2f6b1252034a7117f5990a125 4cec33fef9151d2ba60483a72b49ccd7dadd0b5c044a69f00f468e71c489fe07 8999980daf617644a36da7579626f122b6c279ad54e055bbaf8242daedbd36c2 b9b3b50f89b1dd7c5f5eaf2ee558b6881b014d66f6b30bc20244f361ebc721d7 e281f8c25451cbccb1509fa07814e4cfeaa8ae113402fc2db9a6c63a165bc1e6 96257cc1ed5c88b37de73e2c355c17c6b1ab26620210effe5b3283c776d0e4b9 357e9364404a2ab249c27ad3a2c93305f38db5afbbec1b56b58ee5e0817d5602 82b410c617589d410deb33f1ff4163d49b22d329ee517442a004965115a46124 fe082be2c5d05675b3ab9a69234851d505db3a3deddb509794b817f5b59a8ab8".split()),
 }
+# Exact profile-generator outputs from immutable pre-update revision
+# 3094c0a69a620780558b535cf6aaf0f91ea66b62, retained for safe upgrades.
+_LEGACY_PROFILE_HASHES["implementer"] |= frozenset({"3d393a145c900749c33296550e740bf61af64b91d2b4cf3462cb2c44e1d65195"})
+_LEGACY_PROFILE_HASHES["focused-implementer"] |= frozenset({
+    "cdced1431108b7b55b022b70e6129ca4b4c298c560a3a972a2f8805474bcff21",
+    "d4fef2b7b5e77d027b4d3e0807fdeb3a6bc6d81f3cf8aabf41affce7b912e573",
+    "8f6890bfa3ad76b2a0401a04f33a4e7494ea91b3cb266b749f1d72a7cbf8aba7",
+})
 
 
 # Exact prior generator output from immutable 5e6554196d27c4d6bc87c2a8008bd3c37ef01b31:

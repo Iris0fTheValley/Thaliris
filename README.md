@@ -53,7 +53,12 @@ Implementer 与 Focused Implementer 都负责实现，保持聚焦的 working se
 Investigator 可以拥有较大的私有 working set，将广泛扫描、调用点和残留引用
 压缩成事实、位置、证据和未知项。执行角色利用这些证据，并保留实现决策权。
 Reasoning Specialist 用于重构不明确的问题。Verifier 仅保留只读兼容，
-不推荐作为流程阶段。
+不推荐作为流程阶段。Focused Implementer 负责语义收敛；当核心实现和不变量已落实、
+会改变方向的未知已解决、证据能说明核心语义，而且剩余工作不太可能改变已定架构、因果模型、安全边界、
+范围或验收时，可以带上候选状态、证据限制和剩余任务返回 FINAL。测试通过本身不会切换角色。
+安装或 smoke 检查若仍用于证明核心语义，仍属于 Focused Implementer 的收敛工作。
+Root 决定后续是否仍需 Focused reasoning，或可将独立且确定的收尾交给普通 Implementer。
+小型直接常规操作无需仅为流程而建立子角色；这仍受既有执行模式约束。
 
 Controller 的 model、effort、native profile 均无固定值，由 Host/用户选择。
 Investigator、Curator 和标准 Implementer 默认 `gpt-6-luna/xhigh`；Focused

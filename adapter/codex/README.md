@@ -51,13 +51,21 @@ not a role or second Controller, and one authorized child session owns its
 execution. Within a stable Workstream, that same session may perform relevant
 reads, plan, implement, verify, fix ordinary in-scope failures, synchronize
 generated output and docs, run needed integration checks, inspect diff/status,
-and complete assigned Git closure. A local verification PASS does not require
-returning to Root; these local closures do not create semantic routing boundaries.
-Root regains control at a semantic Workstream boundary. If evidence changes task
-direction, ownership, observable semantics, a hard invariant, compatibility,
-acceptance, or reveals an unverified external dependency that could change the
-decision, the child stops and returns the concrete unknown in FINAL. Execution
-authority cannot expand Controller-assigned scope. Reviewers challenge
+and complete assigned Git closure. These are available checkpoints, not a
+mandatory bundle. A local verification PASS does not require returning to Root
+or switching roles. Root chooses the semantic boundary and may assign a separate
+closure Workstream when the remainder is independently deterministic. A new semantic Workstream may use a different role; the profile chosen for one
+Workstream does not bind the task's remaining operational work. Local
+deterministic failures in paths, arguments, manifests, generated files,
+installation environment, docs, fixtures, or Git may be fixed within the current
+assignment. A very small direct routine operation needs no ceremonial child
+handoff when the Controller is already authorized to perform it; authority
+modes remain unchanged. If evidence changes task direction, ownership,
+observable semantics, an accepted architecture or security boundary, a hard
+invariant, compatibility, acceptance, or reveals
+an unverified external dependency that could change the decision, the child
+stops and returns the concrete unknown in FINAL. Execution authority cannot
+expand Controller-assigned scope. Reviewers challenge
 converged candidates after implementation stops; their findings return to
 Controller, which decides on follow-on work.
 Use Reasoning Specialist when an independent challenge may materially change
@@ -98,12 +106,26 @@ decision-critical originals, call chains, diffs, and tests as needed. It does
 not repeat the covered broad inventory or delegate a Scanner over that surface.
 A fresh Scanner can collect a genuinely uncovered decision-changing evidence
 gap that needs independent broad discovery, limited to that gap.
-Focused Implementer continues complex implementation within its assigned
-Workstream across local checkpoints when it still benefits from focused
-reasoning. A local verification PASS does not force a return to Root. Close the
-Workstream at its semantic boundary or when assigned acceptance is complete. A
-deterministic remainder goes to Controller routing only when it is outside the
-Workstream or independently closable without the Focused model's reasoning. A Scanner batches
+Focused Implementer owns semantic convergence of its implementation
+candidate. It may return FINAL when core implementation and hard invariants are
+in place, decision-changing unknowns are resolved, focused evidence demonstrates
+core semantics, the candidate is internally coherent, and remaining work is
+unlikely to change the causal model, scope, acceptance, or direction. A focused
+test PASS alone does not meet this boundary or trigger a role switch. The FINAL
+handoff names candidate state and exact sources or diff, invariants satisfied,
+focused evidence and its limits, remaining tasks, acceptance, and escalation
+boundary. Documentation, generated output, configuration, installation, Host
+smoke checks, fixtures, and Git closure need not be complete unless a check is
+needed to prove core semantics. Installation or smoke feedback that exposes a
+semantic defect stays with Focused Implementer while it is needed to establish
+the candidate. The Controller decides whether remaining work still needs the
+core reasoning or is an independent deterministic closure for an ordinary
+Implementer. Coupled work can remain in the active Focused Workstream. After
+FINAL, the child is complete and cannot be resumed; more work uses a fresh
+session and Controller handoff. If evidence changes the accepted architecture
+or causal model, security boundary, hard invariant, compatibility, scope,
+acceptance, or direction, return it to Root without
+redesigning it. A Scanner batches
 related searches and reads, returns compact facts, and once evidence is
 sufficient stops immediately; do not expand the scan for one more confirmation.
 Once the Workstream goal, authority, and boundary are known, Implementer and Focused Implementer batch the

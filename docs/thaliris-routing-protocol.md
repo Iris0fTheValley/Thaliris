@@ -97,17 +97,27 @@ Within a stable Workstream, the same Implementer session may complete multiple
 local closures: batch relevant reads, plan, implement, run focused verification,
 fix ordinary in-scope failures, synchronize generated output and documentation,
 run needed integration verification, inspect diff and status, and complete
-assigned Git closure. A local verification PASS does not require returning to
-Root. Ordinary test fixes, generated or documentation synchronization,
-integration checks, and assigned Git closure are execution checkpoints inside
-the Workstream, not separate semantic routing boundaries. The child retains
+assigned Git closure. These are available execution checkpoints, not a mandatory
+bundle. A local verification PASS does not require returning to Root or
+switching roles. Root chooses the semantic boundary and may assign a separate
+closure Workstream when the remainder is independently deterministic. A new semantic Workstream may use a different role; the profile chosen for one
+Workstream does not bind the task's remaining operational work. Ordinary
+test fixes, generated or documentation synchronization, integration checks,
+and assigned Git closure are not automatically separate semantic routing
+boundaries. Local deterministic failures in paths, arguments, manifests,
+generated files, installation environment, documentation, fixtures, or Git may
+be fixed by the current executor within its assignment. The child retains
 execution authority only within the assigned goal, scope, invariants, and
-acceptance; this authority never expands Controller-assigned scope.
+acceptance; this authority never expands Controller-assigned scope. Very small
+direct routine operations need no ceremonial child handoff when the Controller
+is already authorized to perform them; this does not change delegated,
+controller-direct, or single-agent authority.
 
 Root regains control at the semantic Workstream boundary. A child returns
 distilled state, its commit reference, and verification evidence after its
 assigned Workstream is complete. If new evidence changes task direction,
-ownership, observable semantics, a hard invariant, compatibility contract, or
+ownership, observable semantics, an accepted architecture or security boundary,
+a hard invariant, compatibility contract, or
 acceptance, or reveals an unverified external dependency that can change the
 decision, the child stops and returns the concrete unknown in FINAL for Root to
 decide. Only the Controller decides what follows; no child acts as a second
@@ -146,13 +156,29 @@ set. With an Astra Focused Implementer profile, explore evidence needed for
 the current Workstream directly and use Scanner work only for a clearly large,
 low-reasoning-density collection that can be compressed independently. Small
 local searches may be direct.
-Focused Implementer continues complex implementation within its assigned
-Workstream across local checkpoints when it still benefits from focused
-reasoning. A local verification PASS does not force a return to Root. Close the
-Workstream only at its semantic boundary or when its assigned acceptance is
-complete. A deterministic remainder goes to Controller routing only when it
-is outside the Workstream or independently closable without the Focused model's
-reasoning.
+Focused Implementer owns semantic convergence of its implementation
+candidate. It may return FINAL once core implementation and hard invariants are
+in place, decision-changing unknowns are resolved, focused evidence demonstrates
+the candidate's core semantics, the candidate is internally coherent, and
+remaining work is unlikely to change the causal model, scope, acceptance, or
+direction. A focused-test PASS alone does not meet this boundary or trigger a
+role switch. The FINAL handoff identifies candidate state and exact source
+locations or diff, invariants satisfied, focused evidence and its limits,
+explicit remaining tasks, acceptance, and the escalation boundary. Documentation,
+generated output, configuration, installation, Host smoke checks, fixtures, and
+Git closure are not automatically required before this handoff; include any
+check needed to prove core semantics. Installation or smoke feedback that
+exposes a semantic defect stays with Focused Implementer while needed to
+establish the candidate. The Controller decides whether remaining work still
+needs the core reasoning or is an independent deterministic closure for an
+ordinary Implementer. Coupled work may stay in the active Focused Workstream.
+After a child returns FINAL, it is complete and cannot be resumed; further work
+requires a fresh session and Controller handoff. If evidence changes the
+accepted architecture or causal model, security boundary, hard invariant,
+compatibility, scope, acceptance, or direction, return
+the issue to Root without redesigning it. Focused Implementer may continue
+complex implementation across local checkpoints when it still benefits from
+focused reasoning; a local PASS does not force a return to Root.
 
 Once the Workstream goal, authority, and boundary are known, Implementer and
 Focused Implementer batch the relevant source, test, generation, and

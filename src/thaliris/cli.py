@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 from . import __version__
-from . import codex_adapter, codex_bootstrap, lifecycle
+from . import codex_adapter, codex_bootstrap, lifecycle, task_authority
 from .core import TaskStateSchemaIncompatible, artifact_get, catalog, document_get, milestone_check, rollback, stale, task_artifact, task_get, task_promote, task_show, task_status, task_update
 
 
@@ -20,7 +20,22 @@ class _Parser(argparse.ArgumentParser):
 
 def _task_status(root: Path, *, suppress_protocol_notice: bool) -> dict[str, object]:
     """Attach the one-shot lifecycle notice at the Codex CLI boundary."""
+    anchor = task_authority.read(root)
+    if anchor is not None:
+        try:
+            task_authority.check(root)
+            conflict = False
+        except (ValueError, OSError):
+            conflict = True
+        if conflict:
+            return {"ok": False, "status": "TASK_AUTHORITY_CONFLICT", "task_id": anchor["task_id"],
+                    "authority_sha256": task_authority.digest(task_authority.path(root)),
+                    "recovery_action": "task-recover-authority --expected-authority-sha256 <authority_sha256> --reason <reason>"}
     out = task_status(root)
+    if anchor is not None:
+        out["Task Authority"] = {"status": anchor["status"], "provenance": anchor["provenance"],
+                                 "execution_mode": anchor["contract"]["execution_mode"],
+                                 "host_actor_assurance": "UNKNOWN", "authority_sha256": task_authority.digest(task_authority.path(root))}
     if not suppress_protocol_notice:
         notice = lifecycle.consume_protocol_deviation_notice(root, str(out["Task"]["id"]))
         if notice is not None:
@@ -71,6 +86,7 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("goal")
     q.add_argument("--milestone")
     q.add_argument("--input")
+    q.add_argument("--authority-contract", help="Controller-selected human instruction, boundary, invariants, acceptance and execution mode JSON; an explicit governance assertion, not Host Root proof")
     q.add_argument("--hook-attestation", help=argparse.SUPPRESS)
     q.add_argument("--bootstrap-receipt", dest="bootstrap_receipt")
     q.add_argument("--controller-bridge-sha256", help=argparse.SUPPRESS)
@@ -81,6 +97,9 @@ def _parser() -> argparse.ArgumentParser:
     q.add_argument("--lifecycle-sha256", required=True)
     q.add_argument("--reason", required=True)
     q.add_argument("--hook-attestation", help=argparse.SUPPRESS)
+    q = sub.add_parser("task-recover-authority", help="continue existing authority: preserve conflicts, restore recorded intent and baseline, fence known old children")
+    q.add_argument("--expected-authority-sha256", required=True)
+    q.add_argument("--reason", required=True)
     q = sub.add_parser("task-recover-state", help="archive an incompatible task state before starting a new task")
     q.add_argument("--expected-sha256", required=True)
     q.add_argument("--abandon-active", action="store_true", help="confirm abandonment of the archived ACTIVE task")
@@ -177,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = _parser().parse_args(argv)
         root = args.root.resolve()
+        if args.command not in {"audit-hook", "codex-bootstrap", "task-status", "doctor", "version", "codex-install", "codex-uninstall", "task-recover-authority"}:
+            task_authority.check(root)
         if args.command == "audit-hook":
             try:
                 payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
@@ -211,8 +232,10 @@ def main(argv: list[str] | None = None) -> int:
             receipt = args.bootstrap_receipt or args.controller_bridge_sha256
             if args.bootstrap_receipt and args.controller_bridge_sha256 and args.bootstrap_receipt != args.controller_bridge_sha256:
                 raise ValueError("conflicting bootstrap receipts")
-            out = codex_adapter.task_start(root, args.goal, args.milestone, args.input, args.hook_attestation, receipt)
+            start_args = (root, args.goal, args.milestone, args.input, args.hook_attestation, receipt)
+            out = codex_adapter.task_start(*start_args, authority_contract=args.authority_contract) if args.authority_contract else codex_adapter.task_start(*start_args)
         elif args.command == "task-abandon": out = codex_adapter.task_abandon(root, args.task_id, args.revision, args.state_sha256, args.lifecycle_sha256, args.reason, args.hook_attestation)
+        elif args.command == "task-recover-authority": out = task_authority.recover(root, args.expected_authority_sha256, args.reason)
         elif args.command == "task-recover-state": out = codex_adapter.task_recover_state(root, args.expected_sha256, args.abandon_active, args.hook_attestation, args.controller_bridge_sha256)
         elif args.command == "task-update": out = task_update(root, codex_adapter.controller_actor(args.role), args.base_revision, args.input)
         elif args.command == "task-show": out = task_show(root)
@@ -226,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "rollback": out = rollback(root, args.backup)
         elif args.command == "uninstall": out = codex_adapter.uninstall(root)
         else: out = {"ok": True, "version": __version__}
+        if out.get("ok") and args.command in {"task-update", "task-artifact", "task-promote"}:
+            task_authority.checkpoint(root)
         print(json.dumps(out, sort_keys=True, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
         return 0 if out.get("ok", False) else 3
     except TaskStateSchemaIncompatible as exc:

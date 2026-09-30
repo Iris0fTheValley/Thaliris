@@ -5,6 +5,37 @@ Codex is the runtime. Thaliris provides durable records, identities, revisions,
 hashes, provenance, objective freshness observations, explicit retrieval, and
 native lifecycle binding. It is not a semantic decision engine.
 
+Task authority is durable human task intent, recorded by an explicit Controller
+operation under a governance boundary. `task-start --authority-contract <json>`
+selects the actual human instruction, boundary, invariants, acceptance, and
+execution mode (`delegated`, `controller-direct`, or `single-agent`). Never
+infer human authorship from UserPromptSubmit, field absence, session equality,
+PID, environment, or SessionSource. Host actor assurance remains UNKNOWN.
+Known children, readonly roles, and fenced actors cannot establish, expand,
+rewrite, recover, or reactivate authority. Unrecognized delegates and shared
+OS access are not universally authenticated or isolated by this contract.
+
+The external anchor under the user's `.thaliris/task-authority/` preserves
+project/task identity, goal, intent, lifecycle evidence and the original
+security baseline independently of mutable repository configuration. Ordinary
+continuation survives turns, network, Hook, session and daemon interruption;
+it requires no repeat Root identity proof. `task-recover-authority` with the
+exact external authority hash and a reason archives conflicts, restores the
+recorded bytes and fences known old children. It retains death proof UNKNOWN
+and cannot bless changed security bytes or remove fences. Scope, goal,
+acceptance, execution mode, unfencing or a new security baseline require an
+actual superior human decision; child prompts, state or config cannot grant it.
+Authority ends on closure, human revocation, Controller abandonment or replacement.
+
+Explicit human Controller-direct intent overrides the default role split:
+Controller may read, edit, test, verify, commit and finish; fresh auxiliary
+roles apply only when semantically useful, with no implementation spawn.
+Explicit single-agent/no-children intent allows ordinary Codex execution and
+closure with no children. Overrides are persisted task intent, never inferred
+from convenience. Without an explicit override, the default routing and child
+completion contract below remain unchanged. Fresh isolation, reviewer/verifier
+readonly and explicit Astra authorization remain in force in every mode.
+
 The Controller is the sole task-specific semantic router. For every task,
 whether ACTIVE or degraded, it selects the minimum necessary fresh roles.
 Roles are capabilities, not mandatory workflow stages. A straightforward,
@@ -278,7 +309,7 @@ own optional `index_update` in the same `task-promote` call. Core does not
 generate INDEX content; it validates the CAS, references, and atomic commit.
 
 With NO_TASK, Thaliris leaves ordinary Codex tool use and spawn behavior
-transparent. With positive Host actor assurance, during an ACTIVE managed task
+transparent. With persistent task intent or positive Host actor assurance, during an ACTIVE delegated managed task
 the persistent Controller uses only
 native spawn/wait/list/interrupt operations and an explicit allow-set of
 trusted direct `thaliris` runtime commands. `init`, `codex-install`, `uninstall`, `rollback`, a
@@ -392,11 +423,12 @@ block. Bootstrap confirms repository identity, checks
 existing task state, and establishes missing project definitions without
 reinstalling Host hooks or profiles. On READY, use only its opaque
 `task_start_receipt` in a direct `task-start --bootstrap-receipt` call in this
-session; the current Host Hook must supply one-shot task-start attestation.
-On DEFINITION_READY_ACTOR_UNKNOWN, definition configuration is ready but managed
-Controller authority is unavailable. Do not retry task-start or manufacture a
-Root receipt. Ordinary reads, source edits, focused tests, investigation, and
-repair continue through the authorized roles with managed assurance UNKNOWN.
+session with `--authority-contract <json>`; the current Hook witnesses the
+explicit Controller operation without proving native Root or human authorship.
+On DEFINITION_READY_ACTOR_UNKNOWN, definition configuration is ready; select
+the actual human task instruction and contract in this explicit start operation.
+Never manufacture a Root receipt. Ordinary work and explicit task admission
+are governed by the human instruction with Host actor assurance UNKNOWN.
 Codex 0.159.2 ThreadSpawn fields positively identify children; built-in Review
 can share the owner session and omit them. Absence or a matching session alone
 is not Controller proof. Known bound child and readonly rules still apply.

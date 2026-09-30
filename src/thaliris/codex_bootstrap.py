@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 import subprocess
 
-from . import core, lifecycle, runtime_identity
+from . import core, lifecycle, runtime_identity, task_authority
 
 EXPECTED_MANAGED_HOOK_ABI = lifecycle.MANAGED_HOOK_ABI
 EXPECTED_ADAPTER_PROTOCOL_VERSION = lifecycle.CODEX_ADAPTER_PROTOCOL_VERSION
@@ -203,6 +203,11 @@ def _bootstrap(root: Path, hook_attestation: str | None = None) -> dict[str, obj
 
     task = _task_preflight(workspace)
     if task["status"] == "ACTIVE":
+        anchor = task_authority.check(workspace)
+        if anchor is not None:
+            return {"ok": True, "status": "CURRENT_CONTINUATION", "recovery": task,
+                    "task_authority": {"provenance": anchor["provenance"], "execution_mode": anchor["contract"]["execution_mode"]},
+                    "init_invoked": False, "session_restart_required": False}
         session_hash = lifecycle.consume_bootstrap_observation(workspace, str(task["task_id"]), hook_attestation)
         owner = task["owner_session_id_hash"]
         if session_hash is not None and owner != "UNKNOWN":
@@ -330,10 +335,10 @@ def bootstrap(root: Path, hook_attestation: str | None = None) -> dict[str, obje
     assurance = lifecycle._controller_actor_assurance({})
     result.update(controller_actor_assurance=assurance, ordinary_workspace_work_allowed=True)
     if assurance != "CONTROLLER":
-        result["managed_control_authority"] = "UNAVAILABLE"
+        result["managed_control_authority"] = "PERSISTENT_TASK_INTENT" if result.get("task_authority") else "EXPLICIT_CONTROLLER_ASSERTION_REQUIRED"
         if result.get("status") == "READY":
             result["status"] = "DEFINITION_READY_ACTOR_UNKNOWN"
-        elif result.get("status") == "CURRENT_CONTINUATION":
+        elif result.get("status") == "CURRENT_CONTINUATION" and not result.get("task_authority"):
             result["status"] = "UNKNOWN"
             result["session_owner_hash_match"] = "YES"
     return result

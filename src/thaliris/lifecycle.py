@@ -16,7 +16,7 @@ import time
 import uuid
 from typing import Any
 
-from . import core, roles, runtime_identity, host_preflight
+from . import core, roles, runtime_identity, host_preflight, task_authority
 
 HOOK_COMMAND_PREFIX = "thaliris audit-hook"
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop")
@@ -103,12 +103,14 @@ _OBVIOUS_WRITE = re.compile(
 )
 _COMMAND_SEPARATOR = re.compile(r"(?:\r?\n|&&|\|\||\||&|;)")
 _CONTEXT_OPERATIONS = frozenset({
+    "task-recover-authority",
     "init", "codex-bootstrap", "codex-install", "codex-uninstall", "doctor", "stale", "milestone-check", "memory-status", "uninstall",
     "task-start", "task-abandon", "task-recover-state", "task-update", "task-show",
     "task-status", "task-get", "artifact-get", "catalog", "document-get",
     "task-artifact", "task-close", "task-promote", "recover-pending-spawn", "rollback", "version",
 })
 _ACTIVE_ROOT_CONTEXT_OPERATIONS = frozenset({
+    "task-recover-authority",
     "codex-bootstrap", "doctor", "milestone-check", "memory-status", "task-update", "task-status", "task-get", "artifact-get",
     "catalog", "document-get", "task-artifact", "task-close", "task-promote",
     "recover-pending-spawn", "task-abandon", "version",
@@ -119,10 +121,11 @@ _CHILD_CONTEXT_READS = frozenset({
     "document-get",
 })
 _CHILD_CONTEXT_MUTATIONS = frozenset({
+    "task-recover-authority",
     "task-start", "task-abandon", "task-recover-state", "task-update", "task-artifact", "task-close", "task-promote", "codex-install",
     "recover-pending-spawn", "rollback", "init", "uninstall", "codex-uninstall",
 })
-_CONTROL_STATE_TARGET = re.compile(r"(?i)\.context[\\/](?:state\.json|audit[\\/](?:lifecycle|external-recovery|abandoned)(?:[\\/][^\s\"']+)?)")
+_CONTROL_STATE_TARGET = re.compile(r"(?i)(?:\.thaliris[\\/]task-authority|\.context[\\/](?:state\.json|audit[\\/](?:lifecycle|external-recovery|abandoned)(?:[\\/][^\s\"']+)?))")
 _DURABLE_PATH_TARGET = re.compile(r"(?i)(?:^|[\s\"'=])((?:\.agent-memory|\.milestones)(?:[\\/][^\s\"'|;&<>]*)?)")
 _START_ATTESTATION_TTL_NS = 120 * 1_000_000_000
 
@@ -1191,6 +1194,19 @@ def handle_hook(root: Path, event: str, payload: object, managed_hook_abi: str |
         if event not in HOOK_EVENTS or not isinstance(payload, dict):
             return ""
         root = _hook_repository_root(root, payload)
+        anchor = task_authority.read(root)
+        if anchor is not None and (_session_id_hash(payload) in anchor["fenced_sessions"] or
+                _identity_hash(payload.get("agent_id")) in anchor["fenced_agents"]):
+            return _permission_deny("THALIRIS_ABANDONED_ACTOR") if event == "PreToolUse" else ""
+        if event == "PreToolUse":
+            try:
+                if _context_operation(payload) == "task-recover-authority":
+                    if _controller_actor_assurance(payload) == "CHILD":
+                        return _permission_deny("THALIRIS_CHILD_AUTHORITY_MUTATION")
+                elif not (_controller_actor_assurance(payload) == "UNKNOWN" and _context_operation(payload) in {"task-status", "doctor"}):
+                    task_authority.check(root)
+            except (OSError, ValueError, KeyError, TypeError):
+                return _permission_deny("THALIRIS_TASK_AUTHORITY_CONFLICT: preserve the external authority and task evidence; a Controller must resolve this conflict.")
         if event == "PreToolUse" and _offline_administration_requested(payload):
             return _permission_deny("THALIRIS_OFFLINE_ADMINISTRATION_REQUIRES_DISCONNECTED_INTEGRATION: automated actors cannot use offline administrative recovery while integration is present.")
         if payload.get("agent_id") is not None and event in {"PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop"}:
@@ -1236,7 +1252,7 @@ def handle_hook(root: Path, event: str, payload: object, managed_hook_abi: str |
             tool = payload.get("tool_name") or payload.get("tool")
             if isinstance(tool, str) and _tool_basename(tool) in _COLLABORATION_TOOL_NAMES:
                 _best_effort_record(_record_runtime_event, root, payload, event, tool)
-                if _controller_actor_assurance(payload) == "CONTROLLER":
+                if _controller_actor_assurance(payload) == "CONTROLLER" or task_authority.check(root) is not None:
                     _best_effort_record(_reconcile_lifecycle_post_tool, root, payload, _tool_basename(tool))
                 if _tool_basename(tool) in _DELEGATION_TOOL_NAMES:
                     _best_effort_record(_record_delegation_telemetry, root, payload)
@@ -1247,8 +1263,8 @@ def handle_hook(root: Path, event: str, payload: object, managed_hook_abi: str |
         # Stop has no production policy role. It neither invokes a model nor
         # blocks or corrects the Controller.
         return ""
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return ""
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return _permission_deny("THALIRIS_TASK_AUTHORITY_UNAVAILABLE") if event == "PreToolUse" and task_authority.path(root).exists() else ""
 
 
 def _best_effort_record(function: Any, *args: Any, **kwargs: Any) -> None:
@@ -1630,6 +1646,7 @@ def _lifecycle_path(root: Path, task_id: str) -> Path:
 
 
 def _load_lifecycle(path: Path, task_id: str) -> dict[str, Any]:
+    task_authority.check(path.parents[3])
     if not path.is_file():
         return {"version": LIFECYCLE_STATE_VERSION, "task_id_hash": _task_key(task_id), "children": [], "pending_authorized_spawn": None, "sequence": 0}
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -2003,7 +2020,7 @@ def _reserve_managed_spawn(root: Path, payload: dict[str, Any], expected_task_id
                 return _permission_deny("THALIRIS_ABANDONED_SESSION: this native session belongs to an abandoned managed task.")
             path = _lifecycle_path(root, task_id)
             state = _load_lifecycle(path, task_id)
-            if not nested and active_controller_owner(root, task_id) != session_id_hash:
+            if not nested and task_authority.check(root) is None and active_controller_owner(root, task_id) != session_id_hash:
                 return _permission_deny("THALIRIS_ACTIVE_OWNER_REQUIRED: ACTIVE spawn requires the owning Hook session.")
             parent = _bound_child_record(state, payload) if nested else None
             if nested and (parent is None or parent.get("depth") != 1 or not roles.delegation_allowed(parent["role"], role)):
@@ -2154,7 +2171,7 @@ def _record_subagent_start(root: Path, payload: dict[str, Any]) -> bool:
             return False
         path = _lifecycle_path(root, task_id)
         state = _load_lifecycle(path, task_id)
-        if active_controller_owner(root, task_id) != session_id_hash:
+        if task_authority.check(root) is None and active_controller_owner(root, task_id) != session_id_hash:
             return False
         state["sequence"] = int(state.get("sequence", 0)) + 1
         child_hash = _identity_hash(agent_id)
@@ -2360,7 +2377,7 @@ def _reconcile_lifecycle_post_tool(root: Path, payload: dict[str, Any], tool: st
         if nested:
             if _bound_child_record(state, payload) is None:
                 return
-        elif session_hash is None or active_controller_owner(root, task_id) != session_hash:
+        elif session_hash is None or (task_authority.check(root) is None and active_controller_owner(root, task_id) != session_hash):
             return
         changed = observed = False
         if tool == "spawn_agent":
@@ -2786,7 +2803,7 @@ def _context_operation(payload: dict[str, Any]) -> str | None:
     return _context_call(payload)[0]
 
 
-def _direct_context_option(payload: dict[str, Any], names: set[str]) -> str | None:
+def _direct_context_option(payload: dict[str, Any], names: set[str], *, digest_only: bool = True) -> str | None:
     """Read a scalar option from the already recognized direct CLI invocation."""
     command = _bash_command(payload)
     if command is None or _context_call(payload)[0] is None:
@@ -2809,7 +2826,7 @@ def _direct_context_option(payload: dict[str, Any], names: set[str]) -> str | No
             for name in names:
                 if option.startswith(name + "="):
                     values.append(option[len(name) + 1:])
-    return values[0] if len(values) == 1 and re.fullmatch(r"[0-9a-f]{64}", values[0]) else None
+    return values[0] if len(values) == 1 and values[0] and (not digest_only or re.fullmatch(r"[0-9a-f]{64}", values[0])) else None
 
 
 def _compound_invalid_state_mutation(payload: dict[str, Any]) -> bool:
@@ -2979,7 +2996,7 @@ def _child_pre_tool_output(root: Path, payload: dict[str, Any]) -> str:
         if target not in binding.allowed_delegation_targets:
             return _permission_deny("THALIRIS_ROLE_SESSION_DELEGATION: only Investigator delegation is permitted.")
     operation, context_targets = _context_call(payload)
-    if operation in _CHILD_CONTEXT_MUTATIONS and binding is not None and not binding.controller_control_state_modification_allowed:
+    if operation in _CHILD_CONTEXT_MUTATIONS:
         target = f"thaliris {operation}"
         _best_effort_record(_record_protocol_deviation, root, payload, operation=operation, target=target, blocked=True)
         return _permission_deny(f"THALIRIS_ROLE_SESSION_CONTROL_STATE_MUTATION: a {role_names} session may not modify Controller-owned control state.")
@@ -3197,7 +3214,11 @@ def role_catalog_session_status(root: Path, session_hash: str) -> str:
 
 
 def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None = None, *, bridge_sha256: str | None = None, event: str = "PreToolUse") -> str:
-    if _controller_actor_assurance(payload) != "CONTROLLER":
+    explicit = _direct_context_option(payload, {"--authority-contract"}, digest_only=False)
+    contract_path = Path(explicit) if explicit else None
+    if contract_path is not None and not contract_path.is_absolute():
+        contract_path = Path(str(payload.get("cwd") or root)) / contract_path
+    if _controller_actor_assurance(payload) != "CONTROLLER" and not (explicit and _controller_actor_assurance(payload) == "UNKNOWN"):
         return _permission_deny("THALIRIS_CONTROLLER_ACTOR_UNKNOWN") if event == "PreToolUse" else ""
     session_hash = _session_id_hash(payload)
     if session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI:
@@ -3219,6 +3240,8 @@ def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_h
         "controller_bridge_sha256": bridge_sha256,
         "created_at_ns": now,
         "expires_at_ns": now + _START_ATTESTATION_TTL_NS,
+        "authority_contract_sha256": task_authority.digest(contract_path) if contract_path else None,
+        "authority_provenance": "CONTROLLER_ASSERTED_HUMAN_INSTRUCTION" if explicit else "LEGACY_SYNTHETIC_CONTROLLER",
     }
     with core._lock(root):
         _write_capture(_start_attestation_path(root, token), record)
@@ -3231,7 +3254,7 @@ def _issue_task_start_attestation(root: Path, payload: dict[str, Any], managed_h
 
 
 def _issue_task_abandon_attestation(root: Path, payload: dict[str, Any], managed_hook_abi: str | None = None) -> str:
-    if _controller_actor_assurance(payload) != "CONTROLLER":
+    if _controller_actor_assurance(payload) != "CONTROLLER" and not (_controller_actor_assurance(payload) == "UNKNOWN" and task_authority.check(root) is not None):
         return _permission_deny("THALIRIS_CONTROLLER_ACTOR_UNKNOWN")
     session_hash = _session_id_hash(payload)
     if session_hash is None or managed_hook_abi != MANAGED_HOOK_ABI:
@@ -3315,9 +3338,9 @@ def consume_bootstrap_observation(root: Path, task_id: str, token: str | None) -
     return match.group(1)
 
 
-def consume_task_start_attestation(root: Path, token: str | None, controller_bridge_sha256: str | None = None) -> str:
+def consume_task_start_attestation(root: Path, token: str | None, controller_bridge_sha256: str | None = None, authority_contract_sha256: str | None = None) -> str:
     """Consume one current-hook, current-session bearer attestation."""
-    if _controller_actor_assurance({}) != "CONTROLLER":
+    if _controller_actor_assurance({}) != "CONTROLLER" and authority_contract_sha256 is None:
         raise ValueError("THALIRIS_CONTROLLER_ACTOR_UNKNOWN")
     error = ValueError("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
     if not isinstance(token, str):
@@ -3341,6 +3364,7 @@ def consume_task_start_attestation(root: Path, token: str | None, controller_bri
             and record.get("adapter_protocol_version") == CODEX_ADAPTER_PROTOCOL_VERSION
             and record.get("managed_hook_abi") == MANAGED_HOOK_ABI
             and record.get("controller_bridge_sha256") == controller_bridge_sha256
+            and record.get("authority_contract_sha256") == authority_contract_sha256
             and type(record.get("created_at_ns")) is int
             and type(record.get("expires_at_ns")) is int
             and record["created_at_ns"] <= time.time_ns() <= record["expires_at_ns"]
@@ -3356,7 +3380,7 @@ def consume_task_start_attestation(root: Path, token: str | None, controller_bri
 
 def consume_task_abandon_attestation(root: Path, token: str | None) -> tuple[str, str]:
     """Consume one hook-issued recovery proof and return session and proof hashes."""
-    if _controller_actor_assurance({}) != "CONTROLLER":
+    if _controller_actor_assurance({}) != "CONTROLLER" and task_authority.check(root) is None:
         raise ValueError("THALIRIS_CONTROLLER_ACTOR_UNKNOWN")
     error = ValueError("MANAGED_CURRENT_SESSION_NOT_ATTESTED")
     match = re.fullmatch(r"v1\.([0-9a-f]{64})\.([A-Za-z0-9_-]{16,128})", token or "")
@@ -3391,7 +3415,10 @@ def consume_task_abandon_attestation(root: Path, token: str | None) -> tuple[str
 
 
 def _write_capture(path: Path, state: dict[str, Any]) -> None:
+    if path.parent.name == "lifecycle" and path.parent.parent.name == "audit":
+        task_authority.check(path.parents[3])
     core._atomic_write(path, (json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8"))
+    task_authority.capture(path, state)
 
 
 def _normalized_agent_role(tool_input: dict[str, Any], payload: dict[str, Any]) -> str:
@@ -3491,8 +3518,15 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
         return _permission_deny("THALIRIS_OFFLINE_ADMINISTRATION_REQUIRES_DISCONNECTED_INTEGRATION: automated actors have no offline recovery grant while managed hooks are present.")
     state_status, _task_id = managed_task_state(root)
     operation = _context_operation(payload) if normalized in _CONTROLLER_EXECUTION_TOOL_NAMES else None
+    if operation == "task-recover-authority":
+        return "" if _controller_actor_assurance(payload) == "UNKNOWN" else _permission_deny("THALIRIS_CHILD_AUTHORITY_MUTATION")
 
-    if _controller_actor_assurance(payload) != "CONTROLLER":
+    anchor = task_authority.check(root)
+    explicit_start = operation == "task-start" and _direct_context_option(payload, {"--authority-contract"}, digest_only=False) is not None
+    target = _control_state_target(payload)
+    if (anchor is not None or _controller_actor_assurance(payload) == "CONTROLLER") and target is not None and (_obvious_write_attempt(payload) or _obvious_mutation_tool(normalized)):
+        return _permission_deny("THALIRIS_CONTROL_STATE_DIRECT_WRITE: use explicit checked Thaliris operations.")
+    if _controller_actor_assurance(payload) != "CONTROLLER" and anchor is None and not explicit_start:
         # Codex 0.159.2 Review delegates share the owner's session_id and omit
         # agent fields. Session matches and field absence are not Root proof.
         # Keep ordinary work available; withhold only dangerous control grants.
@@ -3547,7 +3581,7 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
             owner = active_controller_owner(root, _task_id)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             owner = None
-        if owner is None or owner != _session_id_hash(payload):
+        if anchor is None and (owner is None or owner != _session_id_hash(payload)):
             if normalized in {"list_agents", "wait_agent"} or operation in {
                 "doctor", "milestone-check", "memory-status", "task-status", "task-get",
                 "artifact-get", "catalog", "document-get", "version",
@@ -3558,10 +3592,20 @@ def _pre_tool_output(payload: dict[str, Any], root: Path | None = None, managed_
             _best_effort_record(_record_controller_guard_event, root, payload, "CHILD_REUSE", "blocked")
             return _permission_deny("THALIRIS_FRESH_ROLE_SESSION_REQUIRED: continue work with a new named-role spawn_agent(fork_turns=\"none\") handoff.")
         if normalized == "spawn_agent":
+            if anchor is not None:
+                mode = anchor["contract"]["execution_mode"]
+                if mode == "single-agent":
+                    return _permission_deny("THALIRIS_SINGLE_AGENT_TASK: the human instruction selected no children.")
+                if mode == "controller-direct" and _managed_spawn_role(payload) in {"implementer", "focused-implementer"}:
+                    return _permission_deny("THALIRIS_CONTROLLER_DIRECT_TASK: implementation belongs to the Controller; only auxiliary roles apply.")
             tool_input = _delegation_input(payload)
             if tool_input.get("fork_turns") != "none":
                 return _permission_deny(f"THALIRIS_ISOLATION_REQUIRED: spawn a fresh {_native_role_names()} session explicitly with fork_turns=\"none\".")
             return _reserve_managed_spawn(root, payload, _task_id)
+        if anchor is not None and anchor["contract"]["execution_mode"] in {"controller-direct", "single-agent"}:
+            if operation in {"task-start", "init", "rollback", "task-recover-state"}:
+                return _permission_deny("THALIRIS_TASK_AUTHORITY_REPLACEMENT_REQUIRES_CONTROLLER_DECISION")
+            return ""
         if normalized in _ROOT_MANAGED_TOOL_NAMES:
             _best_effort_record(_record_controller_guard_event, root, payload, normalized, "allowed")
             return ""
@@ -3888,4 +3932,5 @@ def task_abandon(
                 or _read_abandoned_spawn_provenance(root) != (provenance_complete, spawn_provenance)):
             raise ValueError("task-abandon child fence verification failed")
         state_path.unlink()
+        task_authority.checkpoint(root)
     return {"ok": True, "status": "ABANDONED", "task_id": task_id, "revision": revision, "archive": str(archive.relative_to(root)).replace("\\", "/"), "lifecycle_status": "RECOVERED_INCOMPLETE"}

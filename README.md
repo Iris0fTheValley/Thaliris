@@ -8,6 +8,9 @@ Thaliris 是一个 Git-native 的机械上下文与生命周期层。它不运�
 0.4.2 runtime drift, current Host identity limits, and offline recovery:
 [Runtime drift and recovery](docs/thaliris-runtime-recovery.md).
 
+Persistent human task intent, reconnect recovery, explicit Controller-direct
+and single-agent modes: [Task authority](docs/thaliris-task-authority.md).
+
 ## 生产信息流
 
 ```text
@@ -155,12 +158,14 @@ state 与 delta。两者都只提供事实，不成为 correctness、ownership �
 
 Git repository 中的 substantive work 应先运行已安装的
 `thaliris-run.cmd --root <repo> codex-bootstrap`。若返回 READY，在同一 session
-将返回的 bootstrap receipt 传给 `thaliris task-start "goal" --bootstrap-receipt <receipt>`；
-当前 Host Hook 提供一次性的 task-start attestation。
+将返回的 bootstrap receipt 传给 `thaliris task-start "goal" --bootstrap-receipt <receipt> --authority-contract <json>`。
+DEFINITION_READY_ACTOR_UNKNOWN 也可用此显式 Controller 操作建立任务意图；
+Host Root 身份仍 UNKNOWN。外部授权保存 human instruction、boundary、invariants、
+acceptance、execution_mode，断线重连无需重复 Root 证明。
 
 ```text
 thaliris init
-thaliris task-start "goal" --bootstrap-receipt <receipt>
+thaliris task-start "goal" --bootstrap-receipt <receipt> --authority-contract <json>
 thaliris task-status
 thaliris task-get OBJECT_ID
 thaliris task-update --role controller --base-revision N --input update.json
@@ -170,6 +175,7 @@ thaliris document-get .agent-memory/model-chosen/a.md .milestones/current/status
 thaliris task-promote --role controller --base-revision N --input promotion.json
 thaliris task-close --base-revision N
 thaliris recover-pending-spawn HANDOFF_ID
+thaliris task-recover-authority --expected-authority-sha256 <hash> --reason "recover interrupted work"
 thaliris stale
 thaliris rollback BACKUP_ID
 thaliris doctor

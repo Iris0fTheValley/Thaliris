@@ -35,10 +35,13 @@ Codex 0.159.2's immutable source supplies `agent_id`/`agent_type` on native
 ThreadSpawn PreToolUse/PostToolUse events. Its shared `session_id` is inherited
 by descendants. Built-in Review delegates use another source variant and omit
 agent fields while sharing that session. Thus absence of fields or a matching
-owner session alone cannot authorize Controller control. Current admission
-leaves actor assurance UNKNOWN and does not mint or consume Controller
-attestations. Definition readiness is reported as
-`DEFINITION_READY_ACTOR_UNKNOWN`. Bound named children retain their existing
+owner session alone cannot authorize Controller control. Actor assurance
+remains UNKNOWN. An explicit Controller selection of actual human task intent
+can establish a persistent external anchor under the accepted governance
+boundary; the Hook witnesses the operation, never human authorship. Definition
+readiness remains `DEFINITION_READY_ACTOR_UNKNOWN` until that selection.
+See [persistent task authority](thaliris-task-authority.md) for admission,
+reconnect recovery, tampering protection and execution modes. Bound children retain their existing
 identity, isolation, and readonly rules. The fixture
 `codex-0159-actor-source-contract.json` describes upstream serialization, not a
 live capture. See [the immutable runtime source](https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/codex-rs/core/src/hook_runtime.rs)

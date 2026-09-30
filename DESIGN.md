@@ -12,6 +12,16 @@ Core provides durable records, identities, revisions and compare-and-swap,
 atomic writes and rollback, provenance, objective freshness observations,
 Artifact addressing, task-surface observations, and explicit retrieval.
 
+The Codex adapter also preserves explicitly selected human task intent in an
+external governance anchor. Root identity and human prompt authorship remain
+UNKNOWN; explicit task selection is a semantic Controller decision, not a
+UserPromptSubmit inference. Continuation survives session/daemon interruption.
+Known children, readonly and fenced actors cannot alter authority. Explicit
+Controller-direct and single-agent modes override the default role split;
+absent an explicit override, existing routing remains. See
+[Persistent task authority](docs/thaliris-task-authority.md) for the contract,
+recovery, security baseline and shared-OS limitations.
+
 ## Production information flow
 
 ```text

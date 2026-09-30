@@ -706,6 +706,37 @@ Codex is the runtime. Thaliris provides durable records, identities, revisions,
 hashes, provenance, objective freshness observations, explicit retrieval, and
 native lifecycle binding. It is not a semantic decision engine.
 
+Task authority is durable human task intent, recorded by an explicit Controller
+operation under a governance boundary. `task-start --authority-contract <json>`
+selects the actual human instruction, boundary, invariants, acceptance, and
+execution mode (`delegated`, `controller-direct`, or `single-agent`). Never
+infer human authorship from UserPromptSubmit, field absence, session equality,
+PID, environment, or SessionSource. Host actor assurance remains UNKNOWN.
+Known children, readonly roles, and fenced actors cannot establish, expand,
+rewrite, recover, or reactivate authority. Unrecognized delegates and shared
+OS access are not universally authenticated or isolated by this contract.
+
+The external anchor under the user's `.thaliris/task-authority/` preserves
+project/task identity, goal, intent, lifecycle evidence and the original
+security baseline independently of mutable repository configuration. Ordinary
+continuation survives turns, network, Hook, session and daemon interruption;
+it requires no repeat Root identity proof. `task-recover-authority` with the
+exact external authority hash and a reason archives conflicts, restores the
+recorded bytes and fences known old children. It retains death proof UNKNOWN
+and cannot bless changed security bytes or remove fences. Scope, goal,
+acceptance, execution mode, unfencing or a new security baseline require an
+actual superior human decision; child prompts, state or config cannot grant it.
+Authority ends on closure, human revocation, Controller abandonment or replacement.
+
+Explicit human Controller-direct intent overrides the default role split:
+Controller may read, edit, test, verify, commit and finish; fresh auxiliary
+roles apply only when semantically useful, with no implementation spawn.
+Explicit single-agent/no-children intent allows ordinary Codex execution and
+closure with no children. Overrides are persisted task intent, never inferred
+from convenience. Without an explicit override, the default routing and child
+completion contract below remain unchanged. Fresh isolation, reviewer/verifier
+readonly and explicit Astra authorization remain in force in every mode.
+
 The Controller is the sole task-specific semantic router. For every task,
 whether ACTIVE or degraded, it selects the minimum necessary fresh roles.
 Roles are capabilities, not mandatory workflow stages. A straightforward,
@@ -979,7 +1010,7 @@ own optional `index_update` in the same `task-promote` call. Core does not
 generate INDEX content; it validates the CAS, references, and atomic commit.
 
 With NO_TASK, Thaliris leaves ordinary Codex tool use and spawn behavior
-transparent. With positive Host actor assurance, during an ACTIVE managed task
+transparent. With persistent task intent or positive Host actor assurance, during an ACTIVE delegated managed task
 the persistent Controller uses only
 native spawn/wait/list/interrupt operations and an explicit allow-set of
 trusted direct `thaliris` runtime commands. `init`, `codex-install`, `uninstall`, `rollback`, a
@@ -1093,11 +1124,12 @@ block. Bootstrap confirms repository identity, checks
 existing task state, and establishes missing project definitions without
 reinstalling Host hooks or profiles. On READY, use only its opaque
 `task_start_receipt` in a direct `task-start --bootstrap-receipt` call in this
-session; the current Host Hook must supply one-shot task-start attestation.
-On DEFINITION_READY_ACTOR_UNKNOWN, definition configuration is ready but managed
-Controller authority is unavailable. Do not retry task-start or manufacture a
-Root receipt. Ordinary reads, source edits, focused tests, investigation, and
-repair continue through the authorized roles with managed assurance UNKNOWN.
+session with `--authority-contract <json>`; the current Hook witnesses the
+explicit Controller operation without proving native Root or human authorship.
+On DEFINITION_READY_ACTOR_UNKNOWN, definition configuration is ready; select
+the actual human task instruction and contract in this explicit start operation.
+Never manufacture a Root receipt. Ordinary work and explicit task admission
+are governed by the human instruction with Host actor assurance UNKNOWN.
 Codex 0.159.2 ThreadSpawn fields positively identify children; built-in Review
 can share the owner session and omit them. Absence or a matching session alone
 is not Controller proof. Known bound child and readonly rules still apply.
@@ -1918,7 +1950,7 @@ def _global_agents_block(executable: Path | None = None, executable_sha256: str 
     script = _codex_home(codex_home) / HOST_RUN_SCRIPT_NAME
     quoted = str(script).replace("'", "''")
     trusted_route = f"`& '{quoted}' --root <repo> codex-bootstrap`" if os.name == "nt" else f"`'{quoted}' --root <repo> codex-bootstrap`"
-    task_route = f"`& '{quoted}' --root <repo> task-start <goal> --bootstrap-receipt <receipt>`" if os.name == "nt" else f"`'{quoted}' --root <repo> task-start <goal> --bootstrap-receipt <receipt>`"
+    task_route = f"`& '{quoted}' --root <repo> task-start <goal> --bootstrap-receipt <receipt> --authority-contract <json>`" if os.name == "nt" else f"`'{quoted}' --root <repo> task-start <goal> --bootstrap-receipt <receipt> --authority-contract <json>`"
     return f"""<!-- thaliris:global:begin -->
 ## Thaliris project startup
 
@@ -1930,14 +1962,31 @@ If you are a managed child inside an ACTIVE task, follow the explicit handoff;
 do not run project bootstrap, task-start, or task-abandon for the parent's
 task. The owning root Controller handles startup, admission, and continuation
 decisions.
-On READY, pass its `task_start_receipt` as `<receipt>` in {task_route}
-in this session; the current Hook must attest
-task start. On DEFINITION_READY_ACTOR_UNKNOWN, the definition is ready but
-managed Controller authority is unavailable. Continue ordinary source work,
-reads, investigation, focused tests, and repair through the authorized roles
-with assurance UNKNOWN. Do not retry task-start or invent Root proof from
-absent child fields, a matching owner session, inherited environment, PID,
-process ancestry, or SessionSource. Known bound child/readonly rules remain.
+On READY or DEFINITION_READY_ACTOR_UNKNOWN, pass its `task_start_receipt` as
+`<receipt>` in {task_route}. The JSON selects the actual human instruction,
+boundary, invariants, acceptance and execution_mode (delegated by default;
+controller-direct or single-agent only on explicit human instruction).
+This explicit Controller assertion establishes persistent task intent outside
+the repo under `.thaliris/task-authority/`; it is governance, not mechanical
+human authentication. Host Root identity remains UNKNOWN. UserPromptSubmit,
+absent fields, session equality, environment, PID and SessionSource mint no
+authority. Known child, readonly, abandoned and fenced actors cannot create,
+expand, rewrite or reactivate authority. Unknown delegates/shared OS remain
+outside universal mechanical authentication. Ordinary continuation requires no
+new Root proof after turn/network/Hook/session/daemon interruption. Authority
+ends on human revocation, task closure, Controller abandonment/replacement.
+Conflict recovery uses `task-recover-authority --expected-authority-sha256
+<exact external hash> --reason <reason>`: archive evidence, restore recorded
+bytes and original security baseline, fence known old children; death proof
+may remain UNKNOWN. It cannot bless changed security bytes or remove fences.
+Changing goal, scope, acceptance, mode, unfencing or security baseline requires
+an actual superior human decision. Children cannot authorize it by prompt,
+state or config. Explicit Controller-direct mode permits Controller reads,
+edits, tests, verification, Git and completion with useful fresh auxiliary
+roles only. Explicit single-agent/no-children mode permits ordinary Codex work
+and completion without children. With no explicit override, retain default
+Controller routing. Fresh isolation, reviewer/verifier readonly, and explicit
+Astra authorization remain in force.
 Use this installed command for later Thaliris operations. On
 CURRENT_CONTINUATION, continue or explicitly abort the owning task using the
 exact `task-abandon` packet. Recover any unbound pending spawn with trusted
@@ -2671,8 +2720,12 @@ def task_start(
     input_file: str | None,
     hook_attestation: str | None = None,
     controller_bridge_sha256: str | None = None,
+    authority_contract: str | None = None,
 ) -> dict[str, object]:
     root = core._repo_root(root)
+    from . import task_authority
+    task_authority.check(root)
+    intent = task_authority.contract(authority_contract) if authority_contract else None
     definition = _project_definition_facts(root)
     if definition["project_definition_present"] != "YES":
         bootstrap = {
@@ -2720,7 +2773,8 @@ def task_start(
     bridge = _controller_bridge()
     if hook_attestation is not None and controller_bridge_sha256 != bridge["controller_bridge_sha256"]:
         return {"ok": False, "status": "CONTROLLER_BRIDGE_REQUIRED", "expected_controller_bridge_sha256": bridge["controller_bridge_sha256"], "host_instruction_activation": "UNKNOWN"}
-    session_hash = lifecycle.consume_task_start_attestation(root, hook_attestation, controller_bridge_sha256)
+    session_hash = lifecycle.consume_task_start_attestation(root, hook_attestation, controller_bridge_sha256,
+        task_authority.digest(Path(authority_contract)) if authority_contract else None)
     if hook_attestation is not None:
         catalog_status = lifecycle.role_catalog_session_status(root, session_hash)
         if catalog_status == "NEW_ROLE_CATALOG_IDENTITY_NOT_ACTIVE":
@@ -2732,12 +2786,21 @@ def task_start(
         "HOST_EXPLICIT_BLOCKING_WAIT": host_explicit_blocking_wait().get("status"),
         "selected_continuation_mode": mode,
     }
-    if mode == "UNAVAILABLE":
+    if mode == "UNAVAILABLE" and intent is None:
         return {"ok": False, "status": "MANAGED_CONTINUATION_UNAVAILABLE", "managed_readiness": readiness}
+    if mode == "UNAVAILABLE" and intent is not None:
+        # Unknown Host scheduling capability is not revocation of selected
+        # human task intent. Keep the observation unknown; never invent a
+        # wait cap or an automatic reentry capability from this grant.
+        readiness["status"] = "UNKNOWN"
     result = core.task_start(root, goal, milestone, input_file, actor="controller")
+    if intent is not None:
+        task_authority.establish(root, core._load_state(root), intent, session_hash)
     if session_hash is not None:
         lifecycle.record_task_start_owner(root, str(result["task_id"]), session_hash)
     result["managed_readiness"] = {**readiness, **_activation_fields(root), "CONTROLLER_ACTIVATION_BRIDGE_ACTIVE": "YES" if hook_attestation is not None else "NOT_APPLICABLE", "HOST_INSTRUCTION_ACTIVE": "UNKNOWN", "controller_activation_bridge": "ACTIVE" if hook_attestation is not None else "NOT_APPLICABLE", "host_instruction_activation": "UNKNOWN", "role_catalog_session_status": catalog_status if hook_attestation is not None else "NOT_APPLICABLE"}
+    if intent is not None:
+        result["task_authority"] = {"provenance": "CONTROLLER_ASSERTED_HUMAN_INSTRUCTION", "host_actor_assurance": "UNKNOWN", "execution_mode": intent["execution_mode"]}
     return result
 
 
@@ -2946,11 +3009,18 @@ def bootstrap_check(root: Path) -> dict[str, object]:
 
 
 def task_close(root: Path, base_revision: int) -> dict[str, object]:
+    from . import task_authority
+    anchor = task_authority.check(core._repo_root(root))
     state = core.task_show(root)["state"]
     task_id = str(state["task_id"])
-    if not lifecycle.qualifying_child_completed(core._repo_root(root)):
+    override = anchor is not None and anchor["contract"]["execution_mode"] in {"controller-direct", "single-agent"}
+    if override and lifecycle.managed_dependency_pending(core._repo_root(root)):
+        raise ValueError("task-close requires no pending or active managed children")
+    if not override and not lifecycle.qualifying_child_completed(core._repo_root(root)):
         raise ValueError("task-close requires an authorized explicit handoff, a matching native SubagentStart/Stop identity, and no pending or active managed work; after child completion, use list_agents to observe an exact name-bound native Completed status")
-    return core.task_close(root, base_revision, expected_task_id=task_id)
+    result = core.task_close(root, base_revision, expected_task_id=task_id)
+    task_authority.checkpoint(core._repo_root(root))
+    return result
 
 
 def audit_hook(root: Path, event: str, payload: object, managed_hook_abi: str | None = None) -> str:

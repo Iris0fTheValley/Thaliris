@@ -50,8 +50,8 @@ evidence, Executor results, Reviewer findings, and Specialist challenges. This
 remains private working-context awareness; it creates no candidate register,
 saved admission state, counter, score, threshold, extra checkpoint, or
 interruption of an active Workstream. Executors return their normal result and
-do not track candidates, spawn Curator, or add a separate memory-governance
-section to FINAL.
+do not track candidates, spawn Curator, maintain durable INDEX navigation, or
+add a separate memory-governance section to FINAL.
 
 Near the task's natural end, as part of ordinary closure before `task-close`,
 the Controller decides whether evidence established, revised, invalidated, or
@@ -59,8 +59,8 @@ materially clarified reusable project knowledge and whether a concise, sourced
 memory entry would improve, constrain, or accelerate future decisions or
 recovery. This is not limited to facts a future agent would otherwise need to
 reinvestigate. With selected candidates, Root supplies a fresh Curator with the
-facts and supporting evidence, exact relevant prior memory, and canonical sources needed to reconcile
-them. With no candidates or no future value, it skips Curator; small ordinary
+facts and supporting evidence, exact relevant prior memory and INDEX navigation,
+and canonical sources needed to reconcile them. With no candidates or no future value, it skips Curator; small ordinary
 tasks can skip it entirely. Task size or architecture work alone never makes
 Curator mandatory.
 
@@ -70,7 +70,10 @@ evidence and avoid duplicating canonical text. Memory can act as a future-Agent
 recovery entrance by linking or summarizing easy-to-locate canonical material,
 or by compressing a decision basis spread across code, Host, history, or design.
 Curator reconciles selected candidates with the supplied sources and can report
-that existing knowledge is sufficient and no write is needed. Implementers
+that existing knowledge is sufficient and no write is needed. When adding,
+revising, merging, splitting, narrowing, superseding, or deleting selected
+memory, Curator also judges whether relevant INDEX navigation needs an update
+and updates it when needed. Implementers
 keep product and protocol documentation and the README aligned with current
 behavior. Compatibility or specialized profiles may exist without becoming
 mandatory workflow stages.
@@ -142,8 +145,15 @@ reads an Artifact body for automatic propagation. The Controller explicitly
 retrieves it and selects any material for a later handoff.
 
 Durable navigation uses `catalog` and explicit exact-path `document-get` only.
-Legacy semantic metadata is opaque compatibility data, never search, display,
-or routing authority.
+The root INDEX maps are model-maintained semantic navigation, not bare file
+listings. Their concise descriptions say what linked knowledge covers, when it
+is useful to read, and current versus historical applicability where useful;
+Root uses them to select exact recovery documents, with currently relevant
+knowledge discoverable first. Models choose natural paths, hierarchy, and
+wording without a fixed schema or taxonomy. Core never interprets, generates,
+or rebuilds INDEX content; it performs only mechanical path, CAS, size, link,
+and atomic-write checks. Legacy semantic metadata is opaque compatibility data,
+never search, display, or routing authority.
 SessionStart only points to the two root INDEX paths; it does not inject their
 contents. Before starting managed work, the Controller explicitly reads the
 root navigation and creates a minimal thin INDEX first if one is missing.
@@ -152,10 +162,11 @@ is insufficient, freshness is invalid, or resume/compact requires recovery.
 
 Milestones are ordinary documents. Curator is an optional knowledge-enhancement
 role, not a mandatory task stage. `task-promote` stores what the Controller
-explicitly selected without an epistemic qualification gate.
-When a promotion changes durable navigation, the Controller should provide its
-own optional `index_update` in the same `task-promote` call. Core does not
-generate INDEX content; it validates CAS, references, and the atomic commit.
+explicitly selected without an epistemic qualification gate. When a
+`task-promote` call changes durable navigation, the Controller provides its
+optional `index_update` in the same call. Curator maintains relevant memory
+navigation during curation. Core checks paths, CAS, size, links, and atomic
+commit; it does not generate INDEX content.
 If Codex explicitly reports a native spawn failure before `SubagentStart`, the
 Controller may call `thaliris recover-pending-spawn HANDOFF_ID` for that exact
 handoff; Core never infers failure from a missing event, timeout, or retry.

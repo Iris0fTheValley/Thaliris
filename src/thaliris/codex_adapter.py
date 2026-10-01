@@ -878,7 +878,8 @@ working context; do not create a candidate register, persisted admission state,
 score, counter, or threshold, add a separate checkpoint, or interrupt an active
 Workstream for memory review. Executors return their normal distilled result,
 evidence, and decision-changing information. They do not track memory
-candidates, spawn Curator, or add a durable-governance product to FINAL.
+candidates, spawn Curator, maintain durable INDEX navigation, or add a
+durable-governance product to FINAL.
 
 Near the task's natural end, as part of ordinary closure before `task-close`,
 the Controller decides whether the task established, revised, invalidated, or
@@ -887,8 +888,8 @@ retrievable memory entry would improve, constrain, or accelerate future
 decisions or recovery. This is not limited to facts a future agent would
 otherwise need to reinvestigate. When selected candidates exist, the Controller
 hands a fresh Curator the selected candidates, their facts and
-supporting evidence, exact relevant prior memory, and canonical sources/documents
-needed to reconcile them. If there are no
+supporting evidence, exact relevant prior memory and INDEX navigation, and
+canonical sources/documents needed to reconcile them. If there are no
 candidates or no future decision value, finish without Curator; small ordinary
 tasks can skip it entirely. No task-size or architecture-work trigger makes it
 mandatory.
@@ -900,8 +901,11 @@ agent recovery entrance may summarize and link easy-to-locate canonical
 material or preserve the decision basis that is spread across code, Host,
 history, or design; do not impose a fixed split between memory and formal
 documentation. Curator reconciles selected candidates with supplied prior
-memory and canonical sources. If existing material is already sufficient, it
-returns an explicit no-write conclusion. Keep `.agent-memory/` concise,
+memory, INDEX navigation, and canonical sources. If existing material is
+already sufficient, it returns an explicit no-write conclusion. When Curator
+adds, revises, merges, splits, narrows, supersedes, or deletes selected memory,
+it also judges whether relevant INDEX navigation needs a semantic update.
+Keep `.agent-memory/` concise,
 traceable, and linked; detailed raw evidence remains in canonical sources,
 Artifacts, Git, or rollout records, with only the basis and references needed
 for future recovery in memory. Implementer roles keep product/protocol
@@ -1049,8 +1053,18 @@ Status is a bounded mechanical record label. Legacy durable Markdown Status meta
 as opaque compatibility data, never routing authority. Freshness reports only FRESH, PARTIAL, RECORDED, CHANGED, MISSING, or
 UNKNOWN mechanical facts. `.agent-memory/INDEX.md` and
 `.milestones/INDEX.md` are model-maintained thin global maps of the durable
-tree; Core does not reconstruct a second catalog by recursively scanning the
-filesystem or impose a taxonomy. SessionStart only points to these maps; before
+tree and semantic navigation, not bare file listings. Keep their descriptions
+concise: what linked knowledge covers, when it is useful to read, and current
+versus historical or superseded applicability where useful. The Controller
+uses these descriptions to select exact documents for recovery with
+`document-get`. Keep currently relevant knowledge discoverable first and
+retain historical links only when they help explain earlier scope or
+decisions. Models choose natural paths, hierarchy, and wording; there is no
+fixed schema or taxonomy, status classifier, or state machine. Core does not
+interpret INDEX contents, generate their text, or rebuild a catalog by
+recursively scanning the filesystem. It
+performs only mechanical path, compare-and-swap, size, link, and atomic-write
+checks. SessionStart only points to these maps; before
 `task-start`, the Controller explicitly reads the root navigation, and if a map
 is missing it establishes a minimal thin INDEX first. During an active task,
 navigation is not reread automatically; the Controller may reread it when the
@@ -1327,16 +1341,31 @@ as an optional repo-relative Artifact and return its pointer with a short result
 
 Use only on the Controller's fresh handoff with selected reusable-knowledge
 candidates. The handoff supplies selected facts, exact relevant prior memory,
-and canonical sources/documents needed for reconciliation. Task size or
+relevant INDEX navigation, and canonical sources/documents needed for
+reconciliation. Task size or
 architecture work alone never triggers Curator, and Curator is not a mandatory
 stage. Do not automatically summarize a task, select a next role, or route a
 result. Curator output is an ordinary result or Artifact; Core has no Curator
 state machine.
 
 Reconcile only Controller-selected candidates in `.agent-memory/` and their
-relevant links in `.agent-memory/INDEX.md`, using the supplied supporting
-evidence, prior memory, and canonical sources/documents. Do not blindly append or duplicate canonical
-text. A concise recovery entrance may summarize and link easy-to-locate
+relevant links in INDEX entries explicitly supplied in the handoff, using the
+supporting evidence, prior memory, and canonical sources/documents supplied there.
+When adding, revising, merging, splitting, narrowing, superseding, or deleting
+selected memory, also judge whether its relevant INDEX navigation needs a
+semantic update; update it when that helps the Controller select the right
+recovery documents, and leave it unchanged when it remains accurate. Keep
+INDEX entries concise and semantic: what linked knowledge covers, when it is
+useful to read, and current versus historical or superseded applicability where
+useful. Keep currently relevant knowledge discoverable first and retain
+historical links when they help explain earlier scope or decisions. Choose
+natural paths, hierarchy, and wording for the material; do not impose a fixed
+schema, taxonomy, status classifier, or state machine. Do not rebuild a
+directory listing or catalog, write comprehensive history, or duplicate
+memory bodies in INDEX files. Core performs only mechanical path,
+compare-and-swap, size, link, and atomic-write checks; it never interprets or
+generates INDEX content. Do not blindly append or duplicate canonical text. A
+concise recovery entrance may summarize and link easy-to-locate
 material or preserve a decision basis spread across code, Host, history, or
 design; do not impose a fixed split between memory and formal documentation. If
 the selected material is already sufficient, explicitly report that existing
@@ -1360,15 +1389,22 @@ recovery in memory.
 
 ## Durable knowledge loop
 
-At task start, the Controller reads the root INDEX map and then makes an exact
-`document-get` request for selected linked entries. During ordinary task work,
+At task start, the Controller reads the root INDEX map and uses its concise
+semantic descriptions to select exact linked documents with `document-get`.
+INDEX is a thin navigation map, not a bare file listing; descriptions say what
+the linked knowledge covers, when it is useful to read, and current versus
+historical applicability where useful. Keep currently relevant knowledge
+discoverable first and retain historical links when they help explain earlier
+scope or decisions. The model chooses natural paths, hierarchy, and wording;
+there is no fixed schema or taxonomy, status classifier, or state machine.
+During ordinary task work,
 the Controller alone recognizes possible durable candidates from user input,
 Root decisions, Investigator evidence, Executor FINAL results, Reviewer
 findings, and Specialist challenges. This remains private working-context
 awareness, with no persisted list, state machine, score, counter, threshold,
 extra checkpoint, or interruption of an active Workstream. Executors return
-their normal result and do not track durable candidates, spawn Curator, or add
-a memory-governance section to FINAL.
+their normal result and do not track durable candidates, spawn Curator,
+maintain durable INDEX navigation, or add a memory-governance section to FINAL.
 
 Near natural task end, within ordinary closure before `task-close`, the
 Controller decides whether evidence established, revised, invalidated, or
@@ -1377,8 +1413,8 @@ retrievable entry would improve, constrain, or accelerate future decisions or
 recovery. The judgment is not limited to knowledge a future agent would
 otherwise have to reinvestigate. If candidates have future value, the Controller
 selects a fresh Curator and supplies the selected candidates, their facts and
-supporting evidence, exact relevant prior memory, and canonical sources/documents
-needed to reconcile them. If no
+supporting evidence, exact relevant prior memory and INDEX navigation, and
+canonical sources/documents needed to reconcile them. If no
 candidates or no future value, it skips Curator; small ordinary tasks can skip
 it entirely. Task size or architecture work alone does not trigger the role.
 
@@ -1392,11 +1428,12 @@ documentation only says what. Curator reconciles selected candidates with the su
 may explicitly report that existing knowledge is sufficient and no write is
 needed. `CHANGED` remains an evidence change, not semantic invalidation; the
 Controller may request revalidation when a decision depends on changed evidence
-and has become unreliable. If the Controller promotes a selected record that
-changes durable navigation, it supplies the model-authored INDEX CAS update in
-that same promotion. Otherwise it leaves INDEX bytes unchanged. A fresh later
-task recovers only by reading INDEX and exact selected documents, not by broad
-reinvention or recursive scanning.
+and has become unreliable. For `task-promote`, the Controller supplies an
+optional model-authored INDEX CAS update in the same call when its promoted
+records change durable navigation. During memory curation, Curator makes the
+corresponding semantic navigation judgment and updates the relevant INDEX when
+needed. A fresh later task recovers by reading INDEX descriptions and selected
+documents, not by broad reinvention or recursive scanning.
 
 ## Reasoning Specialist
 

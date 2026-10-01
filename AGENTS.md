@@ -171,7 +171,8 @@ working context; do not create a candidate register, persisted admission state,
 score, counter, or threshold, add a separate checkpoint, or interrupt an active
 Workstream for memory review. Executors return their normal distilled result,
 evidence, and decision-changing information. They do not track memory
-candidates, spawn Curator, or add a durable-governance product to FINAL.
+candidates, spawn Curator, maintain durable INDEX navigation, or add a
+durable-governance product to FINAL.
 
 Near the task's natural end, as part of ordinary closure before `task-close`,
 the Controller decides whether the task established, revised, invalidated, or
@@ -180,8 +181,8 @@ retrievable memory entry would improve, constrain, or accelerate future
 decisions or recovery. This is not limited to facts a future agent would
 otherwise need to reinvestigate. When selected candidates exist, the Controller
 hands a fresh Curator the selected candidates, their facts and
-supporting evidence, exact relevant prior memory, and canonical sources/documents
-needed to reconcile them. If there are no
+supporting evidence, exact relevant prior memory and INDEX navigation, and
+canonical sources/documents needed to reconcile them. If there are no
 candidates or no future decision value, finish without Curator; small ordinary
 tasks can skip it entirely. No task-size or architecture-work trigger makes it
 mandatory.
@@ -341,9 +342,18 @@ Memory and milestones are ordinary explicit storage. Search results are ordinary
 Status is a bounded mechanical record label. Legacy durable Markdown Status metadata remains readable
 as opaque compatibility data, never routing authority. Freshness reports only FRESH, PARTIAL, RECORDED, CHANGED, MISSING, or
 UNKNOWN mechanical facts. `.agent-memory/INDEX.md` and
-`.milestones/INDEX.md` are model-maintained thin global maps of the durable
-tree; Core does not reconstruct a second catalog by recursively scanning the
-filesystem or impose a taxonomy. SessionStart only points to these maps; before
+`.milestones/INDEX.md` are model-maintained thin semantic navigation maps of
+durable knowledge, not bare file listings. Keep entries concise about what
+linked knowledge covers, when it is useful to read, and current versus
+historical or superseded applicability where useful. The Controller reads the
+maps and uses these descriptions to select exact recovery documents. Keep
+currently relevant knowledge discoverable first; retain historical links when
+they help explain earlier scope or decisions. Models choose natural paths,
+hierarchy, and wording; there is no fixed schema or taxonomy, status classifier,
+or state machine. Core never
+interprets INDEX content, writes or rebuilds a catalog, or recursively scans
+the filesystem. It performs only mechanical path, compare-and-swap, size,
+link, and atomic-write checks. SessionStart only points to these maps; before
 `task-start`, the Controller explicitly reads the root navigation, and if a map
 is missing it establishes a minimal thin INDEX first. During an active task,
 navigation is not reread automatically; the Controller may reread it when the
@@ -355,12 +365,14 @@ or supplements the selection.
 `CHANGED` records an evidence change, not semantic invalidation. When a
 decision depends on changed evidence and is no longer reliable, the Controller
 may request revalidation. A selected Curator maintains a small, current,
-non-conflicting, traceable corpus and its relevant index links by modifying,
-merging, splitting, revising, narrowing, superseding, or deleting entries. It does not scan the
-whole corpus or decide architecture.
-When a promotion changes durable navigation, the Controller should include its
-own optional `index_update` in the same `task-promote` call. Core does not
-generate INDEX content; it validates the CAS, references, and atomic commit.
+non-conflicting, traceable corpus and its relevant INDEX links by modifying,
+merging, splitting, revising, narrowing, superseding, or deleting selected
+entries. For those changes, Curator also judges whether the relevant semantic
+navigation should change and updates it when needed. It does not scan the whole
+corpus or decide architecture. When a `task-promote` call changes durable
+navigation, the Controller supplies the optional model-authored `index_update`
+in that same call. Core validates paths, CAS, size, links, and atomic writes;
+it does not interpret or generate INDEX content.
 
 With NO_TASK, Thaliris leaves ordinary Codex tool use and spawn behavior
 transparent. With persistent task intent or positive Host actor assurance, during an ACTIVE delegated managed task

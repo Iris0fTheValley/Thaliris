@@ -70,8 +70,8 @@ the Controller's working context. Do not create a candidate register or
 persisted admission state, add scores, counters, or thresholds, make an extra
 checkpoint, or interrupt an active Workstream for memory review. Executors
 return their normal distilled results, evidence, and decision-changing
-information. They do not track memory candidates, spawn Curator, or add a
-separate durable-governance product to FINAL.
+information. They do not track memory candidates, spawn Curator, maintain
+durable INDEX navigation, or add a separate durable-governance product to FINAL.
 
 Near the task's natural end, as ordinary closure before `task-close`, the
 Controller decides whether evidence established, revised, invalidated, or
@@ -80,8 +80,8 @@ retrievable memory entry would improve, constrain, or accelerate future
 decisions or recovery. This does not require that a future agent would
 otherwise need to reinvestigate the knowledge. If selected candidates have
 future value, Root hands Curator those candidates, facts and supporting
-evidence, exact relevant prior memory, and the canonical sources/documents
-needed to reconcile them. If
+evidence, exact relevant prior memory and INDEX navigation, and the canonical
+sources/documents needed to reconcile them. If
 no candidates or no future value, it skips Curator; small ordinary tasks can
 skip it entirely. Task size or architecture work alone never triggers a
 Curator stage.
@@ -94,13 +94,31 @@ material or compress the decision basis spread across code, Host, history, or
 design. Do not impose a fixed split between memory and formal documentation.
 Curator reconciles the selected candidates with supplied prior memory and
 canonical sources; if existing material is sufficient, it explicitly reports
-that no write is needed.
+that no write is needed. Before selecting recovery documents, Root uses the
+root INDEX's concise semantic descriptions of what linked knowledge covers,
+when it is useful to read, and current or historical applicability where
+useful. INDEX is navigation, not a bare file listing; keep current knowledge
+discoverable first and retain historical links when they help explain earlier
+scope or decisions. Models choose natural paths, hierarchy, and wording without
+a fixed schema, taxonomy, status classifier, or state machine.
 
 Curator maintains only Controller-selected knowledge under `.agent-memory/`
-and relevant links in `.agent-memory/INDEX.md`. Preserve provenance and scope
-for each retained claim; when new evidence revises or supersedes a conclusion,
-preserve its original scope and historical applicability where relevant. Keep
-the corpus small, current, non-conflicting, and traceable. Do not preserve task
+and relevant links in INDEX entries explicitly supplied in the handoff.
+When adding, revising, merging, splitting, narrowing, superseding, or deleting
+selected memory, Curator also judges whether the relevant INDEX navigation
+needs a semantic update and updates it when needed. Keep INDEX entries concise
+and semantic: what linked knowledge covers, when it is useful to read, and
+current versus historical or superseded applicability where useful. Keep
+currently relevant knowledge discoverable first and retain historical links
+when they help explain earlier scope or decisions. Curator chooses natural
+paths, hierarchy, and wording; there is no fixed schema, taxonomy, status
+classifier, or state machine. Do not rebuild a directory listing or catalog,
+write comprehensive history, or duplicate memory bodies in INDEX files. Core
+performs only mechanical path, compare-and-swap, size, link, and atomic-write
+checks; it never interprets or generates INDEX content. Preserve provenance
+and scope for each retained claim; when new evidence revises or supersedes a
+conclusion, preserve its original scope and historical applicability where
+relevant. Keep the corpus small, current, non-conflicting, and traceable. Do not preserve task
 chronology, implementation logs, ordinary commit histories, transient test
 outputs, or momentary failures as logs; those sources are not automatic
 exclusions when they establish reusable knowledge that can improve, constrain,

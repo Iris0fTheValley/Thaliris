@@ -1387,10 +1387,20 @@ def test_knowledge_maintenance_and_formal_docs_stay_in_instruction_sources() -> 
         "neither automatic exclusions nor a reason by themselves to create memory",
         "do not duplicate canonical text",
         "If existing material is already sufficient, it returns an explicit no-write conclusion",
+        "model-maintained thin global maps of the durable tree and semantic navigation, not bare file listings",
+        "what linked knowledge covers, when it is useful to read",
+        "uses these descriptions to select exact documents for recovery",
+        "there is no fixed schema or taxonomy",
+        "status classifier, or state machine",
+        "performs only mechanical path, compare-and-swap, size, link, and atomic-write checks",
+        "maintain durable INDEX navigation",
     ):
         assert phrase in normalized_managed
     assert "`CHANGED` records an evidence change, not semantic invalidation" in managed
     normalized_packs = " ".join(packs.split())
+    checked_in_packs = Path("docs/thaliris-role-packs.md").read_bytes()
+    checked_in_packs = checked_in_packs.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    assert checked_in_packs == packs.encode("utf-8")
     for phrase in (
         "the Controller alone recognizes possible durable candidates",
         "no persisted list, state machine, score, counter, threshold",
@@ -1403,6 +1413,10 @@ def test_knowledge_maintenance_and_formal_docs_stay_in_instruction_sources() -> 
         "Curator reconciles selected candidates",
         "existing knowledge is sufficient and no write is needed",
         "modifying, merging, splitting, revising, narrowing, superseding, or deleting only selected entries",
+        "semantic descriptions to select exact linked documents",
+        "Keep currently relevant knowledge discoverable first",
+        "maintain durable INDEX navigation",
+        "Curator makes the corresponding semantic navigation judgment",
     ):
         assert phrase in normalized_packs
     normalized_curator = " ".join(curator.split()).lower()
@@ -1415,8 +1429,22 @@ def test_knowledge_maintenance_and_formal_docs_stay_in_instruction_sources() -> 
     assert "existing material is sufficient and no write is needed" in normalized_curator
     assert "product or protocol documentation and readme changes" in normalized_curator
     assert "do not scan broadly, make architecture decisions, or delegate" in normalized_curator
+    for phrase in (
+        "index entries explicitly supplied by the controller",
+        "when adding, revising, merging, splitting, narrowing, superseding, or deleting selected memory",
+        "also judge whether relevant index navigation needs a semantic update",
+        "what linked knowledge covers, when it is useful to read",
+        "current versus historical or superseded applicability",
+        "keep currently relevant knowledge discoverable first",
+        "do not impose a fixed schema, taxonomy, status classifier, or state machine",
+        "do not rebuild a directory listing or catalog",
+        "core handles only mechanical path, compare-and-swap, size, link, and atomic-write checks",
+    ):
+        assert phrase in normalized_curator
     assert "do not keep or return a separate memory-candidate list" in implementer
     assert "do not keep or return a separate memory-candidate list" in focused
+    assert "Executors do not maintain durable INDEX navigation" in implementer
+    assert "Executors do not maintain durable INDEX navigation" in focused
     assert "formal project documentation" in implementer
     assert "formal project documentation" in focused
     assert "README" in implementer
@@ -1430,6 +1458,14 @@ def test_knowledge_maintenance_and_formal_docs_stay_in_instruction_sources() -> 
         assert "product/protocol" in documented
     routing_protocol = Path("docs/thaliris-routing-protocol.md").read_text(encoding="utf-8").lower()
     assert "ordinary commit histories" in routing_protocol
+    for documented in (Path("AGENTS.md").read_text(encoding="utf-8").lower(), routing_protocol):
+        assert "semantic navigation maps" in documented or "semantic descriptions" in documented
+        assert "linked knowledge covers" in documented
+        assert "current" in documented and "historical" in documented
+    assert "maintain durable index navigation" in Path("AGENTS.md").read_text(encoding="utf-8").lower()
+    assert "curator also judges whether the relevant index navigation" in routing_protocol
+    assert "薄语义导航地图" in Path("README.md").read_text(encoding="utf-8")
+    assert "model-maintained semantic navigation" in Path("README.en.md").read_text(encoding="utf-8").lower()
 
 
 def test_9b5bcf2_curator_profile_is_recognized_as_legacy() -> None:

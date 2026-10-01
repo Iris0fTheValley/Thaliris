@@ -166,6 +166,8 @@ def inline_degraded() -> str:
 
 _PACKED_PREFIX = "$r=[IO.StreamReader]::new([IO.Compression.GZipStream]::new([IO.MemoryStream]::new([Convert]::FromBase64String('"
 _PACKED_SUFFIX = "')),[IO.Compression.CompressionMode]::Decompress));try{iex $r.ReadToEnd()}finally{$r.Dispose()};"
+_VARIABLE_FREE_PACKED_PREFIX = "iex ([IO.StreamReader]::new([IO.Compression.GZipStream]::new([IO.MemoryStream]::new([Convert]::FromBase64String('"
+_VARIABLE_FREE_PACKED_SUFFIX = "')),[IO.Compression.CompressionMode]::Decompress)).ReadToEnd())"
 
 
 def packed_literal(source: str) -> str:
@@ -174,13 +176,23 @@ def packed_literal(source: str) -> str:
     return _PACKED_PREFIX + data + _PACKED_SUFFIX
 
 
+def packed_literal_without_variables(source: str) -> str:
+    """Pack generated code behind a loader safe inside nested PowerShell quotes."""
+    data = base64.b64encode(gzip.compress(source.encode(), mtime=0)).decode()
+    return _VARIABLE_FREE_PACKED_PREFIX + data + _VARIABLE_FREE_PACKED_SUFFIX
+
+
 def unpack_literal(source: str) -> str:
     """Decode for exact ownership comparison, never evaluation or authority."""
-    if not source.startswith(_PACKED_PREFIX):
+    if source.startswith(_PACKED_PREFIX):
+        prefix, suffix = _PACKED_PREFIX, _PACKED_SUFFIX
+    elif source.startswith(_VARIABLE_FREE_PACKED_PREFIX):
+        prefix, suffix = _VARIABLE_FREE_PACKED_PREFIX, _VARIABLE_FREE_PACKED_SUFFIX
+    else:
         return source
-    if not source.endswith(_PACKED_SUFFIX):
+    if not source.endswith(suffix):
         raise ValueError("invalid packed Host literal")
-    data = base64.b64decode(source[len(_PACKED_PREFIX):-len(_PACKED_SUFFIX)], validate=True)
+    data = base64.b64decode(source[len(prefix):-len(suffix)], validate=True)
     try:
         with gzip.GzipFile(fileobj=io.BytesIO(data)) as stream:
             raw = stream.read(65537)

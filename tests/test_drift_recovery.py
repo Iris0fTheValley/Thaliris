@@ -356,15 +356,20 @@ def test_windows_degraded_fresh_delegation_has_no_managed_grant(tmp_path, pinned
 def test_windows_packed_hook_preserves_exact_ownership_and_healthy_dispatch(tmp_path, pinned_test_thaliris):
     exe, _ = pinned_test_thaliris
     command, _home = _windows_hook(tmp_path, exe, drift=False)
-    envelope = command.split('-Command "', 1)[1][:-1]
-    source = host_preflight.unpack_literal(envelope)
-    altered = command.replace(envelope, host_preflight.packed_literal(source + ";Write-Output 'altered'"))
+    prefix = 'powershell.exe -NoProfile -NonInteractive -Command "'
+    assert command.startswith(prefix)
+    assert command.endswith('"')
+    packed_expression = command[len(prefix):-1]
+    source = host_preflight.unpack_literal(packed_expression)
+    altered_expression = host_preflight.packed_literal_without_variables(source + ";Write-Output 'altered'")
+    altered = prefix + altered_expression + '"'
     assert lifecycle._pinned_host_payload(altered) is None
     assert lifecycle._pinned_host_payload(command + ";Write-Output 'altered'") is None
     assert lifecycle._pinned_host_payload(command[:-1]) is None
-    truncated = host_preflight._PACKED_PREFIX + "H4sI" + host_preflight._PACKED_SUFFIX
-    assert lifecycle._pinned_host_payload(command.replace(envelope, truncated)) is None
-    assert lifecycle._pinned_host_payload(command.replace(envelope, host_preflight.packed_literal("X" * 65537))) is None
+    truncated = prefix + host_preflight._VARIABLE_FREE_PACKED_PREFIX + "H4sI" + host_preflight._VARIABLE_FREE_PACKED_SUFFIX + '"'
+    assert lifecycle._pinned_host_payload(truncated) is None
+    oversized = prefix + host_preflight.packed_literal_without_variables("X" * 65537) + '"'
+    assert lifecycle._pinned_host_payload(oversized) is None
     payload = {"tool_name": "Bash", "tool_input": {"command": "Write-Output 'HOOK_INPUT_MUST_NOT_EVALUATE'"}}
     result = subprocess.run(command, shell=True, cwd=tmp_path, input=json.dumps(payload).encode(), capture_output=True, timeout=15)
     assert result.returncode == 0, result.stderr

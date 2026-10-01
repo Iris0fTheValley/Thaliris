@@ -482,9 +482,9 @@ def _v041_pinned_host_command(script: Path, executable: Path, executable_sha256:
     return "powershell.exe -NoProfile -NonInteractive -EncodedCommand " + base64.b64encode(source.encode("utf-16le")).decode("ascii")
 
 
-def _pinned_host_command(script: Path, executable: Path, executable_sha256: str,
-                         runtime_sha256: str | None, event: str) -> str:
-    """The Host owns this inline check; modified trampoline bytes cannot skip it."""
+def _pinned_host_source(script: Path, executable: Path, executable_sha256: str,
+                        runtime_sha256: str | None, event: str) -> str:
+    """Build the generated inline Host check; modified trampoline bytes cannot skip it."""
     payload = {
         "script": str(script), "executable": str(executable), "sha": executable_sha256,
         "runtime": runtime_sha256, "event": event, "abi": MANAGED_HOOK_ABI,
@@ -506,9 +506,23 @@ def _pinned_host_command(script: Path, executable: Path, executable_sha256: str,
         + "\nDegraded ('hook trampoline changed; expected='+$expected+' actual='+$actual);exit 0}"
 
     )
-    # The closed loader contains only generated ASCII and no double quotes.
-    # Encoding its base64 literal again as UTF-16 would exceed cmd's limit.
+    return source
+
+
+def _legacy_pinned_host_command(script: Path, executable: Path, executable_sha256: str,
+                                runtime_sha256: str | None, event: str) -> str:
+    """Render the previously registered packed -Command form for exact legacy recognition."""
+    source = _pinned_host_source(script, executable, executable_sha256, runtime_sha256, event)
     return 'powershell.exe -NoProfile -NonInteractive -Command "' + host_preflight.packed_literal(source) + '"'
+
+
+def _pinned_host_command(script: Path, executable: Path, executable_sha256: str,
+                         runtime_sha256: str | None, event: str) -> str:
+    """Keep the packed loader variable-free for nested shells and the Windows line limit."""
+    source = host_preflight.packed_literal_without_variables(
+        _pinned_host_source(script, executable, executable_sha256, runtime_sha256, event)
+    )
+    return 'powershell.exe -NoProfile -NonInteractive -Command "' + source + '"'
 
 
 def _pinned_host_payload(command: str) -> dict[str, Any] | None:
@@ -523,6 +537,7 @@ def _pinned_host_payload(command: str) -> dict[str, Any] | None:
             source = host_preflight.unpack_literal(command[len(packed_prefix):-1])
         else:
             source = base64.b64decode(command[len(prefix):], validate=True).decode("utf-16le")
+            source = host_preflight.unpack_literal(source)
         marker = "$p=([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"
         if not source.startswith("$ErrorActionPreference='Stop';" + marker):
             return None
@@ -532,6 +547,7 @@ def _pinned_host_payload(command: str) -> dict[str, Any] | None:
             return None
         if command not in {
             _pinned_host_command(Path(payload["script"]), Path(payload["executable"]), payload["sha"], payload["runtime"], payload["event"]),
+            _legacy_pinned_host_command(Path(payload["script"]), Path(payload["executable"]), payload["sha"], payload["runtime"], payload["event"]),
             _v041_pinned_host_command(Path(payload["script"]), Path(payload["executable"]), payload["sha"], payload["runtime"], payload["event"], payload["abi"]),
         }:
             return None

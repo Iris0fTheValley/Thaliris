@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from thaliris import codex_adapter, codex_app_server, lifecycle
+from thaliris import codex_adapter, codex_app_server, host_preflight, lifecycle
 
 
 _EVENT_NAMES = {
@@ -235,6 +235,33 @@ def test_trust_uses_host_current_hash_and_reinstall_trusts_changed_pin(tmp_path:
     assert second["status"] == "TRUSTED"
     assert second["changed"] is True
     assert {state["state"][f"{home / 'hooks.json'}:{event}:0:0"]["trusted_hash"] for event in lifecycle.HOOK_EVENTS} == set(second_hashes.values())
+
+
+def test_pinned_host_command_uses_variable_free_packed_expression_and_recognizes_legacy() -> None:
+    script = Path(r"C:\Users\codex\AppData\Roaming\Codex\thaliris-host-hook.ps1")
+    executable = Path(r"C:\Users\codex\AppData\Local\Programs\Thaliris\thaliris.exe")
+    pin = "a" * 64
+    runtime = "b" * 64
+    command = lifecycle._pinned_host_command(script, executable, pin, runtime, "PreToolUse")
+    prefix = 'powershell.exe -NoProfile -NonInteractive -Command "'
+
+    assert command.startswith(prefix)
+    assert command.endswith('"')
+    assert len(command) < 8191
+    packed_expression = command[len(prefix):-1]
+    assert "$" not in packed_expression
+    assert packed_expression.startswith(host_preflight._VARIABLE_FREE_PACKED_PREFIX)
+    source = host_preflight.unpack_literal(packed_expression)
+    assert source == lifecycle._pinned_host_source(script, executable, pin, runtime, "PreToolUse")
+    assert lifecycle._pinned_host_payload(command) == {
+        "script": str(script), "executable": str(executable), "sha": pin,
+        "runtime": runtime, "event": "PreToolUse", "abi": lifecycle.MANAGED_HOOK_ABI,
+    }
+    altered = prefix + host_preflight.packed_literal_without_variables(source + ";Write-Output 'altered'") + '"'
+    assert lifecycle._pinned_host_payload(altered) is None
+
+    legacy = lifecycle._legacy_pinned_host_command(script, executable, pin, runtime, "PreToolUse")
+    assert lifecycle._pinned_host_payload(legacy) == lifecycle._pinned_host_payload(command)
 
 
 def test_uninstall_removes_only_exact_thaliris_trust_state(tmp_path: Path) -> None:

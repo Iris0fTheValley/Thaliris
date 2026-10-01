@@ -136,16 +136,28 @@ Memory 默认不注入。模型自行维护 `.agent-memory/INDEX.md` 和
 `Status` 是有界的记录标签。旧文档中的其它 metadata 仍可读取，但只作为不透明兼容字段，
 不是传播权限。
 
-Milestone 是普通长期文档。任务结束、`task-close` 前，Controller 只做一次简短语义判断：
-任务是否新增、改变或推翻了可能影响未来决策、且若不保留就需要重新调查的 durable knowledge？
-若否，静默跳过 Curator；若是，再向新的 Curator 提供已选事实与相关旧知识/文档。Curator
-是可选角色，任务规模不会触发它，也不是必经阶段。Curator 只维护 Controller 选定的
-`.agent-memory/` 知识文件和相关 INDEX 链接，保留每条结论的来源与适用范围；新证据更新或
-取代旧结论时，在相关情况下保留旧结论的历史适用性。除非任务过程或失败能证明稳定且会影响
-未来决策的知识，否则不把任务时间线、实现日志、普通提交历史、临时测试输出或瞬时失败写入
-Memory。正式产品/协议文档和 README 的行为同步由 Implementer 或 Focused Implementer 负责。
-详细证据保留在 Artifact、Git 或 rollout 记录。`CHANGED` 仅表示证据变化；当依赖该证据的决策不再
-可靠时，Controller 可要求重新验证。Reviewer 被选用时检查文档与实现的语义偏差。
+长期知识是否需要准入由 Controller 独自判断。正常任务进行中，Root 留意用户指令、自己的架构或治理
+决策、Investigator 证据、Executor FINAL、Reviewer 发现和 Specialist 挑战中出现的可复用知识。这只是
+Controller 当前工作上下文中的判断；不建立候选清单、持久准入状态、分数、计数器、阈值或额外检查点，
+也不为记忆审查中断正在执行的 Workstream。Executor 返回正常结果、证据和会改变决策的信息，不追踪
+记忆候选、不生成 Curator，也不在 FINAL 增加单独的长期治理内容。
+
+接近任务自然结束时，Controller 在正常收尾中判断证据是否建立、修订、推翻或实质澄清了可复用的项目
+知识，以及简明、有来源且容易检索的记忆条目是否能改善、约束或加快未来决策或恢复。这不限于未来
+Agent 否则需要重新调查的知识。若选定的候选值得保留，Root 向新的 Curator 提供候选知识、事实与支撑
+证据、精确相关的既有 memory，以及需要对照的规范来源和文档；没有候选或没有未来决策价值时则跳过。普通小任务可以完全
+跳过 Curator；任务规模或架构工作本身不会触发必经阶段。
+
+现有文档、源码、指令、测试、提交和 rollout 既不是自动排除理由，也不代表必须另建 memory；把它们当作
+证据，并避免照抄规范文本。Memory 可以作为未来 Agent 的恢复入口，概述并链接容易找到的规范材料，或
+压缩散落在代码、Host、历史和设计中的决策依据。Curator 应把选定候选与提供的资料对照；若既有知识
+已经足够，应明确说明无需写入。保留每条结论的来源和适用范围；新证据修订或取代旧结论时，在相关情况
+下保留旧结论的历史适用性。任务时间线、实现日志、普通提交历史、临时测试输出或瞬时失败不应作为日志
+保存；但如果它们能建立会改善、约束或加快未来决策或恢复的可复用知识，也不能自动排除。正式产品/协议
+文档和 README 的行为同步由 Implementer 或 Focused Implementer 负责。详细原始证据保留在规范来源、
+Artifact、Git 或 rollout 记录中；memory 只保留未来恢复所需的简明依据和引用。`CHANGED` 仅表示证据
+变化；当依赖该证据的决策不再可靠时，Controller 可要求重新验证。Reviewer 被选用时检查文档与实现的
+语义偏差。
 `task-promote` 保存 Controller 明确选择的记录；Core 不裁决其 epistemic legitimacy。
 当一次 promotion 会改变 durable navigation 时，Controller 应在同一次
 `task-promote` 中提供自己写好的 optional `index_update`。Core 不生成 INDEX

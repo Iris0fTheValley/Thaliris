@@ -1374,22 +1374,49 @@ def test_knowledge_maintenance_and_formal_docs_stay_in_instruction_sources() -> 
     reviewer = roles.get_role("reviewer").instructions
 
     normalized_managed = " ".join(managed.split())
-    assert "before `task-close`, make one short semantic judgment" in normalized_managed
-    assert "If no, silently skip Curator" in normalized_managed
-    assert "exact relevant prior knowledge/documents" in normalized_managed
+    for phrase in (
+        "the Controller alone notices possible reusable knowledge",
+        "candidate register, persisted admission state",
+        "do not track memory candidates, spawn Curator",
+        "established, revised, invalidated, or materially clarified reusable project knowledge",
+        "improve, constrain, or accelerate future decisions or recovery",
+        "no candidates or no future decision value, finish without Curator",
+        "small ordinary tasks can skip it entirely",
+        "No task-size or architecture-work trigger makes it mandatory",
+        "the selected candidates, their facts and supporting evidence, exact relevant prior memory",
+        "neither automatic exclusions nor a reason by themselves to create memory",
+        "do not duplicate canonical text",
+        "If existing material is already sufficient, it returns an explicit no-write conclusion",
+    ):
+        assert phrase in normalized_managed
     assert "`CHANGED` records an evidence change, not semantic invalidation" in managed
     normalized_packs = " ".join(packs.split())
-    assert "before `task-close`, it makes one short semantic judgment" in normalized_packs
-    assert "If no, it silently skips Curator" in normalized_packs
-    assert "modifying, merging, splitting, superseding, or deleting only selected entries" in normalized_packs
+    for phrase in (
+        "the Controller alone recognizes possible durable candidates",
+        "no persisted list, state machine, score, counter, threshold",
+        "Executors return their normal result and do not track durable candidates",
+        "If candidates have future value, the Controller selects a fresh Curator",
+        "small ordinary tasks can skip it entirely",
+        "the selected candidates, their facts and supporting evidence, exact relevant prior memory",
+        "neither automatic exclusions nor sufficient reasons by themselves to create memory",
+        "avoid duplicating canonical text",
+        "Curator reconciles selected candidates",
+        "existing knowledge is sufficient and no write is needed",
+        "modifying, merging, splitting, revising, narrowing, superseding, or deleting only selected entries",
+    ):
+        assert phrase in normalized_packs
     normalized_curator = " ".join(curator.split()).lower()
     assert "under `.agent-memory/`" in normalized_curator
     assert "preserve provenance and scope" in normalized_curator
     assert "historical applicability where relevant" in normalized_curator
     assert "ordinary commit histories" in normalized_curator
+    assert "not automatic exclusions" in normalized_curator
     assert "report the missing knowledge area" in normalized_curator
+    assert "existing material is sufficient and no write is needed" in normalized_curator
     assert "product or protocol documentation and readme changes" in normalized_curator
     assert "do not scan broadly, make architecture decisions, or delegate" in normalized_curator
+    assert "do not keep or return a separate memory-candidate list" in implementer
+    assert "do not keep or return a separate memory-candidate list" in focused
     assert "formal project documentation" in implementer
     assert "formal project documentation" in focused
     assert "README" in implementer
@@ -1398,7 +1425,8 @@ def test_knowledge_maintenance_and_formal_docs_stay_in_instruction_sources() -> 
     assert "semantic drift" in packs
     for path in ("AGENTS.md", "docs/thaliris-routing-protocol.md"):
         documented = " ".join(Path(path).read_text(encoding="utf-8").split()).lower()
-        assert "add, change, or overturn durable knowledge" in documented
+        assert "established, revised, invalidated, or materially clarified reusable project knowledge" in documented
+        assert "executors return their normal" in documented
         assert "product/protocol" in documented
     routing_protocol = Path("docs/thaliris-routing-protocol.md").read_text(encoding="utf-8").lower()
     assert "ordinary commit histories" in routing_protocol

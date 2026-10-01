@@ -163,16 +163,43 @@ The Specialist grounds critique in selected information, reports material
 alternatives and critical missing facts, and does not make the final decision.
 It does not perform broad fact gathering, implementation, routine review, or
 ordinary hard-problem solving.
-At task end, before `task-close`, make one short semantic judgment: did the task
-add, change, or overturn durable knowledge that could affect a future decision
-and would otherwise require reinvestigation? If no, silently skip Curator. If
-yes, select a fresh Curator and provide the selected durable facts plus exact
-relevant prior knowledge/documents. Curator is optional, never triggered by
-task size, and not a mandatory stage. It keeps durable memory under
-`.agent-memory/`; detailed evidence and task results remain in Artifacts, Git,
-or rollout records. Implementer roles keep product/protocol documentation and
-README aligned with current behavior; Reviewer challenges semantic drift when
-selected.
+Throughout normal task work, the Controller alone notices possible reusable
+knowledge from the user's instruction, its own architecture or governance
+decisions, Investigator evidence, Executor FINAL results, Reviewer findings,
+and Reasoning Specialist challenges. Keep that awareness in the Controller's
+working context; do not create a candidate register, persisted admission state,
+score, counter, or threshold, add a separate checkpoint, or interrupt an active
+Workstream for memory review. Executors return their normal distilled result,
+evidence, and decision-changing information. They do not track memory
+candidates, spawn Curator, or add a durable-governance product to FINAL.
+
+Near the task's natural end, as part of ordinary closure before `task-close`,
+the Controller decides whether the task established, revised, invalidated, or
+materially clarified reusable project knowledge and whether a concise, sourced,
+retrievable memory entry would improve, constrain, or accelerate future
+decisions or recovery. This is not limited to facts a future agent would
+otherwise need to reinvestigate. When selected candidates exist, the Controller
+hands a fresh Curator the selected candidates, their facts and
+supporting evidence, exact relevant prior memory, and canonical sources/documents
+needed to reconcile them. If there are no
+candidates or no future decision value, finish without Curator; small ordinary
+tasks can skip it entirely. No task-size or architecture-work trigger makes it
+mandatory.
+
+Existing documentation, source, instructions, tests, commits, and rollout
+records are neither automatic exclusions nor a reason by themselves to create
+memory. Use them as evidence, and do not duplicate canonical text. A future-
+agent recovery entrance may summarize and link easy-to-locate canonical
+material or preserve the decision basis that is spread across code, Host,
+history, or design; do not impose a fixed split between memory and formal
+documentation. Curator reconciles selected candidates with supplied prior
+memory and canonical sources. If existing material is already sufficient, it
+returns an explicit no-write conclusion. Keep `.agent-memory/` concise,
+traceable, and linked; detailed raw evidence remains in canonical sources,
+Artifacts, Git, or rollout records, with only the basis and references needed
+for future recovery in memory. Implementer roles keep product/protocol
+documentation and README aligned with current behavior; Reviewer challenges
+semantic drift when selected.
 
 When Thaliris routing, roles, bootstrap, trust boundaries, or Controller
 contracts change, check and synchronize both the repository-managed
@@ -329,7 +356,7 @@ or supplements the selection.
 decision depends on changed evidence and is no longer reliable, the Controller
 may request revalidation. A selected Curator maintains a small, current,
 non-conflicting, traceable corpus and its relevant index links by modifying,
-merging, splitting, superseding, or deleting entries. It does not scan the
+merging, splitting, revising, narrowing, superseding, or deleting entries. It does not scan the
 whole corpus or decide architecture.
 When a promotion changes durable navigation, the Controller should include its
 own optional `index_update` in the same `task-promote` call. Core does not

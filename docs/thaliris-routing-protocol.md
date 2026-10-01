@@ -62,27 +62,57 @@ the managed failure, read the evidence needed for that diagnosis, coordinate,
 and report; it does not take over substantial repository investigation,
 implementation, or testing.
 
-At task end, before `task-close`, the Controller makes one short semantic
-judgment: did the task add, change, or overturn durable knowledge that could
-affect a future decision and would otherwise require reinvestigation? If no,
-it silently skips Curator. If yes, it selects a fresh Curator and supplies the
-selected durable facts and exact relevant prior knowledge/documents. Curator
-is optional, never selected by task size, and not a mandatory stage. Curator
-maintains only Controller-selected durable knowledge under `.agent-memory/`
+Durable-knowledge admission belongs to the Controller alone. During normal
+task work, Root notices reusable candidates in the human instruction, its own
+architecture or governance decisions, Investigator evidence, Executor FINAL
+results, Reviewer findings, and Specialist challenges. Keep this awareness in
+the Controller's working context. Do not create a candidate register or
+persisted admission state, add scores, counters, or thresholds, make an extra
+checkpoint, or interrupt an active Workstream for memory review. Executors
+return their normal distilled results, evidence, and decision-changing
+information. They do not track memory candidates, spawn Curator, or add a
+separate durable-governance product to FINAL.
+
+Near the task's natural end, as ordinary closure before `task-close`, the
+Controller decides whether evidence established, revised, invalidated, or
+materially clarified reusable project knowledge and whether a concise, sourced,
+retrievable memory entry would improve, constrain, or accelerate future
+decisions or recovery. This does not require that a future agent would
+otherwise need to reinvestigate the knowledge. If selected candidates have
+future value, Root hands Curator those candidates, facts and supporting
+evidence, exact relevant prior memory, and the canonical sources/documents
+needed to reconcile them. If
+no candidates or no future value, it skips Curator; small ordinary tasks can
+skip it entirely. Task size or architecture work alone never triggers a
+Curator stage.
+
+Existing documentation, source, project instructions, tests, commits, and
+rollout records are neither automatic exclusions nor reasons by themselves to
+create memory. Treat them as evidence and do not duplicate canonical text. A
+future-Agent recovery entrance may link or summarize easy-to-locate canonical
+material or compress the decision basis spread across code, Host, history, or
+design. Do not impose a fixed split between memory and formal documentation.
+Curator reconciles the selected candidates with supplied prior memory and
+canonical sources; if existing material is sufficient, it explicitly reports
+that no write is needed.
+
+Curator maintains only Controller-selected knowledge under `.agent-memory/`
 and relevant links in `.agent-memory/INDEX.md`. Preserve provenance and scope
-for each retained claim; when new evidence updates or supersedes a conclusion,
+for each retained claim; when new evidence revises or supersedes a conclusion,
 preserve its original scope and historical applicability where relevant. Keep
-the corpus small, current, non-conflicting, and traceable. Exclude task
+the corpus small, current, non-conflicting, and traceable. Do not preserve task
 chronology, implementation logs, ordinary commit histories, transient test
-outputs, and momentary failures unless they establish stable knowledge that
-could affect a future decision. If consistency depends on durable material the
-Controller did not select, stop and report the missing knowledge area for the
-Controller to select; do not scan the corpus. Product/protocol docs and README
-aligned with current behavior belong to Implementer or Focused Implementer.
-Curator does not make architecture decisions or delegate. Detailed evidence
-stays in Artifacts, Git, or rollout records rather than memory. `CHANGED`
-reports an evidence change, not semantic invalidation. The Controller may
-request revalidation when a decision depends on changed evidence and has
+outputs, or momentary failures as logs; those sources are not automatic
+exclusions when they establish reusable knowledge that can improve, constrain,
+or accelerate future decisions or recovery. If consistency depends on durable
+material the Controller did not select, stop and report the missing knowledge
+area for Root to select; do not scan the corpus. Product/protocol docs and
+README aligned with current behavior belong to Implementer or Focused
+Implementer. Curator does not make architecture decisions or delegate. Keep
+detailed raw evidence in canonical sources, Artifacts, Git, or rollout records,
+with only the concise basis and references needed for future recovery in memory.
+`CHANGED` reports an evidence change, not semantic invalidation. The Controller
+may request revalidation when a decision depends on changed evidence and has
 become unreliable.
 
 For divisible work, Root routes by semantic Workstream. Define Workstream

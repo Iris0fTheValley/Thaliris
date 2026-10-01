@@ -44,12 +44,33 @@ challenges the result. Complex implementation may use a more focused,
 higher-capability execution binding, while implementation decisions stay with
 the executor. Reasoning Specialist is reserved for reframing the problem when
 the problem definition, abstraction, or assumptions are themselves unclear.
-At task end, before `task-close`, the Controller makes one short judgment about
-whether the task added, changed, or overturned durable knowledge that could
-affect a future decision and otherwise require reinvestigation. Only then does
-it select a fresh Curator with selected facts and relevant prior knowledge.
-Curator maintains only selected `.agent-memory/` knowledge and index links.
-Task size alone never triggers it, and it is not a mandatory stage. Implementers
+Durable-knowledge admission belongs to the Controller. During normal task work,
+Root notices reusable knowledge in user input, its own decisions, Investigator
+evidence, Executor results, Reviewer findings, and Specialist challenges. This
+remains private working-context awareness; it creates no candidate register,
+saved admission state, counter, score, threshold, extra checkpoint, or
+interruption of an active Workstream. Executors return their normal result and
+do not track candidates, spawn Curator, or add a separate memory-governance
+section to FINAL.
+
+Near the task's natural end, as part of ordinary closure before `task-close`,
+the Controller decides whether evidence established, revised, invalidated, or
+materially clarified reusable project knowledge and whether a concise, sourced
+memory entry would improve, constrain, or accelerate future decisions or
+recovery. This is not limited to facts a future agent would otherwise need to
+reinvestigate. With selected candidates, Root supplies a fresh Curator with the
+facts and supporting evidence, exact relevant prior memory, and canonical sources needed to reconcile
+them. With no candidates or no future value, it skips Curator; small ordinary
+tasks can skip it entirely. Task size or architecture work alone never makes
+Curator mandatory.
+
+Existing docs, source, instructions, tests, commits, and rollouts are neither
+automatic exclusions nor reasons by themselves to create memory. Use them as
+evidence and avoid duplicating canonical text. Memory can act as a future-Agent
+recovery entrance by linking or summarizing easy-to-locate canonical material,
+or by compressing a decision basis spread across code, Host, history, or design.
+Curator reconciles selected candidates with the supplied sources and can report
+that existing knowledge is sufficient and no write is needed. Implementers
 keep product and protocol documentation and the README aligned with current
 behavior. Compatibility or specialized profiles may exist without becoming
 mandatory workflow stages.

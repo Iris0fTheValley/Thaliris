@@ -68,6 +68,31 @@ stops and returns the concrete unknown in FINAL. Execution authority cannot
 expand Controller-assigned scope. Reviewers challenge
 converged candidates after implementation stops; their findings return to
 Controller, which decides on follow-on work.
+
+Durable-knowledge admission also belongs to Root. During ordinary task work,
+the Controller notices possible reusable knowledge in user input, its own
+decisions, Investigator evidence, Executor results, Reviewer findings, and
+Specialist challenges. This awareness stays in its working context; it creates
+no candidate register, persisted admission state, score, counter, threshold,
+extra checkpoint, or interruption of an active Workstream. Executors return
+their normal result and do not track memory candidates, spawn Curator, or add
+a separate durable-governance product to FINAL.
+
+Near the task's natural end, the Controller decides whether evidence
+established, revised, invalidated, or materially clarified reusable project
+knowledge and whether a concise, sourced memory entry would improve, constrain,
+or accelerate future decisions or recovery. It is not limited to knowledge
+future agents would otherwise need to reinvestigate. When candidates have
+future value, Root gives a fresh Curator the selected candidates, facts and
+supporting evidence, exact relevant prior memory, and canonical sources needed to reconcile them. No candidates or
+no future value means no Curator; small ordinary tasks can skip it entirely.
+Existing docs, source, instructions, tests, commits, and rollout records are
+neither automatic exclusions nor reasons by themselves to create memory. They
+are evidence; memory can link or summarize easy-to-find canonical material or
+compress a decision basis spread across code, Host, history, or design. Curator
+reconciles supplied candidates and may report that existing knowledge is
+sufficient and no write is needed.
+
 Use Reasoning Specialist when an independent challenge may materially change
 direction, including when framing appears coherent or an outcome is unexpected.
 It tests hidden assumptions, causal models, decomposition, boundaries, decision

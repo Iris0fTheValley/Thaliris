@@ -37,8 +37,8 @@ def test_core_create_checkpoint_retire_without_host(store, mode):
     anchor = start(store, mode)
     assert store.check() == anchor
     assert anchor["contract"] == intent(mode)
-    assert anchor["provenance"] == "CONTROLLER_ASSERTED_HUMAN_INSTRUCTION"
-    assert anchor["host_actor_assurance"] == "UNKNOWN"
+    assert anchor["provenance"] == "SELECTED_TASK_INTENT"
+    assert "host_actor_assurance" not in anchor
     assert not {"origin_session_hash", "lifecycle_sha256", "fenced_agents", "fenced_sessions"} & anchor.keys()
     packet = store.root / "packet.json"
     packet.write_text('{"active_work": ["repair"]}')
@@ -76,7 +76,10 @@ def test_core_recovery_restores_original_bytes_and_archives_conflicts(store):
         store.recover("0" * 64, "Restore selected intent")
     assert not (store.directory / "recovery").exists()
     recovered = store.recover(hashlib.sha256(anchor_bytes).hexdigest(), "Restore selected intent")
-    assert recovered["host_actor_assurance"] == recovered["child_death_proof"] == "UNKNOWN"
+    assert recovered == {"ok": True, "status": "TASK_AUTHORITY_RECOVERED", "task_id": original["task_id"],
+                         "authority_provenance": "SELECTED_TASK_INTENT"}
+    assert "host_actor_assurance" not in recovered and "child_death_proof" not in recovered
+    assert "death_proof" not in store.read()["recoveries"][-1]
     assert state_path.read_bytes() == state_bytes
     assert security_path.read_bytes() == security_bytes
     assert not absent_security.exists()
@@ -143,6 +146,21 @@ def test_supplied_native_evidence_is_checked_and_recovered_by_adapter(store):
     assert (archive / "native.json").read_bytes() == b'changed native evidence'
 
 
+@pytest.mark.parametrize("field,value", [("provenance", "ADAPTER_SELECTED_INTENT"),
+                                         ("host_actor_assurance", "UNKNOWN")])
+def test_adapter_authority_provenance_is_immutable_during_recovery(store, field, value):
+    core.task_start(store.root, "Repair the example", None, None)
+    anchor = store.establish(core.task_show(store.root)["state"], intent(), adapter_fields={field: value})
+    assert anchor[field] == value
+
+    def change_provenance(record):
+        record[field] = "CHANGED"
+
+    with pytest.raises(ValueError, match="TASK_AUTHORITY_IDENTITY_CHANGED"):
+        store.recover(authority.digest(store.path()), "Keep adapter provenance", restore_adapter=change_provenance)
+    assert store.check()[field] == value
+
+
 def test_core_import_and_operations_do_not_load_codex_modules(tmp_path):
     # An import blocker proves the complete neutral operation chain, including
     # recovery, rather than merely testing the top-level module import.
@@ -162,8 +180,11 @@ store = authority.AuthorityStore(root, Path(sys.argv[2]), protected_paths=(".con
 intent = {"human_instruction":"Selected instruction", "boundary":"Example", "invariants":"Preserve behavior", "acceptance":"Focused checks", "execution_mode":"single-agent"}
 anchor = store.establish(core.task_show(root)["state"], intent)
 assert store.check()["task_id"] == anchor["task_id"]
+assert anchor["provenance"] == "SELECTED_TASK_INTENT" and "host_actor_assurance" not in anchor
 (root / ".context/state.json").write_bytes(b"corrupt")
 recovered = store.recover(authority.digest(store.path()), "Restore neutral authority")
+assert "host_actor_assurance" not in recovered and "child_death_proof" not in recovered
+assert "death_proof" not in store.read()["recoveries"][-1]
 store.checkpoint()
 core.task_close(root, 1)
 store.checkpoint()

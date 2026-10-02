@@ -108,6 +108,7 @@ def test_repository_tampering_does_not_rebless_authority(workspace, target):
         task_authority.recover(workspace, "0" * 64, "Human selected restore")
     recovered = task_authority.recover(workspace, hashlib.sha256(original).hexdigest(), "Human selected restore of the same intent and original baseline")
     assert recovered["child_death_proof"] == "UNKNOWN"
+    assert task_authority.read(workspace)["recoveries"][-1]["death_proof"] == "UNKNOWN"
     assert task_authority.check(workspace)["goal"] == "Repair the example"
 
 

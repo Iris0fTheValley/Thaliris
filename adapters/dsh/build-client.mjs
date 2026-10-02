@@ -64,7 +64,10 @@ try {
     if (!existsSync(generated) || !existsSync(sourceMap)) throw new Error('The native DSH client build emitted no installable bundle or source map.')
     const output = join(adapterRoot, 'lib')
     mkdirSync(output, { recursive: true })
-    copyFileSync(generated, join(output, 'client.js'))
+    const bundle = readFileSync(generated, 'utf8')
+    const sanitizedBundle = bundle.replace(/(\/\/#region \\0dsh-css:)[^\r\n]*/g, '$1ThalirisPage.module.css.mjs')
+    if (sanitizedBundle.includes(source)) throw new Error('The generated client bundle contains an absolute DSH build path.')
+    writeFileSync(join(output, 'client.js'), sanitizedBundle)
     copyFileSync(sourceMap, join(output, 'client.js.map'))
     const map = JSON.parse(readFileSync(join(output, 'client.js.map'), 'utf8'))
     const temporaryPrefix = `../../../packages/client/${relativeTemp.split(sep).join('/')}/src/`

@@ -1,20 +1,23 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
-import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const adapterRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const source = process.env.DSH_SOURCE
 const packDirectory = process.env.THALIRIS_PACK_DIR
-if (!source || !packDirectory) throw new Error('Set DSH_SOURCE and THALIRIS_PACK_DIR to the pinned source and locally packed bundles.')
+const temporaryRoot = process.env.THALIRIS_TEST_TMP_ROOT
+if (!source || !packDirectory || !temporaryRoot || !process.env.THALIRIS_TEST_PYTHON || !process.env.THALIRIS_TEST_CORE_PATH) {
+  throw new Error('Set DSH_SOURCE, THALIRIS_PACK_DIR, THALIRIS_TEST_TMP_ROOT, THALIRIS_TEST_PYTHON, and THALIRIS_TEST_CORE_PATH for the packed activation smoke.')
+}
+mkdirSync(resolve(temporaryRoot), { recursive: true })
 const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: source, encoding: 'utf8' })
 if (revision.status !== 0 || revision.stdout.trim() !== '639ed015397290b3745d163aafe02ffee4aa3f84') {
   throw new Error('DSH source revision differs from the verified install baseline.')
 }
 const requireSource = createRequire(resolve(source, 'package.json'))
-const temp = mkdtempSync(join(tmpdir(), 'thaliris-plugin-manager-smoke-'))
+const temp = mkdtempSync(join(resolve(temporaryRoot), 'thaliris-plugin-manager-smoke-'))
 const tsconfig = join(temp, 'tsconfig.json')
 const requireValues = createRequire(resolve(source, 'packages/storage/storage-domain/package.json'))
 const ts = requireSource('typescript')

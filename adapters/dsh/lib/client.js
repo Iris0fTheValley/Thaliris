@@ -3981,8 +3981,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			}
 		};
 		//#endregion
-		//#region \0dsh-css:C:\Users\12298\Documents\Codex\2026-10-02\codex-benchmark-1-thaliris-host-neutral\work\deepseek-harness\packages\client\thaliris-build-KE6slc\src\client\ThalirisPage.module.css.mjs
-		const css = ".m7ZUFa_page{width:100%;color:var(--dsw-alias-text-primary);flex-direction:column;gap:18px;display:flex}.m7ZUFa_header,.m7ZUFa_sectionHead,.m7ZUFa_cardHead,.m7ZUFa_inline,.m7ZUFa_inlineActions,.m7ZUFa_permissionRow{align-items:center;gap:12px;display:flex}.m7ZUFa_header,.m7ZUFa_sectionHead,.m7ZUFa_cardHead{justify-content:space-between}.m7ZUFa_header{align-items:flex-start}.m7ZUFa_title{margin:0;font-size:20px;font-weight:600}.m7ZUFa_summary,.m7ZUFa_section p,.m7ZUFa_section small{color:var(--dsw-alias-text-secondary)}.m7ZUFa_summary{margin:5px 0 0}.m7ZUFa_section{flex-direction:column;gap:14px;min-width:0;display:flex}.m7ZUFa_fieldset{border:0;flex-direction:column;gap:14px;min-width:0;margin:0;padding:0;display:flex}.m7ZUFa_visuallyHidden{clip:rect(0, 0, 0, 0);white-space:nowrap;border:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}.m7ZUFa_section h3,.m7ZUFa_section h4{margin:0;font-weight:600}.m7ZUFa_section h3{font-size:16px}.m7ZUFa_section h4{font-size:14px}.m7ZUFa_section p{margin:0;line-height:1.5}.m7ZUFa_field{flex-direction:column;gap:6px;min-width:0;display:flex}.m7ZUFa_field>span{font-size:13px;font-weight:500}.m7ZUFa_field textarea{resize:vertical;box-sizing:border-box;width:100%;min-height:118px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:10px 12px;line-height:1.5}.m7ZUFa_field select,.m7ZUFa_inline select,.m7ZUFa_section>select{max-width:100%;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:8px 10px}.m7ZUFa_inline{flex-wrap:wrap}.m7ZUFa_inline select{flex:1;min-width:220px}.m7ZUFa_inlineActions{flex-wrap:wrap;justify-content:flex-end}.m7ZUFa_grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;display:grid}.m7ZUFa_wide{grid-column:1/-1}.m7ZUFa_stack{flex-direction:column;gap:10px;display:flex}.m7ZUFa_card{border:1px solid var(--dsw-alias-border-primary);background:var(--dsw-alias-surface-secondary);border-radius:10px;flex-direction:column;gap:12px;min-width:0;padding:14px;display:flex}.m7ZUFa_cardHead{align-items:flex-start}.m7ZUFa_cardHead code,.m7ZUFa_cardHead p{color:var(--dsw-alias-text-secondary);overflow-wrap:anywhere;margin-top:5px;display:block}.m7ZUFa_subsection{flex-direction:column;gap:10px;padding-top:4px;display:flex}.m7ZUFa_checkGrid{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:8px 12px;display:grid}.m7ZUFa_permissionRow{flex-wrap:wrap;justify-content:flex-start;padding:7px 0}.m7ZUFa_permissionRow strong{min-width:140px}.m7ZUFa_notice{background:var(--dsw-alias-surface-tertiary);overflow-wrap:anywhere;border-radius:8px;padding:9px 11px}.m7ZUFa_error{color:var(--dsw-alias-text-danger);background:var(--dsw-alias-surface-danger);border-radius:8px;padding:9px 11px}.m7ZUFa_card pre{max-width:100%;max-height:260px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);white-space:pre-wrap;overflow-wrap:anywhere;border-radius:7px;margin:0;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:auto}@media (width<=680px){.m7ZUFa_header,.m7ZUFa_sectionHead{flex-direction:column;align-items:flex-start}.m7ZUFa_inline{flex-direction:column;align-items:stretch}.m7ZUFa_inline select{box-sizing:border-box;width:100%}}";
+		//#region \0dsh-css:ThalirisPage.module.css.mjs
+		const css = "._6ZMQjW_page{width:100%;color:var(--dsw-alias-text-primary);flex-direction:column;gap:18px;display:flex}._6ZMQjW_header,._6ZMQjW_sectionHead,._6ZMQjW_cardHead,._6ZMQjW_inline,._6ZMQjW_inlineActions,._6ZMQjW_permissionRow{align-items:center;gap:12px;display:flex}._6ZMQjW_header,._6ZMQjW_sectionHead,._6ZMQjW_cardHead{justify-content:space-between}._6ZMQjW_header{align-items:flex-start}._6ZMQjW_title{margin:0;font-size:20px;font-weight:600}._6ZMQjW_summary,._6ZMQjW_section p,._6ZMQjW_section small{color:var(--dsw-alias-text-secondary)}._6ZMQjW_summary{margin:5px 0 0}._6ZMQjW_section{flex-direction:column;gap:14px;min-width:0;display:flex}._6ZMQjW_fieldset{border:0;flex-direction:column;gap:14px;min-width:0;margin:0;padding:0;display:flex}._6ZMQjW_visuallyHidden{clip:rect(0, 0, 0, 0);white-space:nowrap;border:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}._6ZMQjW_section h3,._6ZMQjW_section h4{margin:0;font-weight:600}._6ZMQjW_section h3{font-size:16px}._6ZMQjW_section h4{font-size:14px}._6ZMQjW_section p{margin:0;line-height:1.5}._6ZMQjW_field{flex-direction:column;gap:6px;min-width:0;display:flex}._6ZMQjW_field>span{font-size:13px;font-weight:500}._6ZMQjW_field textarea{resize:vertical;box-sizing:border-box;width:100%;min-height:118px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:10px 12px;line-height:1.5}._6ZMQjW_field select,._6ZMQjW_inline select,._6ZMQjW_section>select{max-width:100%;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:8px 10px}._6ZMQjW_inline{flex-wrap:wrap}._6ZMQjW_inline select{flex:1;min-width:220px}._6ZMQjW_inlineActions{flex-wrap:wrap;justify-content:flex-end}._6ZMQjW_grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;display:grid}._6ZMQjW_wide{grid-column:1/-1}._6ZMQjW_stack{flex-direction:column;gap:10px;display:flex}._6ZMQjW_card{border:1px solid var(--dsw-alias-border-primary);background:var(--dsw-alias-surface-secondary);border-radius:10px;flex-direction:column;gap:12px;min-width:0;padding:14px;display:flex}._6ZMQjW_cardHead{align-items:flex-start}._6ZMQjW_cardHead code,._6ZMQjW_cardHead p{color:var(--dsw-alias-text-secondary);overflow-wrap:anywhere;margin-top:5px;display:block}._6ZMQjW_subsection{flex-direction:column;gap:10px;padding-top:4px;display:flex}._6ZMQjW_checkGrid{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:8px 12px;display:grid}._6ZMQjW_permissionRow{flex-wrap:wrap;justify-content:flex-start;padding:7px 0}._6ZMQjW_permissionRow strong{min-width:140px}._6ZMQjW_notice{background:var(--dsw-alias-surface-tertiary);overflow-wrap:anywhere;border-radius:8px;padding:9px 11px}._6ZMQjW_error{color:var(--dsw-alias-text-danger);background:var(--dsw-alias-surface-danger);border-radius:8px;padding:9px 11px}._6ZMQjW_card pre{max-width:100%;max-height:260px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);white-space:pre-wrap;overflow-wrap:anywhere;border-radius:7px;margin:0;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:auto}@media (width<=680px){._6ZMQjW_header,._6ZMQjW_sectionHead{flex-direction:column;align-items:flex-start}._6ZMQjW_inline{flex-direction:column;align-items:stretch}._6ZMQjW_inline select{box-sizing:border-box;width:100%}}";
 		const tagId = "@thaliris/dsh-plugin/ThalirisPage.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -3992,27 +3992,27 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			document.head.appendChild(tag);
 		}
 		var ThalirisPage_module_css_default = {
-			"card": "m7ZUFa_card",
-			"cardHead": "m7ZUFa_cardHead",
-			"checkGrid": "m7ZUFa_checkGrid",
-			"error": "m7ZUFa_error",
-			"field": "m7ZUFa_field",
-			"fieldset": "m7ZUFa_fieldset",
-			"grid": "m7ZUFa_grid",
-			"header": "m7ZUFa_header",
-			"inline": "m7ZUFa_inline",
-			"inlineActions": "m7ZUFa_inlineActions",
-			"notice": "m7ZUFa_notice",
-			"page": "m7ZUFa_page",
-			"permissionRow": "m7ZUFa_permissionRow",
-			"section": "m7ZUFa_section",
-			"sectionHead": "m7ZUFa_sectionHead",
-			"stack": "m7ZUFa_stack",
-			"subsection": "m7ZUFa_subsection",
-			"summary": "m7ZUFa_summary",
-			"title": "m7ZUFa_title",
-			"visuallyHidden": "m7ZUFa_visuallyHidden",
-			"wide": "m7ZUFa_wide"
+			"card": "_6ZMQjW_card",
+			"cardHead": "_6ZMQjW_cardHead",
+			"checkGrid": "_6ZMQjW_checkGrid",
+			"error": "_6ZMQjW_error",
+			"field": "_6ZMQjW_field",
+			"fieldset": "_6ZMQjW_fieldset",
+			"grid": "_6ZMQjW_grid",
+			"header": "_6ZMQjW_header",
+			"inline": "_6ZMQjW_inline",
+			"inlineActions": "_6ZMQjW_inlineActions",
+			"notice": "_6ZMQjW_notice",
+			"page": "_6ZMQjW_page",
+			"permissionRow": "_6ZMQjW_permissionRow",
+			"section": "_6ZMQjW_section",
+			"sectionHead": "_6ZMQjW_sectionHead",
+			"stack": "_6ZMQjW_stack",
+			"subsection": "_6ZMQjW_subsection",
+			"summary": "_6ZMQjW_summary",
+			"title": "_6ZMQjW_title",
+			"visuallyHidden": "_6ZMQjW_visuallyHidden",
+			"wide": "_6ZMQjW_wide"
 		};
 		//#endregion
 		//#region src/client/ThalirisPage.tsx

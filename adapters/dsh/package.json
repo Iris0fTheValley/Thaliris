@@ -1,11 +1,12 @@
 {
   "name": "@thaliris/dsh-plugin",
   "version": "0.2.0",
-  "private": true,
+  "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./index.mjs",
     "./api": "./api.mjs",
+    "./client": "./lib/client.js",
     "./package.json": "./package.json",
     "./remote": {
       "types": "./remote.d.ts",
@@ -18,6 +19,8 @@
   "files": [
     "index.mjs",
     "policy.mjs",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md",
     "api.mjs",
     "core_bridge.py",
     "README.md",
@@ -25,11 +28,26 @@
     "CLIENT-CONTRACT.md",
     "cordis.patch.yml",
     "cordis.patch.example.yml",
+    "build-client.mjs",
     "remote.mjs",
-    "remote.d.ts"
+    "remote.d.ts",
+    "remote.d.mts",
+    "client/index.tsx",
+    "client/css-modules.d.ts",
+    "client/remote-types.ts",
+    "client/policy-controller.ts",
+    "client/native-controller.ts",
+    "client/ThalirisPage.tsx",
+    "client/locales.ts",
+    "client/ThalirisPage.module.css",
+    "lib/client.js",
+    "lib/client.js.map"
   ],
   "scripts": {
-    "test:native": "node tests/run-native.mjs"
+    "build:client": "node build-client.mjs",
+    "test:native": "node tests/run-native.mjs",
+    "test:client": "node tests/run-client.mjs",
+    "test:install": "node tests/run-package-smoke.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
@@ -48,6 +66,18 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-api-workspace-controller",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ],
+      "platform": "web"
     }
   },
   "dependencies": {

@@ -179,15 +179,18 @@ export function apply(ctx, config) {
       return { child_id: id, outcome: end.data.reason.kind, terminal_seq: end.seq, terminal_reason: end.data.reason, provenance: 'native-session-turn/end' }
     } finally { await handle.close() }
   }
+  async function reconcile(agent, args, signal) {
+    const inspected = await bridge(agent, 'inspect', {}, signal)
+    if (inspected.state.task_id !== args.task_id || inspected.state.revision !== args.base_revision) throw new Error('TASK_ID_OR_REVISION_CONFLICT')
+    if (inspected.state.active_work.length !== 1) throw new Error('THALIRIS_RESERVATION_REQUIRED')
+    const reservation = JSON.parse(inspected.state.active_work[0])
+    const observation = await nativeObservation(agent, reservation, signal, args.action === 'cancel-reconcile')
+    if (args.action === 'check' || observation.outcome === 'UNKNOWN') return { ...observation, released: false }
+    return { ...await bridge(agent, 'reconcile', { task_id: args.task_id, base_revision: args.base_revision, observation: JSON.stringify({ ...reservation, ...observation }) }, signal), ...observation, released: true, native_completed: observation.outcome === 'completed' }
+  }
   register(TOOL_NAMES[4], 'Check/reconcile a crash reservation using native catalog and durable terminal Session evidence. UNKNOWN never auto releases.',
     object({ ...identitySchema, action: { type: 'string', enum: ['check', 'reconcile', 'cancel-reconcile'] } }), async (args, agent, signal) => {
-      const inspected = await bridge(agent, 'inspect', {}, signal)
-      if (inspected.state.task_id !== args.task_id || inspected.state.revision !== args.base_revision) throw new Error('TASK_ID_OR_REVISION_CONFLICT')
-      if (inspected.state.active_work.length !== 1) throw new Error('THALIRIS_RESERVATION_REQUIRED')
-      const reservation = JSON.parse(inspected.state.active_work[0])
-      const observation = await nativeObservation(agent, reservation, signal, args.action === 'cancel-reconcile')
-      if (args.action === 'check' || observation.outcome === 'UNKNOWN') return { ...observation, released: false }
-      return { ...await bridge(agent, 'reconcile', { task_id: args.task_id, base_revision: args.base_revision, observation: JSON.stringify({ ...reservation, ...observation }) }, signal), ...observation, released: true, native_completed: observation.outcome === 'completed' }
+      return await reconcile(agent, args, signal)
     })
 
   async function memory(args, agent, signal, operation) {
@@ -217,6 +220,7 @@ export function apply(ctx, config) {
   ctx.provide('thaliris', {
     templates: () => import('./policy.mjs').then(module => structuredClone(module.roleTemplates)),
     providers: () => ctx.get('thalirisMemory')?.list() ?? [],
+    toolCatalog: () => ctx.tools.schemas().map(({ name, description }) => ({ name, description })),
     diagnostics: async (sessionId, signal) => {
       const agent = ctx.agents.get(sessionId)
       await binding(agent)

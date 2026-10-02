@@ -1,6 +1,6 @@
 # Shared client contract
 
-This is the implemented runtime seam for the next shared Web/Desktop client Workstream. It uses existing native Settings, model catalog, Workspace and plugin-manager pages. A client view is a projection; it cannot replace Core/native records or imply completion.
+The shared Web/Desktop client is the `@thaliris/dsh-plugin/client` entry. It uses one native Plugins-page item, ConfigForms, native model and tool catalogs, native Workspace and Session projections, and the native Plugin Manager. A client view is a projection; it cannot replace Core/native records or imply completion.
 
 ## Native configuration
 
@@ -52,6 +52,7 @@ The contribution uses native strict input codecs and the Host's SRC Remote metho
 |---|---|---|
 | `templates()` | none | Detached initial editable role templates; does not change stored roles |
 | `providers()` | none | Current registered `[{id,name}]`; empty when capability/providers absent |
+| `toolCatalog()` | none | Current native tool registry `[{name,description}]` |
 | `diagnostics(sessionId, signal?)` | Native root Session ID | `{task:{state,contract},workspace:{root,workspaceId},configurationRevision:number|null,permissions:{memory,roles},providers,reservations:[{reservation,native}]}` |
 | `approveMemory(sessionId, proposalId, signal?)` | Native root Session and selected Core proposal ID | Provider write result and Core acknowledgement; records native-client approval observation under current grants |
 
@@ -71,8 +72,14 @@ The Controller's native tool calls are independent of UI:
 
 Optional memory tools read/search under explicit byte/item bounds and propose writes. Children need native tool allowlist membership and current enabled role grants/context permission. The model-facing tools expose no policy mutation or approval endpoint. Tasks/close/routing remain usable after memory capability removal.
 
-## Next shared client slice
+## Client behavior and packaging
 
-Implement one reusable client page in native `plugins.item` (pattern: `ui-settings-subagent/src/client/index.ts:52–92`), using `configForms.whileServed(['thaliris'], register)`, existing native slots/locale/renderer/primitives, and a package `dsh.client` declaration for the shared Web client loaded by Desktop too. Follow `ui-plugin-manager/src/client/index.ts:96–145` for the native plugin panel/slots; do not build a second plugin manager.
+The shared client registers in native `plugins.item` only while the Host serves `thaliris`. General edits `policy.controllerPrompt`; Roles edits complete records, supports custom and empty role sets, explicit templates, duplication with a new unique ID, deletion, exact native routes, native tool grants, and role memory/context permissions; Memory exposes write mode, independent auto-write consent, provider enablement and Controller grants; Context binds native Workspace IDs and role context permissions; Diagnostics reads a selected native root Session, displays Core and native observations, opens a correlated child Session, copies a valid reconcile request, and exposes an explicit proposal-approval action only when current grants permit it.
 
-The page needs full role CRUD/duplication, complete prompt editing, enable/tool/context/memory grants, native model selection for inherit/fixed/allowed modes, visible Controller guidance, explicit Workspace binding, provider availability/write policy with auto opt-in, proposal review and diagnostics/recovery facts. Add client mount/unmount, revision conflict, role-empty/delete/edit, provider-missing, manual/review/auto and Web/Desktop shared-page tests plus visual/native installation smoke. The runtime/package tests do not establish visual integration or full installed Host startup. Do not add an orchestration state machine, claim semantic completion from observations, duplicate native policy/pipeline storage, or auto-release UNKNOWN reservations.
+The component uses native locale and settings primitives. Editable data remains on the `thaliris` ConfigForm with revision-fenced atomic mutations. The only client-side policy state is the unsaved page draft. Duplicating a role copies its visible fields and grants while assigning a new unique, stable ID. Diagnostics, Workspace, Session, model, provider, and tool values are native projections; they do not become a second Settings, Session, Workspace, or task store. Desktop uses the same DSH Web client registration and module bundle.
+
+`dsh.client` declares the shared client dependencies, and `./client` resolves to the generated DSH closure-factory artifact in `lib/client.js`. Build from the pinned DSH source with `npm run build:client` and `DSH_SOURCE` set; component tests use `npm run test:client`. After packing the runtime, memory capability and local provider archives, `THALIRIS_PACK_DIR=<directory>` with `DSH_SOURCE` set enables `npm run test:install`, which uses the native Plugin Manager in an isolated temporary profile. The two optional memory packages ship their own disabled-by-default bundle patches and are independently removable through the existing native Plugin Manager.
+
+Client tests cover native Settings revision conflicts, role create/edit/duplicate/delete/empty persistence, model and tool selection, Workspace binding, separate memory consent and grants, absent providers, native diagnostic projections, explicit proposal approval, and actual slot/Gateway contribution mount and disposal. The generated bundle is built with the DSH client preset; package/tarball and isolated Plugin Manager checks confirm the installable surface. No online model credentials or current installed profile are needed.
+
+Do not add an orchestration state machine, claim semantic completion from observations, duplicate native policy/pipeline storage, or auto-release UNKNOWN reservations.

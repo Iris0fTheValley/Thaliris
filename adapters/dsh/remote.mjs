@@ -8,6 +8,6 @@ const method = (name, parameters, cancellable = false) => ({
   ...(cancellable ? { cancellation: { parameter: 'signal' } } : {}), result: { mode: 'strict', typeSymbol: '@thaliris/dsh-plugin#JsonValue', create: () => z.json(), decode: value => z.json().parse(value) },
 })
 export const remoteContribution = { package: '@thaliris/dsh-plugin', descriptors: [
-  method('templates', []), method('providers', []), method('diagnostics', ['sessionId'], true),
+  method('templates', []), method('providers', []), method('toolCatalog', []), method('diagnostics', ['sessionId'], true),
   method('approveMemory', ['sessionId', 'proposalId'], true),
 ] }

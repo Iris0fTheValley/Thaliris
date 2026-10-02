@@ -17,6 +17,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteMap {
     'thaliris/templates': () => Promise<RemoteResult<RoleRecord[]>>;
     'thaliris/providers': () => Promise<RemoteResult<{ id: string; name: string }[]>>;
+    'thaliris/toolCatalog': () => Promise<RemoteResult<{ name: string; description: string }[]>>;
     'thaliris/diagnostics': (sessionId: string, signal?: AbortSignal) => Promise<RemoteResult<JsonValue>>;
     'thaliris/approveMemory': (sessionId: string, proposalId: string, signal?: AbortSignal) => Promise<RemoteResult<JsonValue>>;
   }

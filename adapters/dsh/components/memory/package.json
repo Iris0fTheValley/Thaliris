@@ -1,12 +1,16 @@
 {
   "name": "@thaliris/dsh-memory",
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "exports": "./index.mjs",
   "files": [
     "index.mjs",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "cordis.patch.yml"
   ],
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.4"
   }

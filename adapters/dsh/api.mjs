@@ -10,6 +10,7 @@ export default class ThalirisController extends TypertRemoteService {
   }
   templates() { return this.ctx.thaliris.templates() }
   providers() { return this.ctx.thaliris.providers() }
+  toolCatalog() { return this.ctx.thaliris.toolCatalog() }
   diagnostics(sessionId, signal) {
     identity(sessionId)
     return this.ctx.thaliris.diagnostics(sessionId, signal)
@@ -24,7 +25,7 @@ function identity(value) {
   if (typeof value !== 'string' || !value.trim() || value.length > 128) throw new Error('THALIRIS_NATIVE_ID_REQUIRED')
 }
 // Native standard-decorator API used from JavaScript without a custom wire schema.
-for (const name of ['templates', 'providers', 'diagnostics', 'approveMemory']) {
+for (const name of ['templates', 'providers', 'toolCatalog', 'diagnostics', 'approveMemory']) {
   Remote(ThalirisController.prototype[name], { kind: 'method', name, static: false, private: false,
     addInitializer(initialize) { initializers.push(initialize) } })
 }

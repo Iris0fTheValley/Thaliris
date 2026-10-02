@@ -95,8 +95,9 @@ export class NativeProjectionController {
   async loadModels(): Promise<void> {
     this.store.update(state => { state.modelStatus = 'loading' })
     try {
-      const catalog = await this.ctx.remote.session.modelCatalog()
-      this.store.update(state => { state.modelCatalog = catalog; state.modelStatus = 'ready' })
+      const response = await this.ctx.remote.session.modelCatalog()
+      if (!response.ok) throw new Error(remoteError(response))
+      this.store.update(state => { state.modelCatalog = response.value; state.modelStatus = 'ready' })
     } catch {
       this.store.update(state => { state.modelStatus = 'error' })
     }

@@ -14,6 +14,7 @@ import type { RoleRecord, UserPolicy } from '../remote'
 import { NS, en } from '../client/locales.ts'
 import { PolicyEditorController, type ThalirisSettings } from '../client/policy-controller.ts'
 import type { NativeProjectionState } from '../client/native-controller.ts'
+import { NativeProjectionController } from '../client/native-controller.ts'
 import { ThalirisPage, type ThalirisPageFace } from '../client/ThalirisPage.tsx'
 
 vi.mock('../remote.mjs', () => ({ remoteContribution: { package: '@thaliris/dsh-plugin', descriptors: [] } }))
@@ -111,8 +112,7 @@ function useStore<T>(store: SnapshotStore<T>) {
   return <S,>(select: (state: T) => S): S => useSyncExternalStore(store.subscribe, () => select(store.getSnapshot()), () => select(store.getSnapshot()))
 }
 
-function renderPage(editor: PolicyEditorController) {
-  const native = createSnapshotStore(nativeState())
+function renderPage(editor: PolicyEditorController, native = createSnapshotStore(nativeState())) {
   const actions = {
     save: vi.fn(() => { void editor.save() }), discard: vi.fn(() => editor.discard()), refresh: vi.fn(),
     loadDiagnostics: vi.fn(), openPlugin: vi.fn(), openSession: vi.fn(), approveMemory: vi.fn(),
@@ -126,9 +126,40 @@ function renderPage(editor: PolicyEditorController) {
   return { actions, native }
 }
 
+function createNativeProjectionController(catalogResponse: unknown): NativeProjectionController {
+  const list = <T,>(snapshot: T) => ({ getSnapshot: () => snapshot, subscribe: () => () => {} })
+  const ctx = {
+    sessions: { list: list(sessions) },
+    workspaces: { list: list(workspaces) },
+    remote: {
+      session: { modelCatalog: vi.fn(async () => catalogResponse) },
+      $on: vi.fn(() => () => {}),
+    },
+    on: vi.fn(() => () => {}),
+  }
+  return new NativeProjectionController(ctx as never)
+}
+
 afterEach(cleanup)
 
 describe('shared Thaliris settings client', () => {
+  it('unwraps the native model catalog result and renders while the catalog is still empty at startup', async () => {
+    const controller = createNativeProjectionController({ ok: true, value: modelCatalog })
+    const editor = new PolicyEditorController(createForm().form)
+    renderPage(editor, controller.store)
+
+    expect(controller.getSnapshot().modelCatalog).toBeUndefined()
+    fireEvent.click(screen.getByRole('tab', { name: en.tabRoles }))
+    fireEvent.change(screen.getByLabelText(en.modelPolicy), { target: { value: 'fixed' } })
+    expect(screen.getByRole('option', { name: en.noModels })).toBeTruthy()
+
+    await act(async () => { await controller.loadModels() })
+
+    expect(controller.getSnapshot().modelCatalog).toEqual(modelCatalog)
+    expect(controller.getSnapshot().modelStatus).toBe('ready')
+    expect(screen.getByRole('option', { name: 'Alpha / Fast' })).toBeTruthy()
+  })
+
   it('renders the shared editable Web/Desktop page and persists complete role, route, Workspace, and memory policy through native CAS', async () => {
     const backing = createForm()
     const editor = new PolicyEditorController(backing.form)

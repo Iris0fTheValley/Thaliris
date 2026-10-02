@@ -321,7 +321,7 @@ function RoleGrantControls({ role, index, providers, t, onRole }: {
   t: (key: LocaleKey) => string; onRole: (index: number, patch: Partial<RoleRecord>) => void
 }) {
   const providerIds = [...new Set([...providers.map(provider => provider.id), ...role.memory.read, ...role.memory.write])]
-  return <div className={css.subsection}><h4>{t('roleMemory')}</h4>
+  return <div className={css.subsection}><h4>{t('roleMemory')}: {role.name || role.id} ({role.id})</h4>
     {providerIds.map(id => {
       const provider = providers.find(value => value.id === id)
       const name = provider?.name ?? id

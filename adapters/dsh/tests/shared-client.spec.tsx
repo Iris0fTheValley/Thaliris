@@ -210,6 +210,8 @@ describe('shared Thaliris settings client', () => {
     expect(editor.getSnapshot().draft?.workspaces).toEqual([{ workspaceId: 'workspace-1', root: 'C:/repo', enabled: true }])
     expect(editor.getSnapshot().draft?.roles[0]?.context.memory).toBe(true)
     fireEvent.click(screen.getByRole('tab', { name: en.tabMemory }))
+    expect(screen.getByRole('heading', { name: `${en.roleMemory}: Custom writer (custom-writer)` })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: `${en.roleMemory}: Custom writer (custom-writer-copy)` })).toBeTruthy()
     fireEvent.change(screen.getByLabelText(en.memoryMode), { target: { value: 'manual' } })
     expect(editor.getSnapshot().draft?.memory.mode).toBe('manual')
     fireEvent.change(screen.getByLabelText(en.memoryMode), { target: { value: 'suggest-review' } })

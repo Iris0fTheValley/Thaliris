@@ -13,6 +13,6 @@ Baseline: upstream DSH `639ed015397290b3745d163aafe02ffee4aa3f84`.
 | Memory | Optional independent capability/provider packages; async external injection, bounded read/search/write and user grants | No embeddings/vector/RAG/credential management |
 | Memory writes | Disabled default, manual/review Core proposals, human Remote approval, explicitly opted-in auto | Approval is human-client governance within native Host trust |
 | Uninstall | Native effects dispose provider/capability; routing and close continue | Native package-manager UI installation/removal smoke is pending |
-| Remote | Actual native Gateway SRC dispatch of templates, diagnostics, approval | Shared client mounting/visual tests pending |
+| Remote | Actual native Gateway SRC dispatch of templates, diagnostics, approval; temporary Web preview rendered the client and injected its API namespace | End-to-end browser diagnostics still needs an active Core task in the configured root Session |
 
 Tests use real native source components and a scripted LLM. They do not establish Codex managed enforcement, universal process authentication, or semantic task completion authority.

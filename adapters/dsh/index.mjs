@@ -39,18 +39,54 @@ export function apply(ctx, config) {
       && header.id === agent.id && header.parentSession === undefined && header.isSeeded === false
       && (header.delegationDepth ?? 0) === 0 && header.origin !== 'subagent' && !!header.cwd
   }
+  function isPersistedRoot(header, sessionId) {
+    return !!header && header.id === sessionId && header.parentSession === undefined && header.isSeeded === false
+      && (header.delegationDepth ?? 0) === 0 && header.origin !== 'subagent' && !!header.cwd
+  }
+  async function workspaceBinding(header) {
+    const workspace = await ctx.workspaceRegistry.resolveByPath(header.cwd)
+    const selected = readPolicy(config).workspaces.find(row => row.enabled && row.workspaceId === workspace?.id)
+    if (!selected || realpathSync(selected.root) !== realpathSync(workspace.path) || realpathSync(header.cwd) !== realpathSync(selected.root)) throw new Error('THALIRIS_WORKSPACE_NOT_CONFIGURED')
+    return { root: realpathSync(selected.root), workspaceId: workspace.id }
+  }
+  async function persistedRootBinding(sessionId) {
+    // Persistent native metadata, never a caller id or a matching object alone.
+    const stored = await ctx.sessionPersistence.stat(sessionId)
+    const header = stored?.header
+    if (!isPersistedRoot(header, sessionId)) throw new Error('THALIRIS_PERSISTED_ROOT_REQUIRED')
+    return await workspaceBinding(header)
+  }
   async function binding(agent) {
     if (disposed || !isNativeRoot(agent)) throw new Error('THALIRIS_NATIVE_ROOT_REQUIRED')
-    const workspace = await ctx.workspaceRegistry.resolveByPath(agent.session.header.cwd)
-    const selected = readPolicy(config).workspaces.find(row => row.enabled && row.workspaceId === workspace?.id)
-    if (!selected || realpathSync(selected.root) !== realpathSync(workspace.path) || realpathSync(agent.session.header.cwd) !== realpathSync(selected.root)) throw new Error('THALIRIS_WORKSPACE_NOT_CONFIGURED')
-    // Persistent native metadata, never a caller id or a matching object alone.
+    const bound = await workspaceBinding(agent.session.header)
     const stored = await ctx.sessionPersistence.stat(agent.id)
-    const header = stored?.header
-    if (!header || header.id !== agent.id || header.parentSession !== undefined || header.isSeeded !== false
-      || (header.delegationDepth ?? 0) !== 0 || header.origin === 'subagent' || !header.cwd
-      || realpathSync(header.cwd) !== realpathSync(selected.root)) throw new Error('THALIRIS_PERSISTED_ROOT_REQUIRED')
-    return { root: realpathSync(selected.root), workspaceId: workspace.id }
+    if (!isPersistedRoot(stored?.header, agent.id) || realpathSync(stored.header.cwd) !== bound.root) throw new Error('THALIRIS_PERSISTED_ROOT_REQUIRED')
+    return bound
+  }
+  async function withNativeRoot(sessionId, signal, operation) {
+    let agent = ctx.agents.get(sessionId)
+    let handle
+    if (!agent) {
+      // Prove durable root ancestry and exact configured Workspace before asking
+      // the native Agent service to resume caller-selected persisted history.
+      await persistedRootBinding(sessionId)
+      signal?.throwIfAborted()
+      try {
+        handle = await ctx.agents.resume({ resumeSessionId: sessionId, signal })
+        agent = handle.agent
+      } catch (error) {
+        // Another native request may have resumed this exact identity after our
+        // initial lookup. Reuse it only after the ordinary live binding checks.
+        agent = ctx.agents.get(sessionId)
+        if (!agent) throw error
+      }
+    }
+    try {
+      await binding(agent)
+      return await operation(agent)
+    } finally {
+      await handle?.dispose()
+    }
   }
   ctx.systemPrompt.section({ name: 'thaliris:controller-contract', order: ctx.systemPrompt.getSectionOrder('TEAM_POLICY'),
     text: ({ agent }) => {
@@ -227,15 +263,12 @@ export function apply(ctx, config) {
     templates: () => import('./policy.mjs').then(module => structuredClone(module.roleTemplates)),
     providers: () => ctx.get('thalirisMemory')?.list() ?? [],
     toolCatalog: () => ctx.tools.schemas().map(({ name, description }) => ({ name, description })),
-    diagnostics: async (sessionId, signal) => {
-      const agent = ctx.agents.get(sessionId)
-      await binding(agent)
+    diagnostics: async (sessionId, signal) => withNativeRoot(sessionId, signal, async agent => {
       const task = await bridge(agent, 'inspect', {}, signal)
       return { task, workspace: await binding(agent), configurationRevision: ctx.get('settings')?.describe({ redactSecrets: true }).find(row => row.ns === ctx.get('configEditor')?.entries().find(entry => entry.fiber?.runtime?.name === name)?.options.id)?.revision ?? null, permissions: { memory: readPolicy(config).memory, roles: readPolicy(config).roles.map(({ id, enabled, tools, memory, context, modelPolicy }) => ({ id, enabled, tools, memory, context, modelPolicy })) },
         providers: ctx.get('thalirisMemory')?.list() ?? [], reservations: await Promise.all(task.state.active_work.map(async value => ({ reservation: JSON.parse(value), native: await nativeObservation(agent, JSON.parse(value), signal, false) }))) }
-    },
-    approveMemory: async (sessionId, proposalId, signal) => {
-      const agent = ctx.agents.get(sessionId)
+    }),
+    approveMemory: async (sessionId, proposalId, signal) => withNativeRoot(sessionId, signal, async agent => {
       const bound = await binding(agent), policy = readPolicy(config)
       const task = await bridge(agent, 'inspect', {}, signal)
       const proposal = task.state.pending_results.map(value => { try { return JSON.parse(value) } catch { return null } }).find(value => value?.proposal_id === proposalId)
@@ -245,7 +278,7 @@ export function apply(ctx, config) {
       const value = await capability.invoke(proposal.provider, 'write', { ...proposal, ...bound, signal, maxBytes: 16384 })
       const recorded = await bridge(agent, 'proposal', { observation: JSON.stringify({ approval_id: randomUUID(), proposal_id: proposal.proposal_id, provider: proposal.provider, workspaceId: bound.workspaceId, outcome: 'provider-write-observed', provenance: 'native-client-approval' }) }, signal)
       return { value, recorded: true, ...recorded }
-    },
+    }),
   })
   ctx.effect(() => async () => {
     disposed = true

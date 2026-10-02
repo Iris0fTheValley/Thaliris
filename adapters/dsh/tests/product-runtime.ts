@@ -38,7 +38,7 @@ const signal = () => new AbortController().signal
 const contract = { human_instruction: 'Product runtime fixture', boundary: 'Temporary fixtures only', invariants: 'Native durable identity, optional memory, editable policy', acceptance: 'Controller decides', execution_mode: 'delegated' }
 const role = { id: 'editable', name: 'My role', description: 'Fully editable', enabled: true, prompt: 'EXACT_EDITED_PROMPT', tools: [], modelPolicy: { mode: 'allowed', routes: [{ provider: 'mock', model: 'child' }] }, memory: { read: [], write: [] }, context: { handoff: true, memory: false } }
 const handoff = { goal: 'Fixture', scope: 'Text only', invariants: 'No ambient input', acceptance: 'Controller assesses', context: 'BOUNDED_SELECTION' }
-async function harness(home: string, initialize: boolean) {
+async function harness(home: string, initialize: boolean, resumeRoot = true) {
   const dir = join(home, 'profiles', 'product'), workspace = join(home, 'repo'), secondRoot = join(home, 'second')
   if (initialize) {
     await mkdir(workspace); await mkdir(secondRoot)
@@ -74,7 +74,7 @@ async function harness(home: string, initialize: boolean) {
   })
   await ctx.plugin(Registry); await ctx.plugin(Gateway); await ctx.plugin(Api)
   const parent = initialize ? await ctx.agentLoop.create(SessionId('persistent-controller'), { provider: 'mock', model: 'parent' }, { cwd: workspace })
-    : (await ctx.agents.resume({ resumeSessionId: SessionId('persistent-controller'), agentOptions: { provider: 'mock', model: 'parent' } })).agent
+    : resumeRoot ? (await ctx.agents.resume({ resumeSessionId: SessionId('persistent-controller'), agentOptions: { provider: 'mock', model: 'parent' } })).agent : undefined
   await ctx.sessionPersistence.flush()
   let call = 0
   const execute = (name: string, args: any, agent = parent) => ctx.tools.execute({ callId: ToolCallId(`product-${++call}`), name, arguments: args, agent, signal: signal() })
@@ -207,6 +207,15 @@ async function initialize(home: string) {
   } finally { await h.ctx.fiber.dispose() }
 }
 async function restart(home: string) {
+  const unloaded = await harness(home, false, false)
+  try {
+    assert.equal(unloaded.ctx.agents.get(SessionId('persistent-controller')), undefined, 'fixture begins with no live Agent for the persisted root Session')
+    const diagnostics: any = await unloaded.ctx.typertGateway.invoke({ namespace: 'thaliris', method: 'diagnostics', args: { sessionId: 'persistent-controller' } })
+    assert.equal(diagnostics.task.state.status, 'ACTIVE', 'native diagnostics resumes the exact persisted root Agent and reads its current Core task')
+    assert.equal(diagnostics.workspace.workspaceId, (await unloaded.ctx.workspaceRegistry.resolveByPath(unloaded.workspace))!.id)
+    assert.equal(unloaded.ctx.agents.get(SessionId('persistent-controller')), undefined, 'one-shot diagnostics disposes only the Agent handle it resumed')
+    console.log('PASS Gateway diagnostics resumes and validates a persisted configured root Session, then disposes its owned Agent handle')
+  } finally { await unloaded.ctx.fiber.dispose() }
   const h = await harness(home, false)
   try {
     assert.deepEqual((h.view().value as any).policy.roles, [], 'deleted roles stay deleted after fresh process')

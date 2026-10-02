@@ -3983,7 +3983,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		};
 		//#endregion
 		//#region \0dsh-css:ThalirisPage.module.css.mjs
-		const css = "._7Qqqeq_page{width:100%;color:var(--dsw-alias-text-primary);flex-direction:column;gap:18px;display:flex}._7Qqqeq_header,._7Qqqeq_sectionHead,._7Qqqeq_cardHead,._7Qqqeq_inline,._7Qqqeq_inlineActions,._7Qqqeq_permissionRow{align-items:center;gap:12px;display:flex}._7Qqqeq_header,._7Qqqeq_sectionHead,._7Qqqeq_cardHead{justify-content:space-between}._7Qqqeq_header{align-items:flex-start}._7Qqqeq_title{margin:0;font-size:20px;font-weight:600}._7Qqqeq_summary,._7Qqqeq_section p,._7Qqqeq_section small{color:var(--dsw-alias-text-secondary)}._7Qqqeq_summary{margin:5px 0 0}._7Qqqeq_section{flex-direction:column;gap:14px;min-width:0;display:flex}._7Qqqeq_fieldset{border:0;flex-direction:column;gap:14px;min-width:0;margin:0;padding:0;display:flex}._7Qqqeq_visuallyHidden{clip:rect(0, 0, 0, 0);white-space:nowrap;border:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}._7Qqqeq_section h3,._7Qqqeq_section h4{margin:0;font-weight:600}._7Qqqeq_section h3{font-size:16px}._7Qqqeq_section h4{font-size:14px}._7Qqqeq_section p{margin:0;line-height:1.5}._7Qqqeq_field{flex-direction:column;gap:6px;min-width:0;display:flex}._7Qqqeq_field>span{font-size:13px;font-weight:500}._7Qqqeq_field textarea{resize:vertical;box-sizing:border-box;width:100%;min-height:118px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:10px 12px;line-height:1.5}._7Qqqeq_field select,._7Qqqeq_inline select,._7Qqqeq_section>select{max-width:100%;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:8px 10px}._7Qqqeq_inline{flex-wrap:wrap}._7Qqqeq_inline select{flex:1;min-width:220px}._7Qqqeq_inlineActions{flex-wrap:wrap;justify-content:flex-end}._7Qqqeq_grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;display:grid}._7Qqqeq_wide{grid-column:1/-1}._7Qqqeq_stack{flex-direction:column;gap:10px;display:flex}._7Qqqeq_card{border:1px solid var(--dsw-alias-border-primary);background:var(--dsw-alias-surface-secondary);border-radius:10px;flex-direction:column;gap:12px;min-width:0;padding:14px;display:flex}._7Qqqeq_cardHead{align-items:flex-start}._7Qqqeq_cardHead code,._7Qqqeq_cardHead p{color:var(--dsw-alias-text-secondary);overflow-wrap:anywhere;margin-top:5px;display:block}._7Qqqeq_subsection{flex-direction:column;gap:10px;padding-top:4px;display:flex}._7Qqqeq_checkGrid{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:8px 12px;display:grid}._7Qqqeq_permissionRow{flex-wrap:wrap;justify-content:flex-start;padding:7px 0}._7Qqqeq_permissionRow strong{min-width:140px}._7Qqqeq_notice{background:var(--dsw-alias-surface-tertiary);overflow-wrap:anywhere;border-radius:8px;padding:9px 11px}._7Qqqeq_error{color:var(--dsw-alias-text-danger);background:var(--dsw-alias-surface-danger);border-radius:8px;padding:9px 11px}._7Qqqeq_card pre{max-width:100%;max-height:260px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);white-space:pre-wrap;overflow-wrap:anywhere;border-radius:7px;margin:0;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:auto}@media (width<=680px){._7Qqqeq_header,._7Qqqeq_sectionHead{flex-direction:column;align-items:flex-start}._7Qqqeq_inline{flex-direction:column;align-items:stretch}._7Qqqeq_inline select{box-sizing:border-box;width:100%}}";
+		const css = ".ezQ7lW_page{width:100%;color:var(--dsw-alias-text-primary);flex-direction:column;gap:18px;display:flex}.ezQ7lW_header,.ezQ7lW_sectionHead,.ezQ7lW_cardHead,.ezQ7lW_inline,.ezQ7lW_inlineActions,.ezQ7lW_permissionRow{align-items:center;gap:12px;display:flex}.ezQ7lW_header,.ezQ7lW_sectionHead,.ezQ7lW_cardHead{justify-content:space-between}.ezQ7lW_header{align-items:flex-start}.ezQ7lW_title{margin:0;font-size:20px;font-weight:600}.ezQ7lW_summary,.ezQ7lW_section p,.ezQ7lW_section small{color:var(--dsw-alias-text-secondary)}.ezQ7lW_summary{margin:5px 0 0}.ezQ7lW_section{flex-direction:column;gap:14px;min-width:0;display:flex}.ezQ7lW_fieldset{border:0;flex-direction:column;gap:14px;min-width:0;margin:0;padding:0;display:flex}.ezQ7lW_visuallyHidden{clip:rect(0, 0, 0, 0);white-space:nowrap;border:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}.ezQ7lW_section h3,.ezQ7lW_section h4{margin:0;font-weight:600}.ezQ7lW_section h3{font-size:16px}.ezQ7lW_section h4{font-size:14px}.ezQ7lW_section p{margin:0;line-height:1.5}.ezQ7lW_field{flex-direction:column;gap:6px;min-width:0;display:flex}.ezQ7lW_field>span{font-size:13px;font-weight:500}.ezQ7lW_field textarea{resize:vertical;box-sizing:border-box;width:100%;min-height:118px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:10px 12px;line-height:1.5}.ezQ7lW_field select,.ezQ7lW_inline select,.ezQ7lW_section>select{max-width:100%;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:8px 10px}.ezQ7lW_inline{flex-wrap:wrap}.ezQ7lW_inline select{flex:1;min-width:220px}.ezQ7lW_inlineActions{flex-wrap:wrap;justify-content:flex-end}.ezQ7lW_grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;display:grid}.ezQ7lW_wide{grid-column:1/-1}.ezQ7lW_stack{flex-direction:column;gap:10px;display:flex}.ezQ7lW_card{border:1px solid var(--dsw-alias-border-primary);background:var(--dsw-alias-surface-secondary);border-radius:10px;flex-direction:column;gap:12px;min-width:0;padding:14px;display:flex}.ezQ7lW_cardHead{align-items:flex-start}.ezQ7lW_cardHead code,.ezQ7lW_cardHead p{color:var(--dsw-alias-text-secondary);overflow-wrap:anywhere;margin-top:5px;display:block}.ezQ7lW_subsection{flex-direction:column;gap:10px;padding-top:4px;display:flex}.ezQ7lW_checkGrid{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:8px 12px;display:grid}.ezQ7lW_permissionRow{flex-wrap:wrap;justify-content:flex-start;padding:7px 0}.ezQ7lW_permissionRow strong{min-width:140px}.ezQ7lW_notice{background:var(--dsw-alias-surface-tertiary);overflow-wrap:anywhere;border-radius:8px;padding:9px 11px}.ezQ7lW_error{color:var(--dsw-alias-text-danger);background:var(--dsw-alias-surface-danger);border-radius:8px;padding:9px 11px}.ezQ7lW_card pre{max-width:100%;max-height:260px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);white-space:pre-wrap;overflow-wrap:anywhere;border-radius:7px;margin:0;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:auto}@media (width<=680px){.ezQ7lW_header,.ezQ7lW_sectionHead{flex-direction:column;align-items:flex-start}.ezQ7lW_inline{flex-direction:column;align-items:stretch}.ezQ7lW_inline select{box-sizing:border-box;width:100%}}";
 		const tagId = "@thaliris/dsh-plugin/ThalirisPage.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -3993,27 +3993,27 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			document.head.appendChild(tag);
 		}
 		var ThalirisPage_module_css_default = {
-			"card": "_7Qqqeq_card",
-			"cardHead": "_7Qqqeq_cardHead",
-			"checkGrid": "_7Qqqeq_checkGrid",
-			"error": "_7Qqqeq_error",
-			"field": "_7Qqqeq_field",
-			"fieldset": "_7Qqqeq_fieldset",
-			"grid": "_7Qqqeq_grid",
-			"header": "_7Qqqeq_header",
-			"inline": "_7Qqqeq_inline",
-			"inlineActions": "_7Qqqeq_inlineActions",
-			"notice": "_7Qqqeq_notice",
-			"page": "_7Qqqeq_page",
-			"permissionRow": "_7Qqqeq_permissionRow",
-			"section": "_7Qqqeq_section",
-			"sectionHead": "_7Qqqeq_sectionHead",
-			"stack": "_7Qqqeq_stack",
-			"subsection": "_7Qqqeq_subsection",
-			"summary": "_7Qqqeq_summary",
-			"title": "_7Qqqeq_title",
-			"visuallyHidden": "_7Qqqeq_visuallyHidden",
-			"wide": "_7Qqqeq_wide"
+			"card": "ezQ7lW_card",
+			"cardHead": "ezQ7lW_cardHead",
+			"checkGrid": "ezQ7lW_checkGrid",
+			"error": "ezQ7lW_error",
+			"field": "ezQ7lW_field",
+			"fieldset": "ezQ7lW_fieldset",
+			"grid": "ezQ7lW_grid",
+			"header": "ezQ7lW_header",
+			"inline": "ezQ7lW_inline",
+			"inlineActions": "ezQ7lW_inlineActions",
+			"notice": "ezQ7lW_notice",
+			"page": "ezQ7lW_page",
+			"permissionRow": "ezQ7lW_permissionRow",
+			"section": "ezQ7lW_section",
+			"sectionHead": "ezQ7lW_sectionHead",
+			"stack": "ezQ7lW_stack",
+			"subsection": "ezQ7lW_subsection",
+			"summary": "ezQ7lW_summary",
+			"title": "ezQ7lW_title",
+			"visuallyHidden": "ezQ7lW_visuallyHidden",
+			"wide": "ezQ7lW_wide"
 		};
 		//#endregion
 		//#region src/client/ThalirisPage.tsx
@@ -4643,7 +4643,14 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			])];
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: ThalirisPage_module_css_default.subsection,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h4", { children: t("roleMemory") }), providerIds.map((id) => {
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("h4", { children: [
+					t("roleMemory"),
+					": ",
+					role.name || role.id,
+					" (",
+					role.id,
+					")"
+				] }), providerIds.map((id) => {
 					const provider = providers.find((value) => value.id === id);
 					const name = provider?.name ?? id;
 					return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -5076,7 +5083,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			roleHandoff: "May receive a bounded Controller handoff",
 			roleMemoryContext: "May receive explicitly selected memory context",
 			diagnosticsTitle: "Native diagnostics",
-			diagnosticsHelp: "Select a native root Session. Diagnostics resumes it through native Session services, then verifies the exact Session, Workspace, and Thaliris anchor.",
+			diagnosticsHelp: "Select a native root Session. Diagnostics verifies its persisted root ancestry and Workspace, resumes it through the native Agent service when needed, then checks the Thaliris anchor.",
 			selectSession: "Native root Session",
 			noRootSessions: "No native root Sessions are listed.",
 			loadDiagnostics: "Load diagnostics",
@@ -5197,7 +5204,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			roleHandoff: "可接收控制器的有界委派",
 			roleMemoryContext: "可接收明确选择的记忆上下文",
 			diagnosticsTitle: "原生诊断",
-			diagnosticsHelp: "选择原生根会话。诊断会通过原生会话服务恢复会话，然后核实会话、工作区和 Thaliris 锚点。",
+			diagnosticsHelp: "选择原生根会话。诊断会核实持久化根会话祖先关系和工作区；必要时通过原生代理服务恢复会话，然后检查 Thaliris 锚点。",
 			selectSession: "原生根会话",
 			noRootSessions: "原生列表中没有根会话。",
 			loadDiagnostics: "载入诊断",

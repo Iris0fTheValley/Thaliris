@@ -15,6 +15,10 @@ protected-byte storage; `thaliris.task_authority` preserves Codex compatibility
 and supplies native lifecycle/session evidence. See the linked API example for
 direct Core use by another adapter.
 
+Minimal out-of-tree DSH integration: [DSH plugin MVP](adapters/dsh/README.md).
+It reuses native DSH Agents/subagents and the same Python Core, with explicit
+Controller intent, bounded fresh child context, and Controller-decided closure.
+
 ## 生产信息流
 
 ```text

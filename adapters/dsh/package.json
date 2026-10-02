@@ -1,0 +1,18 @@
+{
+  "name": "@thaliris/dsh-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./index.mjs",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "files": ["index.mjs", "core_bridge.py", "README.md", "CAPABILITIES.md", "cordis.patch.example.yml"],
+  "scripts": { "test:native": "node tests/run-native.mjs" },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-subagent": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-subprocess": "0.2.0-rc.2"
+  },
+  "dshSourceRevision": "639ed015397290b3745d163aafe02ffee4aa3f84"
+}

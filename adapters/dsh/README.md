@@ -65,11 +65,13 @@ their execution bodies, including when a caller bypasses schema visibility.
 3. Interpret the result yourself. A normal native completion is an observation,
    not semantic acceptance. A noncompleted result records its native status
    and raises a native tool error carrying the observation and partial output;
-   the task remains ACTIVE. Infrastructure failure/cancellation preserves the
-   ACTIVE record and may leave its selected Workstream pending for diagnosis.
+   the task remains ACTIVE. Infrastructure failure/cancellation before a native
+   result preserves the selected Workstream reservation in `active_work` for
+   diagnosis.
 4. `thaliris_task_close`: supply the current `task_id/base_revision` and an
-   explicit `decision` (up to 3500 characters). Core records the decision and
-   marks the task DONE. Nothing automatically calls this tool.
+   explicit `decision` (up to 3500 characters). When no Workstream reservation
+   is unresolved, Core records the decision and marks the task DONE. Nothing
+   automatically calls this tool.
 
 `thaliris_task_inspect` explicitly retrieves the ACTIVE task and selected
 contract. It injects nothing into child context. Goal, scope and intent are
@@ -101,10 +103,19 @@ checkpoint leaves evidence for diagnosis rather than inventing recovery.
 Core task operations serialize within one plugin instance. Native run objects
 supply identity and terminal facts; child prose supplies neither. Runs always
 dispose through DSH. Cordis effects own tool registrations and operation cleanup.
-Unload cancels and drains active child/process work, removes registrations, and
-preserves ACTIVE/DONE records and native parent Agents. Reload starts with fresh
-plugin state and no duplicate registrations. There are no plugin event listeners,
-so event registration count remains zero.
+If a native result is observed, `finish` records that observation in
+`pending_results` and clears its `active_work` reservation. Cancellation,
+infrastructure failure, or unload before `run.result` leaves the reservation in
+`active_work` for diagnosis. While `active_work` is nonempty, a new
+`thaliris_workstream` fails with `UNRESOLVED_ACTIVE_WORK_CANNOT_BEGIN`, and
+`thaliris_task_close` fails with `UNRESOLVED_ACTIVE_WORK_CANNOT_CLOSE`. These
+rejections leave the Core ledger and external authority anchor unchanged.
+`thaliris_task_inspect` can retrieve the ACTIVE record after reload. The MVP has
+no recovery or reconciliation operation; a missing native terminal observation
+must remain unresolved. Unload cancels and drains active child/process work,
+removes registrations, and preserves ACTIVE/DONE records and native parent
+Agents. Reload starts with fresh plugin state and no duplicate registrations.
+There are no plugin event listeners, so event registration count remains zero.
 
 ## Reproduce verification
 

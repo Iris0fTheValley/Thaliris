@@ -41,6 +41,12 @@ def state_bytes(workspace):
     return (Path(workspace["root"]) / ".context/state.json").read_bytes()
 
 
+def authority_bytes(workspace):
+    anchors = list(Path(workspace["authority_directory"]).glob("*.json"))
+    assert len(anchors) == 1
+    return anchors[0].read_bytes()
+
+
 def test_same_core_task_explicit_close_and_external_anchor(workspace):
     task = start(workspace)
     assert task["status"] == "ACTIVE"
@@ -63,6 +69,31 @@ def test_same_core_task_explicit_close_and_external_anchor(workspace):
     assert "stop_reason=error" in closed_state["pending_results"][0]
     assert "Controller close decision" in closed_state["pending_results"][1]
     assert not list((Path(workspace["root"]) / ".context").glob("dsh-input-*"))
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments", "error"),
+    [
+        ("begin", {"observation": "replacement Workstream"}, "UNRESOLVED_ACTIVE_WORK_CANNOT_BEGIN"),
+        ("close", {"decision": "Controller says done."}, "UNRESOLVED_ACTIVE_WORK_CANNOT_CLOSE"),
+    ],
+)
+def test_unresolved_work_rejects_replacement_and_close_without_mutation(workspace, operation, arguments, error):
+    task = start(workspace)
+    reservation = "selected Workstream/role/handoff digest"
+    begun = invoke(workspace, "begin", {"task_id": task["task_id"], "base_revision": task["revision"], "observation": reservation})["result"]
+    assert begun["revision"] == 2
+    state_before = state_bytes(workspace)
+    anchor_before = authority_bytes(workspace)
+
+    blocked = invoke(workspace, operation, {"task_id": task["task_id"], "base_revision": begun["revision"], **arguments})
+    assert not blocked["ok"]
+    assert blocked["error"] == error
+    assert state_bytes(workspace) == state_before
+    assert authority_bytes(workspace) == anchor_before
+    inspected = invoke(workspace, "inspect", {})["result"]["state"]
+    assert inspected["active_work"] == [reservation]
+    assert inspected["pending_results"] == []
 
 
 @pytest.mark.parametrize("operation,args", [("recover", {}), ("expand", {}), ("start", {"goal": "wider", "contract": CONTRACT}), ("close", {"task_id": "wrong", "base_revision": 1, "decision": "done"})])

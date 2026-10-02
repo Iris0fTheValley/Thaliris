@@ -66,6 +66,8 @@ def dispatch(request: dict) -> dict:
     if operation == "close":
         if set(args) != {"task_id", "base_revision", "decision"} or not isinstance(args["decision"], str) or not args["decision"].strip() or len(args["decision"]) > 3500:
             raise ValueError("CONTROLLER_DECISION_REQUIRED")
+        if state["active_work"]:
+            raise ValueError("UNRESOLVED_ACTIVE_WORK_CANNOT_CLOSE")
         # Preserve the explicit model decision as a pending-result observation.
         result = update(core, root, native_id, state["revision"], {"active_work": [], "pending_results": [*state["pending_results"], "Controller close decision: " + args["decision"]]})
         store.checkpoint()
@@ -74,6 +76,8 @@ def dispatch(request: dict) -> dict:
         return result
     if set(args) != {"task_id", "base_revision", "observation"} or not isinstance(args["observation"], str) or not args["observation"].strip() or len(args["observation"]) > 3500:
         raise ValueError("INVALID_NATIVE_OBSERVATION")
+    if operation == "begin" and state["active_work"]:
+        raise ValueError("UNRESOLVED_ACTIVE_WORK_CANNOT_BEGIN")
     partial = {"active_work": [args["observation"]]} if operation == "begin" else {"active_work": [], "pending_results": [*state["pending_results"], args["observation"]]}
     result = update(core, root, native_id, state["revision"], partial)
     store.checkpoint()

@@ -59,12 +59,20 @@ async function setup(script: any[], provider = 'spawn', inheritRoute = false) {
     assert.equal(files.length, 1)
     return JSON.parse(await readFile(join(config.authorityDirectory, files[0]!), 'utf8'))
   }
+  const durableBytes = async () => {
+    const files = (await readdir(config.authorityDirectory)).filter(name => name.endsWith('.json'))
+    assert.equal(files.length, 1)
+    return {
+      ledger: await readFile(join(workspace, '.context/state.json')),
+      authority: await readFile(join(config.authorityDirectory, files[0]!)),
+    }
+  }
   const execute = (name: string, args: any, agent: Agent | undefined = parent) => ctx.tools.execute({ callId: ToolCallId(`call-${++call}`), name, arguments: args, agent, signal: signal() })
   const clean = async () => {
     await ctx.fiber.dispose()
     await rm(directory, { recursive: true, force: true })
   }
-  return { ctx, parent, mock, script, config, entry, state, authority, execute, clean }
+  return { ctx, parent, mock, script, config, entry, state, authority, durableBytes, execute, clean }
 }
 
 function lastTool(options: any) {
@@ -221,8 +229,9 @@ async function unloadActiveChild() {
   try {
     const started: any = await fixture.execute(names[0]!, { goal: 'Unload active native run', contract: selectedContract })
     let childId: string | undefined
+    let childStarts = 0
     const published = Promise.withResolvers<void>()
-    fixture.ctx.on('subagent/start', (info: SubagentRunInfo) => { childId = info.id; published.resolve() })
+    fixture.ctx.on('subagent/start', (info: SubagentRunInfo) => { childId = info.id; childStarts++; published.resolve() })
     const operation = fixture.execute(names[2]!, { task_id: started.value.task_id, base_revision: 1, workstream: 'hanging', role: 'Implementer', handoff })
     await published.promise
     await fixture.ctx.loader.update(fixture.entry.id, { disabled: true })
@@ -238,7 +247,27 @@ async function unloadActiveChild() {
     const inspected: any = await fixture.execute(names[1]!, {})
     assert.equal(inspected.isError, false)
     assert.equal(inspected.value.state.status, 'ACTIVE')
-    console.log('PASS unload cancels and drains native child, removes tools, preserves interrupted ACTIVE record; reload explicitly retrieves it')
+    const reservation = inspected.value.state.active_work
+    assert.equal(reservation.length, 1)
+    const preserved = await fixture.durableBytes()
+    const blockedBegin = await fixture.execute(names[2]!, {
+      task_id: inspected.value.state.task_id, base_revision: inspected.value.state.revision,
+      workstream: 'second Workstream', role: 'Implementer', handoff,
+    })
+    assert.equal(blockedBegin.isError, true)
+    assert.match(JSON.stringify(blockedBegin), /UNRESOLVED_ACTIVE_WORK_CANNOT_BEGIN/)
+    assert.deepEqual(await fixture.durableBytes(), preserved, 'rejected replacement leaves exact ledger and authority bytes intact')
+    const blockedClose = await fixture.execute(names[3]!, {
+      task_id: inspected.value.state.task_id, base_revision: inspected.value.state.revision,
+      decision: 'The Controller claims completion.',
+    })
+    assert.equal(blockedClose.isError, true)
+    assert.match(JSON.stringify(blockedClose), /UNRESOLVED_ACTIVE_WORK_CANNOT_CLOSE/)
+    assert.deepEqual(await fixture.durableBytes(), preserved, 'rejected close leaves exact ledger and authority bytes intact')
+    assert.equal(childStarts, 1, 'unresolved reservation prevents a second native child launch')
+    assert.deepEqual((await fixture.state()).active_work, reservation, 'the original native reservation remains available for diagnosis')
+    assert.equal((await fixture.authority()).status, 'ACTIVE')
+    console.log('PASS unload/reload preserves unresolved work; inspect succeeds; replacement and close reject without ledger, anchor or child mutation')
   } finally { await fixture.clean() }
 }
 

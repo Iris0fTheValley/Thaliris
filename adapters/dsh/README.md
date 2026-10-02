@@ -2,8 +2,10 @@
 
 This out-of-tree Cordis plugin uses DSH's Loader, Agent, fresh in-process
 subagents and subprocess service with the same Python Thaliris Core. The
-Controller explicitly selects human intent, each semantic Workstream, its
-configured role and bounded handoff, and the final completion decision.
+Controller explicitly selects human intent and the final completion
+decision. Under the selected execution mode, it decides whether each semantic
+slice calls for delegation; when delegating, it selects the Workstream,
+configured role and bounded handoff.
 Thaliris does not run a second Agent loop or choose semantic roles or models.
 
 The [capability map](CAPABILITIES.md) identifies the reused source APIs. The
@@ -53,8 +55,11 @@ The plugin contributes a dynamic Controller contract through DSH's native
 `systemPrompt.section` API. It is evaluated for each model request and appears
 only for the exact live native root Agent in the configured working directory,
 including before that Agent calls a Thaliris tool. It keeps semantic ownership
-with the Controller: select roles for the current slice, send a bounded
-handoff, and decide acceptance from the returned observations. It recommends
+with the Controller: models own semantics while the mechanical layer owns
+facts. For each slice, the Controller decides under the selected execution
+mode whether to handle permitted work directly or delegate. When delegating,
+it selects the minimum suitable role, sends a bounded handoff, and decides
+acceptance from the returned observations. It recommends
 Investigator for fact gathering, Implementer for a stable direction, and
 Focused Implementer for assigned work involving coupled invariants or nonlocal
 effects. Reviewer and other challenge roles remain optional.

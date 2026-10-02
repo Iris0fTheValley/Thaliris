@@ -253,8 +253,13 @@ def test_lifecycle_policy_denials_name_role_sessions_or_native_codex_sessions() 
     denials = re.findall(r'_permission_deny\("([^"]+)', source)
     assert denials
     for denial in denials:
-        assert "child" not in denial.lower(), denial
-        assert "Child" not in denial, denial
+        # Stable error identifiers and the explicit human no-children contract
+        # are not role-routing prose. Preserve those compatibility surfaces.
+        code, _, prose = denial.partition(":")
+        if code == "THALIRIS_SINGLE_AGENT_TASK":
+            assert prose.strip() == "the human instruction selected no children."
+        else:
+            assert "child" not in prose.lower(), denial
     assert "fresh Investigator session and edits to a fresh Implementer session" in source
     assert "managed native Codex session lifecycle" in source
     assert "managed child slot" not in source

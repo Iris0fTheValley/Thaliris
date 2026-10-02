@@ -10,6 +10,10 @@ Thaliris 是一个 Git-native 的机械上下文与生命周期层。它不运�
 
 Persistent human task intent, reconnect recovery, explicit Controller-direct
 and single-agent modes: [Task authority](docs/thaliris-task-authority.md).
+The host-neutral Python `thaliris.authority.AuthorityStore` owns intent and
+protected-byte storage; `thaliris.task_authority` preserves Codex compatibility
+and supplies native lifecycle/session evidence. See the linked API example for
+direct Core use by another adapter.
 
 ## 生产信息流
 

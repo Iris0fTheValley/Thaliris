@@ -7,6 +7,7 @@ Source baseline: DeepSeek Harness `639ed015397290b3745d163aafe02ffee4aa3f84`
 | --- | --- | --- |
 | Out-of-tree loading and unload | `vendor/loader/src/config/tree.ts` `create/update/remove`, Cordis effects | REUSE module URL/profile entry and fiber cleanup |
 | Calling Controller | `packages/core/tools/src/index.ts` `ToolRunContext.agent`; `packages/core/agent/src/index.ts` `get/roots` | REUSE exact live Agent and native ownership; bind root object and durable native ID |
+| Model guidance | `packages/core/system-prompt/src/index.ts` `section/getSectionOrder`; `packages/core/agent/src/runtime-types.ts` `AssembleContext.agent`; `packages/subagent/subagent/src/child-agent.ts` `persona` | REUSE dynamic root-only Controller section and native child persona; no second prompt assembler |
 | Fresh child | `packages/subagent/subagent-spawn-in-process/src/index.ts` `inheritsParentContext = false`; `subagent/src/child-agent.ts` | REUSE `ctx.subagents.start`; reject seeding/remote providers |
 | Route and tool scope | `subagent/src/types.ts` `agentOptions`, `persona`, `toolFilter`, `maxDepth` | REUSE configured role map and explicit allowlist; deny Controller tools again in their bodies |
 | Identity, outcome and cleanup | `subagent/src/types.ts` `SubagentRun.id/localAgent/result/dispose` | REUSE native result/status; no parsing child prose for lifecycle |

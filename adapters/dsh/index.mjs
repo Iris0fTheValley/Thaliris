@@ -5,9 +5,20 @@ import { fileURLToPath } from 'node:url'
 import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 
 export const name = 'thaliris-dsh'
-export const inject = ['agents', 'tools', 'subagents', 'subprocess']
+export const inject = ['agents', 'systemPrompt', 'tools', 'subagents', 'subprocess']
 export const TOOL_NAMES = Object.freeze(['thaliris_task_start', 'thaliris_task_inspect', 'thaliris_workstream', 'thaliris_task_close'])
 const bridgePath = fileURLToPath(new URL('./core_bridge.py', import.meta.url))
+const CONTROLLER_POLICY = `Thaliris Controller contract:
+You own task direction, scope, accepted invariants, and semantic completion. Thaliris records selected intent and mechanical observations; it does not choose roles, judge work, or accept a task for you. For each semantic slice, select the role and send only a bounded handoff; do not send the parent transcript or full working set. An Investigator gathers and compresses facts; an Implementer executes a stable direction; a Focused Implementer handles assigned work that requires sustained reasoning across coupled invariants or nonlocal effects. Native child completion is an observation, not acceptance. Reviewer and other challenge roles are optional when independent review could change a decision, never default gates.`
+const CHILD_POLICY = `Thaliris child contract:
+Work only within the selected handoff's goal, scope, invariants, acceptance, and context. Treat that handoff as the complete relevant task context: do not infer wider authority, request or reconstruct the parent's transcript or private task records, or expand the assignment. Report a decision-changing unknown instead of widening scope. Native completion is an observation; the Controller decides semantic acceptance.`
+const ROLE_POLICY = Object.freeze({
+  Investigator: 'As Investigator, gather and verify facts within the selected scope. Return concise findings with exact locations, covered and uncovered scope, unknowns, and contradictions; leave implementation and task decisions to the Controller.',
+  Implementer: 'As Implementer, execute the accepted direction for this bounded slice. Make local code decisions, verify the changed behavior, fix ordinary in-scope failures, and synchronize assigned documentation.',
+  'Focused Implementer': 'As Focused Implementer, reason through the assigned coupled invariants and nonlocal effects while implementing a coherent candidate. Inspect decision-critical sources directly and return any issue that changes scope, acceptance, or direction to the Controller.',
+  Reviewer: 'As Reviewer, independently challenge the candidate with evidence and report material findings; do not implement or decide acceptance.',
+  'Reasoning Specialist': 'As Reasoning Specialist, independently challenge framing, assumptions, causal model, and decision basis; report alternatives or missing facts without deciding the task.'
+})
 const string = { type: 'string' }
 const shortString = { type: 'string' }
 const object = (properties, required = Object.keys(properties)) => ({ type: 'object', properties, required, additionalProperties: false })
@@ -61,13 +72,26 @@ export function apply(ctx, raw) {
   const cancellations = new Set()
   const runs = new Set()
 
+  function isNativeRoot(agent) {
+    return !!agent
+      && ctx.agents.get(agent.id) === agent
+      && ctx.agents.roots().includes(agent)
+      && agent.session.header.parentSession === undefined
+      && (agent.session.header.delegationDepth ?? 0) === 0
+      && agent.session.header.origin !== 'subagent'
+      && !!agent.session.header.cwd
+      && realpathSync(agent.session.header.cwd) === config.root
+  }
+
+  const disposePrompt = ctx.systemPrompt.section({
+    name: 'thaliris:controller-contract',
+    order: ctx.systemPrompt.getSectionOrder('TEAM_POLICY'),
+    text: ({ agent }) => isNativeRoot(agent) ? CONTROLLER_POLICY : '',
+  })
+
   function authorize(exec) {
     const agent = exec.agent
-    if (disposed || !agent || ctx.agents.get(agent.id) !== agent || !ctx.agents.roots().includes(agent)
-      || agent.session.header.parentSession !== undefined
-      || (agent.session.header.delegationDepth ?? 0) !== 0
-      || agent.session.header.origin === 'subagent'
-      || !agent.session.header.cwd || realpathSync(agent.session.header.cwd) !== config.root) throw new Error('THALIRIS_NATIVE_ROOT_REQUIRED')
+    if (disposed || !isNativeRoot(agent)) throw new Error('THALIRIS_NATIVE_ROOT_REQUIRED')
     if (controller && controller !== agent) throw new Error('THALIRIS_CONTROLLER_MISMATCH')
     return agent
   }
@@ -140,6 +164,7 @@ export function apply(ctx, raw) {
       const inspected = await bridge(agent, 'inspect', {}, signal)
       if (inspected.contract.execution_mode !== 'delegated') throw new Error('THALIRIS_DELEGATED_INTENT_REQUIRED')
       const prompt = JSON.stringify({ workstream: args.workstream, role: args.role, ...args.handoff })
+      const persona = [route.persona, CHILD_POLICY, ROLE_POLICY[args.role]].filter(Boolean).join('\n\n')
       const selected = { workstream: args.workstream, role: args.role, handoff_sha256: createHash('sha256').update(prompt).digest('hex') }
       const begun = await bridge(agent, 'begin', { task_id: args.task_id, base_revision: args.base_revision, observation: JSON.stringify(selected) }, signal)
       let run
@@ -148,7 +173,7 @@ export function apply(ctx, raw) {
           parent: agent, signal, label: args.workstream, prompt: [{ type: 'text', text: prompt }], maxDepth: 1,
           toolFilter: { allow: route.tools, deny: TOOL_NAMES },
           ...(route.agentOptions === undefined ? {} : { agentOptions: route.agentOptions }),
-          ...(route.persona === undefined ? {} : { persona: route.persona }),
+          persona,
         })
         runs.add(run)
         if (!run.localAgent || run.localAgent.id !== run.id || run.localAgent.session.header.parentSession !== agent.id
@@ -177,6 +202,7 @@ export function apply(ctx, raw) {
     runs.clear()
     cancellations.clear()
     controller = undefined
+    disposePrompt()
     // Durable ACTIVE/DONE ledgers and native parent sessions are never deleted.
   }, 'thaliris owned operations')
 }

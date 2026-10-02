@@ -2,9 +2,9 @@
 
 This out-of-tree Cordis plugin uses DSH's Loader, Agent, fresh in-process
 subagents and subprocess service with the same Python Thaliris Core. The
-Controller explicitly selects human intent, a Workstream, a configured role,
-the child's bounded handoff, and the final completion decision. Thaliris does
-not run a second Agent loop or choose semantic roles or models.
+Controller explicitly selects human intent, each semantic Workstream, its
+configured role and bounded handoff, and the final completion decision.
+Thaliris does not run a second Agent loop or choose semantic roles or models.
 
 The [capability map](CAPABILITIES.md) identifies the reused source APIs. The
 verified DSH baseline is `639ed015397290b3745d163aafe02ffee4aa3f84`, version
@@ -47,6 +47,29 @@ semantics. Review your preset composition when configuring capabilities. This
 plugin always excludes its four Controller tools and denies them again in
 their execution bodies, including when a caller bypasses schema visibility.
 
+## Model guidance and child context
+
+The plugin contributes a dynamic Controller contract through DSH's native
+`systemPrompt.section` API. It is evaluated for each model request and appears
+only for the exact live native root Agent in the configured working directory,
+including before that Agent calls a Thaliris tool. It keeps semantic ownership
+with the Controller: select roles for the current slice, send a bounded
+handoff, and decide acceptance from the returned observations. It recommends
+Investigator for fact gathering, Implementer for a stable direction, and
+Focused Implementer for assigned work involving coupled invariants or nonlocal
+effects. Reviewer and other challenge roles remain optional.
+
+For delegated work, the plugin passes the selected handoff as the child's only
+Thaliris task message and adds a concise bounded-child contract through DSH's
+native `persona` API. Exact canonical role names also receive brief role
+guidance; custom configured names get the general child contract. Any configured
+`route.persona` remains part of the native child persona. DSH composes the
+parent's selected static Agent preset into a child as part of its native
+behavior. The Thaliris dynamic Controller contract is root-only, and the plugin
+does not inject the parent conversation, Core ledger, or unselected task data
+into the child. This describes Thaliris-owned context, not isolation from
+arbitrary static instructions in third-party presets.
+
 ## Controller tools
 
 1. `thaliris_task_start`: supply `goal` and the selected `contract`, containing
@@ -58,10 +81,11 @@ their execution bodies, including when a caller bypasses schema visibility.
 2. `thaliris_workstream`: supply the returned `task_id/base_revision`,
    `workstream`, configured `role`, and `handoff` containing exactly `goal`,
    `scope`, `invariants`, `acceptance`, and `context`. The delegated execution
-   mode is required. Only these selected values enter the child's prompt.
-   Native `spawn` runs a fresh one-shot child with depth cap 1 and explicit
-   tool filtering. Seeding or remote providers are rejected. The response
-   contains the native child ID, stop reason, output, and current revision.
+   mode is required. Only these selected values enter the child's Thaliris task
+   message; the native DSH Agent preset and configured persona compose as
+   described above. Native `spawn` runs a fresh one-shot child with depth cap 1
+and explicit tool filtering. Seeding or remote providers are rejected. The
+response contains the native child ID, stop reason, output, and current revision.
 3. Interpret the result yourself. A normal native completion is an observation,
    not semantic acceptance. A noncompleted result records its native status
    and raises a native tool error carrying the observation and partial output;
@@ -135,10 +159,12 @@ security conflicts and neutral imports. The native suite imports the actual
 out-of-tree module through Loader, creates real Agents, drives tool execution,
 spawns real native children, invokes real Python through the local subprocess
 provider, and explicitly closes the Core task. It verifies completed parent
-conversation and unselected authority sentinels do not enter child context,
-Controller tools disappear and refuse direct child execution, native failure
-stays ACTIVE, seeding is rejected, unload drains an active child, ordinary native
-turns continue while unloaded, and repeated reloads restore exactly four tools.
+conversation and unselected authority sentinels are absent from the initial
+child input, which contains only the selected Thaliris handoff as task context.
+It also verifies Controller tools disappear and refuse direct child execution,
+native failure stays ACTIVE, seeding is rejected, unload drains an active child,
+ordinary native turns continue while unloaded, and repeated reloads restore
+exactly four tools.
 
 Only the LLM boundary is scripted, using upstream's `MockAdapter`. No Agent,
 subagent manager, Loader, process or Core is mocked. This proves local composition

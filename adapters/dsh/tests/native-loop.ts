@@ -84,6 +84,16 @@ function lastTool(options: any) {
   return JSON.parse(message.content.filter((block: any) => block.type === 'text').map((block: any) => block.text).join(''))
 }
 
+function systemText(options: any) {
+  const message = options.messages[0]
+  assert.equal(message?.role, 'system', 'native model input starts with its system-role prompt')
+  return message.content.filter((block: any) => block.type === 'text').map((block: any) => block.text).join('\n')
+}
+
+function occurrences(text: string, value: string) {
+  return text.split(value).length - 1
+}
+
 async function closedLoop() {
   let fixture: Awaited<ReturnType<typeof setup>>
   let child: Agent | undefined
@@ -146,6 +156,29 @@ async function closedLoop() {
     assert.equal((await fixture.authority()).dsh_controller_id, parent.id)
     assert.equal(ctx.agents.get(observed.child_id), undefined, 'native run dispose removes child')
     assert.equal(fixture.mock.requests.length, 7)
+    assert.equal(fixture.mock.requests[0].model, 'parent')
+    assert.equal(occurrences(systemText(fixture.mock.requests[0]), 'Thaliris Controller contract:'), 1, 'root guidance is present before its first tool call')
+    const controllerRequests = fixture.mock.requests.filter(request => request.model === 'parent')
+    assert.ok(controllerRequests.length > 0)
+    for (const request of controllerRequests) {
+      assert.equal(occurrences(systemText(request), 'Thaliris Controller contract:'), 1, 'root receives the semantic contract exactly once per model request')
+    }
+    const childRequests = fixture.mock.requests.filter(request => request.model === 'selected-child')
+    assert.equal(childRequests.length, 2)
+    for (const request of childRequests) {
+      const system = systemText(request)
+      assert.equal(occurrences(system, 'Thaliris Controller contract:'), 0, 'root-only contract does not reach a child')
+      assert.equal(occurrences(system, 'Thaliris child contract:'), 1)
+      assert.match(system, /As Implementer, execute the accepted direction/)
+      assert.match(system, /Execute only the selected bounded handoff\./, 'configured native route persona is preserved')
+    }
+    const initialChildMessages = childRequests[0].messages
+    assert.doesNotMatch(JSON.stringify(initialChildMessages), /AMBIENT_PARENT_SENTINEL|UNSELECTED_AUTHORITY_SENTINEL/)
+    const selectedMessages = initialChildMessages.filter((message: any) => message.role === 'user'
+        && message.content.some((block: any) => block.type === 'text' && block.text.includes('SELECTED_CONTEXT_ONLY')))
+    assert.equal(selectedMessages.length, 1, 'fresh child receives one selected handoff message alongside native runtime context')
+    const selectedText = selectedMessages[0].content.filter((block: any) => block.type === 'text').map((block: any) => block.text).join('\n')
+    assert.deepEqual(JSON.parse(selectedText), { workstream: 'answer', role: 'Implementer', ...handoff })
 
     // Native Loader toggles remove precisely the plugin's effects, then remount.
     for (let cycle = 0; cycle < 2; cycle++) {
@@ -160,6 +193,7 @@ async function closedLoop() {
         parent.followup(createUserMessage({ content: [{ type: 'text', text: 'Native question while plugin is unloaded.' }], source: { kind: 'user' } }))
         await parent.whenIdle()
         assert.equal(parent.session.snapshotEvents().at(-1)!.type, 'turn/end')
+        assert.equal(occurrences(systemText(fixture.mock.requests.at(-1)), 'Thaliris Controller contract:'), 0, 'unload removes the root prompt contribution')
       }
       await ctx.loader.update(fixture.entry.id, { disabled: false })
       await ctx.loader.await()
@@ -170,6 +204,7 @@ async function closedLoop() {
     parent.followup(createUserMessage({ content: [{ type: 'text', text: 'Ordinary native question.' }], source: { kind: 'user' } }))
     await parent.whenIdle()
     assert.equal(fixture.mock.requests.length, 9)
+    assert.equal(occurrences(systemText(fixture.mock.requests.at(-1)), 'Thaliris Controller contract:'), 1, 'reload restores one root prompt contribution')
     const other = await ctx.agentLoop.create(SessionId('other-native-root'), { provider: 'mock', model: 'parent' }, { cwd: fixture.config.root })
     const denied = await fixture.execute(names[1]!, {}, other)
     assert.equal(denied.isError, true)

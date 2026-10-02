@@ -63,11 +63,13 @@ def test_same_core_task_explicit_close_and_external_anchor(workspace):
     anchor = json.loads(next(Path(workspace["authority_directory"]).glob("*.json")).read_text())
     assert anchor["task_id"] == task["task_id"] and anchor["status"] == "DONE"
     assert anchor["dsh_controller_id"] == "native-root"
-    assert anchor["host_actor_assurance"] == "UNKNOWN"
     assert anchor["contract"] == CONTRACT
     closed_state = json.loads(state_bytes(workspace))
     assert "stop_reason=error" in closed_state["pending_results"][0]
     assert "Controller close decision" in closed_state["pending_results"][1]
+    assert anchor["provenance"] == "SELECTED_TASK_INTENT"
+    assert "host_actor_assurance" not in anchor
+    assert "death_proof" not in anchor and "child_death_proof" not in anchor
     assert not list((Path(workspace["root"]) / ".context").glob("dsh-input-*"))
 
 

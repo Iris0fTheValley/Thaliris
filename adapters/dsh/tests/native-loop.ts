@@ -8,6 +8,11 @@ import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
+import Storage from '@deepseek-ai/dsh-storage'
+import * as StorageJson from '@deepseek-ai/dsh-storage-json'
+import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
+import Persistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import WorkspaceRegistry from '@deepseek-ai/dsh-workspace'
 import Subagents from '@deepseek-ai/dsh-subagent'
 import * as Spawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import * as Fork from '@deepseek-ai/dsh-subagent-fork-in-process'
@@ -22,7 +27,7 @@ const helpers = await import(pathToFileURL(join(upstream, 'packages/core/agent-l
 const { MockAdapter, textResponse, toolCallResponse, maxTokensResponse } = helpers
 const pluginUrl = new URL('../index.mjs', import.meta.url).href
 const corePath = fileURLToPath(new URL('../../../src', import.meta.url))
-const names = ['thaliris_task_start', 'thaliris_task_inspect', 'thaliris_workstream', 'thaliris_task_close']
+const names = ['thaliris_task_start', 'thaliris_task_inspect', 'thaliris_workstream', 'thaliris_task_close', 'thaliris_reconcile']
 const selectedContract = { human_instruction: 'Implement the selected bounded example. UNSELECTED_AUTHORITY_SENTINEL', boundary: 'Only the selected fixture.', invariants: 'Fresh context, root-only task authority.', acceptance: 'Controller assesses the returned answer.', execution_mode: 'delegated' }
 const handoff = { goal: 'Return the selected answer', scope: 'fixture only', invariants: 'Do not widen authority', acceptance: 'Return answer 42', context: 'SELECTED_CONTEXT_ONLY' }
 const signal = () => new AbortController().signal
@@ -35,6 +40,12 @@ async function setup(script: any[], provider = 'spawn', inheritRoute = false) {
   execFileSync('git', ['init', '-q', workspace])
   const ctx = new Context()
   await mountAgentLoopTestDependencies(ctx)
+  await ctx.plugin(Persistence, { root: join(directory, 'sessions'), compression: 'none' })
+  await ctx.plugin(Storage)
+  await ctx.plugin(StorageJson, { root: join(directory, 'storage') })
+  await ctx.plugin(StorageDomain, { backend: 'json' })
+  await ctx.plugin(WorkspaceRegistry)
+  const nativeWorkspace = await ctx.workspaceRegistry.create(workspace)
   await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(Subagents)
   await ctx.plugin(Spawn, { providerName: 'spawn' })
@@ -46,9 +57,11 @@ async function setup(script: any[], provider = 'spawn', inheritRoute = false) {
   const mock = new MockAdapter(script)
   ctx.llm.registerAdapter(['mock'], mock)
   const parent = await ctx.agentLoop.create(SessionId('native-controller'), { provider: 'mock', model: 'parent' }, { cwd: workspace })
+  await ctx.sessionPersistence.flush()
   const config = { root: workspace, pythonExecutable: process.env.THALIRIS_TEST_PYTHON, corePath,
     authorityDirectory: join(directory, 'authority'), subagentProvider: provider,
-    roles: { Implementer: { tools: [], ...(inheritRoute ? {} : { agentOptions: { provider: 'mock', model: 'selected-child' } }), persona: 'Execute only the selected bounded handoff.' } } }
+    policy: { workspaces: [{ workspaceId: nativeWorkspace.id, root: workspace, enabled: true }], roles: [{ id: 'Implementer', name: 'Implementer', description: 'Editable fixture', enabled: true, tools: [],
+      modelPolicy: inheritRoute ? { mode: 'inherit', routes: [] } : { mode: 'fixed', routes: [{ provider: 'mock', model: 'selected-child' }] }, prompt: 'EDITED_ROLE_PROMPT Execute only the selected bounded handoff.' }] } }
   const entryId = await ctx.loader.create({ name: pluginUrl, config })
   const entry = ctx.loader.resolve(entryId)
   await ctx.loader.await()
@@ -150,7 +163,7 @@ async function closedLoop() {
     parent.followup(createUserMessage({ content: [{ type: 'text', text: 'Please perform the bounded task.' }], source: { kind: 'user' } }))
     await parent.whenIdle()
     await Promise.all(bodyDenials)
-    assert.equal(deniedInBody, 4)
+    assert.equal(deniedInBody, 5)
     assert.equal((await fixture.state()).status, 'DONE', JSON.stringify({ parent: parent.session.snapshotEvents().filter(event => ['tool/result', 'turn/end'].includes(event.type)), child: child?.session.snapshotEvents().filter(event => ['tool/result', 'turn/end'].includes(event.type)) }))
     assert.equal((await fixture.authority()).status, 'DONE')
     assert.equal((await fixture.authority()).dsh_controller_id, parent.id)
@@ -172,8 +185,8 @@ async function closedLoop() {
     for (const request of childRequests) {
       const system = systemText(request)
       assert.equal(occurrences(system, 'Thaliris Controller contract:'), 0, 'root-only contract does not reach a child')
-      assert.equal(occurrences(system, 'Thaliris child contract:'), 1)
-      assert.match(system, /As Implementer, execute the accepted direction/)
+      assert.equal(occurrences(system, 'Thaliris child contract:'), 0)
+      assert.match(system, /EDITED_ROLE_PROMPT/)
       assert.match(system, /Execute only the selected bounded handoff\./, 'configured native route persona is preserved')
     }
     const initialChildMessages = childRequests[0].messages
@@ -202,7 +215,7 @@ async function closedLoop() {
       await ctx.loader.update(fixture.entry.id, { disabled: false })
       await ctx.loader.await()
       for (const name of names) assert.ok(ctx.tools.get(name))
-      assert.equal(ctx.tools.schemas(parent).filter(tool => names.includes(tool.name)).length, 4)
+      assert.equal(ctx.tools.schemas(parent).filter(tool => names.includes(tool.name)).length, 5)
     }
     fixture.script.push(textResponse('native normal answer'))
     parent.followup(createUserMessage({ content: [{ type: 'text', text: 'Ordinary native question.' }], source: { kind: 'user' } }))
@@ -230,10 +243,10 @@ async function failureAndBoundary() {
     assert.equal(fixture.mock.requests[0].model, 'parent', 'omitted role route inherits native parent configuration')
     assert.equal((await fixture.state()).status, 'ACTIVE')
     const untouched = await readFile(join(fixture.config.root, '.context/state.json'), 'utf8')
-    const unknown = await fixture.execute(names[2]!, { task_id: ack.task_id, base_revision: 3, workstream: 'unknown', role: 'Unconfigured', handoff })
+    const unknown = await fixture.execute(names[2]!, { task_id: ack.task_id, base_revision: 4, workstream: 'unknown', role: 'Unconfigured', handoff })
     assert.equal(unknown.isError, true)
     assert.equal(await readFile(join(fixture.config.root, '.context/state.json'), 'utf8'), untouched)
-    const spoofed = await fixture.execute(names[3]!, { task_id: ack.task_id, base_revision: 3, decision: 'done', actor: 'native-controller' })
+    const spoofed = await fixture.execute(names[3]!, { task_id: ack.task_id, base_revision: 4, decision: 'done', actor: 'native-controller' })
     assert.equal(spoofed.isError, true)
     const stale = await fixture.execute(names[3]!, { task_id: ack.task_id, base_revision: 1, decision: 'done' })
     assert.equal(stale.isError, true)
@@ -306,6 +319,16 @@ async function unloadActiveChild() {
     assert.equal(childStarts, 1, 'unresolved reservation prevents a second native child launch')
     assert.deepEqual((await fixture.state()).active_work, reservation, 'the original native reservation remains available for diagnosis')
     assert.equal((await fixture.authority()).status, 'ACTIVE')
+    const check: any = await fixture.execute(names[4]!, { task_id: inspected.value.state.task_id, base_revision: inspected.value.state.revision, action: 'check' })
+    assert.equal(check.isError, false, JSON.stringify(check))
+    assert.equal(check.value.outcome, 'aborted')
+    assert.equal(check.value.released, false)
+    assert.deepEqual(await fixture.durableBytes(), preserved)
+    const reconciled: any = await fixture.execute(names[4]!, { task_id: inspected.value.state.task_id, base_revision: inspected.value.state.revision, action: 'reconcile' })
+    assert.equal(reconciled.isError, false, JSON.stringify(reconciled))
+    assert.equal(reconciled.value.native_completed, false)
+    assert.equal((await fixture.state()).active_work.length, 0)
+    assert.equal((await fixture.state()).status, 'ACTIVE')
     console.log('PASS unload/reload preserves unresolved work; inspect succeeds; replacement and close reject without ledger, anchor or child mutation')
   } finally { await fixture.clean() }
 }

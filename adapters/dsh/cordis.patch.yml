@@ -1,0 +1,122 @@
+[
+  {
+    "insert": [
+      {
+        "id": "thaliris",
+        "name": "@thaliris/dsh-plugin",
+        "disabled": true,
+        "config": {
+          "policy": {
+            "roles": [
+              {
+                "id": "investigator",
+                "name": "Investigator",
+                "description": "Investigator initial template",
+                "prompt": "Gather and verify facts within the selected scope. Return concise findings with locations, unknowns and contradictions.",
+                "enabled": true,
+                "tools": [],
+                "modelPolicy": {
+                  "mode": "inherit",
+                  "routes": []
+                },
+                "memory": {
+                  "read": [],
+                  "write": []
+                },
+                "context": {
+                  "handoff": true,
+                  "memory": false
+                }
+              },
+              {
+                "id": "implementer",
+                "name": "Implementer",
+                "description": "Implementer initial template",
+                "prompt": "Execute the accepted direction for this bounded slice. Verify changed behavior and synchronize assigned documentation.",
+                "enabled": true,
+                "tools": [],
+                "modelPolicy": {
+                  "mode": "inherit",
+                  "routes": []
+                },
+                "memory": {
+                  "read": [],
+                  "write": []
+                },
+                "context": {
+                  "handoff": true,
+                  "memory": false
+                }
+              },
+              {
+                "id": "focused-implementer",
+                "name": "Focused Implementer",
+                "description": "Focused Implementer initial template",
+                "prompt": "Implement a coherent candidate across the assigned coupled invariants. Return decision-changing unknowns to the Controller.",
+                "enabled": true,
+                "tools": [],
+                "modelPolicy": {
+                  "mode": "inherit",
+                  "routes": []
+                },
+                "memory": {
+                  "read": [],
+                  "write": []
+                },
+                "context": {
+                  "handoff": true,
+                  "memory": false
+                }
+              },
+              {
+                "id": "reviewer",
+                "name": "Reviewer",
+                "description": "Reviewer initial template",
+                "prompt": "Independently challenge the selected candidate with evidence; do not implement or decide acceptance.",
+                "enabled": true,
+                "tools": [],
+                "modelPolicy": {
+                  "mode": "inherit",
+                  "routes": []
+                },
+                "memory": {
+                  "read": [],
+                  "write": []
+                },
+                "context": {
+                  "handoff": true,
+                  "memory": false
+                }
+              },
+              {
+                "id": "curator",
+                "name": "Curator",
+                "description": "Curator initial template",
+                "prompt": "Propose selected memory changes for user review. Do not change memory policy or task authority.",
+                "enabled": true,
+                "tools": [],
+                "modelPolicy": {
+                  "mode": "inherit",
+                  "routes": []
+                },
+                "memory": {
+                  "read": [],
+                  "write": []
+                },
+                "context": {
+                  "handoff": true,
+                  "memory": false
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "thaliris-api",
+        "name": "@thaliris/dsh-plugin/api",
+        "disabled": true
+      }
+    ]
+  }
+]

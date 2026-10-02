@@ -18,7 +18,7 @@ def workspace(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
     subprocess.run(["git", "init", "-q", str(root)], check=True)
-    return {"protocol": 1, "core_path": str(SOURCE), "root": str(root), "authority_directory": str(tmp_path / "authority"), "native_controller_id": "native-root"}
+    return {"protocol": 1, "core_path": str(SOURCE), "root": str(root), "authority_directory": str(tmp_path / "authority"), "native_controller_id": "native-root", "native_workspace_id": "native-workspace"}
 
 
 def invoke(workspace, operation, arguments, **changes):
@@ -54,9 +54,9 @@ def test_same_core_task_explicit_close_and_external_anchor(workspace):
     inspected = invoke(workspace, "inspect", {})["result"]
     assert inspected["state"]["task_id"] == task["task_id"]
     assert inspected["contract"] == CONTRACT
-    begun = invoke(workspace, "begin", {"task_id": task["task_id"], "base_revision": 1, "observation": "selected Workstream/role/handoff digest"})["result"]
+    begun = invoke(workspace, "begin", {"task_id": task["task_id"], "base_revision": 1, "observation": json.dumps({"correlation": "selected", "workstream": "fixture", "role": "editable", "handoff_sha256": "digest"})})["result"]
     assert begun["revision"] == 2
-    finished = invoke(workspace, "finish", {"task_id": task["task_id"], "base_revision": 2, "observation": "native child-id stop_reason=error"})["result"]
+    finished = invoke(workspace, "finish", {"task_id": task["task_id"], "base_revision": 2, "observation": json.dumps({"correlation": "selected", "workstream": "fixture", "role": "editable", "handoff_sha256": "digest", "child_id": "native-child", "stop_reason": "error"})})["result"]
     assert finished["revision"] == 3 and finished["status"] == "ACTIVE"
     closed = invoke(workspace, "close", {"task_id": task["task_id"], "base_revision": 3, "decision": "Controller decided the bounded goal is achieved."})["result"]
     assert closed["status"] == "DONE" and closed["revision"] == 5
@@ -65,8 +65,8 @@ def test_same_core_task_explicit_close_and_external_anchor(workspace):
     assert anchor["dsh_controller_id"] == "native-root"
     assert anchor["contract"] == CONTRACT
     closed_state = json.loads(state_bytes(workspace))
-    assert "stop_reason=error" in closed_state["pending_results"][0]
-    assert "Controller close decision" in closed_state["pending_results"][1]
+    assert json.loads(closed_state["pending_results"][1])["stop_reason"] == "error"
+    assert "Controller close decision" in closed_state["pending_results"][2]
     assert anchor["provenance"] == "SELECTED_TASK_INTENT"
     assert "host_actor_assurance" not in anchor
     assert "death_proof" not in anchor and "child_death_proof" not in anchor
@@ -159,3 +159,23 @@ print("neutral imports verified")
     process = subprocess.run([sys.executable, "-I", "-c", code, str(BRIDGE)], input=json.dumps({**workspace, "operation": "start", "arguments": {"goal": "neutral import fixture", "contract": CONTRACT}}), text=True, capture_output=True, check=False)
     assert process.returncode == 0, process.stderr
     assert process.stdout.strip() == "neutral imports verified"
+
+
+def test_correlated_binding_and_unknown_reconciliation_preserve_original(workspace):
+    task = start(workspace)
+    reservation = {"correlation": "unique", "workstream": "selected", "role": "editable", "handoff_sha256": "digest"}
+    invoke(workspace, "begin", {"task_id": task["task_id"], "base_revision": 1, "observation": json.dumps(reservation)})
+    bound = invoke(workspace, "bind", {"task_id": task["task_id"], "base_revision": 2, "observation": json.dumps({**reservation, "child_id": "native-child"})})
+    assert bound["ok"] and bound["result"]["revision"] == 3
+    preserved = state_bytes(workspace), authority_bytes(workspace)
+    for observation in ({**reservation, "child_id": "other-child"}, {**reservation, "child_id": "native-child", "outcome": "UNKNOWN", "provenance": "native-session-turn/end"}):
+        denied = invoke(workspace, "reconcile", {"task_id": task["task_id"], "base_revision": 3, "observation": json.dumps(observation)})
+        assert not denied["ok"]
+        assert (state_bytes(workspace), authority_bytes(workspace)) == preserved
+    reconciled = invoke(workspace, "reconcile", {"task_id": task["task_id"], "base_revision": 3, "observation": json.dumps({**reservation, "child_id": "native-child", "outcome": "error", "provenance": "native-session-turn/end"})})
+    assert reconciled["ok"] and reconciled["result"]["status"] == "ACTIVE"
+    state = invoke(workspace, "inspect", {})["result"]["state"]
+    assert state["active_work"] == []
+    assert "Archived reservation" in state["pending_results"][0]
+    assert json.loads(state["pending_results"][1])["outcome"] == "error"
+    assert not invoke(workspace, "inspect", {}, native_workspace_id="other-workspace")["ok"]

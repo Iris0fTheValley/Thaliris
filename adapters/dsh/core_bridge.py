@@ -14,7 +14,7 @@ MAX_REQUEST_BYTES = 262144
 
 
 def dispatch(request: dict) -> dict:
-    if set(request) != {"protocol", "core_path", "root", "authority_directory", "native_controller_id", "operation", "arguments"} or type(request["protocol"]) is not int or request["protocol"] != 1:
+    if set(request) != {"protocol", "core_path", "root", "authority_directory", "native_controller_id", "native_workspace_id", "operation", "arguments"} or type(request["protocol"]) is not int or request["protocol"] != 1:
         raise ValueError("INVALID_BRIDGE_ENVELOPE")
     for key in ("core_path", "root", "authority_directory"):
         if not isinstance(request[key], str) or not Path(request[key]).is_absolute():
@@ -22,6 +22,9 @@ def dispatch(request: dict) -> dict:
     native_id = request["native_controller_id"]
     if not isinstance(native_id, str) or not native_id or len(native_id) > 128:
         raise ValueError("NATIVE_CONTROLLER_REQUIRED")
+    workspace_id = request["native_workspace_id"]
+    if not isinstance(workspace_id, str) or not workspace_id or len(workspace_id) > 128:
+        raise ValueError("NATIVE_WORKSPACE_REQUIRED")
     sys.path.insert(0, request["core_path"])
     from thaliris import core
     from thaliris.authority import AuthorityStore, validate_contract
@@ -49,18 +52,24 @@ def dispatch(request: dict) -> dict:
         result = core.task_start(root, args["goal"], None, None, actor="dsh:" + native_id)
         # Failure here leaves the ACTIVE Core ledger intact for operator diagnosis.
         state = core.task_show(root)["state"]
-        store.establish(state, args["contract"], adapter_fields={"dsh_controller_id": native_id})
+        store.establish(state, args["contract"], adapter_fields={"dsh_controller_id": native_id, "dsh_workspace_id": workspace_id})
         return result
-    if operation not in {"inspect", "begin", "finish", "close"}:
+    if operation not in {"inspect", "begin", "bind", "finish", "reconcile", "proposal", "close"}:
         raise ValueError("UNSUPPORTED_BRIDGE_OPERATION")
     record = store.check()
-    if record is None or record.get("dsh_controller_id") != native_id:
+    if record is None or record.get("dsh_controller_id") != native_id or record.get("dsh_workspace_id") != workspace_id:
         raise ValueError("DSH_CONTROLLER_MISMATCH_OR_INACTIVE")
     state = core.task_show(root)["state"]
     if operation == "inspect":
         if args:
             raise ValueError("INVALID_INSPECT_ARGUMENTS")
         return {"ok": True, "state": state, "contract": record["contract"]}
+    if operation == "proposal":
+        if set(args) != {"observation"} or not isinstance(args["observation"], str) or len(args["observation"]) > 3500:
+            raise ValueError("INVALID_MEMORY_PROPOSAL")
+        result = update(core, root, native_id, state["revision"], {"pending_results": [*state["pending_results"], args["observation"]]})
+        store.checkpoint()
+        return result
     if args.get("task_id") != state["task_id"] or type(args.get("base_revision")) is not int or args["base_revision"] != state["revision"]:
         raise ValueError("TASK_ID_OR_REVISION_CONFLICT")
     if operation == "close":
@@ -78,7 +87,19 @@ def dispatch(request: dict) -> dict:
         raise ValueError("INVALID_NATIVE_OBSERVATION")
     if operation == "begin" and state["active_work"]:
         raise ValueError("UNRESOLVED_ACTIVE_WORK_CANNOT_BEGIN")
-    partial = {"active_work": [args["observation"]]} if operation == "begin" else {"active_work": [], "pending_results": [*state["pending_results"], args["observation"]]}
+    if operation in {"bind", "finish", "reconcile"} and len(state["active_work"]) != 1:
+        raise ValueError("NATIVE_RESERVATION_REQUIRED")
+    if operation in {"bind", "finish", "reconcile"}:
+        previous = json.loads(state["active_work"][0])
+        observed = json.loads(args["observation"])
+        if any(observed.get(key) != previous.get(key) for key in ("correlation", "workstream", "role", "handoff_sha256")) or not observed.get("child_id"):
+            raise ValueError("NATIVE_RESERVATION_CONFLICT")
+        if previous.get("child_id") and observed["child_id"] != previous["child_id"]:
+            raise ValueError("NATIVE_CHILD_CONFLICT")
+        if operation == "reconcile" and (observed.get("outcome") not in {"completed", "aborted", "error", "max-tokens", "blocked", "interrupted"} or observed.get("provenance") != "native-session-turn/end"):
+            raise ValueError("NATIVE_TERMINAL_EVIDENCE_REQUIRED")
+    partial = {"active_work": [args["observation"]]} if operation in {"begin", "bind"} else {
+        "active_work": [], "pending_results": [*state["pending_results"], "Archived reservation: " + state["active_work"][0], args["observation"]]}
     result = update(core, root, native_id, state["revision"], partial)
     store.checkpoint()
     return result

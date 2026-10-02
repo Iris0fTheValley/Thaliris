@@ -1,178 +1,41 @@
-# Thaliris DSH plugin MVP
+# Thaliris for DeepSeek Harness
 
-This out-of-tree Cordis plugin uses DSH's Loader, Agent, fresh in-process
-subagents and subprocess service with the same Python Thaliris Core. The
-Controller explicitly selects human intent and the final completion
-decision. Under the selected execution mode, it decides whether each semantic
-slice calls for delegation; when delegating, it selects the Workstream,
-configured role and bounded handoff.
-Thaliris does not run a second Agent loop or choose semantic roles or models.
+The host plugin reuses neutral Thaliris Core for task intent, evidence and closure. DSH owns Workspace identities, persistent Sessions, Agents, child execution, Settings, models and plugin lifecycle. No Codex adapter code is used or changed.
 
-The [capability map](CAPABILITIES.md) identifies the reused source APIs. The
-verified DSH baseline is `639ed015397290b3745d163aafe02ffee4aa3f84`, version
-`0.2.0-rc.2`, with Cordis `4.0.4`. Other revisions require compatibility
-verification. This is an MVP, without framework or Host feature parity.
+The runtime package is `@thaliris/dsh-plugin`; its optional native Remote projection is `@thaliris/dsh-plugin/api`. `components/memory` and `components/memory-local` are separate installable packages. Tasks run without either memory package or the client UI. The client contract is in [CLIENT-CONTRACT.md](CLIENT-CONTRACT.md).
 
-## Deployment
+## Configuration and installation
 
-Make this package available alongside the DSH runtime with its peer packages
-resolving to that runtime's copies. A source checkout can load `index.mjs` by
-module URL; an installed local package exposes the same entry point. Keep the
-package directory and `core_bridge.py` together. Package replacement follows
-native DSH restart behavior; configuration unload/reload uses Loader normally.
+Use a native DSH profile at the verified source revision `639ed015397290b3745d163aafe02ffee4aa3f84`. The runtime requires native agents, systemPrompt, tools, subagents, subprocess, workspaceRegistry, sessionPersistence and llm services. The subprocess implementation must execute the configured Python locally. Core source must expose `thaliris.core` and `thaliris.authority`.
 
-Use the [example patch](cordis.patch.example.yml) beside `index.mjs`, with a
-native DSH profile already providing `agents`, `tools`, `subagents`, the
-`spawn` provider and `subprocess` (the local provider is verified). Mount the
-plugin on the deployment's global tool plane, outside individual Agent presets.
-Configure these explicit absolute paths in your local deployment:
+The package declares a standard `dsh.bundle.patch`. Its runtime and API entries initially stay disabled so installation does not guess a Python executable, Core installation, authority directory or workspace. Configure `pythonExecutable`, `corePath`, `authorityDirectory` through the native plugin configuration/document facilities, then enable the runtime and optional API entries. All three paths must be absolute. The external authority directory must be outside the governed repository. Do not put credentials in plugin configuration. The native profile patch persists initial role template records; explicitly deleting them to `[]` stays empty across restart. `build-bundle.mjs` regenerates that composition from the visible template source.
 
-- `root`: existing Git repository root, matching the native Controller's cwd.
-- `pythonExecutable`: Python 3.11 or newer in your chosen environment.
-- `corePath`: directory containing the `thaliris` Python package, e.g. the
-  Thaliris checkout's `src` directory. The plugin does not use the Codex CLI.
-- `authorityDirectory`: external storage outside the workspace, without
-  symlink/reparse traversal. Closed ledgers remain here after unload.
+`cordis.patch.example.yml` shows an enabled source deployment. Bind native Workspace IDs to exact canonical Git roots in the live `policy.workspaces` field. Matching a path alone does not establish a task Controller. Workspace registration and a durable root Session must exist first; native Settings stores user policy, while Core stores the selected task contract separately.
 
-The example uses `THALIRIS_DSH_ROOT`, `THALIRIS_DSH_PYTHON`,
-`THALIRIS_DSH_CORE_PATH`, and `THALIRIS_DSH_AUTHORITY_DIRECTORY` to populate
-these fields via native Loader expressions. No personal paths or credentials
-are included. `bridgeTimeoutMs` defaults to 30000 and accepts up to 300000.
+Policy fields are live native Settings forms. Models come from the existing native catalog/configuration. Role records contain editable ID, name, description, full prompt, enabled state, tool allowlist, model policy, memory grants and context permissions. There is no appended hidden role prompt. The Controller guidance is visible and editable. `inherit` uses the native parent configuration, `fixed` has exactly one configured route, and `allowed` lets the Controller supply a member of the user-configured route set for the current slice. Exact route metadata and reasoning capability come from `ctx.llm.resolveModelInfo`; Thaliris does not rank models or rewrite selection policy.
 
-`roles` is an explicit deployment map from Controller-selected names to native
-`agentOptions` (`provider/model/reasoningEffort/maxTokens`), optional `persona`,
-and a required global tool `tools` allowlist. Omitted `agentOptions` inherit
-the native parent route. Use configured DSH routes; there are no Codex model
-names, complexity rules or automatic profile selection. Native restrictions
-apply to global tools and intersect; scoped registrations follow DSH's native
-semantics. Review your preset composition when configuring capabilities. This
-plugin always excludes its four Controller tools and denies them again in
-their execution bodies, including when a caller bypasses schema visibility.
+## Runtime behavior
 
-## Model guidance and child context
+Controller tools start/inspect a task, select a bounded Workstream, check/reconcile unresolved work, and explicitly close a task. A caller must be the exact registered native root Agent, with persisted root Session ancestry and the configured native Workspace/canonical root. The Core external anchor must match that persisted Session ID and native Workspace ID. A fresh Agent that legitimately resumes the same persisted root Session may continue; an unrelated root with the same directory cannot. Shared process/OS access and writer leases are governance facts, not universal actor authentication. Older adapter anchors without the native Workspace ID fail closed; no silent migration changes their authority.
 
-The plugin contributes a dynamic Controller contract through DSH's native
-`systemPrompt.section` API. It is evaluated for each model request and appears
-only for the exact live native root Agent in the configured working directory,
-including before that Agent calls a Thaliris tool. It keeps semantic ownership
-with the Controller: models own semantics while the mechanical layer owns
-facts. For each slice, the Controller decides under the selected execution
-mode whether to handle permitted work directly or delegate. When delegating,
-it selects the minimum suitable role, sends a bounded handoff, and decides
-acceptance from the returned observations. It recommends
-Investigator for fact gathering, Implementer for a stable direction, and
-Focused Implementer for assigned work involving coupled invariants or nonlocal
-effects. Reviewer and other challenge roles remain optional.
+Delegation requires delegated task intent and a native provider that starts fresh without parent context. The selected handoff, exact editable role prompt and optional explicitly selected bounded memory results reach the child. Native tool filtering and tool-body checks both protect task authority. The native child ID is recorded immediately after start and before awaiting its result. A random unique native catalog label covers the crash window before ID binding.
 
-For delegated work, the plugin passes the selected handoff as the child's only
-Thaliris task message and adds a concise bounded-child contract through DSH's
-native `persona` API. Exact canonical role names also receive brief role
-guidance; custom configured names get the general child contract. Any configured
-`route.persona` remains part of the native child persona. DSH composes the
-parent's selected static Agent preset into a child as part of its native
-behavior. The Thaliris dynamic Controller contract is root-only, and the plugin
-does not inject the parent conversation, Core ledger, or unselected task data
-into the child. This describes Thaliris-owned context, not isolation from
-arbitrary static instructions in third-party presets.
+A child result leaves the task ACTIVE. The Controller chooses semantic acceptance and closes explicitly. Unresolved reservations block replacement and close. Unload cancels only owned operations, disposes native runs, removes registrations and retains Core ledgers, external authority and native Session logs.
 
-## Controller tools
+Recovery checks the exact parent catalog correlation and native child ancestry. Durable `turn/end` reasons prove completed, aborted, error, max-tokens, blocked or interrupted observations. Catalog membership or inactivity alone never proves completion. `check` changes no ledger; `reconcile` archives the original reservation and observed native evidence in Core pending results before releasing that Workstream. `cancel-reconcile` cancels an exact resident native child, awaits idle, flushes and reads the native terminal evidence. None of these actions accepts or expands task intent, resumes a one-shot child, or unfences actors.
 
-1. `thaliris_task_start`: supply `goal` and the selected `contract`, containing
-   exactly `human_instruction`, `boundary`, `invariants`, `acceptance`, and
-   `execution_mode`. This explicit Controller assertion records intent; it
-   does not mechanically authenticate the human. Core initialization creates
-   its ignored task state, configuration and navigation templates if absent.
-   It installs no Codex instructions or runtime components.
-2. `thaliris_workstream`: supply the returned `task_id/base_revision`,
-   `workstream`, configured `role`, and `handoff` containing exactly `goal`,
-   `scope`, `invariants`, `acceptance`, and `context`. The delegated execution
-   mode is required. Only these selected values enter the child's Thaliris task
-   message; the native DSH Agent preset and configured persona compose as
-   described above. Native `spawn` runs a fresh one-shot child with depth cap 1
-and explicit tool filtering. Seeding or remote providers are rejected. The
-response contains the native child ID, stop reason, output, and current revision.
-3. Interpret the result yourself. A normal native completion is an observation,
-   not semantic acceptance. A noncompleted result records its native status
-   and raises a native tool error carrying the observation and partial output;
-   the task remains ACTIVE. Infrastructure failure/cancellation before a native
-   result preserves the selected Workstream reservation in `active_work` for
-   diagnosis.
-4. `thaliris_task_close`: supply the current `task_id/base_revision` and an
-   explicit `decision` (up to 3500 characters). When no Workstream reservation
-   is unresolved, Core records the decision and marks the task DONE. Nothing
-   automatically calls this tool.
+When correlation, child persistence, or terminal reason is unavailable, outcome remains UNKNOWN and the reservation stays in place. Cross-process liveness of an unbound/orphan child is not established by the native catalog or a read handle. The broader explicit UNKNOWN-abandonment path is not implemented: it needs a Controller decision about available native handling evidence. Do not delete the reservation or infer death.
 
-`thaliris_task_inspect` explicitly retrieves the ACTIVE task and selected
-contract. It injects nothing into child context. Goal, scope and intent are
-immutable for an ACTIVE task; this MVP exposes no expansion or recovery tool.
-Restart with an ACTIVE task requires the same native Controller identity;
-an identity replacement is not silently authorized.
+## Optional memory
 
-The plugin authorizes against the exact live `exec.agent`, native registry root
-ownership, durable ancestry/depth, and configured cwd. It binds the Controller
-object after an authorized successful call and checks the persisted native ID
-on later bridge operations, including after reload. It accepts no caller actor
-or session-ID field. Known native children cannot start, inspect, route or close
-tasks. Shared OS access and direct Python invocation remain governance, not a
-security sandbox; Host actor assurance remains UNKNOWN.
+Install `@thaliris/dsh-memory` to expose the async provider capability. Install `@thaliris/dsh-memory-local` separately for the optional default local provider over native storageDomain. External provider plugins register the same read/search/write seam through their native effects. They own their remote transport and credentials; no vector store, embeddings, RAG pipeline or credential manager is included.
 
-## Bridge and lifecycle
+Memory defaults disabled. User policy selects providers, Controller and role read/write grants, and `disabled`, `manual`, `suggest-review` or `auto`. Auto writes require the separately persisted `autoAuthorized: true` opt-in. Manual/review writes create bounded proposals in existing Core evidence. A human client may approve a selected proposal through the optional native API, under current grants. A Curator/child cannot invoke that approval endpoint as a model tool or change policy through the Thaliris tools. Returned provider data is bounded; provider removal makes later calls unavailable. Retrieval is explicit and never injected automatically. Workstream `memoryContext` selects exact provider queries and bounds; role context/read grants and Controller grants must allow them.
 
-`core_bridge.py` reads one bounded protocol-1 JSON envelope from stdin, imports
-only neutral `thaliris.core/authority`, executes one operation, and writes one
-JSON response. The plugin supplies native identity from execution context and
-launches the configured interpreter with `-I` through `ctx.subprocess`, with
-bounded output, a deadline, cancellation and managed exit. Internal operations
-are `start/inspect/begin/finish/close`; they are transport mechanics, not model
-policy. Core owns task identity, revision checks, immutable intent, protected
-configuration and external authority anchors. The bridge is not an independent
-identity or ledger service. A failure between a Core mutation and its authority
-checkpoint leaves evidence for diagnosis rather than inventing recovery.
+Disabling/removing the default provider or the entire capability preserves task routing and close. No native workspace/session/child database or independent orchestration state machine is added.
 
-Core task operations serialize within one plugin instance. Native run objects
-supply identity and terminal facts; child prose supplies neither. Runs always
-dispose through DSH. Cordis effects own tool registrations and operation cleanup.
-If a native result is observed, `finish` records that observation in
-`pending_results` and clears its `active_work` reservation. Cancellation,
-infrastructure failure, or unload before `run.result` leaves the reservation in
-`active_work` for diagnosis. While `active_work` is nonempty, a new
-`thaliris_workstream` fails with `UNRESOLVED_ACTIVE_WORK_CANNOT_BEGIN`, and
-`thaliris_task_close` fails with `UNRESOLVED_ACTIVE_WORK_CANNOT_CLOSE`. These
-rejections leave the Core ledger and external authority anchor unchanged.
-`thaliris_task_inspect` can retrieve the ACTIVE record after reload. The MVP has
-no recovery or reconciliation operation; a missing native terminal observation
-must remain unresolved. Unload cancels and drains active child/process work,
-removes registrations, and preserves ACTIVE/DONE records and native parent
-Agents. Reload starts with fresh plugin state and no duplicate registrations.
-There are no plugin event listeners, so event registration count remains zero.
+## Verification
 
-## Reproduce verification
+Set `DSH_SOURCE` to the isolated pinned source clone and `THALIRIS_TEST_PYTHON` to a task-owned Python environment, then run `node adapters/dsh/tests/run-native.mjs` and `python -m pytest adapters/dsh/tests/test_bridge.py -q`. The source runner uses temporary resolver configuration and does not modify the upstream clone or global runtime.
 
-Use an isolated DSH source clone at the pinned revision. Install its locked
-dependencies with `pnpm install --frozen-lockfile --ignore-scripts`. The checked-in
-runner requires Node 22.19+ or 24+, that clone in `DSH_SOURCE`, and an isolated
-Python 3.11+ executable in `THALIRIS_TEST_PYTHON`. From the Thaliris root:
-
-```text
-python -m pytest adapters/dsh/tests/test_bridge.py -q
-node adapters/dsh/tests/run-native.mjs
-```
-
-The Python tests exercise real JSON processes and Core authority, including
-revision/identity conflicts, unsupported expansion/recovery, external storage,
-security conflicts and neutral imports. The native suite imports the actual
-out-of-tree module through Loader, creates real Agents, drives tool execution,
-spawns real native children, invokes real Python through the local subprocess
-provider, and explicitly closes the Core task. It verifies completed parent
-conversation and unselected authority sentinels are absent from the initial
-child input, which contains only the selected Thaliris handoff as task context.
-It also verifies Controller tools disappear and refuse direct child execution,
-native failure stays ACTIVE, seeding is rejected, unload drains an active child,
-ordinary native turns continue while unloaded, and repeated reloads restore
-exactly four tools.
-
-Only the LLM boundary is scripted, using upstream's `MockAdapter`. No Agent,
-subagent manager, Loader, process or Core is mocked. This proves local composition
-and mechanics on Windows with Node 24/Python 3.11; it does not establish live
-provider quality, remote execution, cross-process Controller migration or
-universal shared-OS authorization. No model credentials are required.
+The tests compose actual Cordis Loader, native Settings/profile persistence, WorkspaceRegistry, JSON storageDomain, JSONL SessionPersistence, AgentLoop, native spawn provider, native Gateway and local subprocess with a scripted LLM. They cover editable/deleted roles, revision conflicts, model denial, fresh bounded prompt/tool boundaries, multiple workspaces, memory provider injection/grants/proposals/opt-in/removal, aborted recovery, and a fresh-process restart using the same persisted root Session and catalog-correlated completed child. No online models or unrelated upstream suite are run. Web/Desktop visual integration and broader UNKNOWN abandonment remain separate work.

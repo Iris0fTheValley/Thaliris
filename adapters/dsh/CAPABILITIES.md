@@ -1,20 +1,18 @@
-# DSH capability map
+# Runtime capability observations
 
-Source baseline: DeepSeek Harness `639ed015397290b3745d163aafe02ffee4aa3f84`
-(`0.2.0-rc.2`). Paths below refer to that repository.
+Baseline: upstream DSH `639ed015397290b3745d163aafe02ffee4aa3f84`.
 
-| Requirement | Native surface | Adapter action |
-| --- | --- | --- |
-| Out-of-tree loading and unload | `vendor/loader/src/config/tree.ts` `create/update/remove`, Cordis effects | REUSE module URL/profile entry and fiber cleanup |
-| Calling Controller | `packages/core/tools/src/index.ts` `ToolRunContext.agent`; `packages/core/agent/src/index.ts` `get/roots` | REUSE exact live Agent and native ownership; bind root object and durable native ID |
-| Model guidance | `packages/core/system-prompt/src/index.ts` `section/getSectionOrder`; `packages/core/agent/src/runtime-types.ts` `AssembleContext.agent`; `packages/subagent/subagent/src/child-agent.ts` `persona` | REUSE dynamic root-only Controller section and native child persona; no second prompt assembler |
-| Fresh child | `packages/subagent/subagent-spawn-in-process/src/index.ts` `inheritsParentContext = false`; `subagent/src/child-agent.ts` | REUSE `ctx.subagents.start`; reject seeding/remote providers |
-| Route and tool scope | `subagent/src/types.ts` `agentOptions`, `persona`, `toolFilter`, `maxDepth` | REUSE configured role map and explicit allowlist; deny Controller tools again in their bodies |
-| Identity, outcome and cleanup | `subagent/src/types.ts` `SubagentRun.id/localAgent/result/dispose` | REUSE native result/status; no parsing child prose for lifecycle |
-| Python process | `packages/subprocess/subprocess/src/types.ts` spawn spec, collection and managed exit | REUSE `ctx.subprocess`; one bounded JSON request/response |
-| Task intent and ledger | Thaliris `src/thaliris/authority.py` and `core.py` | NEED BRIDGE to the same Python Core, with explicit source/interpreter/external store |
+| Surface | Verified behavior | Limit |
+|---|---|---|
+| Core | Native subprocess imports neutral core/authority only; external anchor owns intent | Shared OS governance, not actor authentication |
+| Root continuation | Native Workspace + persisted root Session/new Agent resumes exact anchor | Missing/changed native workspace anchor fails closed |
+| Policy | Native Settings live forms, stored edits, revision conflicts; editable prompt and legal empty role list | Deployment paths use native ordinary plugin configuration |
+| Models | Native exact route metadata and configured allowed-set membership | No route ranking or online catalog smoke |
+| Children | Fresh native spawn, bounded handoff, allowlist plus body checks, immediate ID/correlation recording | Current supported provider is local in-process spawn |
+| Recovery | Native catalog correlation + durable terminal Session reason; archived reservation; completed/aborted tested | Unbound/cross-process liveness remains UNKNOWN; no uncertainty auto-release |
+| Memory | Optional independent capability/provider packages; async external injection, bounded read/search/write and user grants | No embeddings/vector/RAG/credential management |
+| Memory writes | Disabled default, manual/review Core proposals, human Remote approval, explicitly opted-in auto | Approval is human-client governance within native Host trust |
+| Uninstall | Native effects dispose provider/capability; routing and close continue | Native package-manager UI installation/removal smoke is pending |
+| Remote | Actual native Gateway SRC dispatch of templates, diagnostics, approval | Shared client mounting/visual tests pending |
 
-No replacement Agent loop, tool pipeline, subagent manager, identity service,
-Host installation, automatic semantic router or benchmark evaluator is needed.
-The bridge adds serialization only. The Controller selects intent, Workstream,
-role, context and completion; native status is an observation.
+Tests use real native source components and a scripted LLM. They do not establish Codex managed enforcement, universal process authentication, or semantic task completion authority.

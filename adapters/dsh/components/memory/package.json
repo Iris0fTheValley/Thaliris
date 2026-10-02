@@ -1,0 +1,13 @@
+{
+  "name": "@thaliris/dsh-memory",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": "./index.mjs",
+  "files": [
+    "index.mjs",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.4"
+  }
+}

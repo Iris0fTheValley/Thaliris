@@ -1,17 +1,23 @@
-# Copy beside index.mjs; use with a native DSH profile providing the injected services.
-# Environment entries configure local deployment only; no credentials are needed here.
+# Explicit local deployment configuration. Use native Workspace IDs, not caller IDs.
 - insert:
-    - id: thaliris-dsh
+    - id: thaliris
       name: './index.mjs'
       config:
-        root: !!js process.env.THALIRIS_DSH_ROOT
         pythonExecutable: !!js process.env.THALIRIS_DSH_PYTHON
         corePath: !!js process.env.THALIRIS_DSH_CORE_PATH
         authorityDirectory: !!js process.env.THALIRIS_DSH_AUTHORITY_DIRECTORY
-        subagentProvider: spawn
-        roles:
-          Implementer:
-            # Explicit global tool allowlist. Empty is useful for a text-only smoke.
-            tools: []
-            # Omit agentOptions to inherit the configured native parent route.
-            persona: 'Execute only the selected bounded handoff; return findings to the Controller.'
+        policy:
+          workspaces:
+            - workspaceId: !!js process.env.THALIRIS_DSH_WORKSPACE_ID
+              root: !!js process.env.THALIRIS_DSH_ROOT
+              enabled: true
+          # An empty role set is legal. Add editable records in native Settings.
+          roles: []
+          memory:
+            mode: disabled
+            autoAuthorized: false
+            providers: []
+            controllerRead: []
+            controllerWrite: []
+    - id: thaliris-api
+      name: './api.mjs'

@@ -31,6 +31,13 @@ export const inject = [
 /** Mount the same product page in the shared Web client used by Desktop. */
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'thaliris-client: dictionaries')
+  ctx.effect(() => ctx.remote.$mount(remoteContribution), 'thaliris-client: native Gateway contribution')
+  // The mount creates a traced Cordis service. Consume it from a dependent
+  // fiber; requiring it in this mounting fiber would deadlock initialization.
+  ctx.inject(['remote.thaliris'], mountPage)
+}
+
+function mountPage(ctx: Context): void {
   const policy = new PolicyEditorController(ctx.configForms.get<ThalirisSettings>('thaliris'))
   const native = new NativeProjectionController(ctx)
   const face: ThalirisPageFace = {
@@ -47,15 +54,12 @@ export function apply(ctx: Context): void {
   ctx.effect(() => async () => {
     await Promise.all([policy.dispose(), native.dispose()])
   }, 'thaliris-client: native projection subscriptions')
-  ctx.effect(() => ctx.remote.$mount(remoteContribution).then(dispose => {
-    void native.refresh()
-    return dispose
-  }), 'thaliris-client: native Gateway contribution')
+  void native.refresh()
   ctx.effect(() => ctx.configForms.whileServed(['thaliris'], () => ctx.slots.inject('plugins.item', () => ctx.slots.register({
     name: 'plugins.item',
     id: 'thaliris',
     order: 40,
-    label: () => ctx.locale.bind(NS)('tabGeneral'),
+    label: () => ctx.locale.bind(NS)('pluginTitle'),
     locale: NS,
     inject: () => face,
   }, ThalirisPage))), 'thaliris-client: shared settings page')

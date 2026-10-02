@@ -6,6 +6,8 @@ import { Context } from '@deepseek-ai/cordis'
 import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
+import * as Gateway from '@deepseek-ai/dsh-api-gateway/client'
+import * as TypertRegistry from '@deepseek-ai/dsh-typert-registry/client'
 import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
@@ -16,8 +18,7 @@ import { PolicyEditorController, type ThalirisSettings } from '../client/policy-
 import type { NativeProjectionState } from '../client/native-controller.ts'
 import { NativeProjectionController } from '../client/native-controller.ts'
 import { ThalirisPage, type ThalirisPageFace } from '../client/ThalirisPage.tsx'
-
-vi.mock('../remote.mjs', () => ({ remoteContribution: { package: '@thaliris/dsh-plugin', descriptors: [] } }))
+import { remoteContribution } from '../remote.mjs'
 
 const role = (id: string): RoleRecord => ({
   id, name: id, description: '', prompt: `full prompt for ${id}`, enabled: true, tools: [],
@@ -356,34 +357,61 @@ describe('shared client lifecycle', () => {
     const emptySessions = { ids: [], byId: {}, phase: 'ready', projectionsBySession: {} }
     const emptyWorkspaces = { ...workspaces, items: [] }
     const source = <T,>(initial: T) => ({ getSnapshot: () => initial, subscribe: () => () => {} })
-    const disposed = vi.fn()
-    const remote = {
-      $mount: vi.fn(async () => disposed),
-      $on: vi.fn(() => () => {}),
-      session: { modelCatalog: vi.fn(async () => modelCatalog) },
-      thaliris: {
-        templates: vi.fn(async () => ({ ok: true, value: [role('reviewer')] })),
-        providers: vi.fn(async () => ({ ok: true, value: [] })),
-        toolCatalog: vi.fn(async () => ({ ok: true, value: [] })),
-        diagnostics: vi.fn(async () => ({ ok: true, value: diagnostics })),
-        approveMemory: vi.fn(async () => ({ ok: true, value: {} })),
-      },
-    }
+    // Use the real Gateway namespace services: a plain remote.thaliris object
+    // bypasses Cordis dependency tracing and hid the production injection bug.
+    const call = vi.fn(async (_path: string, endpoint: string) => {
+      const values: Record<string, unknown> = {
+        'session/modelCatalog': modelCatalog,
+        'thaliris/templates': [role('reviewer')],
+        'thaliris/providers': [{ id: 'local', name: 'Local' }],
+        'thaliris/toolCatalog': [{ name: 'read_file', description: 'Read one file' }],
+        'thaliris/diagnostics': diagnostics,
+        'thaliris/approveMemory': { approval_id: 'approval-1' },
+      }
+      if (!(endpoint in values)) throw new Error(`Unexpected endpoint: ${endpoint}`)
+      return { ok: true, value: values[endpoint] }
+    })
+    ctx.provide('connection', {
+      rpc: { call }, registerGenerationSource: () => () => {}, start: () => ({ stop: () => {} }),
+    })
+    await ctx.plugin(TypertRegistry)
+    const gateway = ctx.plugin(Gateway)
+    await gateway
+    const unmountSession = await ctx.remote.$mount({ package: '@fixture/session', descriptors: [{
+      ...remoteContribution.descriptors[0], id: '@fixture/session#session/modelCatalog',
+      service: 'sessionController', namespace: 'session', method: 'modelCatalog',
+    }] })
     ctx.provide('locale', locale)
     ctx.provide('configForms', configForms)
-    ctx.provide('remote', remote)
-    ctx.provide('remote.session', remote.session)
-    ctx.provide('sessions', { list: source(emptySessions), using: vi.fn() })
+    ctx.provide('sessions', { list: source(emptySessions), using: vi.fn(async (_id, _options, callback) => callback()) })
     ctx.provide('workspaces', { list: source(emptyWorkspaces) })
     ctx.provide('uiWorkspace', { openSession: vi.fn() })
     ctx.provide('pluginNavigation', { openBundle: vi.fn() })
     const plugin = ctx.plugin({ inject, apply })
     await plugin.await()
     await waitFor(() => expect(slots.entries('plugins.item')).toHaveLength(1))
-    expect(slots.entries('plugins.item')[0]?.options).toMatchObject({ id: 'thaliris', order: 40 })
+    const entry = slots.entries('plugins.item')[0]!
+    expect(entry.options).toMatchObject({ id: 'thaliris', order: 40 })
+    const face = entry.inject!() as ThalirisPageFace
+    await waitFor(() => {
+      expect(face.hooks.native.getSnapshot()).toMatchObject({
+        modelStatus: 'ready', modelCatalog, templateStatus: 'ready', templates: [role('reviewer')],
+        providerStatus: 'ready', providers: [{ id: 'local', name: 'Local' }],
+        toolStatus: 'ready', tools: [{ name: 'read_file', description: 'Read one file' }],
+      })
+    })
+    face.loadDiagnostics('root-session')
+    await waitFor(() => expect(face.hooks.native.getSnapshot()).toMatchObject({ diagnosticStatus: 'ready', diagnostics }))
+    face.approveMemory('root-session', 'proposal-1')
+    await waitFor(() => expect(face.hooks.native.getSnapshot()).toMatchObject({ approvalStatus: 'ready', approvalReceipt: { approval_id: 'approval-1' } }))
+    expect(call).toHaveBeenCalledWith('/api', 'thaliris/diagnostics', { args: { sessionId: 'root-session' } }, expect.any(AbortSignal))
+    expect(call).toHaveBeenCalledWith('/api', 'thaliris/approveMemory', { args: { sessionId: 'root-session', proposalId: 'proposal-1' } }, expect.any(AbortSignal))
+    expect(typeof entry.options.label === 'function' ? entry.options.label() : entry.options.label).toBe('Thaliris')
     await plugin.dispose()
     expect(slots.entries('plugins.item')).toHaveLength(0)
-    expect(disposed).toHaveBeenCalledOnce()
+    expect(ctx.get('remote.thaliris')).toBeUndefined()
+    await unmountSession()
+    await gateway.dispose()
     removeRoot()
   })
 })

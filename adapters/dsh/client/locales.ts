@@ -3,6 +3,7 @@
 export const NS = 'settings.thaliris'
 
 export const en = {
+  pluginTitle: 'Thaliris',
   summary: 'Edit Thaliris guidance, roles, Workspace access, memory grants, and native runtime observations.',
   settingsLabel: 'Thaliris settings',
   tabGeneral: 'General',
@@ -124,6 +125,7 @@ export const en = {
 } as const
 
 export const zh = {
+  pluginTitle: 'Thaliris',
   summary: '编辑 Thaliris 指引、角色、工作区访问、记忆授权和原生运行时观测。',
   settingsLabel: 'Thaliris 设置',
   tabGeneral: '常规',

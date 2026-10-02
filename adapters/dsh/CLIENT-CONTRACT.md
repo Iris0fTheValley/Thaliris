@@ -42,9 +42,14 @@ Mount the optional Host plugin `@thaliris/dsh-plugin/api` beside the active runt
 ```ts
 import { remoteContribution } from '@thaliris/dsh-plugin/remote'
 ctx.effect(() => ctx.remote.$mount(remoteContribution))
-// Promise<RemoteResult<T>>: inspect response.ok before reading response.value.
-const response = await ctx.remote.thaliris.diagnostics(selectedNativeSessionId)
+ctx.inject(['remote.thaliris'], ctx => {
+  // Consume the traced namespace from this dependent fiber.
+  // Promise<RemoteResult<T>>: inspect response.ok before reading response.value.
+  void ctx.remote.thaliris.diagnostics(selectedNativeSessionId)
+})
 ```
+
+The mounting fiber requires `remote`; its dependent page fiber requires `remote.thaliris`. The Gateway creates this namespace as a traced Cordis service, so calling it from a fiber without that injection is rejected even after mounting succeeds. Keeping the dependency on the child avoids a circular startup dependency. The page's initial catalog refresh runs in the dependent fiber, and unload removes both its subscriptions/page and the owned contribution. The Plugins item is named `Thaliris`; `General` labels only its internal tab.
 
 The contribution uses native strict input codecs and the Host's SRC Remote method markers; native Gateway/client mount and dispatch are exercised in the runtime tests. No separate RPC carrier is needed. Inputs contain only native IDs; runtime verifies the exact resident/persisted root and Core anchor. A Session selected for diagnostics must be live/resumed through native services first. Signal is the optional final client parameter and is supplied by the native Gateway to the Host method.
 

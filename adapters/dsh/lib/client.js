@@ -3983,7 +3983,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		};
 		//#endregion
 		//#region \0dsh-css:ThalirisPage.module.css.mjs
-		const css = ".wQt2iW_page{width:100%;color:var(--dsw-alias-text-primary);flex-direction:column;gap:18px;display:flex}.wQt2iW_header,.wQt2iW_sectionHead,.wQt2iW_cardHead,.wQt2iW_inline,.wQt2iW_inlineActions,.wQt2iW_permissionRow{align-items:center;gap:12px;display:flex}.wQt2iW_header,.wQt2iW_sectionHead,.wQt2iW_cardHead{justify-content:space-between}.wQt2iW_header{align-items:flex-start}.wQt2iW_title{margin:0;font-size:20px;font-weight:600}.wQt2iW_summary,.wQt2iW_section p,.wQt2iW_section small{color:var(--dsw-alias-text-secondary)}.wQt2iW_summary{margin:5px 0 0}.wQt2iW_section{flex-direction:column;gap:14px;min-width:0;display:flex}.wQt2iW_fieldset{border:0;flex-direction:column;gap:14px;min-width:0;margin:0;padding:0;display:flex}.wQt2iW_visuallyHidden{clip:rect(0, 0, 0, 0);white-space:nowrap;border:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}.wQt2iW_section h3,.wQt2iW_section h4{margin:0;font-weight:600}.wQt2iW_section h3{font-size:16px}.wQt2iW_section h4{font-size:14px}.wQt2iW_section p{margin:0;line-height:1.5}.wQt2iW_field{flex-direction:column;gap:6px;min-width:0;display:flex}.wQt2iW_field>span{font-size:13px;font-weight:500}.wQt2iW_field textarea{resize:vertical;box-sizing:border-box;width:100%;min-height:118px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:10px 12px;line-height:1.5}.wQt2iW_field select,.wQt2iW_inline select,.wQt2iW_section>select{max-width:100%;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:8px 10px}.wQt2iW_inline{flex-wrap:wrap}.wQt2iW_inline select{flex:1;min-width:220px}.wQt2iW_inlineActions{flex-wrap:wrap;justify-content:flex-end}.wQt2iW_grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;display:grid}.wQt2iW_wide{grid-column:1/-1}.wQt2iW_stack{flex-direction:column;gap:10px;display:flex}.wQt2iW_card{border:1px solid var(--dsw-alias-border-primary);background:var(--dsw-alias-surface-secondary);border-radius:10px;flex-direction:column;gap:12px;min-width:0;padding:14px;display:flex}.wQt2iW_cardHead{align-items:flex-start}.wQt2iW_cardHead code,.wQt2iW_cardHead p{color:var(--dsw-alias-text-secondary);overflow-wrap:anywhere;margin-top:5px;display:block}.wQt2iW_subsection{flex-direction:column;gap:10px;padding-top:4px;display:flex}.wQt2iW_checkGrid{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:8px 12px;display:grid}.wQt2iW_permissionRow{flex-wrap:wrap;justify-content:flex-start;padding:7px 0}.wQt2iW_permissionRow strong{min-width:140px}.wQt2iW_notice{background:var(--dsw-alias-surface-tertiary);overflow-wrap:anywhere;border-radius:8px;padding:9px 11px}.wQt2iW_error{color:var(--dsw-alias-text-danger);background:var(--dsw-alias-surface-danger);border-radius:8px;padding:9px 11px}.wQt2iW_card pre{max-width:100%;max-height:260px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);white-space:pre-wrap;overflow-wrap:anywhere;border-radius:7px;margin:0;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:auto}@media (width<=680px){.wQt2iW_header,.wQt2iW_sectionHead{flex-direction:column;align-items:flex-start}.wQt2iW_inline{flex-direction:column;align-items:stretch}.wQt2iW_inline select{box-sizing:border-box;width:100%}}";
+		const css = "._7Qqqeq_page{width:100%;color:var(--dsw-alias-text-primary);flex-direction:column;gap:18px;display:flex}._7Qqqeq_header,._7Qqqeq_sectionHead,._7Qqqeq_cardHead,._7Qqqeq_inline,._7Qqqeq_inlineActions,._7Qqqeq_permissionRow{align-items:center;gap:12px;display:flex}._7Qqqeq_header,._7Qqqeq_sectionHead,._7Qqqeq_cardHead{justify-content:space-between}._7Qqqeq_header{align-items:flex-start}._7Qqqeq_title{margin:0;font-size:20px;font-weight:600}._7Qqqeq_summary,._7Qqqeq_section p,._7Qqqeq_section small{color:var(--dsw-alias-text-secondary)}._7Qqqeq_summary{margin:5px 0 0}._7Qqqeq_section{flex-direction:column;gap:14px;min-width:0;display:flex}._7Qqqeq_fieldset{border:0;flex-direction:column;gap:14px;min-width:0;margin:0;padding:0;display:flex}._7Qqqeq_visuallyHidden{clip:rect(0, 0, 0, 0);white-space:nowrap;border:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}._7Qqqeq_section h3,._7Qqqeq_section h4{margin:0;font-weight:600}._7Qqqeq_section h3{font-size:16px}._7Qqqeq_section h4{font-size:14px}._7Qqqeq_section p{margin:0;line-height:1.5}._7Qqqeq_field{flex-direction:column;gap:6px;min-width:0;display:flex}._7Qqqeq_field>span{font-size:13px;font-weight:500}._7Qqqeq_field textarea{resize:vertical;box-sizing:border-box;width:100%;min-height:118px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:10px 12px;line-height:1.5}._7Qqqeq_field select,._7Qqqeq_inline select,._7Qqqeq_section>select{max-width:100%;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:8px 10px}._7Qqqeq_inline{flex-wrap:wrap}._7Qqqeq_inline select{flex:1;min-width:220px}._7Qqqeq_inlineActions{flex-wrap:wrap;justify-content:flex-end}._7Qqqeq_grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;display:grid}._7Qqqeq_wide{grid-column:1/-1}._7Qqqeq_stack{flex-direction:column;gap:10px;display:flex}._7Qqqeq_card{border:1px solid var(--dsw-alias-border-primary);background:var(--dsw-alias-surface-secondary);border-radius:10px;flex-direction:column;gap:12px;min-width:0;padding:14px;display:flex}._7Qqqeq_cardHead{align-items:flex-start}._7Qqqeq_cardHead code,._7Qqqeq_cardHead p{color:var(--dsw-alias-text-secondary);overflow-wrap:anywhere;margin-top:5px;display:block}._7Qqqeq_subsection{flex-direction:column;gap:10px;padding-top:4px;display:flex}._7Qqqeq_checkGrid{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:8px 12px;display:grid}._7Qqqeq_permissionRow{flex-wrap:wrap;justify-content:flex-start;padding:7px 0}._7Qqqeq_permissionRow strong{min-width:140px}._7Qqqeq_notice{background:var(--dsw-alias-surface-tertiary);overflow-wrap:anywhere;border-radius:8px;padding:9px 11px}._7Qqqeq_error{color:var(--dsw-alias-text-danger);background:var(--dsw-alias-surface-danger);border-radius:8px;padding:9px 11px}._7Qqqeq_card pre{max-width:100%;max-height:260px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);white-space:pre-wrap;overflow-wrap:anywhere;border-radius:7px;margin:0;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:auto}@media (width<=680px){._7Qqqeq_header,._7Qqqeq_sectionHead{flex-direction:column;align-items:flex-start}._7Qqqeq_inline{flex-direction:column;align-items:stretch}._7Qqqeq_inline select{box-sizing:border-box;width:100%}}";
 		const tagId = "@thaliris/dsh-plugin/ThalirisPage.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -3993,27 +3993,27 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			document.head.appendChild(tag);
 		}
 		var ThalirisPage_module_css_default = {
-			"card": "wQt2iW_card",
-			"cardHead": "wQt2iW_cardHead",
-			"checkGrid": "wQt2iW_checkGrid",
-			"error": "wQt2iW_error",
-			"field": "wQt2iW_field",
-			"fieldset": "wQt2iW_fieldset",
-			"grid": "wQt2iW_grid",
-			"header": "wQt2iW_header",
-			"inline": "wQt2iW_inline",
-			"inlineActions": "wQt2iW_inlineActions",
-			"notice": "wQt2iW_notice",
-			"page": "wQt2iW_page",
-			"permissionRow": "wQt2iW_permissionRow",
-			"section": "wQt2iW_section",
-			"sectionHead": "wQt2iW_sectionHead",
-			"stack": "wQt2iW_stack",
-			"subsection": "wQt2iW_subsection",
-			"summary": "wQt2iW_summary",
-			"title": "wQt2iW_title",
-			"visuallyHidden": "wQt2iW_visuallyHidden",
-			"wide": "wQt2iW_wide"
+			"card": "_7Qqqeq_card",
+			"cardHead": "_7Qqqeq_cardHead",
+			"checkGrid": "_7Qqqeq_checkGrid",
+			"error": "_7Qqqeq_error",
+			"field": "_7Qqqeq_field",
+			"fieldset": "_7Qqqeq_fieldset",
+			"grid": "_7Qqqeq_grid",
+			"header": "_7Qqqeq_header",
+			"inline": "_7Qqqeq_inline",
+			"inlineActions": "_7Qqqeq_inlineActions",
+			"notice": "_7Qqqeq_notice",
+			"page": "_7Qqqeq_page",
+			"permissionRow": "_7Qqqeq_permissionRow",
+			"section": "_7Qqqeq_section",
+			"sectionHead": "_7Qqqeq_sectionHead",
+			"stack": "_7Qqqeq_stack",
+			"subsection": "_7Qqqeq_subsection",
+			"summary": "_7Qqqeq_summary",
+			"title": "_7Qqqeq_title",
+			"visuallyHidden": "_7Qqqeq_visuallyHidden",
+			"wide": "_7Qqqeq_wide"
 		};
 		//#endregion
 		//#region src/client/ThalirisPage.tsx
@@ -4992,6 +4992,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		/** Web/Desktop settings strings for the shared Thaliris client. */
 		const NS = "settings.thaliris";
 		const en = {
+			pluginTitle: "Thaliris",
 			summary: "Edit Thaliris guidance, roles, Workspace access, memory grants, and native runtime observations.",
 			settingsLabel: "Thaliris settings",
 			tabGeneral: "General",
@@ -5112,6 +5113,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			runtimeRequiresSetup: "The runtime and API are installed as separate native entries. Configure Python, Core, authority directory, and Workspace access in the native plugin configuration, then enable both entries in Plugins."
 		};
 		const zh = {
+			pluginTitle: "Thaliris",
 			summary: "编辑 Thaliris 指引、角色、工作区访问、记忆授权和原生运行时观测。",
 			settingsLabel: "Thaliris 设置",
 			tabGeneral: "常规",
@@ -5250,6 +5252,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				zh,
 				en
 			}), "thaliris-client: dictionaries");
+			ctx.effect(() => ctx.remote.$mount(remoteContribution), "thaliris-client: native Gateway contribution");
+			ctx.inject(["remote.thaliris"], mountPage);
+		}
+		function mountPage(ctx) {
 			const policy = new PolicyEditorController(ctx.configForms.get("thaliris"));
 			const native = new NativeProjectionController(ctx);
 			const face = {
@@ -5277,15 +5283,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			ctx.effect(() => async () => {
 				await Promise.all([policy.dispose(), native.dispose()]);
 			}, "thaliris-client: native projection subscriptions");
-			ctx.effect(() => ctx.remote.$mount(remoteContribution).then((dispose) => {
-				native.refresh();
-				return dispose;
-			}), "thaliris-client: native Gateway contribution");
+			native.refresh();
 			ctx.effect(() => ctx.configForms.whileServed(["thaliris"], () => ctx.slots.inject("plugins.item", () => ctx.slots.register({
 				name: "plugins.item",
 				id: "thaliris",
 				order: 40,
-				label: () => ctx.locale.bind(NS)("tabGeneral"),
+				label: () => ctx.locale.bind(NS)("pluginTitle"),
 				locale: NS,
 				inject: () => face
 			}, ThalirisPage))), "thaliris-client: shared settings page");

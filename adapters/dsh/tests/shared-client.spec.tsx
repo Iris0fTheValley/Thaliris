@@ -13,6 +13,7 @@ import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controlle
 import type { RoleRecord, UserPolicy } from '../remote'
 import { NS, en } from '../client/locales.ts'
 import { PolicyEditorController, type ThalirisSettings } from '../client/policy-controller.ts'
+import type { NativeProjectionState } from '../client/native-controller.ts'
 import { ThalirisPage, type ThalirisPageFace } from '../client/ThalirisPage.tsx'
 
 vi.mock('../remote.mjs', () => ({ remoteContribution: { package: '@thaliris/dsh-plugin', descriptors: [] } }))
@@ -95,14 +96,14 @@ const diagnostics = {
   } }],
 }
 
-function nativeState() {
+function nativeState(): NativeProjectionState {
   return {
     modelCatalog, modelStatus: 'ready' as const,
     providers: [{ id: 'provider-one', name: 'Provider One' }], providerStatus: 'ready' as const,
     tools: [{ name: 'read_file', description: 'Read one file' }, { name: 'thaliris_task_close', description: 'Reserved' }], toolStatus: 'ready' as const,
     templates: [role('reviewer')], templateStatus: 'ready' as const,
     sessions, workspaces, diagnosticSessionId: 'root-session', diagnostics, diagnosticStatus: 'ready' as const,
-    diagnosticError: undefined, approvalStatus: 'idle' as const, approvalReceipt: undefined, approvalError: undefined,
+    diagnosticError: undefined, approvalStatus: 'idle', approvalReceipt: undefined, approvalError: undefined,
   }
 }
 
@@ -211,18 +212,27 @@ describe('shared Thaliris settings client', () => {
     await Promise.all([editor.dispose(), restarted.dispose(), afterRestart.dispose()])
   })
 
-  it('blocks stale edits on a newer Settings revision and keeps memory-provider removal visible as editable native grants', async () => {
+  it('shows a conflict reload action that discards the draft and uses refreshed native Settings', async () => {
     const backing = createForm()
     const editor = new PolicyEditorController(backing.form)
+    renderPage(editor)
     editor.edit('controllerPrompt', 'draft')
-    backing.publish({ ...backing.getSnapshot(), revision: 9 })
+    const refreshed = policy()
+    refreshed.controllerPrompt = 'Host refreshed guidance'
+    backing.publish({ ...backing.getSnapshot(), value: { policy: refreshed }, revision: 9 })
     expect(editor.getSnapshot().conflict).toBe(true)
     expect(await editor.save()).toBe(false)
     expect(backing.mutate).not.toHaveBeenCalled()
-    editor.discard()
-    expect(editor.getSnapshot().draft?.controllerPrompt).toBe('Visible Controller instructions')
+    expect((screen.getByLabelText(en.controllerPrompt) as HTMLTextAreaElement).value).toBe('draft')
+    expect(screen.getByText(en.conflict)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.discard }))
+    expect(editor.getSnapshot().conflict).toBe(false)
+    expect(editor.getSnapshot().draft?.controllerPrompt).toBe('Host refreshed guidance')
+    expect((screen.getByLabelText(en.controllerPrompt) as HTMLTextAreaElement).value).toBe('Host refreshed guidance')
     await editor.dispose()
+  })
 
+  it('keeps memory-provider removal visible as editable native grants', async () => {
     const missing = policy()
     missing.memory = { mode: 'disabled', autoAuthorized: false, providers: ['gone'], controllerRead: ['gone'], controllerWrite: ['gone'] }
     const withMissingProvider = new PolicyEditorController(createForm(missing).form)
@@ -248,7 +258,7 @@ describe('shared Thaliris settings client', () => {
 
   it('shows only native root Sessions for diagnostics, exposes proven terminal facts, and sends proposal approval only on an explicit click', async () => {
     const editor = new PolicyEditorController(createForm().form)
-    const { actions } = renderPage(editor)
+    const { actions, native } = renderPage(editor)
     fireEvent.click(screen.getByRole('tab', { name: en.tabDiagnostics }))
     const sessionSelect = screen.getByRole('combobox')
     expect(within(sessionSelect).getByRole('option', { name: /Root workspace/ })).toBeTruthy()
@@ -260,7 +270,30 @@ describe('shared Thaliris settings client', () => {
     expect(screen.getByText(/"action": "reconcile"/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.approveProposal }))
     expect(actions.approveMemory).toHaveBeenCalledWith('root-session', 'proposal-1')
+    act(() => native.update(state => { state.approvalStatus = 'saving' }))
+    expect((screen.getByRole('button', { name: en.approveProposal }) as HTMLButtonElement).disabled).toBe(true)
+    act(() => native.update(state => { state.approvalStatus = 'error'; state.approvalError = 'provider-write-observed: receipt unavailable' }))
+    expect(screen.getByText('provider-write-observed: receipt unavailable')).toBeTruthy()
+    expect(screen.getByText(en.approvalUncertain)).toBeTruthy()
     expect(screen.getByText(en.reconcileGuide)).toBeTruthy()
+    await editor.dispose()
+  })
+
+  it('renders a recorded approval receipt as evidence without creating a second proposal card', async () => {
+    const editor = new PolicyEditorController(createForm().form)
+    const { native } = renderPage(editor)
+    const withReceipt = structuredClone(diagnostics)
+    withReceipt.task.state.pending_results.push(JSON.stringify({
+      approval_id: 'approval-1', proposal_id: 'proposal-1', provider: 'provider-one', workspaceId: 'workspace-1',
+      outcome: 'provider-write-observed', provenance: 'native-client-approval',
+    }))
+    act(() => native.update(state => { state.diagnostics = withReceipt }))
+    fireEvent.click(screen.getByRole('tab', { name: en.tabDiagnostics }))
+    expect(screen.getAllByText(en.proposalText)).toHaveLength(1)
+    expect(screen.getByText(en.alreadyApproved)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.approveProposal })).toBeNull()
+    const receiptCard = screen.getByText(en.approvalReceipts).closest('article')
+    expect(receiptCard?.textContent).toContain('approval-1')
     await editor.dispose()
   })
 

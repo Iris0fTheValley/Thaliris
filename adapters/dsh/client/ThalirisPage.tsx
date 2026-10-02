@@ -125,7 +125,7 @@ export function ThalirisPage(props: Props) {
         {policy.conflict ? <p className={css.error} role="alert">{t('conflict')}</p> : null}
         {policy.validationError ? <p className={css.error} role="alert">{policy.validationError}</p> : null}
         {policy.error ? <p className={css.error} role="alert">{policy.error}</p> : null}
-        {!policy.writable && policy.available ? <Button onClick={props.discard}>{t('discard')}</Button> : null}
+        {policy.available && (!policy.writable || policy.conflict) ? <Button onClick={props.discard}>{t('discard')}</Button> : null}
         <fieldset className={css.fieldset} disabled={!policy.writable}>
         <legend className={css.visuallyHidden}>{t('settingsLabel')}</legend>
         {tab === 'general' && draft ? (
@@ -395,13 +395,14 @@ function Diagnostics({ native, selectedSession, setSelectedSession, copied, setC
   const data = record(native.diagnostics)
   const task = record(data?.task)
   const taskState = record(task?.state)
-  const proposals = (taskState?.pending_results ?? []).flatMap((item: unknown) => {
+  const pendingResults = (taskState?.pending_results ?? []).flatMap((item: unknown) => {
     try { return [typeof item === 'string' ? JSON.parse(item) : item] } catch { return [] }
-  }).map(record).filter((item: Record<string, any> | undefined) => item && typeof item.proposal_id === 'string') as Record<string, any>[]
+  }).map(record).filter((item: Record<string, any> | undefined) => item) as Record<string, any>[]
+  const proposals = pendingResults.filter(item => typeof item.proposal_id === 'string' && typeof item.approval_id !== 'string'
+    && typeof item.provider === 'string' && typeof item.key === 'string' && typeof item.text === 'string' && item.provenance !== undefined)
+  const approvalReceipts = pendingResults.filter(item => typeof item.approval_id === 'string' && typeof item.proposal_id === 'string')
   const reservations = Array.isArray(data?.reservations) ? data.reservations : []
-  const approved = new Set((taskState?.pending_results ?? []).flatMap((item: unknown) => {
-    try { const value = typeof item === 'string' ? JSON.parse(item) : item; return value?.approval_id && value?.proposal_id ? [value.proposal_id] : [] } catch { return [] }
-  }))
+  const approved = new Set(approvalReceipts.map(value => value.proposal_id))
   return <section className={css.section}>
     <h3>{t('diagnosticsTitle')}</h3><p>{t('diagnosticsHelp')}</p>
     <div className={css.inline}><select value={selectedSession} onChange={event => setSelectedSession(event.currentTarget.value)}>
@@ -452,12 +453,16 @@ function Diagnostics({ native, selectedSession, setSelectedSession, copied, setC
           <p>{t('proposalText')}</p><pre>{String(proposal.text ?? '')}</pre>
           <p>{t('proposalProvenance')}: {json(proposal.provenance)}</p>
           {approved.has(proposal.proposal_id) ? <p>{t('alreadyApproved')}</p> : canApprove ?
-            <Button variant="primary" onClick={() => approveMemory(selectedSession, proposal.proposal_id)}>{t('approveProposal')}</Button> :
+            <Button variant="primary" disabled={native.approvalStatus === 'saving'} onClick={() => approveMemory(selectedSession, proposal.proposal_id)}>{t('approveProposal')}</Button> :
             <p className={css.notice}>{t('noApprovalGrant')}</p>}
         </article>
       })}
+      {approvalReceipts.length > 0 ? <InfoCard title={t('approvalReceipts')} value={approvalReceipts} /> : null}
       {native.approvalStatus === 'ready' ? <InfoCard title={t('proposalApproved')} value={native.approvalReceipt} /> : null}
-      {native.approvalStatus === 'error' ? <p className={css.error}>{native.approvalError ?? t('approvalUncertain')}</p> : null}
+      {native.approvalStatus === 'error' ? <>
+        <p className={css.error}>{native.approvalError ?? t('approvalUncertain')}</p>
+        {native.approvalError ? <p className={css.notice}>{t('approvalUncertain')}</p> : null}
+      </> : null}
     </> : null}
   </section>
 }

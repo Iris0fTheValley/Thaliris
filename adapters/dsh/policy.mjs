@@ -33,12 +33,15 @@ export const Config = z.object({
 })
 
 export function readPolicy(config) {
-  const policy = structuredClone(config.policy.get())
-  const ids = new Set()
-  for (const role of policy.roles) {
-    if (!role.id.trim() || ids.has(role.id) || role.tools.some(tool => tool.startsWith('thaliris_task_') || tool === 'thaliris_workstream' || tool === 'thaliris_reconcile')) throw new Error('THALIRIS_INVALID_ROLE_POLICY')
-    ids.add(role.id)
-    if (role.modelPolicy.mode === 'fixed' && role.modelPolicy.routes.length !== 1) throw new Error('THALIRIS_FIXED_ROUTE_REQUIRED')
-  }
-  return policy
+  return structuredClone(config.policy.get())
+}
+
+/** Validate only the role selected for execution; unrelated stored roles do not gate lifecycle reads. */
+export function selectedRole(policy, id) {
+  const matches = policy.roles.filter(role => role.id === id)
+  if (matches.length !== 1 || !matches[0].enabled) throw new Error('THALIRIS_ROLE_NOT_CONFIGURED')
+  const role = matches[0]
+  if (!role.id.trim() || role.tools.some(tool => tool.startsWith('thaliris_task_') || tool === 'thaliris_workstream' || tool === 'thaliris_reconcile')) throw new Error('THALIRIS_INVALID_ROLE_POLICY')
+  if (role.modelPolicy.mode === 'fixed' && role.modelPolicy.routes.length !== 1) throw new Error('THALIRIS_FIXED_ROUTE_REQUIRED')
+  return role
 }

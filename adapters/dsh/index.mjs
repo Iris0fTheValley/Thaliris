@@ -3,7 +3,7 @@ import { realpathSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
-import { readPolicy } from './policy.mjs'
+import { readPolicy, selectedRole } from './policy.mjs'
 export { Config } from './policy.mjs'
 export const name = 'thaliris-dsh'
 export const inject = ['agents', 'systemPrompt', 'tools', 'subagents', 'subprocess', 'workspaceRegistry', 'sessionPersistence', 'llm']
@@ -55,9 +55,16 @@ export function apply(ctx, config) {
   ctx.systemPrompt.section({ name: 'thaliris:controller-contract', order: ctx.systemPrompt.getSectionOrder('TEAM_POLICY'),
     text: ({ agent }) => {
       if (!isNativeRoot(agent)) return ''
-      const policy = readPolicy(config)
-      const cwd = realpathSync(agent.session.header.cwd)
-      return policy.workspaces.some(row => row.enabled && realpathSync(row.root) === cwd && ctx.workspaceRegistry.get(row.workspaceId)?.path && realpathSync(ctx.workspaceRegistry.get(row.workspaceId).path) === cwd) ? policy.controllerPrompt : ''
+      try {
+        const cwd = realpathSync(agent.session.header.cwd), policy = readPolicy(config)
+        return policy.workspaces.some(row => {
+          if (!row.enabled) return false
+          try {
+            const workspace = ctx.workspaceRegistry.get(row.workspaceId)
+            return realpathSync(row.root) === cwd && workspace?.path && realpathSync(workspace.path) === cwd
+          } catch { return false }
+        }) ? policy.controllerPrompt : ''
+      } catch { return '' }
     },
   })
   function bridge(agent, operation, args, signal) {
@@ -105,8 +112,7 @@ export function apply(ctx, config) {
   register(TOOL_NAMES[1], 'Inspect Core task and unresolved reservation without inferring outcomes.', object({}),
     (_args, agent, signal) => bridge(agent, 'inspect', {}, signal))
   register(TOOL_NAMES[2], 'Select one editable role and bounded handoff for a fresh native child.', object({ ...identitySchema, workstream: string, role: string, handoff: handoffSchema, route: routeSchema, memoryContext: memoryContextSchema }, [...Object.keys(identitySchema), 'workstream', 'role', 'handoff']), async (args, agent, signal) => {
-    const policy = readPolicy(config), role = policy.roles.find(row => row.id === args.role && row.enabled)
-    if (!role) throw new Error('THALIRIS_ROLE_NOT_CONFIGURED')
+    const policy = readPolicy(config), role = selectedRole(policy, args.role)
     if (!role.context.handoff) throw new Error('THALIRIS_ROLE_HANDOFF_DENIED')
     const provider = ctx.subagents.getProvider(config.subagentProvider)
     if (!provider || provider.inheritsParentContext !== false) throw new Error('THALIRIS_FRESH_PROVIDER_REQUIRED')
@@ -195,8 +201,8 @@ export function apply(ctx, config) {
 
   async function memory(args, agent, signal, operation) {
     const policy = readPolicy(config), grant = childGrants.get(agent)
-    const role = grant && policy.roles.find(row => row.id === grant.roleId && row.enabled)
-    if (grant && (!role || !role.context.memory || !role.tools.includes(operation === 'read' ? MEMORY_TOOLS[0] : operation === 'search' ? MEMORY_TOOLS[1] : MEMORY_TOOLS[2]))) throw new Error('THALIRIS_MEMORY_PERMISSION_DENIED')
+    const role = grant && selectedRole(policy, grant.roleId)
+    if (grant && (!role.context.memory || !role.tools.includes(operation === 'read' ? MEMORY_TOOLS[0] : operation === 'search' ? MEMORY_TOOLS[1] : MEMORY_TOOLS[2]))) throw new Error('THALIRIS_MEMORY_PERMISSION_DENIED')
     const permission = operation === 'write' ? 'write' : 'read'
     const allowed = grant ? role.memory[permission] : policy.memory[permission === 'write' ? 'controllerWrite' : 'controllerRead']
     if (policy.memory.mode === 'disabled' || !policy.memory.providers.includes(args.provider) || !allowed.includes(args.provider)) throw new Error('THALIRIS_MEMORY_PERMISSION_DENIED')

@@ -19,7 +19,7 @@ export default class ThalirisMemory extends Service {
     request.signal.throwIfAborted()
     if (this.providers.get(id) !== provider) throw new Error('THALIRIS_MEMORY_PROVIDER_UNAVAILABLE')
     const result = JSON.parse(JSON.stringify(value))
-    if (JSON.stringify(result).length > request.maxBytes) throw new Error('THALIRIS_MEMORY_RESULT_BOUND_EXCEEDED')
+    if (Buffer.byteLength(JSON.stringify(result), 'utf8') > request.maxBytes) throw new Error('THALIRIS_MEMORY_RESULT_BOUND_EXCEEDED')
     return result
   }
 }

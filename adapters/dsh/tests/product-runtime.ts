@@ -90,6 +90,18 @@ async function initialize(home: string) {
   const h = await harness(home, true)
   try {
     const start: any = await h.execute('thaliris_task_start', { goal: 'Product fixture', contract }); assert.equal(start.isError, false, JSON.stringify(start))
+    const unbound = await h.ctx.agentLoop.create(SessionId('unbound-controller'), { provider: 'mock', model: 'parent' }, { cwd: h.secondRoot })
+    await h.ctx.sessionPersistence.flush()
+    const originalWorkspaces = structuredClone(h.view().value.policy.workspaces)
+    const staleRoot = join(h.workspace, 'removed-unrelated-workspace')
+    await h.edit([{ op: 'set', path: ['policy', 'workspaces'], value: [
+      originalWorkspaces[0],
+      { workspaceId: 'removed-native-workspace', root: staleRoot, enabled: true },
+    ] }])
+    const promptSection = async (agent: any) => (await h.ctx.systemPrompt.assemble({ agent })).sections.find((section: any) => section.name === 'thaliris:controller-contract')?.text ?? ''
+    assert.match(await promptSection(h.parent), /Thaliris Controller contract:/, 'a stale unrelated binding does not break the configured root prompt')
+    assert.equal(await promptSection(unbound), '', 'an unbound native root receives no Thaliris prompt even with an unrelated stale binding')
+    await h.edit([{ op: 'set', path: ['policy', 'workspaces'], value: originalWorkspaces }])
     const client = new Context()
     await client.plugin(Registry)
     client.provide('connection', { registerGenerationSource: () => () => {}, start: () => ({ stop() {} }), rpc: {
@@ -119,9 +131,13 @@ async function initialize(home: string) {
     assert.deepEqual((h.view().value as any).policy.roles, [])
     let task = await h.inspect()
     assert.equal((await h.execute('thaliris_workstream', { task_id: task.state.task_id, base_revision: task.state.revision, role: role.id, workstream: 'removed', handoff })).isError, true)
-    await h.edit([{ op: 'set', path: ['policy', 'roles'], value: [role] }])
+    const unrelatedInvalid = { ...role, id: 'disabled-fixed-role', enabled: false, modelPolicy: { mode: 'fixed', routes: [] } }
+    const selectedInvalid = { ...role, id: 'invalid-fixed-role', modelPolicy: { mode: 'fixed', routes: [] } }
+    await h.edit([{ op: 'set', path: ['policy', 'roles'], value: [role, unrelatedInvalid, selectedInvalid] }])
     const denied: any = await h.execute('thaliris_workstream', { task_id: task.state.task_id, base_revision: task.state.revision, role: role.id, workstream: 'denied', handoff, route: { provider: 'mock', model: 'other' } })
     assert.equal(denied.isError, true); assert.match(JSON.stringify(denied), /MODEL_ROUTE_NOT_ALLOWED/)
+    const invalidRoute: any = await h.execute('thaliris_workstream', { task_id: task.state.task_id, base_revision: task.state.revision, role: selectedInvalid.id, workstream: 'invalid-selected-role', handoff })
+    assert.equal(invalidRoute.isError, true); assert.match(JSON.stringify(invalidRoute), /FIXED_ROUTE_REQUIRED/)
     script.push((request: any) => { assert.ok(JSON.stringify(request).includes('EXACT_EDITED_PROMPT')); assert.ok(!JSON.stringify(request).includes('Thaliris child contract:')); return textResponse('editable role complete') })
     const routed: any = await h.execute('thaliris_workstream', { task_id: task.state.task_id, base_revision: task.state.revision, role: role.id, workstream: 'editable', handoff, route: { provider: 'mock', model: 'child' } }); assert.equal(routed.isError, false, JSON.stringify(routed))
     await h.edit([{ op: 'set', path: ['policy', 'roles'], value: [] }])
@@ -135,7 +151,8 @@ async function initialize(home: string) {
     const memoryFiber = await h.ctx.plugin(Memory)
     const localFiber = await h.ctx.plugin(LocalMemory)
     let writes = 0
-    const externalFiber = await h.ctx.plugin({ inject: ['thalirisMemory'], apply(ctx: Context) { (ctx as any).thalirisMemory.register(ctx, { id: 'external', name: 'External async fixture', async read() { return { text: 'external' } }, async search() { return [{ key: 'remote', text: 'external' }] }, async write() { writes++; return { stored: true } } }) } })
+    const externalFiber = await h.ctx.plugin({ inject: ['thalirisMemory'], apply(ctx: Context) { (ctx as any).thalirisMemory.register(ctx, { id: 'external', name: 'External async fixture', async read(request: any) { return { text: request.key === 'unicode' ? '😀'.repeat(10) : 'external' } }, async search() { return [{ key: 'remote', text: 'external' }] }, async write() { writes++; return { stored: true } } }) } })
+    await assert.rejects((h.ctx as any).thalirisMemory.invoke('external', 'read', { key: 'unicode', signal: signal(), maxBytes: 31 }), /THALIRIS_MEMORY_RESULT_BOUND_EXCEEDED/)
     await h.edit([{ op: 'set', path: ['policy', 'memory'], value: { mode: 'manual', autoAuthorized: false, providers: ['thaliris-local', 'external'], controllerRead: ['thaliris-local', 'external'], controllerWrite: ['thaliris-local', 'external'] } }])
     assert.equal((await h.execute('thaliris_memory_read', { provider: 'external', key: 'x', maxBytes: 64 })).isError, false)
     assert.equal((await h.execute('thaliris_memory_read', { provider: 'forbidden', key: 'x', maxBytes: 64 })).isError, true)
@@ -198,7 +215,12 @@ async function restart(home: string) {
     assert.equal(task.state.active_work.length, 1)
     const rival = await h.ctx.agentLoop.create(SessionId('unrelated-root'), { provider: 'mock', model: 'parent' }, { cwd: h.workspace }); await h.ctx.sessionPersistence.flush()
     assert.equal((await h.execute('thaliris_task_inspect', {}, rival)).isError, true)
-    const reconciled: any = await h.execute('thaliris_reconcile', { task_id: task.state.task_id, base_revision: task.state.revision, action: 'reconcile' })
+    await h.edit([{ op: 'set', path: ['policy', 'roles'], value: [
+      { ...role, id: 'disabled-fixed-role', enabled: false, modelPolicy: { mode: 'fixed', routes: [] } },
+    ] }])
+    const lifecycle = await h.inspect()
+    assert.equal(lifecycle.state.active_work.length, 1, 'disabled invalid role does not block lifecycle inspection')
+    const reconciled: any = await h.execute('thaliris_reconcile', { task_id: lifecycle.state.task_id, base_revision: lifecycle.state.revision, action: 'reconcile' })
     assert.equal(reconciled.isError, false, JSON.stringify(reconciled)); assert.equal(reconciled.value.native_completed, true)
     const state = (await h.inspect()).state
     assert.equal(state.active_work.length, 0); assert.ok(state.pending_results.some((value: string) => value.includes('Archived reservation:')))

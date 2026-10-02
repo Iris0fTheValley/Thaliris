@@ -160,6 +160,7 @@ export class NativeProjectionController {
   }
 
   async approveMemory(sessionId: string, proposalId: string): Promise<boolean> {
+    if (this.store.getSnapshot().approvalStatus === 'saving') return false
     this.store.update(state => {
       state.approvalStatus = 'saving'
       state.approvalReceipt = undefined

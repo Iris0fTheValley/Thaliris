@@ -3951,6 +3951,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				}
 			}
 			async approveMemory(sessionId, proposalId) {
+				if (this.store.getSnapshot().approvalStatus === "saving") return false;
 				this.store.update((state) => {
 					state.approvalStatus = "saving";
 					state.approvalReceipt = void 0;
@@ -3980,8 +3981,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			}
 		};
 		//#endregion
-		//#region \0dsh-css:C:\Users\12298\Documents\Codex\2026-10-02\codex-benchmark-1-thaliris-host-neutral\work\deepseek-harness\packages\client\thaliris-build-2ajL3E\src\client\ThalirisPage.module.css.mjs
-		const css = "._2Alyqq_page{width:100%;color:var(--dsw-alias-text-primary);flex-direction:column;gap:18px;display:flex}._2Alyqq_header,._2Alyqq_sectionHead,._2Alyqq_cardHead,._2Alyqq_inline,._2Alyqq_inlineActions,._2Alyqq_permissionRow{align-items:center;gap:12px;display:flex}._2Alyqq_header,._2Alyqq_sectionHead,._2Alyqq_cardHead{justify-content:space-between}._2Alyqq_header{align-items:flex-start}._2Alyqq_title{margin:0;font-size:20px;font-weight:600}._2Alyqq_summary,._2Alyqq_section p,._2Alyqq_section small{color:var(--dsw-alias-text-secondary)}._2Alyqq_summary{margin:5px 0 0}._2Alyqq_section{flex-direction:column;gap:14px;min-width:0;display:flex}._2Alyqq_fieldset{border:0;flex-direction:column;gap:14px;min-width:0;margin:0;padding:0;display:flex}._2Alyqq_visuallyHidden{clip:rect(0, 0, 0, 0);white-space:nowrap;border:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}._2Alyqq_section h3,._2Alyqq_section h4{margin:0;font-weight:600}._2Alyqq_section h3{font-size:16px}._2Alyqq_section h4{font-size:14px}._2Alyqq_section p{margin:0;line-height:1.5}._2Alyqq_field{flex-direction:column;gap:6px;min-width:0;display:flex}._2Alyqq_field>span{font-size:13px;font-weight:500}._2Alyqq_field textarea{resize:vertical;box-sizing:border-box;width:100%;min-height:118px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:10px 12px;line-height:1.5}._2Alyqq_field select,._2Alyqq_inline select,._2Alyqq_section>select{max-width:100%;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:8px 10px}._2Alyqq_inline{flex-wrap:wrap}._2Alyqq_inline select{flex:1;min-width:220px}._2Alyqq_inlineActions{flex-wrap:wrap;justify-content:flex-end}._2Alyqq_grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;display:grid}._2Alyqq_wide{grid-column:1/-1}._2Alyqq_stack{flex-direction:column;gap:10px;display:flex}._2Alyqq_card{border:1px solid var(--dsw-alias-border-primary);background:var(--dsw-alias-surface-secondary);border-radius:10px;flex-direction:column;gap:12px;min-width:0;padding:14px;display:flex}._2Alyqq_cardHead{align-items:flex-start}._2Alyqq_cardHead code,._2Alyqq_cardHead p{color:var(--dsw-alias-text-secondary);overflow-wrap:anywhere;margin-top:5px;display:block}._2Alyqq_subsection{flex-direction:column;gap:10px;padding-top:4px;display:flex}._2Alyqq_checkGrid{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:8px 12px;display:grid}._2Alyqq_permissionRow{flex-wrap:wrap;justify-content:flex-start;padding:7px 0}._2Alyqq_permissionRow strong{min-width:140px}._2Alyqq_notice{background:var(--dsw-alias-surface-tertiary);overflow-wrap:anywhere;border-radius:8px;padding:9px 11px}._2Alyqq_error{color:var(--dsw-alias-text-danger);background:var(--dsw-alias-surface-danger);border-radius:8px;padding:9px 11px}._2Alyqq_card pre{max-width:100%;max-height:260px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);white-space:pre-wrap;overflow-wrap:anywhere;border-radius:7px;margin:0;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:auto}@media (width<=680px){._2Alyqq_header,._2Alyqq_sectionHead{flex-direction:column;align-items:flex-start}._2Alyqq_inline{flex-direction:column;align-items:stretch}._2Alyqq_inline select{box-sizing:border-box;width:100%}}";
+		//#region \0dsh-css:C:\Users\12298\Documents\Codex\2026-10-02\codex-benchmark-1-thaliris-host-neutral\work\deepseek-harness\packages\client\thaliris-build-KE6slc\src\client\ThalirisPage.module.css.mjs
+		const css = ".m7ZUFa_page{width:100%;color:var(--dsw-alias-text-primary);flex-direction:column;gap:18px;display:flex}.m7ZUFa_header,.m7ZUFa_sectionHead,.m7ZUFa_cardHead,.m7ZUFa_inline,.m7ZUFa_inlineActions,.m7ZUFa_permissionRow{align-items:center;gap:12px;display:flex}.m7ZUFa_header,.m7ZUFa_sectionHead,.m7ZUFa_cardHead{justify-content:space-between}.m7ZUFa_header{align-items:flex-start}.m7ZUFa_title{margin:0;font-size:20px;font-weight:600}.m7ZUFa_summary,.m7ZUFa_section p,.m7ZUFa_section small{color:var(--dsw-alias-text-secondary)}.m7ZUFa_summary{margin:5px 0 0}.m7ZUFa_section{flex-direction:column;gap:14px;min-width:0;display:flex}.m7ZUFa_fieldset{border:0;flex-direction:column;gap:14px;min-width:0;margin:0;padding:0;display:flex}.m7ZUFa_visuallyHidden{clip:rect(0, 0, 0, 0);white-space:nowrap;border:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}.m7ZUFa_section h3,.m7ZUFa_section h4{margin:0;font-weight:600}.m7ZUFa_section h3{font-size:16px}.m7ZUFa_section h4{font-size:14px}.m7ZUFa_section p{margin:0;line-height:1.5}.m7ZUFa_field{flex-direction:column;gap:6px;min-width:0;display:flex}.m7ZUFa_field>span{font-size:13px;font-weight:500}.m7ZUFa_field textarea{resize:vertical;box-sizing:border-box;width:100%;min-height:118px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:10px 12px;line-height:1.5}.m7ZUFa_field select,.m7ZUFa_inline select,.m7ZUFa_section>select{max-width:100%;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);border:1px solid var(--dsw-alias-border-primary);font:inherit;border-radius:8px;padding:8px 10px}.m7ZUFa_inline{flex-wrap:wrap}.m7ZUFa_inline select{flex:1;min-width:220px}.m7ZUFa_inlineActions{flex-wrap:wrap;justify-content:flex-end}.m7ZUFa_grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px;display:grid}.m7ZUFa_wide{grid-column:1/-1}.m7ZUFa_stack{flex-direction:column;gap:10px;display:flex}.m7ZUFa_card{border:1px solid var(--dsw-alias-border-primary);background:var(--dsw-alias-surface-secondary);border-radius:10px;flex-direction:column;gap:12px;min-width:0;padding:14px;display:flex}.m7ZUFa_cardHead{align-items:flex-start}.m7ZUFa_cardHead code,.m7ZUFa_cardHead p{color:var(--dsw-alias-text-secondary);overflow-wrap:anywhere;margin-top:5px;display:block}.m7ZUFa_subsection{flex-direction:column;gap:10px;padding-top:4px;display:flex}.m7ZUFa_checkGrid{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:8px 12px;display:grid}.m7ZUFa_permissionRow{flex-wrap:wrap;justify-content:flex-start;padding:7px 0}.m7ZUFa_permissionRow strong{min-width:140px}.m7ZUFa_notice{background:var(--dsw-alias-surface-tertiary);overflow-wrap:anywhere;border-radius:8px;padding:9px 11px}.m7ZUFa_error{color:var(--dsw-alias-text-danger);background:var(--dsw-alias-surface-danger);border-radius:8px;padding:9px 11px}.m7ZUFa_card pre{max-width:100%;max-height:260px;color:var(--dsw-alias-text-primary);background:var(--dsw-alias-surface-primary);white-space:pre-wrap;overflow-wrap:anywhere;border-radius:7px;margin:0;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:auto}@media (width<=680px){.m7ZUFa_header,.m7ZUFa_sectionHead{flex-direction:column;align-items:flex-start}.m7ZUFa_inline{flex-direction:column;align-items:stretch}.m7ZUFa_inline select{box-sizing:border-box;width:100%}}";
 		const tagId = "@thaliris/dsh-plugin/ThalirisPage.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -3991,27 +3992,27 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			document.head.appendChild(tag);
 		}
 		var ThalirisPage_module_css_default = {
-			"card": "_2Alyqq_card",
-			"cardHead": "_2Alyqq_cardHead",
-			"checkGrid": "_2Alyqq_checkGrid",
-			"error": "_2Alyqq_error",
-			"field": "_2Alyqq_field",
-			"fieldset": "_2Alyqq_fieldset",
-			"grid": "_2Alyqq_grid",
-			"header": "_2Alyqq_header",
-			"inline": "_2Alyqq_inline",
-			"inlineActions": "_2Alyqq_inlineActions",
-			"notice": "_2Alyqq_notice",
-			"page": "_2Alyqq_page",
-			"permissionRow": "_2Alyqq_permissionRow",
-			"section": "_2Alyqq_section",
-			"sectionHead": "_2Alyqq_sectionHead",
-			"stack": "_2Alyqq_stack",
-			"subsection": "_2Alyqq_subsection",
-			"summary": "_2Alyqq_summary",
-			"title": "_2Alyqq_title",
-			"visuallyHidden": "_2Alyqq_visuallyHidden",
-			"wide": "_2Alyqq_wide"
+			"card": "m7ZUFa_card",
+			"cardHead": "m7ZUFa_cardHead",
+			"checkGrid": "m7ZUFa_checkGrid",
+			"error": "m7ZUFa_error",
+			"field": "m7ZUFa_field",
+			"fieldset": "m7ZUFa_fieldset",
+			"grid": "m7ZUFa_grid",
+			"header": "m7ZUFa_header",
+			"inline": "m7ZUFa_inline",
+			"inlineActions": "m7ZUFa_inlineActions",
+			"notice": "m7ZUFa_notice",
+			"page": "m7ZUFa_page",
+			"permissionRow": "m7ZUFa_permissionRow",
+			"section": "m7ZUFa_section",
+			"sectionHead": "m7ZUFa_sectionHead",
+			"stack": "m7ZUFa_stack",
+			"subsection": "m7ZUFa_subsection",
+			"summary": "m7ZUFa_summary",
+			"title": "m7ZUFa_title",
+			"visuallyHidden": "m7ZUFa_visuallyHidden",
+			"wide": "m7ZUFa_wide"
 		};
 		//#endregion
 		//#region src/client/ThalirisPage.tsx
@@ -4170,7 +4171,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 								role: "alert",
 								children: policy.error
 							}) : null,
-							!policy.writable && policy.available ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							policy.available && (!policy.writable || policy.conflict) ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								onClick: props.discard,
 								children: t("discard")
 							}) : null,
@@ -4799,22 +4800,17 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			const data = record(native.diagnostics);
 			const task = record(data?.task);
 			const taskState = record(task?.state);
-			const proposals = (taskState?.pending_results ?? []).flatMap((item) => {
+			const pendingResults = (taskState?.pending_results ?? []).flatMap((item) => {
 				try {
 					return [typeof item === "string" ? JSON.parse(item) : item];
 				} catch {
 					return [];
 				}
-			}).map(record).filter((item) => item && typeof item.proposal_id === "string");
+			}).map(record).filter((item) => item);
+			const proposals = pendingResults.filter((item) => typeof item.proposal_id === "string" && typeof item.approval_id !== "string" && typeof item.provider === "string" && typeof item.key === "string" && typeof item.text === "string" && item.provenance !== void 0);
+			const approvalReceipts = pendingResults.filter((item) => typeof item.approval_id === "string" && typeof item.proposal_id === "string");
 			const reservations = Array.isArray(data?.reservations) ? data.reservations : [];
-			const approved = new Set((taskState?.pending_results ?? []).flatMap((item) => {
-				try {
-					const value = typeof item === "string" ? JSON.parse(item) : item;
-					return value?.approval_id && value?.proposal_id ? [value.proposal_id] : [];
-				} catch {
-					return [];
-				}
-			}));
+			const approved = new Set(approvalReceipts.map((value) => value.proposal_id));
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
 				className: ThalirisPage_module_css_default.section,
 				children: [
@@ -4955,6 +4951,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 									] }),
 									approved.has(proposal.proposal_id) ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", { children: t("alreadyApproved") }) : canApprove ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 										variant: "primary",
+										disabled: native.approvalStatus === "saving",
 										onClick: () => approveMemory(selectedSession, proposal.proposal_id),
 										children: t("approveProposal")
 									}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
@@ -4964,14 +4961,21 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 								]
 							}, proposal.proposal_id);
 						}),
+						approvalReceipts.length > 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(InfoCard, {
+							title: t("approvalReceipts"),
+							value: approvalReceipts
+						}) : null,
 						native.approvalStatus === "ready" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(InfoCard, {
 							title: t("proposalApproved"),
 							value: native.approvalReceipt
 						}) : null,
-						native.approvalStatus === "error" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+						native.approvalStatus === "error" ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 							className: ThalirisPage_module_css_default.error,
 							children: native.approvalError ?? t("approvalUncertain")
-						}) : null
+						}), native.approvalError ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+							className: ThalirisPage_module_css_default.notice,
+							children: t("approvalUncertain")
+						}) : null] }) : null
 					] }) : null
 				]
 			});
@@ -5098,6 +5102,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			proposalProvenance: "Provenance",
 			approveProposal: "Approve this proposal",
 			proposalApproved: "Native provider result and Core approval receipt",
+			approvalReceipts: "Recorded Core approval receipts",
 			approvalUncertain: "Approval did not return a complete receipt. The provider write may have succeeded; refresh diagnostics and provider state before retrying.",
 			alreadyApproved: "An approval receipt is recorded for this proposal.",
 			noApprovalGrant: "Approval is unavailable under the current provider, write grant, or memory policy.",
@@ -5217,6 +5222,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			proposalProvenance: "来源",
 			approveProposal: "批准此建议",
 			proposalApproved: "原生提供方结果和 Core 批准回执",
+			approvalReceipts: "已记录的 Core 批准回执",
 			approvalUncertain: "批准操作未返回完整回执。提供方写入可能已成功；重试前请刷新诊断和提供方状态。",
 			alreadyApproved: "此建议已有批准回执。",
 			noApprovalGrant: "当前提供方、写入授权或记忆策略不允许批准。",

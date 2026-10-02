@@ -45,6 +45,7 @@ def establish(root: Path, state: dict, intent: dict, session_hash: str) -> dict:
     if prior is not None and prior["status"] == "ACTIVE":
         raise ValueError("TASK_AUTHORITY_ALREADY_ACTIVE")
     return _store(root).establish(state, intent, adapter_fields={
+        "provenance": "CONTROLLER_ASSERTED_HUMAN_INSTRUCTION", "host_actor_assurance": "UNKNOWN",
         "origin_session_hash": session_hash, "lifecycle_sha256": "ABSENT",
         "fenced_sessions": prior.get("fenced_sessions", []) if prior else [],
         "fenced_agents": prior.get("fenced_agents", []) if prior else [],
@@ -119,6 +120,8 @@ def recover(root: Path, expected: str, reason: str) -> dict:
             record["lifecycle_sha256"] = digest(ledger_path)
         elif ledger_path.is_file():
             ledger_path.unlink()
+        record["recoveries"][-1]["death_proof"] = "UNKNOWN"
 
-    return _store(root).recover(expected, reason, archive_paths=archive_paths,
-                                restore_adapter=restore_adapter, evidence=lambda record: _evidence(root, record))
+    result = _store(root).recover(expected, reason, archive_paths=archive_paths,
+                                  restore_adapter=restore_adapter, evidence=lambda record: _evidence(root, record))
+    return {**result, "host_actor_assurance": "UNKNOWN", "child_death_proof": "UNKNOWN"}

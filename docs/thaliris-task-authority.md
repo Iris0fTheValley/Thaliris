@@ -140,8 +140,16 @@ converts incoming workspace/storage/path strings to `Path` objects and calls
 this API; Core does not define a Node plugin or Host wire protocol.
 
 The adapter chooses the external storage directory and protected paths from
-its trusted boundary, rather than mutable repository config. `establish` can
-carry explicit `adapter_fields` without overwriting Core truth fields. For
+its trusted boundary, rather than mutable repository config. Core records
+selected task intent with neutral provenance (`SELECTED_TASK_INTENT`) and makes
+no Host actor assurance claim. An adapter may supply its own immutable
+provenance and Host assurance fields. The Codex facade preserves its existing
+`CONTROLLER_ASSERTED_HUMAN_INSTRUCTION` provenance and `UNKNOWN` Host assurance
+in stored anchors and recovery results. Core recovery reports the recorded
+provenance without adding Host assurance or native death-proof claims; the
+Codex recovery adapter supplies its existing `UNKNOWN` death-proof metadata.
+`establish` can carry explicit `adapter_fields` without overwriting Core-owned
+identity fields. For
 native evidence, `check(evidence={digest_field: (path, conflict_error)})` checks
 adapter-supplied paths against the existing record. `recover` accepts
 `archive_paths={archive_relative_path: native_path}`, `restore_adapter(record)`
@@ -155,7 +163,8 @@ repository/anchor checkpoint is not a multi-file transaction. Interrupted
 writes can require recovery to the prior anchor. `checkpoint` retires deleted
 state as ABANDONED and never reactivates a retired anchor.
 
-Host actor assurance and native death proof remain UNKNOWN. External anchors
-and evidence are private local state and must not be committed. Deleting or
-forging the external store through shared OS access is outside this governance
-boundary; it is not treated as an authenticated human decision.
+For Codex, Host actor assurance and native death proof remain UNKNOWN. Core
+does not generate either claim. External anchors and evidence are private local
+state and must not be committed. Deleting or forging the external store through
+shared OS access is outside this governance boundary; it is not treated as an
+authenticated human decision.

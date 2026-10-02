@@ -20,7 +20,14 @@ from . import core
 MODES = ("delegated", "controller-direct", "single-agent")
 _CONTRACT_FIELDS = {"human_instruction", "boundary", "invariants", "acceptance", "execution_mode"}
 _TRUTH_FIELDS = {"version", "project", "task_id", "goal", "contract", "status", "provenance",
-                 "host_actor_assurance", "state_sha256", "security", "snapshots", "history"}
+                 "state_sha256", "security", "snapshots", "history"}
+_CORE_OWNED_FIELDS = _TRUTH_FIELDS - {"provenance"}
+_ADAPTER_TRUTH_FIELDS = {"host_actor_assurance"}
+
+
+def _truth(record: dict) -> dict:
+    """Return immutable authority fields plus any adapter-supplied assurance."""
+    return {name: record.get(name) for name in _TRUTH_FIELDS | (_ADAPTER_TRUTH_FIELDS & record.keys())}
 
 
 def validate_contract(value: object) -> dict:
@@ -99,7 +106,7 @@ class AuthorityStore:
     def establish(self, state: dict, intent: dict, *, adapter_fields: dict | None = None) -> dict:
         intent = validate_contract(intent)
         fields = adapter_fields or {}
-        if _TRUTH_FIELDS & fields.keys():
+        if _CORE_OWNED_FIELDS & fields.keys():
             raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
         # Only an existing ACTIVE Core ledger can be anchored. No second task
         # state or host-specific task identity is created here.
@@ -113,7 +120,7 @@ class AuthorityStore:
             core._atomic_write(self.directory / "history" / f"{self.path().stem}-{prior['task_id']}.json", self.path().read_bytes())
         record = {"version": 1, "project": str(self.root.resolve()), "task_id": state["task_id"],
                   "goal": state["goal"], "contract": intent, "status": "ACTIVE",
-                  "provenance": "CONTROLLER_ASSERTED_HUMAN_INSTRUCTION", "host_actor_assurance": "UNKNOWN",
+                  "provenance": "SELECTED_TASK_INTENT",
                   "state_sha256": digest(core._state_path(self.root)),
                   "security": {name: digest(self.root / name) for name in self.protected_paths},
                   "history": prior.get("history", []) + [{"task_id": prior["task_id"], "goal": prior["goal"],
@@ -183,9 +190,9 @@ class AuthorityStore:
             record = self.read()
             if record is None or record["status"] != "ACTIVE":
                 raise ValueError("TASK_AUTHORITY_NOT_ACTIVE")
-            truth = json.dumps({name: record[name] for name in _TRUTH_FIELDS}, sort_keys=True)
+            truth = json.dumps(_truth(record), sort_keys=True)
             paths = archive_paths(record) if callable(archive_paths) else archive_paths or {}
-            if json.dumps({name: record.get(name) for name in _TRUTH_FIELDS}, sort_keys=True) != truth:
+            if json.dumps(_truth(record), sort_keys=True) != truth:
                 raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
             # Validate/decode all restoration bytes before any repository write.
             restored = {}
@@ -205,7 +212,7 @@ class AuthorityStore:
             for name, target in paths.items():
                 if digest(target) != "ABSENT":
                     core._atomic_write(archive / name, target.read_bytes())
-            record.setdefault("recoveries", []).append({"reason": reason, "archive": str(archive), "death_proof": "UNKNOWN"})
+            record.setdefault("recoveries", []).append({"reason": reason, "archive": str(archive)})
             for name, content in restored.items():
                 target = self.root / name
                 if content is None:
@@ -215,12 +222,12 @@ class AuthorityStore:
                     core._atomic_write(target, content)
             if restore_adapter is not None:
                 restore_adapter(record)
-                if json.dumps({name: record.get(name) for name in _TRUTH_FIELDS}, sort_keys=True) != truth:
+                if json.dumps(_truth(record), sort_keys=True) != truth:
                     raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
             checks = evidence(record) if callable(evidence) else evidence
-            if json.dumps({name: record.get(name) for name in _TRUTH_FIELDS}, sort_keys=True) != truth:
+            if json.dumps(_truth(record), sort_keys=True) != truth:
                 raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
             self.write(record)
             self.check(evidence=checks)
         return {"ok": True, "status": "TASK_AUTHORITY_RECOVERED", "task_id": record["task_id"],
-                "authority_provenance": record["provenance"], "host_actor_assurance": "UNKNOWN", "child_death_proof": "UNKNOWN"}
+                "authority_provenance": record["provenance"]}

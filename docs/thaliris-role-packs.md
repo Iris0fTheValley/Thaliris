@@ -355,3 +355,8 @@ parent selects the task and returned evidence; Core does not select native agent
 or assert a Host's identity or completion evidence. Native depth, isolation,
 registration, profile selection and lifecycle enforcement belong to each adapter.
 See [Codex's observed native contract](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/docs/thaliris-routing-protocol.md).
+
+Execution constraints belong to adapter policy and selected task intent. They
+may change a native model binding while preserving semantic role IDs, routing,
+instructions, isolation and readonly responsibilities. Core stores an explicit
+optional `execution_constraint` string without choosing or upgrading models.

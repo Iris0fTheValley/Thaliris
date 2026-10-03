@@ -269,3 +269,56 @@ def test_reopened_store_archives_every_recorded_protected_path(store):
 def test_protected_paths_are_normalized_relative_paths(store, name):
     with pytest.raises(ValueError, match="path"):
         authority.AuthorityStore(store.root, store.directory, protected_paths=(name,))
+
+
+@pytest.mark.parametrize("constraint", ["luna-only", "opaque-host-policy"])
+def test_optional_constraint_is_core_owned_opaque_intent(store, constraint):
+    selected = dict(intent(), execution_constraint=constraint)
+    assert authority.validate_contract(selected) is selected
+    core.task_start(store.root, "Repair the example", None, None)
+    anchor = store.establish(core.task_show(store.root)["state"], selected)
+    assert anchor["contract"] == selected
+    store.checkpoint()
+    assert store.check()["contract"] == selected
+    (store.root / ".context/state.json").write_bytes(b"conflict")
+    store.recover(authority.digest(store.path()), "Restore selected execution intent")
+    assert store.check()["contract"] == selected
+    core.task_close(store.root, 1)
+    store.checkpoint()
+    core.task_start(store.root, "Second task", None, None)
+    next_anchor = store.establish(core.task_show(store.root)["state"], intent())
+    assert next_anchor["history"][0]["contract"] == selected
+    assert "execution_constraint" not in next_anchor["contract"]
+
+
+@pytest.mark.parametrize("constraint", [None, "", " ", 7, {}, "x" * 16385])
+def test_constraint_transport_requires_a_bounded_nonempty_string(constraint):
+    with pytest.raises(ValueError, match="TASK_AUTHORITY_CONTRACT_REQUIRED"):
+        authority.validate_contract(dict(intent(), execution_constraint=constraint))
+
+
+def test_five_field_contract_preserves_default_serialization():
+    selected = intent()
+    original = json.dumps(selected, sort_keys=True).encode()
+    assert authority.validate_contract(selected) is selected
+    assert json.dumps(selected, sort_keys=True).encode() == original
+    assert "execution_constraint" not in selected
+    with pytest.raises(ValueError, match="TASK_AUTHORITY_CONTRACT_REQUIRED"):
+        authority.validate_contract(dict(selected, arbitrary_policy="luna-only"))
+
+
+@pytest.mark.parametrize("mutation", ["remove", "replace", "add"])
+def test_recovery_cannot_change_optional_execution_intent(store, mutation):
+    selected = intent() if mutation == "add" else dict(intent(), execution_constraint="luna-only")
+    core.task_start(store.root, "Repair the example", None, None)
+    store.establish(core.task_show(store.root)["state"], selected)
+    original = store.path().read_bytes()
+    def expand(record):
+        if mutation == "remove":
+            record["contract"].pop("execution_constraint")
+        else:
+            record["contract"]["execution_constraint"] = "other-policy"
+    with pytest.raises(ValueError, match="TASK_AUTHORITY_IDENTITY_CHANGED"):
+        store.recover(authority.digest(store.path()), "Preserve execution intent", restore_adapter=expand)
+    assert store.path().read_bytes() == original
+    assert store.check()["contract"] == selected

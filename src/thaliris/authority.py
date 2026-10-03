@@ -19,6 +19,7 @@ from . import core
 
 MODES = ("delegated", "controller-direct", "single-agent")
 _CONTRACT_FIELDS = {"human_instruction", "boundary", "invariants", "acceptance", "execution_mode"}
+_OPTIONAL_CONTRACT_FIELDS = {"execution_constraint"}
 _TRUTH_FIELDS = {"version", "project", "task_id", "goal", "contract", "status", "provenance",
                  "state_sha256", "security", "snapshots", "history"}
 _CORE_OWNED_FIELDS = _TRUTH_FIELDS - {"provenance"}
@@ -32,10 +33,12 @@ def _truth(record: dict) -> dict:
 
 def validate_contract(value: object) -> dict:
     """Validate selected intent mechanically, without inferring its author."""
-    if not isinstance(value, dict) or set(value) != _CONTRACT_FIELDS or value.get("execution_mode") not in MODES:
+    if (not isinstance(value, dict) or not _CONTRACT_FIELDS <= set(value)
+            or set(value) - _CONTRACT_FIELDS - _OPTIONAL_CONTRACT_FIELDS
+            or value.get("execution_mode") not in MODES):
         raise ValueError("TASK_AUTHORITY_CONTRACT_REQUIRED")
     if any(not isinstance(value[key], str) or not value[key].strip() or len(value[key]) > 16384
-           for key in _CONTRACT_FIELDS - {"execution_mode"}):
+           for key in (_CONTRACT_FIELDS - {"execution_mode"}) | (_OPTIONAL_CONTRACT_FIELDS & value.keys())):
         raise ValueError("TASK_AUTHORITY_CONTRACT_REQUIRED")
     return value
 

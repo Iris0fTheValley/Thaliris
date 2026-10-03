@@ -944,3 +944,8 @@ MIT License。参见 [`LICENSE`](LICENSE)。
 * 保持行为不变的简化。
 
 大型框架扩展应由一个无法通过现有小型架构解决的具体 failure mode 来证明其必要性。
+
+Core 0.4.3 also transports an optional nonempty `execution_constraint` string in
+the immutable authority contract. Adapters interpret supported values; Core
+does not select models or alter semantic roles. See
+[authority contracts](docs/thaliris-task-authority.md).

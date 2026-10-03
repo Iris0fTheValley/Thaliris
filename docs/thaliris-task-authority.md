@@ -88,3 +88,10 @@ does not generate either claim. External anchors and evidence are private local
 state and must not be committed. Deleting or forging the external store through
 shared OS access is outside this governance boundary; it is not treated as an
 authenticated human decision.
+
+The five required contract fields remain unchanged. A contract may additionally
+select `execution_constraint` as a nonempty string (at most 16384 characters).
+Core transports this explicit intent without interpreting model names or policy
+values; each adapter validates its supported constraints. The optional field is
+part of the Core-owned immutable contract, history and recovery truth, not an
+adapter override. Contracts omitting it retain their existing representation.

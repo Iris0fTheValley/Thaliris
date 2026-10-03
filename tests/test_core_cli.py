@@ -30,4 +30,4 @@ from thaliris import authority, core, cli, markdown, models
 raise SystemExit(cli.main(['version']))
 '''
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
-    assert json.loads(result.stdout)["version"] == "0.4.2"
+    assert json.loads(result.stdout)["version"] == "0.4.3"

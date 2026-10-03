@@ -866,11 +866,13 @@ Complexity will only be added when real tasks demonstrate that it improves downs
 
 ## Development
 
-Run the test suite:
+Run the Core tests:
 
 ```bash
-uv run --extra test pytest
+uv run --extra test pytest tests/test_core_authority.py tests/test_mechanical_core.py tests/test_core_cli.py
 ```
+
+ABCD source tests additionally install the Codex adapter explicitly; see [package and verification instructions](docs/host-neutral-packaging.md). These tests validate the protocol and tools without starting a benchmark.
 
 Verification is layered by changed surface, risk, and fresh evidence: use the smallest targeted tests during development, combine related fixes before related regression, then run one complete relevant validation for the change. Documentation-only changes, low-risk P2 fixes, and merges/conflicts that do not change already-verified behavior code do not automatically repeat expensive checks. This does not lower completion criteria; user-requested real runtime or visible-behavior verification cannot be replaced by static tests.
 
@@ -884,6 +886,16 @@ Changes should preserve the central invariants:
 4. high-reasoning contexts stay focused;
 5. failure should degrade efficiency before it degrades correctness;
 6. the project remains a thin, Host-neutral layer around shared Core rather than becoming another agent framework.
+
+---
+
+## Related projects / Integrations
+
+* [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex): Codex hooks, native identity and lifecycle, profiles, installation and recovery.
+* [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh): a DeepSeek Harness plugin using native Settings, model catalogs, Workspaces, Sessions, Subagents and the shared Web/Desktop client.
+* [Benchmark](benchmarks/abcd): ABCD implementation, historical evidence index and [protocol](docs/thaliris-benchmark-protocol.md) remain in this main repository.
+
+Both adapters depend on the same Host-neutral Core; neither is another Core implementation. DSH provides editable role/persona, model, tool and context policies; built-in roles are templates. Memory capability and the default provider are independently removable, replaceable components, with multiple providers supported. Disabling memory leaves task/routing available. Users explicitly configure read/write grants and long-term write policy; providers own their RAG/embedding internals, which are not Core dependencies.
 
 ---
 

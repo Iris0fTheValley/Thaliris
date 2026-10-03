@@ -891,11 +891,13 @@ Core 保持 runtime-neutral，不安装 Host hooks，也不执行 agents。[Thal
 
 ## 开发
 
-运行测试套件：
+运行 Core 测试：
 
 ```bash
-uv run --extra test pytest
+uv run --extra test pytest tests/test_core_authority.py tests/test_mechanical_core.py tests/test_core_cli.py
 ```
+
+ABCD 源码测试另外显式安装 Codex adapter；步骤见[分包与验证说明](docs/host-neutral-packaging.md)。它们验证协议和工具，不启动 benchmark。
 
 验证按改动范围、风险和已有的新鲜证据分层：开发中先运行最小针对性测试；多个相关修复完成后合并运行相关回归；最后只运行一次足以覆盖本轮改动的完整相关验证。纯文档调整、低风险 P2 修复，或未改变已验证行为代码的 merge/conflict，不自动重复昂贵检查。这不会降低完成标准；用户明确要求真实 runtime 或 visible behavior 验证时，不能以静态测试替代。
 
@@ -909,6 +911,16 @@ CI 当前覆盖项目支持的 Python 版本。
 4. 高推理上下文保持聚焦；
 5. 失败应先降低效率，而不是降低正确性；
 6. 本项目仍是围绕共享 Core 的精简、Host 无关层，而不会变成另一个 Agent Framework。
+
+---
+
+## Related projects / Integrations
+
+* [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex)：Codex hooks、原生身份与生命周期、profiles、安装及恢复。
+* [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh)：DeepSeek Harness 插件，复用原生 Settings、模型目录、Workspace、Session、Subagent，以及共享 Web/Desktop client。
+* [Benchmark](benchmarks/abcd)：ABCD 实现、历史证据索引与[协议](docs/thaliris-benchmark-protocol.md)继续由本主仓维护。
+
+两个 adapter 依赖同一个 Host-neutral Core，不是另两个 Core 实现。DSH 已提供可编辑的 role/persona、模型与 tools/context 权限；内置角色只是模板。Memory capability 和默认 provider 为可卸载的独立组件，支持替换或多个 provider 并存；关闭 memory 不影响 task/routing。read/write 与长期写入策略由用户明确配置，provider 负责自己的 RAG/embedding 等实现，Core 不依赖这些实现。
 
 ---
 

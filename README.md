@@ -1,6 +1,6 @@
 # Thaliris
 
-主仓库现在发布 Host 无关的 Core、共享语义文档和 ABCD 基准协议/历史证据。`thaliris-core` 仅提供 Core 操作；Codex 集成位于 [Thaliris-Codex](https://github.com/Iris0fTheValley/Thaliris-Codex)，DSH 集成位于 [Thaliris-DSH](https://github.com/Iris0fTheValley/Thaliris-DSH)。安装与 API 边界见 [分包说明](docs/host-neutral-packaging.md)。
+主仓库现在发布 Host 无关的 Core、共享语义文档和 ABCD 基准协议/历史证据。`thaliris-core` 仅提供 Core 操作；Codex 集成位于 [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex)，DSH 集成位于 [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh)。安装与 API 边界见 [分包说明](docs/host-neutral-packaging.md)。
 
 [English](README.en.md)
 
@@ -391,7 +391,7 @@ Controller 决策
 
 ## 安装
 
-本文中的旧版 `context` 命令示例描述 Codex adapter 的行为，并作为设计背景保留。Core 不再提供 prepare/recall、doctor、migrate 或原生角色包。Core 与 Host 边界见[分包说明](docs/host-neutral-packaging.md)；当前命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) 与 [DSH adapter 指南](https://github.com/Iris0fTheValley/Thaliris-DSH)。
+本文中的旧版 `context` 命令示例描述 Codex adapter 的行为，并作为设计背景保留。Core 不再提供 prepare/recall、doctor、migrate 或原生角色包。Core 与 Host 边界见[分包说明](docs/host-neutral-packaging.md)；当前命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) 与 [DSH adapter 指南](https://github.com/Iris0fTheValley/Thaliris-dsh)。
 
 需要 Python 3.11 或更高版本，以及 Git。
 
@@ -436,13 +436,13 @@ context doctor --pretty
       ↓
 normal task routing
 
-上面的初始化流程由 [Codex adapter](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) 提供。Core 不会自动初始化 Git、安装 Host hooks 或自行 bootstrap runtime；这些能力属于具体 adapter。非 Git 工作区不会仅为了启用 Thaliris 而执行 git init。
+上面的初始化流程由 [Codex adapter](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) 提供。Core 不会自动初始化 Git、安装 Host hooks 或自行 bootstrap runtime；这些能力属于具体 adapter。非 Git 工作区不会仅为了启用 Thaliris 而执行 git init。
 
 
 
 ## 快速开始
 
-以下 `context prepare` 示例是 Codex adapter 的历史用法，当前 Core CLI 不提供；当前支持的命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md)。
+以下 `context prepare` 示例是 Codex adapter 的历史用法，当前 Core CLI 不提供；当前支持的命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md)。
 
 启动一个任务：
 
@@ -655,7 +655,7 @@ Symbols: ["Request.cancel"]
 
 INDEX 文件是 router，而不是总结文档。
 
-旧版 Codex adapter 的 `context recall` 命令用于显式、保守的 lexical retrieval。durable memory 默认不会进入普通 role pack；recall 返回 candidates，既不自动接受进 task state，也不自动向下游传播。Core-only CLI 不提供此命令；当前支持的命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md)。
+旧版 Codex adapter 的 `context recall` 命令用于显式、保守的 lexical retrieval。durable memory 默认不会进入普通 role pack；recall 返回 candidates，既不自动接受进 task state，也不自动向下游传播。Core-only CLI 不提供此命令；当前支持的命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md)。
 
 ---
 
@@ -685,7 +685,7 @@ verification.md
 
 ## 托管的 `AGENTS.md`
 
-[Codex adapter](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) 的 `context init` 会在仓库现有的 `AGENTS.md` 中维护一个带标记的小型区块。Core-only CLI 不提供此 Host 初始化命令。
+[Codex adapter](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) 的 `context init` 会在仓库现有的 `AGENTS.md` 中维护一个带标记的小型区块。Core-only CLI 不提供此 Host 初始化命令。
 
 它被有意保持简短。
 
@@ -869,7 +869,7 @@ Independent Reviewer：
 
 ## Host adapters
 
-Core 保持 runtime-neutral，不安装 Host hooks，也不执行 agents。[Thaliris-Codex](https://github.com/Iris0fTheValley/Thaliris-Codex) 与 [Thaliris-DSH](https://github.com/Iris0fTheValley/Thaliris-DSH) 在共享 Core 之上提供原生集成。verification target 表达 requirement，不是 shell authority：只有 adapter 观察到明确的执行完成状态时，才可向 Core 提交受信结果；具体 runtime payload 无法提供该状态时结果保持 `UNKNOWN`。
+Core 保持 runtime-neutral，不安装 Host hooks，也不执行 agents。[Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex) 与 [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh) 在共享 Core 之上提供原生集成。verification target 表达 requirement，不是 shell authority：只有 adapter 观察到明确的执行完成状态时，才可向 Core 提交受信结果；具体 runtime payload 无法提供该状态时结果保持 `UNKNOWN`。
 ---
 
 ## 当前限制

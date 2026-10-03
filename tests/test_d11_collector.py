@@ -2,6 +2,7 @@ import importlib.util
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -864,6 +865,90 @@ def test_preflight_uses_current_codex_lifecycle_api(monkeypatch, tmp_path: Path)
         f'"{trusted}" task-status',
         "evil/context.cmd task-status",
     ]
+
+
+def test_preflight_exercises_installed_codex_adapter(tmp_path: Path, monkeypatch) -> None:
+    package = importlib.import_module("thaliris_codex")
+    codex_adapter = importlib.import_module("thaliris_codex.codex_adapter")
+    doctor = importlib.import_module("thaliris_codex.doctor")
+    lifecycle = importlib.import_module("thaliris_codex.lifecycle")
+    package_dir = Path(package.__file__).resolve().parent
+    assert Path(codex_adapter.__file__).is_file()
+    assert Path(doctor.__file__).is_file()
+    assert Path(lifecycle.__file__).is_file()
+
+    for name in (
+        lifecycle.THALIRIS_EXECUTABLE_ENV,
+        lifecycle.THALIRIS_EXECUTABLE_SHA256_ENV,
+        lifecycle.THALIRIS_RUNTIME_SHA256_ENV,
+        lifecycle.CONTEXT_EXECUTABLE_ENV,
+        lifecycle.CONTEXT_EXECUTABLE_SHA256_ENV,
+        "THALIRIS_INSTALL_MANIFEST",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "isolated-codex-home"))
+    pinned_executable = tmp_path / "thaliris.cmd"
+    pinned_executable.write_bytes(b"test-only pinned executable")
+    monkeypatch.setenv(lifecycle.THALIRIS_EXECUTABLE_ENV, str(pinned_executable))
+    monkeypatch.setenv(
+        lifecycle.THALIRIS_EXECUTABLE_SHA256_ENV,
+        hashlib.sha256(pinned_executable.read_bytes()).hexdigest(),
+    )
+
+    adapter = repo(tmp_path / "adapter")
+    shutil.copytree(
+        package_dir,
+        adapter / "src" / "thaliris_codex",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    profile_dir = adapter / ".codex" / "agents"
+    profile_dir.mkdir(parents=True)
+    for filename, (model, effort, role) in codex_adapter._AGENT_PROFILES.items():
+        profile = codex_adapter._agent_profile(filename.removesuffix(".toml"), role, model, effort)
+        (profile_dir / filename).write_bytes(profile)
+    docs = adapter / "docs"
+    docs.mkdir()
+    (docs / "thaliris-role-packs.md").write_bytes(codex_adapter.ROLE_PACKS.encode("utf-8"))
+    (docs / "thaliris-routing-protocol.md").write_text(ROUTING_PROTOCOL_MARKER + "\n", encoding="utf-8")
+
+    candidate = repo(tmp_path / "candidate")
+    hooks, changed = lifecycle.merge_hooks({})
+    assert changed is True
+    hooks_path = candidate / ".codex" / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    hooks_path.write_text(json.dumps(hooks) + "\n", encoding="utf-8")
+
+    for root in (adapter, candidate):
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.invalid"], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-m", "fixture"], check=True, capture_output=True)
+
+    harness = ROOT / "benchmarks" / "abcd" / "d11_preflight.py"
+    result = d11_preflight.run_preflight(
+        adapter,
+        candidate,
+        expected_adapter_sha=subprocess.run(
+            ["git", "-C", str(adapter), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip(),
+        harness_paths=[harness],
+        evaluator_path=ROOT / "tests" / "test_benchmark_protocol.py",
+        trusted_paths=[harness, pinned_executable],
+        authority=d11_authority.capture_authority(d11_sources),
+    )
+
+    checks = result["checks"]
+    assert result["status"] == "PREFLIGHT_FAIL"  # Host evidence and calibration were not supplied.
+    assert checks["adapter_sha"]["pass"] is True
+    assert checks["product_protocol"]["pass"] is True
+    assert checks["generated_surfaces"]["pass"] is True
+    assert checks["hooks"]["pass"] is True
+    assert checks["control_plane"]["canonical"] is True
+    assert checks["control_plane"]["fake_path"] is True
+    assert checks["control_plane"]["pass"] is True
+    assert checks["clean_checkouts"]["pass"] is True
+    assert checks["candidate_manifest_reproducible"]["pass"] is True
 
 
 def test_run_manifest_cannot_be_frozen_from_failed_preflight() -> None:

@@ -11,6 +11,15 @@ The separate `thaliris-codex` distribution exposes `thaliris_codex` and the
 not bundle a Core copy. Native admission, lifecycle, doctor, Hook trust,
 bootstrap, runtime identity and generated profiles belong to that package.
 
+The shared Core baseline validated with the split Codex adapter is commit
+[`da663e86ffea1fc8d09ea9bbec3ec8da21eeef34`](https://github.com/Iris0fTheValley/Thaliris/tree/da663e86ffea1fc8d09ea9bbec3ec8da21eeef34).
+Pin this revision for reproducible installs of that validated Core/adapter
+package boundary:
+
+```sh
+python -m pip install 'git+https://github.com/Iris0fTheValley/Thaliris.git@da663e86ffea1fc8d09ea9bbec3ec8da21eeef34'
+```
+
 Core installation does not install or configure a Host adapter. For local tests:
 
 ```sh
@@ -29,6 +38,6 @@ perform a benchmark or evaluator run. Historical branch evidence is inert under
 `benchmarks/abcd/historical`, with exact source commit, Git blob and SHA-256
 identities. No historical supervisor or Core implementation is installed.
 
-For actual Host setup follow [Codex](https://github.com/Iris0fTheValley/Thaliris-Codex)
-or [DSH](https://github.com/Iris0fTheValley/Thaliris-DSH). Do not infer a live or
+For actual Host setup follow [Codex](https://github.com/Iris0fTheValley/Thaliris-codex)
+or [DSH](https://github.com/Iris0fTheValley/Thaliris-dsh). Do not infer a live or
 trusted Host from package installation or a generated profile file.

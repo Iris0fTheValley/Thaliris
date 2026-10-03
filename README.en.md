@@ -1,8 +1,10 @@
 # Thaliris
 
+Main now distributes Host-neutral Core, shared semantic guidance and ABCD benchmark protocol/history. `thaliris-core` exposes Core operations. Native integration lives in [Thaliris-Codex](https://github.com/Iris0fTheValley/Thaliris-Codex) and [Thaliris-DSH](https://github.com/Iris0fTheValley/Thaliris-DSH). See [installation and API boundaries](docs/host-neutral-packaging.md).
+
 [中文](README.md)
 
-A lightweight, Git-native context and orchestration layer for Codex.
+A lightweight, Git-native context and orchestration layer for AI coding workflows.
 
 Thaliris helps multi-agent coding workflows keep the right information in the right reasoning context without turning the repository into an agent framework.
 
@@ -10,7 +12,7 @@ It manages the conditions under which information enters a reasoning path, not a
 
 It provides:
 
-* role-specific context packs;
+* shared semantic guidance for role-specific work;
 * evidence-backed project memory;
 * transient task state;
 * investigation and review handoffs;
@@ -385,6 +387,8 @@ Parallelism is reserved for clearly independent work.
 
 ## Installation
 
+The legacy `context` command examples in this README describe Codex-adapter behavior and are retained as design background. Core no longer exposes prepare/recall, doctor, migrate or native role packs. See [Core and Host adapter boundaries](docs/host-neutral-packaging.md), the [current Codex adapter guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md), and the [DSH adapter guide](https://github.com/Iris0fTheValley/Thaliris-DSH).
+
 Python 3.11 or newer and Git are required.
 
 Install directly from the repository:
@@ -626,7 +630,7 @@ Symbols: ["Request.cancel"]
 
 The INDEX files are routers, not summary documents.
 
-`context recall` is explicit, conservative lexical retrieval. Durable memory is not injected into ordinary role packs; recall returns candidates and neither accepts them into task state nor propagates them downstream.
+The former Codex-adapter `context recall` command provided explicit, conservative lexical retrieval. Durable memory was not injected into ordinary role packs; recall returned candidates without accepting them into task state or propagating them downstream. Core-only CLI does not provide this command; see the [current Codex adapter guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) for supported commands.
 
 ---
 
@@ -656,7 +660,7 @@ Milestone documents are project state, not agent transcripts.
 
 ## Managed `AGENTS.md`
 
-`context init` maintains a small marked block inside the repository's existing `AGENTS.md`.
+The Codex adapter's `context init` maintains a small marked block inside the repository's existing `AGENTS.md`. Core-only CLI does not provide this Host setup command; see the [current Codex adapter guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md).
 
 It is deliberately short.
 
@@ -838,11 +842,9 @@ See [DESIGN.md](DESIGN.md) for the implementation, evidence, and migration contr
 
 ---
 
-## Codex adapter
+## Host adapters
 
-Core is runtime-neutral: it does not install Codex hooks or execute agents. `adapter/codex` maps Core contracts to Codex fresh children, the Controller guard, and hook surfaces. A verification target is a requirement, not shell authority. Only an adapter observation with an explicit execution-completion status may submit a trusted result; without such a runtime payload, the result remains `UNKNOWN`.
-
-Automatic Codex acceptance execution currently applies only to executable string targets accepted by its local command allowlist. Structured Core targets remain Core requirements and need another trusted runtime-observation path; see the adapter documentation.
+Core is runtime-neutral: it does not install Host hooks or execute agents. [Thaliris-Codex](https://github.com/Iris0fTheValley/Thaliris-Codex) and [Thaliris-DSH](https://github.com/Iris0fTheValley/Thaliris-DSH) provide native integrations over the shared Core. A verification target is a requirement, not shell authority. Only an adapter observation with an explicit execution-completion status may submit a trusted result; without such a runtime payload, the result remains `UNKNOWN`.
 ---
 
 ## Current limitations
@@ -854,10 +856,9 @@ Current limitations include:
 * routing is intentionally conservative;
 * task state is local and single-task rather than a task database;
 * evidence freshness cannot prove undeclared dependencies;
-* role execution is still performed by Codex rather than by this package;
+* role execution is supplied by host adapters rather than by Core;
 * external adapter health cannot always be observed directly;
 * the benefits of cognitive isolation still require controlled evaluation on real coding workloads.
-* Intent Audit depends on Codex hook runtime behavior; without a real live probe, `context doctor` reports `UNKNOWN` rather than claiming protection.
 
 Complexity will only be added when real tasks demonstrate that it improves downstream quality or reliability.
 
@@ -882,7 +883,7 @@ Changes should preserve the central invariants:
 3. evidence cannot become stronger merely through summarization;
 4. high-reasoning contexts stay focused;
 5. failure should degrade efficiency before it degrades correctness;
-6. the project remains a thin layer around Codex rather than becoming another agent framework.
+6. the project remains a thin, Host-neutral layer around shared Core rather than becoming another agent framework.
 
 ---
 

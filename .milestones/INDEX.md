@@ -7,5 +7,3 @@ Confidence: UNVERIFIED
 ---
 
 # Milestone index
-
-- [M001-name](M001-name/INDEX.md)

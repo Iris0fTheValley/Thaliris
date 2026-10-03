@@ -1,4 +1,7 @@
-"""Console interface: every normal stdout response is exactly one JSON value."""
+"""JSON command boundary for Host-neutral Core operations.
+
+Callers supply opaque actor labels; authorization belongs to their adapter.
+"""
 from __future__ import annotations
 
 import argparse
@@ -6,99 +9,89 @@ import json
 from pathlib import Path
 import sys
 
-from . import __version__
-from .core import init, migrate, milestone_check, prepare, recall, rollback, stale, uninstall, task_artifact, task_close, task_promote, task_show, task_start, task_status, task_update
-from .doctor import report
+from . import __version__, core
 
 
 class _Parser(argparse.ArgumentParser):
-    """Normal errors are machine-readable too; help remains argparse-native."""
     def error(self, message: str) -> None:
         raise ValueError(message)
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = _Parser(prog="context", description="Thaliris: Git-native context routing for agent workflows")
-    p.add_argument("--pretty", action="store_true")
-    p.add_argument("--root", type=Path, default=Path.cwd())
-    sub = p.add_subparsers(dest="command", required=True)
-    for name in ("init", "migrate", "doctor", "stale", "milestone-check", "memory-status", "uninstall"):
-        sub.add_parser(name)
-    q = sub.add_parser("prepare")
-    q.add_argument("task", nargs="?")
-    q.add_argument("--role", required=True, choices=("controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"))
-    q = sub.add_parser("recall", help="explicitly search retained durable memory")
-    q.add_argument("query")
-    q.add_argument("--role", required=True, choices=("controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"))
-    q = sub.add_parser("task-start")
-    q.add_argument("goal")
-    q.add_argument("--milestone")
-    q.add_argument("--input")
-    q = sub.add_parser("task-update")
-    q.add_argument("--role", required=True, choices=("controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"))
-    q.add_argument("--base-revision", required=True, type=int)
-    q.add_argument("--input", required=True)
-    sub.add_parser("task-show")
-    sub.add_parser("task-status", help="bounded Controller routing packet")
-    q = sub.add_parser("task-artifact", help="register a bounded external task artifact pointer")
-    q.add_argument("--base-revision", required=True, type=int)
-    q.add_argument("--id", required=True)
-    q.add_argument("--path", required=True)
-    q.add_argument("--summary", required=True)
-    q.add_argument("--producer-role", choices=("investigator", "curator", "reasoning-specialist", "implementer", "reviewer"))
-    q = sub.add_parser("task-close")
-    q.add_argument("--base-revision", required=True, type=int)
-    q = sub.add_parser(
-        "task-promote",
-        help="Controller-only bounded durable promotion",
-        description="Promote explicit semantic records using the ACTIVE task evidence only.",
-        epilog='Order: task-start -> task updates/review -> Controller decision -> task-promote -> task-close. Minimal JSON: {"records":[{"type":"decision","id":"D-001","title":"Use X","text":"Adopt X.","evidence_refs":["e1"],"confidence":"SUPPORTED"}]}',
-    )
-    q.add_argument("--role", required=True, choices=("controller", "investigator", "curator", "reasoning-specialist", "implementer", "reviewer"))
-    q.add_argument("--base-revision", required=True, type=int)
-    q.add_argument("--input", required=True)
-    q = sub.add_parser("rollback")
-    q.add_argument("backup")
-    sub.add_parser("version")
-    return p
+    parser = _Parser(prog="thaliris-core", description="Host-neutral task records, evidence, explicit retrieval, memory and authority")
+    parser.add_argument("--root", type=Path, default=Path.cwd())
+    parser.add_argument("--pretty", action="store_true")
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("init", "uninstall", "stale", "milestone-check", "task-show", "task-status", "version"):
+        commands.add_parser(name)
+    command = commands.add_parser("catalog")
+    command.add_argument("path", nargs="?")
+    command = commands.add_parser("document-get")
+    command.add_argument("paths", nargs="+")
+    command = commands.add_parser("task-start")
+    command.add_argument("goal")
+    command.add_argument("--milestone")
+    command.add_argument("--input")
+    command.add_argument("--actor", default="unspecified")
+    for name in ("task-update", "task-promote"):
+        command = commands.add_parser(name)
+        command.add_argument("--actor", required=True)
+        command.add_argument("--base-revision", type=int, required=True)
+        command.add_argument("--input", required=True)
+    for name in ("task-get", "artifact-get"):
+        command = commands.add_parser(name)
+        command.add_argument("id")
+    command = commands.add_parser("task-artifact")
+    command.add_argument("--base-revision", type=int, required=True)
+    command.add_argument("--id", required=True)
+    command.add_argument("--path", required=True)
+    command.add_argument("--summary", required=True)
+    command.add_argument("--actor", default="unspecified")
+    command.add_argument("--producer")
+    command.add_argument("--source-ref", action="append")
+    command.add_argument("--supersedes", action="append")
+    command = commands.add_parser("task-close")
+    command.add_argument("--base-revision", type=int, required=True)
+    command.add_argument("--expected-task-id")
+    command = commands.add_parser("rollback")
+    command.add_argument("backup")
+    return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Let formatting be placed before or after a subcommand without changing
-    # the command schema or emitting non-JSON normal output.
-    if argv is None:
-        argv = sys.argv[1:]
+    argv = list(sys.argv[1:] if argv is None else argv)
     if "--pretty" in argv:
-        argv = ["--pretty", *[arg for arg in argv if arg != "--pretty"]]
+        argv = ["--pretty", *[item for item in argv if item != "--pretty"]]
     try:
         args = _parser().parse_args(argv)
         root = args.root.resolve()
-        if args.command == "init": out = init(root)
-        elif args.command == "migrate": out = migrate(root)
-        elif args.command == "doctor": out = report(root)
-        elif args.command == "stale": out = stale(root)
-        elif args.command == "memory-status":
-            data = stale(root); out = {"ok": data["ok"], "entries": len(data["entries"]), "stale": data["stale"]}
-        elif args.command == "milestone-check": out = milestone_check(root)
-        elif args.command == "prepare": out = prepare(root, args.task, args.role)
-        elif args.command == "recall": out = recall(root, args.query, args.role)
-        elif args.command == "task-start": out = task_start(root, args.goal, args.milestone, args.input)
-        elif args.command == "task-update": out = task_update(root, args.role, args.base_revision, args.input)
-        elif args.command == "task-show": out = task_show(root)
-        elif args.command == "task-status": out = task_status(root)
-        elif args.command == "task-artifact": out = task_artifact(root, args.base_revision, args.id, args.path, args.summary, producer_role=getattr(args, "producer_role", None))
-        elif args.command == "task-close": out = task_close(root, args.base_revision)
-        elif args.command == "task-promote": out = task_promote(root, args.role, args.base_revision, args.input)
-        elif args.command == "rollback": out = rollback(root, args.backup)
-        elif args.command == "uninstall": out = uninstall(root)
-        else: out = {"ok": True, "version": __version__}
-        print(json.dumps(out, sort_keys=True, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
-        return 0 if out.get("ok", False) else 3
-    except (ValueError, OSError, json.JSONDecodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True, separators=(",", ":")))
+        name = args.command
+        if name == "version":
+            out = {"ok": True, "version": __version__}
+        elif name in {"init", "uninstall", "stale", "milestone-check", "task-show", "task-status"}:
+            out = getattr(core, name.replace("-", "_"))(root)
+        elif name == "catalog":
+            out = core.catalog(root, args.path)
+        elif name == "document-get":
+            out = core.document_get(root, args.paths)
+        elif name == "task-start":
+            out = core.task_start(root, args.goal, args.milestone, args.input, actor=args.actor)
+        elif name in {"task-update", "task-promote"}:
+            out = getattr(core, name.replace("-", "_"))(root, args.actor, args.base_revision, args.input)
+        elif name in {"task-get", "artifact-get"}:
+            out = getattr(core, name.replace("-", "_"))(root, args.id)
+        elif name == "task-artifact":
+            out = core.task_artifact(root, args.base_revision, args.id, args.path, args.summary,
+                producer=args.producer, registered_by=args.actor, evidence_refs=args.source_ref, supersedes=args.supersedes)
+        elif name == "task-close":
+            out = core.task_close(root, args.base_revision, expected_task_id=args.expected_task_id)
+        else:
+            out = core.rollback(root, args.backup)
+        print(json.dumps(out, sort_keys=True, indent=2 if args.pretty else None))
+        return 0 if out.get("ok") else 3
+    except core.TaskStateSchemaIncompatible as exc:
+        print(json.dumps({"ok": False, **exc.diagnostic}, sort_keys=True))
+        return 3
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True))
         return 2
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-

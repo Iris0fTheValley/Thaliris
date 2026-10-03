@@ -1,0 +1,1174 @@
+"""Fact collector for the benchmark gates.
+
+The collector is intentionally separate from :mod:`d11_protocol`: it reads
+Core state, bytes, and native event records and emits a small ledger.  No
+model-authored report field is trusted for ordering, freshness, or identity.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+from pathlib import Path
+from typing import Any, Iterable
+import time
+import uuid
+
+from candidate_manifest import MANIFEST_VERSION, build_manifest
+from d11_sources import AuthorityRegistry, SOURCE_EVENTS, SOURCE_KINDS, _sha_prefix, chain_payload, create_source_registry, hash_chain_record, registry_sources, validate_event_shape
+
+
+TRUSTED_SOURCE_KINDS = SOURCE_KINDS
+
+# This adapter is deliberately an offline reader.  Codex v0.155.1 session
+# JSONL has no native numeric "root turn" counter and no synthetic
+# ``tool=spawn_agent`` event.  The normalized records below retain their raw
+# line provenance and use names which make the derived nature explicit.
+CODEX_V0155_NORMALIZATION = "codex-jsonl-v0.155.1"
+CODEX_V0155_MIN_VERSION = (0, 155, 1)
+# The normalization is deliberately pinned to Codex rust-v0.155.1, peeled at
+# be2951ea34f0d295ed0becf97079f92fa5f6950e.  A later JSONL shape is not
+# silently accepted as evidence for this metric.
+CODEX_V0155_PEELED_COMMIT = "be2951ea34f0d295ed0becf97079f92fa5f6950e"
+
+
+def _payload(raw: dict[str, Any]) -> dict[str, Any]:
+    value = raw.get("payload")
+    return value if isinstance(value, dict) else raw
+
+
+def _raw_type(raw: dict[str, Any]) -> str:
+    payload = _payload(raw)
+    outer = raw.get("type") or raw.get("event")
+    # Recorder envelopes commonly use an outer transport type such as
+    # ``event_msg`` and put the protocol item type in payload.
+    if outer in {"event_msg", "response_item", "event"} and payload.get("type"):
+        return str(payload["type"])
+    return str(outer or payload.get("type") or "")
+
+
+def _raw_id(value: dict[str, Any]) -> str | None:
+    for key in ("call_id", "command_id", "id", "item_id", "event_id"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return None
+
+
+def _native_output_bytes(payload: dict[str, Any]) -> int | None:
+    """Return bytes from one native command result, without double counting.
+
+    The stable aggregate is preferred; stdout/stderr are only a fallback,
+    followed by formatted output.  Delta bytes are joined by the caller only
+    when this result supplies none.
+    """
+    aggregate = payload.get("aggregated_output")
+    if isinstance(aggregate, str):
+        return len(aggregate.encode("utf-8"))
+    stdout, stderr = payload.get("stdout"), payload.get("stderr")
+    if isinstance(stdout, str) or isinstance(stderr, str):
+        return sum(len(item.encode("utf-8")) for item in (stdout, stderr) if isinstance(item, str))
+    formatted = payload.get("formatted_output")
+    return len(formatted.encode("utf-8")) if isinstance(formatted, str) else None
+
+
+def normalize_codex_v0155_rollout_records(raw_records: Iterable[dict[str, Any]], *,
+                                           source_file: str = "<codex-session-jsonl>",
+                                           source_id: str = "codex-v0155-offline") -> list[dict[str, Any]]:
+    """Normalize named Codex v0.155.1 JSONL shapes for *offline audit*.
+
+    The derived turn attribution comes only from the nested
+    ``event_msg``/``item_completed`` envelope's opaque payload ``turn_id``.
+    It is not a native ordinal, and legacy ``TurnContextItem.root_turn_id`` is
+    not root-turn proof.  A record is emitted only when its session identity
+    is explicit.  This function does not grant trust to arbitrary input:
+    callers must still use a frozen Codex rollout capture before feeding the
+    resulting records into a formal collector.
+    """
+    output: list[dict[str, Any]] = []
+    raw_list = list(raw_records)
+    for line, raw in enumerate(raw_list, 1):
+        if not isinstance(raw, dict):
+            continue
+        payload = _payload(raw)
+        kind = _raw_type(raw).lower().replace("_", "")
+        provenance = {"normalization": CODEX_V0155_NORMALIZATION, "raw_line": line,
+                      "raw_type": _raw_type(raw)}
+        if kind in {"sessionmeta", "sessionmetaitem"}:
+            session_id, thread_id = payload.get("session_id"), payload.get("id")
+            # session_id is file/session identity; id is thread identity.  A
+            # child file deliberately has different values, so never require
+            # equality here.
+            if isinstance(session_id, str) and session_id and isinstance(thread_id, str) and thread_id:
+                output.append({"event": "session_meta", "session_id": session_id,
+                               "thread_id": thread_id, "parent_thread_id": payload.get("parent_thread_id"),
+                               "thread_source": payload.get("thread_source"), "source": payload.get("source"),
+                               "cli_version": payload.get("cli_version"), "agent_role": payload.get("agent_role"),
+                               "_codex_raw_provenance": provenance})
+            continue
+        # Native persisted work is an event_msg item_completed envelope, not a
+        # flat CommandExecutionItem/function_call record.
+        if raw.get("type") == "event_msg" and payload.get("type") == "item_completed":
+            item = payload.get("item")
+            turn = payload.get("turn_id")
+            if not isinstance(item, dict) or not isinstance(turn, str) or not turn:
+                continue
+            item_type = item.get("type")
+            if item_type == "CommandExecution":
+                command = item.get("command")
+                if isinstance(command, list) and all(isinstance(part, str) for part in command):
+                    output.append({"event": "native_command_execution", "command": " ".join(command),
+                                   "output_bytes": _native_output_bytes(item), "native_turn_id": turn,
+                                   "_codex_raw_provenance": provenance})
+            elif item_type == "CollabAgentToolCall" and item.get("tool") == "spawn_agent":
+                children = item.get("receiver_thread_ids")
+                if isinstance(children, list) and len(children) == 1 and isinstance(children[0], str):
+                    output.append({"event": "native_collaboration_spawn_call", "child_thread_id": children[0],
+                                   "native_turn_id": turn, "_codex_raw_provenance": provenance})
+    # Deliberately *not* trusted: only load_trusted_events via a frozen,
+    # authority-verified source registry may add formal collector metadata.
+    for index, record in enumerate(output):
+        record.update({"_source_file": source_file, "_source_line": record["_codex_raw_provenance"]["raw_line"],
+                       "_ingestion_index": index, "_normalized_kind": str(record["event"]),
+                       "_codex_rollout_normalization": CODEX_V0155_NORMALIZATION})
+    return output
+
+
+def normalize_codex_v0155_rollout_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Read one real Codex session JSONL locally; malformed lines fail closed.
+
+    This is intentionally an offline convenience adapter, not a replacement
+    for source-registry capture authority.
+    """
+    raw: list[dict[str, Any]] = []
+    malformed = False
+    with path.open("r", encoding="utf-8") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                malformed = True
+                continue
+            if not isinstance(item, dict):
+                malformed = True
+                continue
+            raw.append(item)
+    records = normalize_codex_v0155_rollout_records(raw, source_file=str(path.resolve()),
+                                                     source_id=f"codex-v0155:{path.resolve()}")
+    if malformed:
+        records.append({"event": "native_rollout_incomplete", "_source_file": str(path.resolve()),
+                        "_source_line": None, "_ingestion_index": len(records),
+                        "_normalized_kind": "native_rollout_incomplete",
+                        "_codex_rollout_normalization": CODEX_V0155_NORMALIZATION,
+                        "_codex_rollout_incomplete": True})
+    return records
+
+
+def load_trusted_codex_v0155_rollout(registry: dict[str, Any], *, authority_registry: AuthorityRegistry | None = None) -> list[dict[str, Any]]:
+    """Ingest one frozen root rollout plus its frozen child rollout files.
+
+    ``registry_sources`` verifies every descriptor and its bytes before any
+    normalization.  Collection-level identity/order proof remains a metric
+    concern: an invalid collection is retained as provenance-bearing records
+    and yields ``UNAVAILABLE`` rather than a guessed fact.
+    """
+    sources = registry_sources(registry, authority_registry=authority_registry)
+    codex = [source for source in sources if source["source_kind"] == "codex_rollout"]
+    if not codex:
+        raise ValueError("v0.155.1 ingestion requires at least one frozen Codex rollout")
+    records: list[dict[str, Any]] = []
+    for source in codex:
+        path = Path(source["canonical_path"])
+        # JSON decoding errors are capture-validation errors, as they were for
+        # the former single-file reader; never normalize a partial collection.
+        raw = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        normalized = normalize_codex_v0155_rollout_records(raw, source_file=str(path), source_id=source["source_id"])
+        for record in normalized:
+            record.update({"_trusted_source": "codex_rollout", "_source_id": source["source_id"],
+                           "_source_run_id": source["run_id"], "_registry_identity": registry["identity"],
+                           "_source_sha256": source["content_sha256"],
+                           "_capture_authority": source.get("capture_authority"),
+                           "_capture_binding": {key: source.get(key) for key in ("task_id", "task_revision", "reservation_id", "session_id")},
+                           "_native_event_id": f'{source["source_id"]}:{record["_source_line"]}'})
+        records.extend(normalized)
+    return records
+
+
+def load_trusted_events(registry: dict[str, Any], *, authority_registry: AuthorityRegistry | None = None) -> list[dict[str, Any]]:
+    """Normalize only explicitly classified host/harness streams.
+
+    A random JSON path or an unclassified dict is not an event source.  The
+    original source, line, native identity, and ingestion order are retained
+    for later audit; raw sequence fields are never used as global time.
+    """
+    records: list[dict[str, Any]] = []
+    source_payload = registry_sources(registry, authority_registry=authority_registry)
+    registry_identity = registry.get("identity")
+    for source in source_payload:
+        kind = source["source_kind"]
+        path = Path(source["canonical_path"]).resolve()
+        source_sha256 = _sha256(path)
+        stream_policy = source.get("stream_identity_policy", "exact_bytes")
+        if stream_policy == "exact_bytes" and source_sha256 != source["content_sha256"]:
+            raise ValueError(f"registered source changed: {path}")
+        if stream_policy == "append_only" and (path.stat().st_size < int(source.get("initial_size", 0)) or _sha_prefix(path, int(source.get("initial_size", 0))) != source["content_sha256"]):
+            raise ValueError(f"registered source changed: {path}")
+        session_identity = None
+        role_identity = None
+        model_identity = None
+        previous_chain_hash = "0" * 64
+        expected_sequence = 1
+        test_stream = bool(registry.get("registry", {}).get("test_only"))
+        with path.open("r", encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, 1):
+                try:
+                    raw = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(raw, dict):
+                    continue
+                payload = raw.get("payload") if isinstance(raw.get("payload"), dict) else {}
+                # Rollout attribution is per native event.  Do not inherit an
+                # invented session/actor from session_meta into later events.
+                rollout_session_identity = raw.get("session_id")
+                controller_session_identity = raw.get("controller_session_id")
+                parent_session_identity = raw.get("parent_session_id")
+                if raw.get("type") == "session_meta":
+                    session_identity = payload.get("id") or payload.get("session_id")
+                    role_identity = payload.get("agent_role")
+                    provenance = payload.get("base_instructions", {}).get("provenance", {}) if isinstance(payload.get("base_instructions"), dict) else {}
+                    model_identity = provenance.get("model") or payload.get("model")
+                normalized_kind = str(raw.get("event") or raw.get("kind") or raw.get("type") or "")
+                if normalized_kind not in source["allowed_event_types"]:
+                    # A known event in the wrong producer stream is a hard
+                    # failure; genuinely unknown rollout noise is not a fact.
+                    if normalized_kind in set().union(*SOURCE_EVENTS.values()):
+                        raise ValueError(f"{normalized_kind} is not allowed in {kind}")
+                    continue
+                if not test_stream and not validate_event_shape(kind, normalized_kind, raw):
+                    raise ValueError(f"{normalized_kind} has an invalid {kind} schema")
+                if not test_stream and normalized_kind == "source_snapshot_attestation" and raw.get("run_id") != source["run_id"]:
+                    raise ValueError("source snapshot attestation run identity is invalid")
+                if kind == "harness_attestation" and not test_stream:
+                    if not all(key in raw for key in ("run_id", "sequence", "previous_hash", "payload_hash", "record_hash", "source_registry_identity", "harness_identity")):
+                        raise ValueError("formal harness attestation is missing hash-chain fields")
+                    if raw.get("run_id") != source["run_id"] or raw.get("source_registry_identity") != registry_identity or raw.get("sequence") != expected_sequence or raw.get("previous_hash") != previous_chain_hash:
+                        raise ValueError("formal harness attestation hash-chain ordering is invalid")
+                    payload_hash = hashlib.sha256(json.dumps(chain_payload(raw), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                    if raw.get("payload_hash") != payload_hash or raw.get("record_hash") != hash_chain_record(raw):
+                        raise ValueError("formal harness attestation hash-chain identity is invalid")
+                    previous_chain_hash = raw["record_hash"]
+                    expected_sequence += 1
+                native_id = raw.get("native_event_id") or raw.get("event_id") or f"{kind}:{path}:{line_number}"
+                records.append({
+                    **raw,
+                    "_trusted_source": kind,
+                    "_source_id": source["source_id"],
+                    "_source_run_id": source["run_id"],
+                    "_registry_identity": registry_identity,
+                    "_source_file": str(path),
+                    "_source_sha256": source_sha256,
+                    "_source_line": line_number,
+                    "_native_event_id": str(native_id),
+                    "_ingestion_index": len(records),
+                    "_normalized_kind": normalized_kind,
+                    "_session_identity": str(rollout_session_identity or session_identity) if (rollout_session_identity or session_identity) else None,
+                    "_rollout_session_identity": str(rollout_session_identity) if rollout_session_identity else None,
+                    "_controller_session_identity": str(controller_session_identity) if controller_session_identity else None,
+                    "_parent_session_identity": str(parent_session_identity) if parent_session_identity else None,
+                    "_role_identity": str(raw.get("role") or raw.get("agent_role") or role_identity) if (raw.get("role") or raw.get("agent_role") or role_identity) else None,
+                    "_model_identity": str(raw.get("model") or model_identity) if (raw.get("model") or model_identity) else None,
+                })
+    return records
+
+
+def _require_trusted(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    records = list(events)
+    if any(not isinstance(event, dict) or event.get("_trusted_source") not in TRUSTED_SOURCE_KINDS or not event.get("_source_id") or not event.get("_registry_identity") for event in records):
+        raise ValueError("collector accepts only normalized trusted events")
+    return records
+
+
+def load_jsonl(paths: Iterable[Path]) -> list[dict[str, Any]]:
+    raise ValueError("load_jsonl is TEST_ONLY/UNTRUSTED_COMPATIBILITY; create a frozen source registry")
+
+
+def load_test_events(sources: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Compatibility fixture loader; never use this for a formal run."""
+    entries = []
+    all_events = sorted(set().union(*SOURCE_EVENTS.values()))
+    for source in sources:
+        if not isinstance(source, dict) or set(source) != {"kind", "path"}:
+            raise ValueError("test source entry is invalid")
+        entries.append({"kind": source["kind"], "path": source["path"], "allowed_event_types": all_events, "producer": "TEST_ONLY"})
+    return load_trusted_events(create_source_registry(entries, run_id="TEST_ONLY", test_only=True))
+
+
+def _kind(event: dict[str, Any]) -> str:
+    return str(event.get("_normalized_kind") or "")
+
+
+def _order(event: dict[str, Any], fallback: int) -> tuple[int, int]:
+    return (int(event.get("_ingestion_index", fallback)), 0)
+
+
+def _provenance(event: dict[str, Any] | None) -> dict[str, Any] | None:
+    if event is None:
+        return None
+    return {
+        "source": event.get("_trusted_source"),
+        "source_file": event.get("_source_file"),
+        "source_sha256": event.get("_source_sha256"),
+        "source_line": event.get("_source_line"),
+        "native_event_id": event.get("_native_event_id"),
+        "order": _order(event, -1)[0],
+    }
+
+
+def _rollout_tool_name(event: dict[str, Any]) -> str:
+    return str(event.get("tool") or event.get("tool_name") or "").rsplit("__", 1)[-1].lower()
+
+
+def _rollout_command(event: dict[str, Any]) -> str:
+    value = event.get("command")
+    if not isinstance(value, str):
+        tool_input = event.get("tool_input") or event.get("input")
+        value = tool_input.get("command") if isinstance(tool_input, dict) else ""
+    return value.strip()
+
+
+def _mechanical_repo_read(event: dict[str, Any]) -> bool:
+    """Classify only explicit repository-read tool shapes; never infer intent."""
+    tool = _rollout_tool_name(event)
+    if tool in {"read", "open", "grep", "rg", "search"}:
+        return True
+    if tool not in {"bash", "powershell", "shell", "exec_command"}:
+        return False
+    command = _rollout_command(event).lower()
+    if not command or "codex --version" in command or "git status" in command or "git rev-parse" in command:
+        return False
+    if "context task-status" in command or "host capability" in command or "host_capability" in command:
+        return False
+    if "index.md" in command and not any(token in command for token in (" rg ", " grep ", "get-content", "cat ", "type ")):
+        return False
+    return any(token in f" {command} " for token in (" rg ", " grep ", "get-content", " cat ", " find ", " ls ", " dir "))
+
+
+def _valid_root_turn(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _confirmed_root_session(events: list[dict[str, Any]]) -> tuple[str, str] | None:
+    """Identify one explicit source/controller stream with root observations.
+
+    Codex JSONL exposes the controller relationship as concrete session IDs;
+    roles, actors, tools, and turns are not identity evidence.
+    """
+    controller_sessions: set[tuple[str, str]] = set()
+    root_observations: set[tuple[str, str]] = set()
+    for event in events:
+        if event.get("_trusted_source") != "codex_rollout":
+            continue
+        session = event.get("_rollout_session_identity")
+        controller = event.get("_controller_session_identity")
+        source = event.get("_source_id")
+        if not isinstance(session, str) or not session or not isinstance(controller, str) or not controller or not isinstance(source, str) or not source:
+            continue
+        identity = (source, controller)
+        controller_sessions.add(identity)
+        if session == controller:
+            root_observations.add(identity)
+    candidates = controller_sessions & root_observations
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def collect_delegation_rollout_metrics(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Cheap offline counts from native rollout tool observations only.
+
+    These are audit metrics, not task state or a routing/enforcement signal.
+    Failure-reason-known is deliberately omitted because the current JSONL
+    schema does not bind that fact to a root turn.
+    """
+    supplied = list(events)
+    # Convenience-normalized records are intentionally not formal evidence.
+    # They may be inspected only as an offline diagnostic and never emit a
+    # formal metric without the authority-verified ingestion path.
+    if any(isinstance(item, dict) and item.get("_codex_rollout_normalization") == CODEX_V0155_NORMALIZATION
+           and not item.get("_trusted_source") for item in supplied):
+        return _unavailable_rollout_metrics()
+    ordered = sorted(_require_trusted(supplied), key=lambda item: _order(item, -1))
+    if any(item.get("_codex_rollout_normalization") == CODEX_V0155_NORMALIZATION for item in ordered):
+        return _collect_codex_v0155_delegation_metrics(ordered)
+    root_source_session = _confirmed_root_session(ordered)
+    if root_source_session is None:
+        return {key: "UNAVAILABLE" for key in (
+            "FIRST_CHILD_SPAWN_ROOT_TURN", "PRE_DELEGATION_REPO_READ_CALLS", "PRE_DELEGATION_REPO_OUTPUT_BYTES",
+        )}
+    root_source, root_session = root_source_session
+    scoped = [event for event in ordered if event.get("_trusted_source") == "codex_rollout"
+              and event.get("_source_id") == root_source
+              and event.get("_rollout_session_identity") == root_session
+              and event.get("_controller_session_identity") == root_session]
+    spawn_events = [event for event in scoped if _kind(event) == "tool_observation" and _rollout_tool_name(event) == "spawn_agent"]
+    first_spawn = next(iter(spawn_events), None)
+    if first_spawn is None or not _valid_root_turn(first_spawn.get("root_turn")):
+        return {key: "UNAVAILABLE" for key in (
+            "FIRST_CHILD_SPAWN_ROOT_TURN", "PRE_DELEGATION_REPO_READ_CALLS", "PRE_DELEGATION_REPO_OUTPUT_BYTES",
+        )}
+    before = scoped[:scoped.index(first_spawn)]
+    reads = [event for event in before if event.get("_trusted_source") == "codex_rollout"
+             and _kind(event) == "tool_observation" and _mechanical_repo_read(event)]
+    output_values = [event.get("output_bytes") for event in reads]
+    output_bytes_available = all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in output_values)
+    return {
+        "FIRST_CHILD_SPAWN_ROOT_TURN": first_spawn["root_turn"],
+        "PRE_DELEGATION_REPO_READ_CALLS": len(reads),
+        "PRE_DELEGATION_REPO_OUTPUT_BYTES": (
+            "UNAVAILABLE" if not output_bytes_available else sum(output_values)
+        ),
+    }
+
+
+def _unavailable_rollout_metrics() -> dict[str, str]:
+    return {key: "UNAVAILABLE" for key in (
+        "FIRST_CHILD_SPAWN_ROOT_TURN", "PRE_DELEGATION_REPO_READ_CALLS", "PRE_DELEGATION_REPO_OUTPUT_BYTES",
+    )}
+
+
+def _codex_v0155_collection(events: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    """Prove a root capture and its separately captured children.
+
+    v0.155.1 writes the child ``SessionMeta`` in the child's rollout file,
+    but retains the root thread in ``session_id``.  No cross-file chronology
+    is inferred: this establishes identity only; root-file ordering remains
+    the sole basis for the pre-delegation count.
+    """
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    records_by_source: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        source_id = event.get("_source_id")
+        if not isinstance(source_id, str) or not source_id:
+            return None
+        records_by_source.setdefault(source_id, []).append(event)
+        if _kind(event) == "session_meta":
+            by_source.setdefault(source_id, []).append(event)
+    # An exact collection has one SessionMeta per authority-verified file.
+    all_sources = {event.get("_source_id") for event in events}
+    if not all_sources or set(by_source) != all_sources or any(len(items) != 1 for items in by_source.values()):
+        return None
+    metas = [items[0] for items in by_source.values()]
+    # Session identity must precede every normalized fact in its own capture;
+    # separate files intentionally have no comparable clock.
+    for meta in metas:
+        source_records = records_by_source[meta["_source_id"]]
+        line = meta.get("_source_line")
+        lines = [item.get("_source_line") for item in source_records]
+        if (not isinstance(line, int) or not all(isinstance(item, int) for item in lines)
+                or line != min(lines) or len(set(lines)) != len(lines)):
+            return None
+    bindings = {(event.get("_source_run_id"), event.get("_registry_identity"),
+                 tuple(event.get("_capture_binding", {}).get(key) for key in
+                       ("task_id", "task_revision", "reservation_id", "session_id")))
+                for event in metas}
+    if len(bindings) != 1 or any(not _is_codex_v0155(event.get("cli_version")) for event in metas):
+        return None
+    roots = [event for event in metas if isinstance(event.get("session_id"), str)
+             and event.get("session_id") == event.get("thread_id")
+             and event.get("parent_thread_id") in (None, "") and not isinstance(event.get("source"), dict)]
+    if len(roots) != 1:
+        return None
+    root = roots[0]
+    root_thread = root["thread_id"]
+    # Frozen capture receipts bind every member of this collection to the
+    # controller/root session recorded by SessionMeta.  A foreign receipt is
+    # not repaired from the native child metadata.
+    if any(isinstance(event.get("_capture_authority"), dict)
+           and event.get("_capture_binding", {}).get("session_id") != root_thread
+           for event in metas):
+        return None
+    children = [event for event in metas if event is not root]
+    child_ids = [event.get("thread_id") for event in children]
+    if (not children or any(not isinstance(child, str) or not child or child == root_thread for child in child_ids)
+            or len(set(child_ids)) != len(child_ids)
+            or any(event.get("session_id") != root_thread for event in children)
+            or any(event.get("parent_thread_id") != root_thread for event in children)):
+        return None
+    return root, children
+
+
+def _codex_version_at_least(value: Any, minimum: tuple[int, int, int]) -> bool:
+    if not isinstance(value, str):
+        return False
+    pieces = value.removeprefix("v").split(".")
+    if len(pieces) < 3 or not all(piece.isdigit() for piece in pieces[:3]):
+        return False
+    return tuple(int(piece) for piece in pieces[:3]) >= minimum
+
+
+def _is_codex_v0155(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    pieces = value.removeprefix("v").split(".")
+    return len(pieces) == 3 and all(piece.isdigit() for piece in pieces) and tuple(map(int, pieces)) == CODEX_V0155_MIN_VERSION
+
+
+def _native_repo_read(command: str) -> bool:
+    # CommandExecution is a mechanical shell record.  The command itself must
+    # contain a read primitive; no natural-language intent is inferred.
+    return _mechanical_repo_read({"tool": "Bash", "command": command})
+
+
+def _collect_codex_v0155_delegation_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute offline audit facts from the named v0.155.1 normalization."""
+    if (any(item.get("_codex_rollout_normalization") != CODEX_V0155_NORMALIZATION for item in events)
+            or any(item.get("_codex_rollout_incomplete") for item in events)):
+        return _unavailable_rollout_metrics()
+    collection = _codex_v0155_collection(events)
+    if collection is None:
+        return _unavailable_rollout_metrics()
+    root_meta, child_metas = collection
+    root_thread = root_meta.get("thread_id")
+    if not isinstance(root_thread, str):
+        return _unavailable_rollout_metrics()
+    # This file has no per-event session id. Its root identity is established
+    # once by session-meta; child identity is separately proved by child meta.
+    scoped = [event for event in events if event.get("_source_file") == root_meta.get("_source_file")]
+    children = {event["thread_id"] for event in child_metas}
+    calls = [event for event in scoped if _kind(event) == "native_collaboration_spawn_call"]
+    # Every frozen child must be paired one-to-one with a root-file native
+    # spawn record.  A child capture never contributes command reads here.
+    call_ids = [call.get("child_thread_id") for call in calls]
+    if (not calls or any(not isinstance(child, str) or child not in children for child in call_ids)
+            or len(set(call_ids)) != len(call_ids) or set(call_ids) != children):
+        return _unavailable_rollout_metrics()
+    first = calls[0]
+    # Native root turns are the opaque turn_id from the event_msg/item_completed
+    # envelope payload.  It is not an ordinal; legacy
+    # TurnContextItem.root_turn_id is correctly absent.
+    turn = first.get("native_turn_id")
+    if not isinstance(turn, str) or not turn:
+        return _unavailable_rollout_metrics()
+    before = [event for event in scoped if _before(event, first)]
+    reads = [event for event in before if _kind(event) == "native_command_execution"
+             and isinstance(event.get("command"), str) and _native_repo_read(event["command"])]
+    byte_values = [event.get("output_bytes") for event in reads]
+    if not all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in byte_values):
+        return {"FIRST_CHILD_SPAWN_ROOT_TURN": turn,
+                "PRE_DELEGATION_REPO_READ_CALLS": len(reads),
+                "PRE_DELEGATION_REPO_OUTPUT_BYTES": "UNAVAILABLE"}
+    return {"FIRST_CHILD_SPAWN_ROOT_TURN": turn,
+            "PRE_DELEGATION_REPO_READ_CALLS": len(reads),
+            "PRE_DELEGATION_REPO_OUTPUT_BYTES": sum(byte_values)}
+
+
+def _before(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Compare only one source stream or an explicit causal edge."""
+    # A canonical path alone is not a stream identity.  A registry may (or a
+    # malicious caller could) describe the same bytes under two producer
+    # entries; treating those entries as one timeline lets unrelated events be
+    # joined into a review/evidence transaction.  Same-stream ordering is
+    # valid only when both the source id and canonical file agree.
+    if (
+        left.get("_source_id") == right.get("_source_id")
+        and left.get("_source_file") == right.get("_source_file")
+    ):
+        return _order(left, -1) < _order(right, -1)
+    # Cross-source order has no shared clock.  It is admitted only by the
+    # single, typed canonical identity of the earlier normalized event.
+    # Optional plural ``causes`` are descriptive; they do not authorize a
+    # transaction edge and therefore cannot be used as an ordering bypass.
+    caused_by = right.get("caused_by")
+    return isinstance(caused_by, str) and caused_by == _canonical_event_identity(left)
+
+
+def _canonical_event_identity(event: dict[str, Any]) -> str | None:
+    """Return exactly one typed identity for a normalized trusted event."""
+    explicit = (
+        ("native", event.get("native_event_id")),
+        ("event", event.get("event_id")),
+        ("attestation", event.get("attestation_id")),
+        ("observation", event.get("observation_id")),
+    )
+    present = [(kind, value) for kind, value in explicit if isinstance(value, str) and value]
+    if len(present) == 1:
+        kind, value = present[0]
+        return f"{kind}:{value}"
+    if present:
+        return None
+    native = event.get("_native_event_id")
+    return f"native:{native}" if isinstance(native, str) and native else None
+
+
+def _state(root: Path) -> dict[str, Any]:
+    value = json.loads((root / ".context" / "state.json").read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("Core state is not an object")
+    return value
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def attest_source_snapshot(output_path: Path, *, run_id: str, candidate_root: Path, path: str, session_id: str, producer_identity: str) -> dict[str, Any]:
+    """Write a host-observed repository snapshot, never a model assertion."""
+    if not isinstance(run_id, str) or not run_id or not isinstance(session_id, str) or not session_id or not isinstance(producer_identity, str) or not producer_identity:
+        raise ValueError("source snapshot provenance is required")
+    if not isinstance(path, str) or not path or "\\" in path or path.startswith("/") or ".." in path.split("/"):
+        raise ValueError("source snapshot path must be repo-relative")
+    candidate_root = candidate_root.resolve()
+    target = candidate_root.joinpath(*path.split("/"))
+    if target.is_symlink() or not target.is_file():
+        raise ValueError("source snapshot target must be a regular file")
+    event = {
+        "event": "source_snapshot_attestation",
+        "observation_id": str(uuid.uuid4()),
+        "run_id": run_id,
+        "path": path,
+        "content_sha256": _sha256(target),
+        "session_id": session_id,
+        "producer_identity": producer_identity,
+        "candidate_root": str(candidate_root),
+        "observed_at_ns": time.time_ns(),
+    }
+    output_path = output_path.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+    return event
+
+
+def _ref_key(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _artifact_envelope(data: bytes, *, artifact_id: str, task_id: str, task_revision: int, allow_legacy: bool = False) -> tuple[dict[str, Any] | None, str | None]:
+    if len(data) > 32 * 1024:
+        return None, "artifact exceeds bounded envelope size"
+    try:
+        value = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, "artifact is not a structured UTF-8 JSON envelope"
+    legacy = {"artifact_id", "task_id", "task_revision", "source_refs", "affected_surface", "confirmed_facts", "inferences", "unknowns", "contradictions", "verification"}
+    required = {"artifact_id", "task_id", "producer_base_revision", "producer_session", "producer_identity", "source_refs", "affected_surface", "confirmed_facts", "inferences", "unknowns", "contradictions", "verification"}
+    if allow_legacy and isinstance(value, dict) and set(value) == legacy:
+        legacy_value = dict(value)
+        base_revision = legacy_value.pop("task_revision")
+        value = {**legacy_value, "producer_base_revision": base_revision, "producer_session": "TEST_ONLY", "producer_identity": "TEST_ONLY"}
+        value["source_refs"] = [{"kind": "event", "source_id": "TEST_ONLY", "native_event_id": str(ref)} if isinstance(ref, str) else ref for ref in value["source_refs"]]
+        for field in ("confirmed_facts", "inferences", "unknowns", "contradictions", "verification"):
+            for item in value[field]:
+                key = "source_refs"
+                item[key] = [{"kind": "event", "source_id": "TEST_ONLY", "native_event_id": str(ref)} if isinstance(ref, str) else ref for ref in item[key]]
+    if not isinstance(value, dict) or set(value) != required:
+        return None, "artifact envelope fields are incomplete or unbounded"
+    if value["artifact_id"] != artifact_id or value["task_id"] != task_id:
+        return None, "artifact envelope identity does not match Core pointer"
+    if not isinstance(value["artifact_id"], str) or not value["artifact_id"] or not isinstance(value["task_id"], str) or not value["task_id"] or not isinstance(value["producer_base_revision"], int) or value["producer_base_revision"] < 0 or not isinstance(value["producer_session"], str) or not value["producer_session"] or not isinstance(value["producer_identity"], str) or not value["producer_identity"]:
+        return None, "artifact envelope provenance is malformed"
+    if any(not isinstance(value[key], list) or len(value[key]) > 32 for key in required - {"artifact_id", "task_id", "producer_base_revision", "producer_session", "producer_identity"}):
+        return None, "artifact envelope lists are not bounded"
+    if not all(isinstance(item, str) and item.strip() for item in value["affected_surface"]):
+        return None, "artifact affected_surface is malformed"
+    source_refs = value["source_refs"]
+    if not all(isinstance(item, dict) and isinstance(item.get("kind"), str) and item.get("kind") in {"repo", "event", "verification"} for item in source_refs):
+        return None, "artifact source_refs are malformed"
+    source_set = {_ref_key(item) for item in source_refs}
+    for field in ("confirmed_facts", "inferences", "unknowns", "contradictions"):
+        for item in value[field]:
+            if not isinstance(item, dict) or set(item) != {"text", "source_refs"} or not isinstance(item["text"], str) or not item["text"].strip() or not isinstance(item["source_refs"], list) or not {_ref_key(ref) for ref in item["source_refs"]} <= source_set:
+                return None, f"artifact {field} contains malformed statements"
+            if field == "confirmed_facts" and not item["source_refs"]:
+                return None, "confirmed facts require supporting source refs"
+    for item in value["verification"]:
+        if not isinstance(item, dict) or set(item) != {"description", "source_refs"} or not isinstance(item["description"], str) or not item["description"].strip() or not isinstance(item["source_refs"], list) or not {_ref_key(ref) for ref in item["source_refs"]} <= source_set:
+            return None, "artifact verification is malformed"
+    return value, None
+
+
+def _resolve_source_refs(envelope: dict[str, Any], root: Path, events: list[dict[str, Any]]) -> tuple[bool, str | None]:
+    test_stream = any(event.get("_source_run_id") == "TEST_ONLY" for event in events)
+    # Diagnostic fixtures remain inspectable.  Formal gates reject their
+    # candidate/review chain before a diagnostic ledger can be reported.
+    if envelope.get("producer_identity") == "TEST_ONLY" or test_stream:
+        return True, None
+    event_ids = {(event.get("_source_id"), event.get("_native_event_id")) for event in events}
+    verification_ids = {event.get("attestation_id") for event in events if _kind(event) in {"verification_attestation", "deterministic_verification", "verification"}}
+    snapshots = {
+        event.get("observation_id"): event
+        for event in events
+        if _kind(event) == "source_snapshot_attestation" and isinstance(event.get("observation_id"), str)
+    }
+    for ref in envelope["source_refs"]:
+        kind = ref.get("kind")
+        if kind == "repo":
+            path = ref.get("path")
+            if not isinstance(path, str) or not path or "\\" in path or path.startswith("/") or ".." in path.split("/"):
+                return False, "repository source reference is not repo-relative"
+            target = root.joinpath(*path.split("/"))
+            observation_id = ref.get("observation_id")
+            observed = snapshots.get(observation_id)
+            if not isinstance(observation_id, str) or observed is None:
+                return False, "repository source reference lacks a trusted observation"
+            if (
+                observed.get("path") != path
+                or observed.get("content_sha256") != ref.get("content_sha256")
+                or observed.get("candidate_root") != str(root.resolve())
+                or observed.get("run_id") not in {event.get("_source_run_id") for event in events if event.get("_source_run_id")}
+            ):
+                return False, "repository source reference does not match its trusted observation"
+            # Recompute at consumption time.  The source snapshot proves
+            # historical observation; it does not make later bytes fresh.
+            if target.is_symlink() or not target.is_file() or _sha256(target) != ref.get("content_sha256"):
+                return False, "repository source reference target is unavailable"
+            if observed.get("_trusted_source") != "thaliris_audit":
+                return False, "repository source observation is outside the trusted capture boundary"
+            if observed.get("session_id") != envelope.get("producer_session") or observed.get("producer_identity") != envelope.get("producer_identity"):
+                return False, "repository source observation is not bound to the artifact producer"
+            starts = [event for event in events if event.get("_trusted_source") == "codex_rollout" and _kind(event) in {"SubagentStart", "native_session_started"} and event.get("session_id") == envelope.get("producer_session")]
+            if not starts or not any(envelope.get("producer_identity") in {event.get("session_id"), event.get("native_event_id"), event.get("_native_event_id"), event.get("producer_identity"), event.get("session_identity")} for event in starts):
+                return False, "repository source observation lacks a trusted producer lifecycle"
+        elif kind == "event":
+            if (ref.get("source_id"), ref.get("native_event_id")) not in event_ids:
+                return False, "native event source reference is not observed"
+        elif kind == "verification":
+            if ref.get("attestation_id") not in verification_ids:
+                return False, "verification source reference is not observed"
+    return True, None
+
+
+def _producer_lifecycle(envelope: dict[str, Any] | None, artifact_id: str, producer_role: str | None, produced: dict[str, Any] | None, events: list[dict[str, Any]]) -> tuple[bool, str | None]:
+    """Bind an artifact producer to a real native child lifecycle."""
+    if envelope is None:
+        return False, "artifact envelope is absent"
+    if any(event.get("_source_run_id") == "TEST_ONLY" for event in events) or envelope.get("producer_identity") == "TEST_ONLY":
+        return True, None
+    session_id = envelope.get("producer_session")
+    identity = envelope.get("producer_identity")
+    if not isinstance(session_id, str) or not isinstance(identity, str):
+        return False, "producer identity is malformed"
+    # Native producer lifecycle is owned by the Codex rollout stream.  Audit
+    # and harness streams can describe that lifecycle, but cannot create it;
+    # accepting their similarly named events would let a producer self-attest.
+    starts = [event for event in events if event.get("_trusted_source") == "codex_rollout" and _kind(event) in {"SubagentStart", "native_session_started"} and event.get("session_id") == session_id]
+    if not starts:
+        return False, "producer native session start is not observed"
+    start = starts[-1]
+    observed_role = str(start.get("role") or start.get("agent_role") or "").lower()
+    if observed_role not in {"investigator", "curator"} or observed_role != str(producer_role or "").lower():
+        return False, "producer native role does not match artifact producer role"
+    identities = {session_id, str(start.get("native_event_id") or start.get("_native_event_id") or ""), str(start.get("producer_identity") or ""), str(start.get("session_identity") or "")}
+    if identity not in identities:
+        return False, "producer identity is not bound to native session"
+    if produced is None or produced.get("producer_session") != session_id:
+        return False, "artifact production is not bound to producer session"
+    stops = [event for event in events if event.get("_trusted_source") == "codex_rollout" and _kind(event) in {"SubagentStop", "native_session_stopped"} and event.get("session_id") == session_id]
+    if not stops or not _before(start, produced) or not any(_before(produced, stop) for stop in stops):
+        return False, "artifact production is outside observed producer lifecycle"
+    return True, None
+
+
+def collect_evidence(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Derive the reusable-evidence lifecycle from state, bytes, and events."""
+    state = _state(root)
+    ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
+    roles = {str(event.get("role") or event.get("consumer_role")) for event in ordered if event.get("role") or event.get("consumer_role")}
+    downstream_roles = {"controller", "reasoning-specialist", "implementer", "focused-implementer", "reviewer"}
+    producer_roles = {
+        str(ref.get("producer_role") or ref.get("producer"))
+        for ref in state.get("artifact_refs", [])
+        if isinstance(ref, dict) and (ref.get("producer_role") or ref.get("producer"))
+    }
+    # A Core-registered Investigator/Curator artifact is itself evidence that
+    # the route crossed a reusable-evidence boundary.  This is derived from
+    # the producer role in Core state, not from the presence of a file, so a
+    # missing registration cannot silently turn the requirement off.
+    evidence_required = bool({"investigator", "curator"} & producer_roles) or bool(
+        ({"investigator", "curator"} & roles)
+        and (roles & downstream_roles - {"investigator", "curator"})
+    )
+    artifacts = []
+    superseded_ids = {target for ref in state.get("artifact_refs", []) if isinstance(ref, dict) for target in ref.get("supersedes", [])}
+    for ref in state.get("artifact_refs", []):
+        if not isinstance(ref, dict):
+            continue
+        path = root.joinpath(*str(ref.get("path", "")).split("/"))
+        actual_sha = _sha256(path) if path.is_file() and not path.is_symlink() else None
+        artifact_id = ref.get("id")
+        produced = next((e for e in ordered if _kind(e) in {"artifact_produced", "artifact_written"} and e.get("artifact_id") == artifact_id), None)
+        registered = next((e for e in ordered if _kind(e) == "artifact_registered" and e.get("artifact_id") == artifact_id), None)
+        task_id = str(ref.get("task_id", state.get("task_id")))
+        task_revision = int(ref.get("revision", state.get("revision", 0)))
+        allow_legacy = any(event.get("_source_run_id") == "TEST_ONLY" for event in ordered)
+        if actual_sha == ref.get("content_sha256") and actual_sha:
+            envelope, envelope_error = _artifact_envelope(path.read_bytes(), artifact_id=str(artifact_id), task_id=task_id, task_revision=task_revision, allow_legacy=allow_legacy)
+        elif registered and isinstance(registered.get("artifact_envelope"), dict):
+            envelope, envelope_error = _artifact_envelope(json.dumps(registered["artifact_envelope"], separators=(",", ":")).encode("utf-8"), artifact_id=str(artifact_id), task_id=task_id, task_revision=task_revision, allow_legacy=allow_legacy)
+        else:
+            envelope, envelope_error = None, "artifact bytes are unavailable and no registration attestation was provided"
+        selections = [e for e in ordered if _kind(e) in {"artifact_selected", "handoff", "role_dispatch"} and artifact_id in e.get("artifact_ids", [])]
+        consumers = [e for e in selections if e.get("role") not in {None, "controller"} or e.get("consumer_role")]
+        valid_item_ids = set()
+        if envelope:
+            for field in ("confirmed_facts", "inferences", "unknowns", "contradictions"):
+                valid_item_ids.update(f"{field}:{index}" for index, _ in enumerate(envelope[field]))
+            valid_item_ids.update(f"verification:{index}" for index, _ in enumerate(envelope["verification"]))
+        source_refs_valid, source_ref_error = _resolve_source_refs(envelope, root, ordered) if envelope else (False, None)
+        producer_role = ref.get("producer_role") or ref.get("producer")
+        producer_lifecycle_valid, producer_lifecycle_error = _producer_lifecycle(envelope, str(artifact_id), producer_role, produced, ordered)
+        carried = [e for e in selections if (e.get("content_sha256") == ref.get("content_sha256") or any(isinstance(item, dict) and item.get("content_sha256") == ref.get("content_sha256") for item in e.get("artifacts", []))) and bool(e.get("evidence_item_ids")) and set(e.get("evidence_item_ids", [])) <= valid_item_ids and source_refs_valid]
+        pointer_reads = [e for e in ordered if _kind(e) in {"artifact_read", "artifact_open"} and e.get("artifact_id") == artifact_id and e.get("content_sha256") == ref.get("content_sha256") and e.get("session_id")]
+        artifact = {
+            "id": artifact_id,
+            "task_id": state.get("task_id"),
+            "revision": ref.get("revision", state.get("revision")),
+            "producer_role": producer_role,
+            "path": ref.get("path"),
+            "registered_by": ref.get("registered_by"),
+            "declared_sha256": ref.get("content_sha256"),
+            "actual_sha256": actual_sha,
+            "produced_order": _order(produced, -1)[0] if produced else None,
+            "registered_order": _order(registered, -1)[0] if registered else None,
+            "dispatch_orders": [_order(item, -1)[0] for item in selections],
+            "produced_provenance": _provenance(produced),
+            "registered_provenance": _provenance(registered),
+            "dispatch_provenance": [_provenance(item) for item in selections],
+            "consumer_roles": sorted({str(item.get("consumer_role") or item.get("role")) for item in consumers}),
+            "carried_content_identity": bool(carried),
+            "supersedes": list(ref.get("supersedes", [])),
+            "active": artifact_id not in superseded_ids,
+            "envelope": envelope,
+            "envelope_error": envelope_error,
+            "source_refs_valid": source_refs_valid,
+            "source_ref_error": source_ref_error,
+            "producer_lifecycle_valid": producer_lifecycle_valid,
+            "producer_lifecycle_error": producer_lifecycle_error,
+            "selected": bool(selections),
+            "selected_item_ids": sorted({item for event in carried for item in event.get("evidence_item_ids", [])}),
+            "pointer_consumers": [_provenance(item) for item in pointer_reads],
+        }
+        artifact["bytes_match"] = actual_sha == ref.get("content_sha256")
+        artifact["registration_attested"] = bool(registered and registered.get("content_sha256") == ref.get("content_sha256"))
+        artifact["historical_validity"] = "PASS" if artifact["bytes_match"] or artifact["registration_attested"] else "FAIL"
+        artifact["current_freshness"] = "FRESH" if artifact["active"] and artifact["bytes_match"] else "STALE"
+        artifact["registered_before_dispatch"] = bool(
+            registered and (not selections or all(_before(registered, item) for item in selections))
+        )
+        artifact["produced_before_registration"] = bool(produced and registered and _before(produced, registered))
+        artifact["used"] = bool(consumers and carried) or bool(pointer_reads and source_refs_valid)
+        artifact["selected_item_ids_valid"] = bool(carried)
+        artifact["consumed"] = artifact["used"]
+        artifacts.append(artifact)
+    return {"evidence_required": "REQUIRED" if evidence_required else "NOT_REQUIRED", "artifacts": artifacts, "routing_roles": sorted(roles), "producer_lifecycle_observed": all(item.get("producer_lifecycle_valid") for item in artifacts) if artifacts else not evidence_required, "formal_collection": bool(ordered) and not any(event.get("_source_run_id") == "TEST_ONLY" for event in ordered)}
+
+
+def collect_candidate(root: Path, *, policy: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Collect candidate identity from the actual product surface."""
+    return build_manifest(root, policy)
+
+
+def attest_candidate(output_path: Path, *, run_id: str, stage: str, candidate_root: Path, policy: dict[str, Any], harness_identity: str, session_id: str | None = None, source_registry_identity: str | None = None, caused_by: str | None = None, causes: list[str] | None = None, attestation_id: str | None = None, reviewer_binding: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Host-owned stage attestation; identity is computed at the stage boundary."""
+    if not isinstance(run_id, str) or not run_id or stage not in {"runtime-final", "review-start", "review-end", "verification-start", "evaluator-start", "seal"}:
+        raise ValueError("invalid candidate attestation boundary")
+    if not isinstance(harness_identity, str) or not harness_identity:
+        raise ValueError("harness identity is required")
+    candidate_root = candidate_root.resolve()
+    manifest = build_manifest(candidate_root, policy)
+    policy_identity = hashlib.sha256(json.dumps(manifest["manifest"]["policy"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    event = {
+        "event": "candidate_attestation",
+        "attestation_id": attestation_id or str(uuid.uuid4()),
+        "run_id": run_id,
+        "stage": stage,
+        "candidate_root": str(candidate_root),
+        "candidate_identity": manifest["identity"],
+        "manifest_version": MANIFEST_VERSION,
+        "manifest_policy_identity": policy_identity,
+        "harness_identity": harness_identity,
+        "session_id": session_id,
+        "order_identity": time.time_ns(),
+    }
+    if caused_by is not None:
+        if not isinstance(caused_by, str) or not caused_by:
+            raise ValueError("candidate attestation causal identity is invalid")
+        event["caused_by"] = caused_by
+    if causes is not None:
+        if not isinstance(causes, list) or not causes or any(not isinstance(item, str) or not item for item in causes):
+            raise ValueError("candidate attestation causal identities are invalid")
+        event["causes"] = list(causes)
+    if reviewer_binding is not None:
+        if stage != "review-start" or not isinstance(reviewer_binding, dict):
+            raise ValueError("reviewer binding is only valid at review start")
+        event["reviewer_binding"] = dict(reviewer_binding)
+    output_path = output_path.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if source_registry_identity is not None:
+        previous = "0" * 64
+        sequence = 1
+        if output_path.is_file() and output_path.stat().st_size:
+            lines = output_path.read_text(encoding="utf-8").splitlines()
+            last = json.loads(lines[-1])
+            previous = str(last["record_hash"])
+            sequence = int(last["sequence"]) + 1
+        event["source_registry_identity"] = source_registry_identity
+        event["sequence"] = sequence
+        event["previous_hash"] = previous
+        event["payload_hash"] = hashlib.sha256(json.dumps(chain_payload(event), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        event["record_hash"] = hash_chain_record(event)
+    with output_path.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+    return event
+
+
+def collect_sessions(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Enumerate every observed model invocation, including failed/orphaned ones."""
+    ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
+    sessions: dict[str, dict[str, Any]] = {}
+    billing_requests: dict[str, list[dict[str, Any]]] = {}
+    for event in ordered:
+        if _kind(event) not in {"session_usage", "rollout_session", "model_usage", "token_usage_record"}:
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        session_id = event.get("session_id") or event.get("_session_identity")
+        # Explicit request billing facts are kept separate from cumulative
+        # session totals.  This branch cannot synthesize a request from native
+        # token_usage_record, which is a thread/session aggregate.
+        if _kind(event) == "model_usage" and isinstance(event.get("billing_request"), dict):
+            if isinstance(session_id, str) and session_id and event.get("_trusted_source") == "codex_rollout" and event.get("_source_run_id") != "TEST_ONLY":
+                request = dict(event["billing_request"])
+                request["provenance"] = {
+                    "kind": "codex_rollout", "source_file": event.get("_source_file"),
+                    "source_line": event.get("_source_line"), "source_sha256": event.get("_source_sha256"),
+                    "native_event_id": event.get("_native_event_id"),
+                }
+                billing_requests.setdefault(session_id, []).append(request)
+            continue
+        usage = event.get("usage")
+        if _kind(event) == "token_usage_record":
+            session_id = session_id or payload.get("session_id")
+            usage = payload.get("thread_token_usage") or payload.get("usage")
+        if isinstance(usage, dict) and "input" not in usage and "input_tokens" in usage:
+            usage = {"input": usage.get("input_tokens"), "cached_input": usage.get("cached_input_tokens"), "output": usage.get("output_tokens")}
+        if not isinstance(session_id, str) or not session_id or not isinstance(usage, dict):
+            continue
+        item = {
+            "session_id": session_id,
+            "role": event.get("role") or event.get("_role_identity"),
+            "model": event.get("model") or event.get("_model_identity"),
+            "input": usage.get("input"),
+            "cached_input": usage.get("cached_input"),
+            "output": usage.get("output"),
+            "status": event.get("status", "UNKNOWN"),
+            "source": event.get("_trusted_source"),
+            "source_file": event.get("_source_file"),
+            "source_line": event.get("_source_line"),
+            "native_event_id": event.get("_native_event_id"),
+        }
+        previous = sessions.get(session_id)
+        if previous is not None and previous != item:
+            if _kind(event) != "token_usage_record":
+                raise ValueError(f"conflicting usage records for session {session_id}")
+            # Native rollout records expose a cumulative thread total.  Keep
+            # the latest source-ordered total instead of counting each turn
+            # as another session.  A plain per-turn record is only additive.
+            if isinstance(payload.get("thread_token_usage"), dict):
+                sessions[session_id] = item
+                continue
+            for field in ("input", "cached_input", "output"):
+                older, newer = previous[field], item[field]
+                item[field] = older + newer if type(older) is int and type(newer) is int else (older if type(older) is not int else newer)
+        sessions[session_id] = item
+    for session_id, requests in billing_requests.items():
+        if session_id in sessions:
+            sessions[session_id]["billing_requests"] = requests
+    return [sessions[key] for key in sorted(sessions)]
+
+
+def collect_candidate_chain(root: Path, events: Iterable[dict[str, Any]], *, policy: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Bind stage-time host attestations to the manifest computed now."""
+    actual = str(build_manifest(root, policy)["identity"])
+    ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
+    stages = {"runtime-final": "runtime_candidate", "review-start": "reviewed_candidate", "review-end": "review_end_candidate", "verification-start": "verified_candidate", "evaluator-start": "evaluator_candidate", "seal": "sealed_candidate"}
+    values: dict[str, Any] = {}
+    formal = bool(ordered) and not any(event.get("_source_run_id") == "TEST_ONLY" for event in ordered)
+    attestations = [event for event in ordered if _kind(event) == "candidate_attestation" and event.get("_trusted_source") == "harness_attestation" and event.get("source_registry_identity") == event.get("_registry_identity")]
+    expected_policy_identity = hashlib.sha256(json.dumps(build_manifest(root, policy)["manifest"]["policy"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    stage_counts: dict[str, int] = {}
+    stage_events: list[dict[str, Any]] = []
+    for stage, field in stages.items():
+        matches = [event for event in attestations if event.get("stage") == stage and event.get("candidate_root") == str(root.resolve()) and event.get("manifest_version") == MANIFEST_VERSION and event.get("manifest_policy_identity", expected_policy_identity) == expected_policy_identity and isinstance(event.get("harness_identity"), str) and event.get("harness_identity")]
+        stage_counts[stage] = len(matches)
+        if matches:
+            stage_events.append(matches[-1])
+        values[field] = matches[-1].get("candidate_identity") if matches else None
+        values[f"{field}_provenance"] = _provenance(matches[-1]) if matches else None
+    ready_orders = [event for event in ordered if _kind(event) == "review_verdict" and event.get("verdict") == "READY" and isinstance(event.get("session_id"), str) and any(att.get("stage") == "review-start" and att.get("session_id") == event.get("session_id") and att.get("candidate_identity") == actual and _before(att, event) for att in attestations)]
+    values["review_verdict"] = "READY" if ready_orders else None
+    values["review_selected"] = bool(stage_counts["review-start"] or stage_counts["review-end"] or any(
+        _kind(event) == "review_verdict" or (
+            _kind(event) in {"native_session_started", "SubagentStart"} and event.get("role") == "reviewer"
+        )
+        for event in ordered
+    ))
+    ready_order = ready_orders[-1] if ready_orders else None
+    values["source_mutations_after_ready"] = bool(ready_order and any(_before(ready_order, event) and _kind(event) == "source_mutation" for event in ordered))
+    values["computed_candidate"] = actual
+    values["stage_counts"] = stage_counts
+    # Stream indexes are local only. Each stage transition must be same-source
+    # ordered or have the exact typed caused_by identity of its predecessor.
+    required_stages = len(stages) if values["review_selected"] else len(stages) - 2
+    values["stage_order_valid"] = len(stage_events) == required_stages and all(
+        _before(left, right) for left, right in zip(stage_events, stage_events[1:])
+    )
+    values["formal_collection"] = formal
+    required_fields = stages.values() if values["review_selected"] else (field for stage, field in stages.items() if stage not in {"review-start", "review-end"})
+    values["stage_provenance_complete"] = all(values.get(f"{field}_provenance") for field in required_fields)
+    values["review_verdict_provenance"] = _provenance(ready_order)
+    values["review_verdict_collector_backed"] = bool(ready_order and ready_order.get("_trusted_source") == "codex_rollout")
+    return values
+
+
+def collect_review_graph(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Collect reviewer edges from native lifecycle and review transactions.
+
+    Native sandbox mode is retained as a capability diagnostic only.  The hard
+    correctness fact is a fresh native session with matching stop and
+    host-attested start/end candidate identities.
+    """
+    ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
+    sessions: set[str] = set()
+    stops: dict[str, list[dict[str, Any]]] = {}
+    graph: list[dict[str, Any]] = []
+    test_stream = any(event.get("_source_run_id") == "TEST_ONLY" for event in ordered)
+    for event in ordered:
+        if (test_stream or event.get("_trusted_source") == "codex_rollout") and _kind(event) in {"native_session_started", "SubagentStart"} and event.get("role") == "reviewer" and isinstance(event.get("session_id"), str):
+            sessions.add(event["session_id"])
+        if (test_stream or event.get("_trusted_source") == "codex_rollout") and _kind(event) in {"native_session_stopped", "SubagentStop"} and isinstance(event.get("session_id"), str):
+            stops.setdefault(event["session_id"], []).append(event)
+    for event in ordered:
+        if _kind(event) != "review_verdict":
+            continue
+        session = event.get("session_id")
+        starts = [att for att in ordered if _kind(att) == "candidate_attestation" and att.get("stage") == "review-start" and att.get("session_id") == session and att.get("_trusted_source") == "harness_attestation"]
+        if not isinstance(session, str) or not starts:
+            continue
+        candidate = starts[-1].get("candidate_identity")
+        review_start = starts[-1]
+        binding = review_start.get("reviewer_binding")
+        ends = [att for att in ordered if _kind(att) == "candidate_attestation" and att.get("stage") == "review-end" and att.get("session_id") == session and att.get("_trusted_source") == "harness_attestation"]
+        observations = [obs for obs in ordered if _kind(obs) == "reviewer_native_observation" and obs.get("session_id") == session and obs.get("native_session_id")]
+        mutations = [mutation for mutation in ordered if _kind(mutation) == "source_mutation" and mutation.get("session_id") == session]
+        stop = stops.get(session, [])
+        end = ends[-1] if ends else None
+        native_starts = [item for item in ordered if (test_stream or item.get("_trusted_source") == "codex_rollout") and _kind(item) in {"native_session_started", "SubagentStart"} and item.get("role") == "reviewer" and item.get("session_id") == session]
+        native_start = native_starts[-1] if native_starts else None
+        verdict_after_start = bool(native_start and _before(native_start, event))
+        completion_after_start = bool(native_start and stop and any(_before(native_start, item) for item in stop))
+        completion_before_end = bool(stop and end and any(_before(item, end) for item in stop))
+        verdict_before_end = bool(stop and end and any(_before(event, item) and _before(item, end) for item in stop))
+        review_start_before_native = bool(native_start and _before(review_start, native_start))
+        integrity = bool(
+            session in sessions
+            and stop
+            and end
+            and review_start_before_native
+            and verdict_after_start
+            and completion_after_start
+            and completion_before_end
+            and verdict_before_end
+            and candidate
+            and end.get("candidate_identity") == candidate
+            and not mutations
+        )
+        start_order_valid = review_start_before_native
+        if not test_stream:
+            # The review-start attestation authorizes one, and only one,
+            # *subsequent* native Reviewer start.  A lifecycle record before
+            # it or a copied reservation/projection is not a review session.
+            expected = ("task_id", "task_revision", "controller_session_id", "reservation_id", "projection_id", "parent_session_id")
+            native_starts = [item for item in ordered if item.get("_trusted_source") == "codex_rollout" and _kind(item) in {"native_session_started", "SubagentStart"} and item.get("role") == "reviewer"]
+            after = [item for item in native_starts if _before(review_start, item)]
+            first = after[0] if after else None
+            start_order_valid = bool(
+                isinstance(binding, dict) and first is not None
+                and first.get("session_id") == session and first.get("role") == "reviewer"
+                and all(first.get(key) == binding.get(key) for key in expected)
+                and first.get("native_sequence") == binding.get("native_sequence")
+                and not any(item.get("session_id") == session and not _before(review_start, item) for item in native_starts)
+                and len([item for item in after if item.get("session_id") == session]) == 1
+            )
+            if not start_order_valid:
+                integrity = False
+        # Every formal review transaction must stay within one frozen run and
+        # registry.  Cross-stream ordering is otherwise admitted only through
+        # explicit causal edges in ``_before``.
+        if not test_stream:
+            transaction_events = [starts[-1], event, end, *(stop or [])]
+            identities = {(item.get("_source_run_id"), item.get("_registry_identity")) for item in transaction_events if item is not None}
+            if len(identities) != 1:
+                integrity = False
+        graph.append({
+            "reviewer_session": session,
+            "input_candidate_identity": candidate,
+            "verdict": event.get("verdict"),
+            "finding_id": event.get("finding_id"),
+            "classification": event.get("classification"),
+            "evidence_identity": event.get("evidence_identity"),
+            "native_session": session in sessions,
+            "native_completion": bool(stop),
+            "review_end_observed": bool(end),
+            "completion_before_review_end": completion_before_end,
+            "verdict_after_review_start": verdict_after_start,
+            "verdict_before_review_end": verdict_before_end,
+            "start_candidate_identity": candidate,
+            "end_candidate_identity": end.get("candidate_identity") if end else None,
+            "review_transaction_integrity": integrity,
+            "reviewer_start_order_valid": start_order_valid,
+            "reviewer_mutation_observed": bool(mutations),
+            "sandbox_mode": observations[-1].get("sandbox_mode") if observations else None,
+            "native_observation_provenance": _provenance(observations[-1]) if observations else None,
+            "order": _order(event, -1)[0],
+            "attestation_provenance": _provenance(starts[-1]),
+            "review_end_provenance": _provenance(end),
+            "verdict_provenance": _provenance(event),
+        })
+    corrections: list[dict[str, Any]] = []
+    for review in graph:
+        if review.get("verdict") != "REQUEST_CHANGES":
+            continue
+        dispatch = next((e for e in ordered if _kind(e) == "implementer_dispatch" and e.get("candidate_from") == review["input_candidate_identity"] and e.get("finding_id") == review.get("finding_id")), None)
+        if dispatch is None:
+            continue
+        implementer_session = dispatch.get("session_id")
+        mutation = next((e for e in ordered if _kind(e) == "source_mutation" and e.get("session_id") == implementer_session and _before(dispatch, e)), None)
+        if mutation is None:
+            continue
+        candidate_to = mutation.get("candidate_identity")
+        verification = next((e for e in ordered if _kind(e) in {"deterministic_verification", "verification"} and e.get("candidate_identity") == candidate_to and e.get("outcome") == "PASSED" and _before(mutation, e)), None)
+        if verification is None:
+            continue
+        corrections.append({"from_candidate": review["input_candidate_identity"], "finding_id": review.get("finding_id"), "implementer_session": implementer_session, "to_candidate": candidate_to, "verification_order": _order(verification, -1)[0], "dispatch_provenance": _provenance(dispatch), "mutation_provenance": _provenance(mutation), "verification_provenance": _provenance(verification)})
+    seen_states: set[tuple[Any, Any, Any]] = set()
+    no_progress: list[dict[str, Any]] = []
+    for review in graph:
+        state = (
+            review.get("input_candidate_identity"),
+            review.get("finding_id"),
+            review.get("evidence_identity"),
+        )
+        if state in seen_states:
+            no_progress.append({
+                "candidate": state[0],
+                "finding_id": state[1],
+                "evidence_identity": state[2],
+                "provenance": review.get("verdict_provenance"),
+            })
+        seen_states.add(state)
+    return {"review_rounds": graph, "correction_edges": corrections, "native_reviewer_sessions": sorted(sessions), "no_progress_cycles": no_progress, "formal_collection": bool(ordered) and not test_stream}

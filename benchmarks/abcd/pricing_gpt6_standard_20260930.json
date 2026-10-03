@@ -1,0 +1,15 @@
+{
+  "version": "gpt6-api-standard-2026-09-30",
+  "source": "User-supplied official OpenAI API pricing facts",
+  "retrieved_at": "2026-09-30",
+  "scope": "API-equivalent Standard tier; prompt input up to 272000 tokens; USD per million tokens",
+  "tier": "Standard",
+  "long_context_threshold": 272000,
+  "long_context_input_multiplier": 2,
+  "long_context_output_multiplier": 1.5,
+  "models": {
+    "gpt-6-luna": {"uncached_input": 0.10, "cached_input": 0.01, "cache_write": 0.125, "output": 0.50},
+    "gpt-6-sol": {"uncached_input": 2.00, "cached_input": 0.20, "cache_write": 2.50, "output": 10.00},
+    "gpt-6-astra": {"uncached_input": 10.00, "cached_input": 1.00, "cache_write": 12.50, "output": 50.00}
+  }
+}

@@ -1,3 +1,3 @@
-"""Thaliris: Git-native, evidence-backed context routing core."""
+"""Host-neutral Thaliris records, retrieval, evidence and authority."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.2"

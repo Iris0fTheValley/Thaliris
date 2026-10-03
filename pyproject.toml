@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "thaliris"
-version = "0.3.0"
-description = "Git-native, evidence-backed context routing and memory core for agent workflows"
+version = "0.4.2"
+description = "Host-neutral mechanical task ledger, evidence, retrieval, memory and authority"
 requires-python = ">=3.11"
 readme = "README.md"
 license = "MIT"
 authors = [{name = "Thaliris contributors"}]
-keywords = ["context", "routing", "memory", "evidence"]
+keywords = ["context", "lifecycle", "memory", "artifacts"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "License :: OSI Approved :: MIT License",
@@ -26,11 +26,12 @@ Issues = "https://github.com/Iris0fTheValley/Thaliris/issues"
 test = ["pytest>=8.0"]
 
 [project.scripts]
-context = "thaliris.cli:main"
+thaliris-core = "thaliris.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+norecursedirs = ["benchmarks/abcd/historical"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/thaliris"]

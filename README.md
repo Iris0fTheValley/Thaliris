@@ -1,8 +1,10 @@
 # Thaliris
 
+主仓库现在发布 Host 无关的 Core、共享语义文档和 ABCD 基准协议/历史证据。`thaliris-core` 仅提供 Core 操作；Codex 集成位于 [Thaliris-Codex](https://github.com/Iris0fTheValley/Thaliris-Codex)，DSH 集成位于 [Thaliris-DSH](https://github.com/Iris0fTheValley/Thaliris-DSH)。安装与 API 边界见 [分包说明](docs/host-neutral-packaging.md)。
+
 [English](README.en.md)
 
-一个轻量、Git 原生的 Codex 上下文与编排层。
+一个轻量、Git 原生的 AI 编程上下文与编排层。
 
 
 项目理念是用大量可丢弃的低成本认知工作，保护少量不可替代的前沿推理注意力；让强模型自己做专家，而不是让搜索、流程和审查占据专家的脑子
@@ -17,7 +19,7 @@
 
 它提供：
 
-* 按角色划分的上下文包；
+* 面向不同语义角色的共享指导文档；
 * 由证据支撑的项目记忆；
 * 瞬态任务状态；
 * 调查与审查交接；
@@ -389,6 +391,8 @@ Controller 决策
 
 ## 安装
 
+本文中的旧版 `context` 命令示例描述 Codex adapter 的行为，并作为设计背景保留。Core 不再提供 prepare/recall、doctor、migrate 或原生角色包。Core 与 Host 边界见[分包说明](docs/host-neutral-packaging.md)；当前命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) 与 [DSH adapter 指南](https://github.com/Iris0fTheValley/Thaliris-DSH)。
+
 需要 Python 3.11 或更高版本，以及 Git。
 
 直接从仓库安装：
@@ -432,11 +436,13 @@ context doctor --pretty
       ↓
 normal task routing
 
-Core 不会自动初始化 Git、安装 Codex hooks 或自行 bootstrap runtime；这些能力属于具体 adapter。非 Git 工作区不会仅为了启用 Thaliris 而执行 git init。
+上面的初始化流程由 [Codex adapter](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) 提供。Core 不会自动初始化 Git、安装 Host hooks 或自行 bootstrap runtime；这些能力属于具体 adapter。非 Git 工作区不会仅为了启用 Thaliris 而执行 git init。
 
 
 
 ## 快速开始
+
+以下 `context prepare` 示例是 Codex adapter 的历史用法，当前 Core CLI 不提供；当前支持的命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md)。
 
 启动一个任务：
 
@@ -649,7 +655,7 @@ Symbols: ["Request.cancel"]
 
 INDEX 文件是 router，而不是总结文档。
 
-`context recall` 是显式、保守的 lexical retrieval。durable memory 默认不会进入普通 role pack；recall 返回 candidates，既不自动接受进 task state，也不自动向下游传播。
+旧版 Codex adapter 的 `context recall` 命令用于显式、保守的 lexical retrieval。durable memory 默认不会进入普通 role pack；recall 返回 candidates，既不自动接受进 task state，也不自动向下游传播。Core-only CLI 不提供此命令；当前支持的命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md)。
 
 ---
 
@@ -679,7 +685,7 @@ verification.md
 
 ## 托管的 `AGENTS.md`
 
-`context init` 会在仓库现有的 `AGENTS.md` 中维护一个带标记的小型区块。
+[Codex adapter](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) 的 `context init` 会在仓库现有的 `AGENTS.md` 中维护一个带标记的小型区块。Core-only CLI 不提供此 Host 初始化命令。
 
 它被有意保持简短。
 
@@ -861,11 +867,9 @@ Independent Reviewer：
 
 ---
 
-## Codex adapter
+## Host adapters
 
-Core 保持 runtime-neutral，不安装 Codex hooks，也不执行 agents。`adapter/codex` 将其映射到 Codex 的 fresh child、Controller guard 和 hook surfaces。verification target 是 requirement，不是 shell authority：只有 adapter 观察到明确的执行完成状态时，才可向 Core 提交受信结果；具体 runtime payload 无法提供该状态时结果保持 `UNKNOWN`。
-
-自动 Codex acceptance execution 目前只适用于 local allowlist 接受的、可执行的 string target。structured Core target 仍是 Core requirement，需要另一条受信 runtime observation path；详见 adapter 文档。
+Core 保持 runtime-neutral，不安装 Host hooks，也不执行 agents。[Thaliris-Codex](https://github.com/Iris0fTheValley/Thaliris-Codex) 与 [Thaliris-DSH](https://github.com/Iris0fTheValley/Thaliris-DSH) 在共享 Core 之上提供原生集成。verification target 表达 requirement，不是 shell authority：只有 adapter 观察到明确的执行完成状态时，才可向 Core 提交受信结果；具体 runtime payload 无法提供该状态时结果保持 `UNKNOWN`。
 ---
 
 ## 当前限制
@@ -877,10 +881,9 @@ Core 保持 runtime-neutral，不安装 Codex hooks，也不执行 agents。`ada
 * 路由有意保持保守；
 * 任务状态是本地的单任务状态，而不是任务数据库；
 * evidence freshness 无法证明未声明的依赖；
-* 角色执行仍由 Codex 完成，而不是由本 package 完成；
+* 角色执行由 Host adapter 提供，而不是由 Core 提供；
 * 外部 adapter 的健康状态并非总能被直接观察；
 * cognitive isolation 的收益仍需在真实编码工作负载上进行受控评估。
-* Intent Audit 依赖 Codex hooks 的运行时行为；未做真实 live probe 时，`context doctor` 会如实报告 `UNKNOWN`。
 
 只有当真实任务证明增加复杂度能改善下游质量或可靠性时，才会增加复杂度。
 
@@ -905,7 +908,7 @@ CI 当前覆盖项目支持的 Python 版本。
 3. 证据不能仅因被总结就变得更强；
 4. 高推理上下文保持聚焦；
 5. 失败应先降低效率，而不是降低正确性；
-6. 本项目仍是 Codex 周围的薄层，而不会变成另一个 Agent Framework。
+6. 本项目仍是围绕共享 Core 的精简、Host 无关层，而不会变成另一个 Agent Framework。
 
 ---
 

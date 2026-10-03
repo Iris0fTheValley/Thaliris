@@ -1,21 +1,32 @@
 name: CI
-
-on:
-  push:
-  pull_request:
-
+on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.11', '3.12', '3.13']
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12', '3.13']
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -e .[test]
-      - run: pytest
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e '.[test]'
+      - run: pytest tests/test_core_authority.py tests/test_mechanical_core.py tests/test_core_cli.py
+  benchmark-sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Iris0fTheValley/Thaliris-Codex
+          path: codex-adapter
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[test]'
+      - run: python -m pip install --no-deps ./codex-adapter
+      - run: pytest tests/test_benchmark_protocol.py tests/test_d11_collector.py

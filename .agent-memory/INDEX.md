@@ -23,8 +23,15 @@ Symbols: []
   bootstrap / ACTIVE-bridge note gives no Host/build identifier. Other Host
   builds, Desktop scenarios, raw Host wire-byte equality, and native child
   `Completed`/`task-close` completion remain unknown.
-- [Operator notes](operator.md), [prompt policy](prompt-policy.md), and
-  [project conventions](project-conventions.md) — Original draft placeholders;
-  operating constraints and conventions remain unconfirmed.
+- [Prompt policy](prompt-policy.md) — Current, source-verified Focused
+  Implementer endpoint, Controller handoff, and independent review/repair
+  boundaries; read when setting a semantic stopping point, preparing an
+  implementation handoff, or routing a bounded correction. It supersedes
+  earlier weaker endpoint wording. Core guidance is at commit `99ff867` and
+  Codex adapter source at `9cce14c`; active native installation or activation
+  is not established.
+- [Operator notes](operator.md) and [project conventions](project-conventions.md)
+  — Original draft placeholders; operating constraints and conventions remain
+  unconfirmed.
 - [Decision index](decisions/INDEX.md) and [lessons index](lessons/INDEX.md) —
   Unadopted templates, not project decisions or historical failure claims.

@@ -2,302 +2,85 @@
 
 <!-- thaliris-routing-protocol: thaliris-routing-v3 -->
 
-The marker identifies this routing contract for D11. Version 3 records the
-effective native agent-profile rule below as part of the semantic contract;
-native lifecycle schemas are independent of this marker.
+The historical routing marker is retained for benchmark compatibility. This
+document explains shared semantics; Host mechanics and native profiles belong
+to adapters. Core stores observations and selected intent, not semantic decisions.
 
-## Single semantic path
+## Ownership and handoff
 
-```text
-Controller --explicit native handoff--> Investigator / Curator / Reasoning Specialist / Implementer / Focused Implementer / Verifier / Reviewer
-Role session --distilled result + optional Artifact pointer--> Controller
-Controller --next explicit handoff--> next selected role session
-Implementer / Focused Implementer / Reviewer --explicit fresh handoff--> Investigator (Scanner working pattern)
-Scanner working pattern --distilled evidence--> requesting role
-```
+Controller owns the user objective, direction, scope, hard invariants, acceptance,
+context selection and next routing. Executor owns implementation design and methods
+within that boundary. A decision-complete handoff carries goal/original acceptance,
+confirmed facts, authoritative source and derived relationships, affected surfaces,
+hard invariants/decided boundaries, usable verification entry and decision-changing
+unknowns. Include source locations and covered/uncovered scope from selected discovery.
+Resolve ambiguity from the request and confirmed facts; bound the transformation in
+cleanup, synchronization or migration. Recommendations are non-binding.
 
-The Controller owns the complete user objective, its decomposition, role and
-context choice, overall invariants, boundaries and acceptance, interpretation
-of child results, and task-level decisions to reopen, review, continue, or end.
-It chooses the minimum necessary fresh role and supplies the task, facts,
-constraints, decisions, unknowns, and pointers to send.
-Before an ordinary implementation handoff, the Controller resolves task
-ambiguity that can be settled from the request and confirmed facts. The packet
-contains Goal, confirmed facts and source of truth, starting state and
-modification boundary, original acceptance and semantic stopping condition,
-hard invariants, Controller-decided
-boundaries/contracts, direction-changing unknowns, and material known
-execution-path constraints. The packet does not prescribe the implementation
-algorithm; local method choices belong to the implementation role. For open-ended cleanup,
-documentation, synchronization, or migration, identify the specific discrepancy
-or transformation and bound its scope. Stop when the original acceptance is met;
-do not pursue defect-free refinement or reinvestigate an established source of truth.
-It may do bounded
-reading to frame a handoff and interpret evidence, but does not perform broad
-repository scans, implementation, or the full task test suite. The Investigator
-role gathers broad evidence, including through the Scanner working pattern.
-Implementer and Focused Implementer make local code decisions within their
-accepted packets and Workstreams.
-A missing fact is a Controller/model error; Core must not infer or append it.
+Fresh children receive only the authorized parent's native handoff and explicitly
+selected material, not an automatic task-state/memory projection. Their private
+working set is larger than the distilled result sent back. Reuse established
+inventory; reopening decision-critical originals is part of execution. A Scanner
+collects only an independent uncovered discovery gap, not a duplicate inventory.
 
-For every task, the Controller selects the minimum necessary fresh semantic
-roles. One top-level child may delegate one nested Investigator session doing
-Scanner work at a time, at maximum
-managed depth two. Roles are capabilities, not mandatory workflow stages.
-This policy is identical for ACTIVE and degraded work; degraded mode does not
-define a second routing flow. A straightforward, bounded, low-risk task with
-confirmed facts may take the Controller -> fresh Implementer -> done path: the
-Implementer may do necessary bounded local reading, implementation, and
-deterministic verification. Decision-changing investigation belongs to the
-Investigator role, which also handles broad scanning and factual compression
-of large working sets, without architecture decisions. Bounded local reading
-needed for implementation may stay inside Implementer or Focused Implementer.
-Reviewer is conditional, not a mechanical post-implementation gate;
-select it only when independent semantic review adds real value, such as
-for architecture or cross-module changes, lifecycle, Host, identity, or
-authority boundaries, compatibility invariants, multiple plausible
-implementations, complex semantic repairs, or remaining correctness
-uncertainty. Curator and Reasoning Specialist are optional and selected only
-when they add actual value. Use Reasoning Specialist when an independent
-challenge may materially change direction, including when framing appears
-coherent or an outcome is unexpected. It tests hidden assumptions, causal
-models, decomposition, boundaries, decision basis, premature convergence, and
-direction-changing alternatives. Difficulty alone is not a trigger.
+## Role selection and Workstreams
 
-With INVALID_STATE, the PreToolUse guard denies only mechanically recognized
-Controller-owned state mutations: direct Thaliris task/lifecycle mutations and
-obvious writes to `.context/state.json` or lifecycle state. Unknown tools,
-coordination, diagnostics, and reads remain transparent. This does not prove
-managed enforcement. Damaged state does not transfer child semantic duties
-to Root. If Investigator or Implementer is unavailable, Root may diagnose
-the managed failure, read the evidence needed for that diagnosis, coordinate,
-and report; it does not take over substantial repository investigation,
-implementation, or testing.
+Roles are capabilities, not mandatory stages. Choose one profile for the Workstream's
+work shape, not a ladder, importance score or file/tool/token/time threshold.
+Investigator gathers broad facts without architecture decisions. Scanner is its
+nested discovery working pattern, not a role. Executor covers Implementer and
+Focused Implementer, not a spawnable identity. Reasoning Specialist independently
+challenges framing when that may change direction. Curator maintains selected reusable
+knowledge; Verifier remains read-only compatibility, not a recommended stage.
+Native role/model bindings, readonly enforcement, execution modes and delegation
+capabilities are adapter-owned. Profiles do not alter semantic responsibilities.
 
-Durable-knowledge admission belongs to the Controller alone. During normal
-task work, Root notices reusable candidates in the human instruction, its own
-architecture or governance decisions, Investigator evidence, Executor FINAL
-results, Reviewer findings, and Specialist challenges. Keep this awareness in
-the Controller's working context. Do not create a candidate register or
-persisted admission state, add scores, counters, or thresholds, make an extra
-checkpoint, or interrupt an active Workstream for memory review. Executors
-return their normal distilled results, evidence, and decision-changing
-information. They do not track memory candidates, spawn Curator, maintain
-durable INDEX navigation, or add a separate durable-governance product to FINAL.
+Stable accepted direction and deterministic convergence use ordinary Implementer.
+Coupled invariants or nonlocal constraints needing sustained reasoning use Focused
+Implementer. Controller routes Workstreams by semantic dependencies, decision coupling
+and independent closure. Executors close local loops inside them; a semantic checkpoint
+is not necessarily a scheduling checkpoint. Count-based thresholds do not route work.
 
-Near the task's natural end, as ordinary closure before `task-close`, the
-Controller decides whether evidence established, revised, invalidated, or
-materially clarified reusable project knowledge and whether a concise, sourced,
-retrievable memory entry would improve, constrain, or accelerate future
-decisions or recovery. This does not require that a future agent would
-otherwise need to reinvestigate the knowledge. If selected candidates have
-future value, Root hands Curator those candidates, facts and supporting
-evidence, exact relevant prior memory and INDEX navigation, and the canonical
-sources/documents needed to reconcile them. If
-no candidates or no future value, it skips Curator; small ordinary tasks can
-skip it entirely. Task size or architecture work alone never triggers a
-Curator stage.
+## Mutation and evidence
 
-Existing documentation, source, project instructions, tests, commits, and
-rollout records are neither automatic exclusions nor reasons by themselves to
-create memory. Treat them as evidence and do not duplicate canonical text. A
-future-Agent recovery entrance may link or summarize easy-to-locate canonical
-material or compress the decision basis spread across code, Host, history, or
-design. Do not impose a fixed split between memory and formal documentation.
-Curator reconciles the selected candidates with supplied prior memory and
-canonical sources; if existing material is sufficient, it explicitly reports
-that no write is needed. Before selecting recovery documents, Root uses the
-root INDEX's concise semantic descriptions of what linked knowledge covers,
-when it is useful to read, and current or historical applicability where
-useful. INDEX is navigation, not a bare file listing; keep current knowledge
-discoverable first and retain historical links when they help explain earlier
-scope or decisions. Models choose natural paths, hierarchy, and wording without
-a fixed schema, taxonomy, status classifier, or state machine.
+Before first mutation, executor establishes acceptance-relevant current mutation
+surfaces, authoritative/derived relationships and a working verification entry.
+Observe enough, make a coherent semantic mutation, verify acceptance-relevant behavior,
+and repair from new evidence. Use the smallest tests for independently verifiable
+semantic slices; keep coupled work together. Update authoritative source and use the
+existing generator/sync for derived outputs. Stale structure calls for refreshing the
+bounded authoritative region and reconstructing the edit; an unsuitable method calls
+for changing methods. Cwd, quoting and known environment command mistakes are mechanical
+recovery, not reasons to restart semantic inquiry. No retry or tool/token/time threshold
+decides convergence. External Host protocol/schema/identity dependencies need source or
+real-shaped proof; unresolved direction-changing dependencies return to Controller.
 
-Curator maintains only Controller-selected knowledge under `.agent-memory/`
-and relevant links in INDEX entries explicitly supplied in the handoff.
-When adding, revising, merging, splitting, narrowing, superseding, or deleting
-selected memory, Curator also judges whether the relevant INDEX navigation
-needs a semantic update and updates it when needed. Keep INDEX entries concise
-and semantic: what linked knowledge covers, when it is useful to read, and
-current versus historical or superseded applicability where useful. Keep
-currently relevant knowledge discoverable first and retain historical links
-when they help explain earlier scope or decisions. Curator chooses natural
-paths, hierarchy, and wording; there is no fixed schema, taxonomy, status
-classifier, or state machine. Do not rebuild a directory listing or catalog,
-write comprehensive history, or duplicate memory bodies in INDEX files. Core
-performs only mechanical path, compare-and-swap, size, link, and atomic-write
-checks; it never interprets or generates INDEX content. Preserve provenance
-and scope for each retained claim; when new evidence revises or supersedes a
-conclusion, preserve its original scope and historical applicability where
-relevant. Keep the corpus small, current, non-conflicting, and traceable. Do not preserve task
-chronology, implementation logs, ordinary commit histories, transient test
-outputs, or momentary failures as logs; those sources are not automatic
-exclusions when they establish reusable knowledge that can improve, constrain,
-or accelerate future decisions or recovery. If consistency depends on durable
-material the Controller did not select, stop and report the missing knowledge
-area for Root to select; do not scan the corpus. Product/protocol docs and
-README aligned with current behavior belong to Implementer or Focused
-Implementer. Curator does not make architecture decisions or delegate. Keep
-detailed raw evidence in canonical sources, Artifacts, Git, or rollout records,
-with only the concise basis and references needed for future recovery in memory.
-`CHANGED` reports an evidence change, not semantic invalidation. The Controller
-may request revalidation when a decision depends on changed evidence and has
-become unreliable.
+## Endpoints and review
 
-For divisible work, Root routes by semantic Workstream. Define Workstream
-boundaries by semantic dependencies, decision coupling, implementation
-uncertainty, and independent closure, not by token, file, or task-count
-thresholds. A Workstream is held by Root and executed by one authorized child
-session; it does not create another role or semantic Controller. A semantic
-checkpoint is not necessarily a scheduling checkpoint. Root routes workstreams.
-Executors close local loops inside them.
+Ordinary Implementer may finish assigned verification, deterministic fixes,
+generated/documentation sync, integration checks, installation and Git closure in the
+same Workstream. Stop at original acceptance. Focused Implementer owns the full reasoning,
+implementation, runtime-feedback and revision loop. It returns FINAL when core solution
+and invariants hold, decision-changing unknowns are resolved, focused evidence supports
+core semantics, and remaining tasks cannot materially change causal model, architecture,
+contract, scope, acceptance or direction. A focused-test PASS alone is insufficient.
+Before that endpoint, installation/smoke feedback that exposes a semantic defect stays
+in its loop. Afterward, ordinary regression/lint/build/sync, mechanical compatibility,
+deterministic defects, installation and Git closure go to a fresh ordinary Implementer
+when assigned. Shared Executor guidance never extends the Focused endpoint. Its result
+identifies exact candidate sources/diff, invariants, evidence and limits, remaining
+tasks, acceptance and escalation boundary. FINAL ends the child; further work is fresh.
 
-Within a stable Workstream, the ordinary Implementer session may complete
-multiple local closures: batch relevant reads, plan, implement, run focused
-verification, fix ordinary in-scope failures, synchronize generated output and
-documentation, run needed integration verification, inspect diff and status,
-and complete assigned Git closure. These are available execution checkpoints,
-not a mandatory bundle. This same-session guidance does not extend the Focused
-Implementer's semantic endpoint described in the role pack. A local verification
-PASS does not by itself end a Workstream or require a role switch. Root chooses the semantic boundary and may assign a separate
-closure Workstream when the remainder is independently deterministic. A new semantic Workstream may use a different role; the profile chosen for one
-Workstream does not bind the task's remaining operational work. Ordinary
-test fixes, generated or documentation synchronization, integration checks,
-and assigned Git closure are not automatically separate semantic routing
-boundaries. Local deterministic failures in paths, arguments, manifests,
-generated files, installation environment, documentation, fixtures, or Git may
-be fixed by the ordinary Implementer within its assignment. Focused Implementer
-may fix them only while the correction could still change the core semantic
-solution; after its endpoint, the Controller can assign a fresh ordinary closure
-Workstream. The child retains
-execution authority only within the assigned goal, scope, invariants, and
-acceptance; this authority never expands Controller-assigned scope. Very small
-direct routine operations need no ceremonial child handoff when the Controller
-is already authorized to perform them; this does not change delegated,
-controller-direct, or single-agent authority.
+Reviewer is fresh, independent and non-writing after candidate convergence. It challenges
+original acceptance, invariants and affected cross-boundary behavior, not only the diff.
+Counterevidence is a finding; inadequate evidence remains unverified/insufficient; READY
+requires supported critical closure. No blocker found is not verified acceptance.
+Accepted design unchanged and bounded defect supports fresh ordinary correction;
+architecture/contract/invariant/scope/acceptance or decision-basis changes reopen Controller.
+Core test PASS and lifecycle completion are observations, not semantic completion authority.
 
-Root regains control at the semantic Workstream boundary. A child returns
-distilled state, its commit reference, and verification evidence after its
-assigned Workstream is complete. If new evidence changes task direction,
-ownership, observable semantics, an accepted architecture or security boundary,
-a hard invariant, compatibility contract, or
-acceptance, or reveals an unverified external dependency that can change the
-decision, the child stops and returns the concrete unknown in FINAL for Root to
-decide. Only the Controller decides what follows; no child acts as a second
-semantic Controller. Do not use file, tool, token, time, or local-closure
-counts to end a Workstream or to choose the executor profile.
-
-When completed Investigator discovery is selected for a later semantic Workstream,
-the Controller handoff carries confirmed facts, exact source locations and
-affected surfaces, relevant unknowns or contradictions, and covered and
-uncovered scope. Implementer or Focused Implementer starts from this selected
-map, directly reopening decision-critical originals, call chains, diffs, and
-tests as needed for implementation. It does not reconstruct the same broad
-inventory or delegate a Scanner over the covered surface. A fresh Scanner may
-collect only a genuinely uncovered decision-changing evidence gap needing
-independent broad discovery, limited to that gap. Evidence coverage is judged
-semantically; it does not create a cache, threshold, state machine, or new
-evidence system.
-
-Before choosing an opportunistic discovered slice, the Controller confirms that
-each explicit user goal has been addressed, explicitly deferred, or has a
-decision-changing blocker. This is a semantic rule, not a mechanical checklist
-or state machine. Focused Implementer can complete complex implementation as
-well as focused reasoning. Implementer and Focused Implementer directly inspect
-known, decision-critical sources, including source code, relevant call chains,
-the current diff, failed tests, and raw evidence. Scanner is a nested
-Investigator discovery working pattern, not a separate role. Scanner work
-discovers over a larger or unknown evidence surface, or compresses a clearly
-large, low-reasoning-density collection that can be handled independently. It
-returns key conclusions, exceptions, UNKNOWNs, and accurate raw locations. The
-collection choice does not predetermine which evidence is relevant and does
-not replace reasoning-coupled reading; targeted rereading of relevant
-originals is useful. The collection choice does not
-predetermine which evidence is relevant. Small local searches may be direct.
-A Scanner batches related searches and reads, returns compact facts, and once
-evidence is sufficient stops immediately; do not expand the scan for one more
-confirmation.
-Only Implementer, Focused
-Implementer, and Reviewer may delegate a fresh Investigator for Scanner work. The remaining child roles
-cannot delegate. Fresh children always use `fork_turns="none"`. Implementer and Focused Implementer work
-only within their assigned semantic Workstream, preserve Controller decisions
-and invariants, and return a decision-changing unknown rather than changing them.
-The ordinary Implementer synchronizes formal project documentation, including
-product/protocol docs and README, for verified behavior within its Workstream.
-Focused Implementer synchronizes those documents only when needed to establish
-core semantics; after its endpoint, deterministic documentation synchronization
-belongs to a fresh ordinary Implementer Workstream when assigned. Focused
-Implementer waits for a delegated Scanner's distilled discovery result and does
-not repeat its
-discovery pass; after that, it may reopen relevant originals to verify the
-evidence while retaining implementation responsibility. Reviewer challenges
-semantic drift between a candidate and its formal project documentation when
-selected.
-
-Focused Implementer owns semantic convergence of its implementation candidate. It
-continues only verification or repair that could still change the core semantic
-solution, then returns FINAL when the candidate is coherent, hard invariants
-hold, decision-changing unknowns are resolved, focused evidence establishes the
-core semantics, and no remaining work is likely to materially change the causal
-model, accepted architecture, contract, scope, acceptance, or direction. A
-focused-test PASS alone is not sufficient. Once this endpoint is reached,
-ordinary regression, lint, build, generated or documentation synchronization,
-mechanical compatibility, small deterministic fixes, installation, and Git
-closure belong to a fresh ordinary Implementer Workstream when assigned. This
-role-specific endpoint overrides the shared same-session closure guidance.
-
-Reviewer is optional, independent, and non-writing. It checks the original
-acceptance, hard invariants, and affected cross-boundary behavior; unverified
-critical acceptance is UNKNOWN or insufficient evidence, never READY by absence
-of a blocker. Findings must tie to accepted criteria rather than inventing
-generic tests, gates, or scope. A bounded defect with the accepted design
-unchanged can go through a fresh ordinary correction handoff. A decision-basis
-change returns to the Controller.
-
-When routing or shared role contracts change, synchronize shared guidance and
-the affected adapter instructions. Bootstrap, trust, Host maintenance, native
-spawn reconciliation and offline administration are adapter-owned; see
-[Codex lifecycle and recovery](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/docs/thaliris-runtime-recovery.md).
-
-## Private work and return
-
-The Scanner working pattern absorbs large mechanical working sets; Implementer,
-Focused Implementer, and Reviewer retain a focused private working set. The default result is a concise
-conclusion, key findings, decision-changing unknowns, contradictions,
-verification performed, and optional Artifact references. The detailed working
-set does not automatically re-enter the Controller.
-Child sessions do not send ordinary progress, heartbeat, or partial-completion
-messages to the parent. They proactively wake the parent only when completed,
-blocked and requiring a parent decision, or when new decision-changing
-information arrives. A decision-changing unknown requiring a Controller
-decision ends the Workstream in FINAL. The child does not send MESSAGE and remain
-ACTIVE for another wait. Follow-up and input tools remain denied for managed
-children.
-Scanner results return to their requesting Implementer, Focused Implementer,
-or Reviewer.
-
-When detailed material should survive, the selected role session writes a free-form Markdown or
-JSON Artifact and returns its pointer. Registration records path and content
-identity; it does not read, summarize, interpret, or propagate the body.
-
-## Explicit retrieval
-
-Artifact bodies and durable documents are available only through explicit
-exact-path retrieval. `catalog` lists bounded metadata; `document-get` reads one to eight named paths. A Controller
-may copy selected retrieved content into a later native handoff.
-
-## Mechanical observations
-
-Freshness reports recorded versus current file identities. Verification reports
-an observed invocation and result identity. Task surface reports baseline,
-current state, and delta. The Controller decides what any observation means.
-
-## Native boundary
-
-Core stores opaque actor labels and explicit observations. An adapter must prove
-its own native identities, isolation, profile binding and completion evidence.
-Core does not invoke a Host, choose a model or authenticate a Controller. The
-[Codex adapter](https://github.com/Iris0fTheValley/Thaliris-Codex) and
-[DSH adapter](https://github.com/Iris0fTheValley/Thaliris-DSH) implement separate
-Host contracts around these shared mechanical APIs.
+Before opportunistic work, Controller accounts for every explicit user goal as addressed,
+explicitly deferred or blocked by a decision-changing dependency. Near natural task closure
+Controller decides whether selected evidence has reusable future value and warrants fresh
+Curator reconciliation. No durable candidate register, extra stage or automatic corpus scan
+is required. INDEX navigation stays concise, semantic, selected and model-maintained.

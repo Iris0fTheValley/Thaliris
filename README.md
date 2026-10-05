@@ -7,7 +7,7 @@
 一个轻量、Git 原生的 AI 编程上下文与编排层。
 
 
-项目理念是用大量可丢弃的低成本认知工作，保护少量不可替代的前沿推理注意力；让强模型自己做专家，而不是让搜索、流程和审查占据专家的脑子
+项目理念是通过选择必要事实、约束和证据，保护高能力模型在聚焦上下文中的有效推理。上下文质量不等于数量，运行时提示词本身也是工作上下文的一部分。
 
 无关信息，竞争目标和历史轨迹越多，真正需要推理的信息越容易被稀释或干扰
 
@@ -82,312 +82,13 @@ Thaliris 由 Thalamus（丘脑） 与 Iris（虹膜） 组合而来。
 
 ---
 
-## 设计理念
+## 上下文与运行时契约
 
-### 每个推理上下文只保留一个主导目标
+上下文质量不等于上下文数量。运行时提示词本身也是工作上下文的一部分：重复规则、无关历史和相互竞争的目标会稀释推理所需的证据。保留必要事实和硬不变量，同时为高能力模型提供信息密集、噪声较低的工作上下文。每项不变量在常规运行时提示词中只有一个权威表达，并有清晰边界；解释和历史背景放在文档中。选择性地使用多语言内容片段，以保留语言特有的含义并优化表达；目标不是随机切换语言或单纯增加语言种类。
 
-强模型已经具备大量从训练中获得的工程知识。
+Controller 负责方向、范围、验收和后续路由，执行角色负责实现方案。决策完备的交接应复用已选择的证据和既有清单。普通 Implementer 负责收敛稳定方向；Focused Implementer 负责完整的推理、实现、运行时反馈和修订循环，直到核心语义收敛，然后把工作上下文释放给新的普通 Implementer 完成确定性收尾。Reviewer 独立且只读；关键验收需要支持证据。Core 记录机械事实，但不判定角色适用性或语义完成状态。
 
-目标不是告诉它们应当执行每一个推理步骤，而是向它们提供：
-
-* 问题；
-* 已确认事实；
-* 相关证据；
-* 硬约束；
-* 未解决的问题。
-
-然后让模型自行推理。
-
-系统会尽量避免在同一个上下文中明确组合互不相关的认知角色。
-
-例如，更推荐：
-
-```text
-调查 → 汇总证据 → 推理 → 实现 → 验证
-```
-
-而不是：
-
-```text
-一个代理负责调查
-        + 设计
-        + 实现
-        + 评判自己的设计
-        + 验证一切
-        + 重读此前的全部日志
-```
-
----
-
-### 弱模型需要流程，强模型需要证据
-
-不同能力的模型适合不同程度的脚手架。
-
-可以近似理解为：
-
-```text
-较弱模型
-    → 做什么 + 怎么做 + 检查清单
-
-中等能力模型
-    → 做什么 + 边界 + 部分方法
-
-强推理模型
-    → 做什么 + 事实 + 硬约束
-```
-
-因此，`Thaliris` 不会尝试给每个代理提供相同的提示词。
-
-调查和机械验证可以使用明确的 schema 与流程。
-
-高推理角色会收到小得多、以证据为核心的上下文。
-
----
-
-### 工作集不等于交接集
-
-调查者可能需要检查数百个文件、搜索结果、符号和中间假设。
-
-这并不意味着下一个代理应该收到全部内容。
-
-预期流程是：
-
-```text
-大型调查工作集
-            ↓
-压缩后的 findings + evidence refs
-            ↓
-被选中的 Controller / Executor / Reviewer 上下文
-            ↓
-聚焦推理、实现或审核
-```
-
-原始探索内容仍可用于追溯，但它不会自动获得进入每个下游上下文的权限。
-
----
-
-### 证据优先于记忆
-
-项目记忆很有用，但记忆不等于事实。
-
-实际优先级是：
-
-```text
-当前源代码 / Git / 测试 / runtime
-                ↓
-新鲜且已验证的项目记忆
-                ↓
-里程碑状态
-                ↓
-历史记忆
-```
-
-当支撑证据发生变化时，已保存的解释可能会变得 stale。
-
-hash 未变化只能证明被引用的证据没有变化，**不能**证明此前的解释是正确的。
-
----
-
-### 优化不能成为正确性依赖
-
-可选工具可以减少重复读取或加快导航。
-
-它们绝不能成为保证正确性的必要条件。
-
-如果 Serena、cachebro、agentmemory 或其他优化层失效，工作流应该只是变慢，而不是变得不正确。
-
----
-
-## 架构
-
-默认角色有意保持职责狭窄。
-
-### Controller / Control Plane
-
-Core 只定义语义角色；具体 runtime 和模型选择属于 adapter。
-
-父级 Controller 负责：
-
-* 任务路由；
-* 任务状态；
-* 上下文 promotion；
-* 阶段转换；
-* 集成；
-* 最终验收。
-
-Controller 拥有顶层任务路由和任务所有权。具体 adapter 可以显式允许执行或审核角色把有界的大规模调查委派给 Investigator；这种子委派只返回压缩事实与证据，不转移任务所有权。
-
-Controller 应基于有界任务视图工作，而不是读取原始调查 transcript。
-
----
-
-### Investigator
-
-具体 runtime 和模型选择属于 adapter。
-
-用于大 working set 调查、仓库扫描和机械式证据收集：
-
-* 仓库搜索；
-* 符号发现；
-* 引用查找；
-* Git 检查；
-* 定向验证；
-* 结构化提取；
-* 测试执行；
-* 残留引用检查。
-
-Investigator 可以拥有很大的工作集，并负责把搜索、调用点、测试和中间探索压缩成事实、位置、证据与未知项。
-
-其输出是 task-local 的结构化 findings 和 evidence refs，而不是 transcript。只有 Controller 作出显式 retention 决定并运行 `task-promote` 后，内容才可能进入 `.agent-memory/` 或 `.milestones/`。
-
----
-
-### Curator
-
-具体 runtime 和模型选择属于 adapter。
-
-Curator 是按需的知识增强角色，而不是调查流水线中的压缩工位。只有当 Controller 已经明确选出值得复用的材料时，才让 Curator 对这些材料做去任务化、压缩、去重或重组，使其适合进入长期项目知识。
-
-Curator 不负责决定什么重要、选择下一角色或替 Controller 路由；它也不能凭空制造比来源材料更强的确定性。
-
-Curation 改变的是表达和可复用性，而不是证据。
-
----
-
-### Reasoning Specialist
-
-具体 runtime 和模型选择属于 adapter。
-
-Reasoning Specialist 是按需的元认知角色。它不因为“实现很难”就自动介入；复杂的具体实现仍应由合适的执行角色自己完成推理和修改。
-
-仅当问题定义、抽象层级、目标或前提本身不清楚时使用它，例如：
-
-* 当前方案始终别扭，怀疑问题被错误建模；
-* 多个候选方案其实在解决不同的问题；
-* 用户或 Controller 还不清楚真正需要决定什么；
-* 需要显式挑战隐藏假设或重新表述核心矛盾。
-
-它不维护任务状态，也不执行大规模仓库调查或常规证据 bookkeeping。它的输出应帮助 Controller 重新定义问题、决策依据和仍需确认的未知项。
-
----
-
-### Implementer
-
-具体 runtime 和模型选择属于 adapter。
-
-接收明确的实现边界，以及完成修改所必需的事实。
-
-它的职责是理解、实现和验证，而不是扩大任务所有权。复杂实现可以由 adapter 选择更聚焦、更高能力的执行绑定，让推理与修改留在同一个 working set 中。
-
-Implementer 可以直接读取少量关键文件；当需要大范围仓库搜索、调用点枚举或其他巨大机械 working set 时，支持该能力的 adapter 可以让它把这部分调查委派给 Investigator，再基于压缩后的事实继续实现。
-
-当关键假设失效、问题定义需要重开或所需范围发生实质性扩大时，控制权返回 Controller。
-
----
-
-### Independent Reviewer
-
-具体 runtime 和模型选择属于 adapter。
-
-Reviewer 按风险和独立判断价值调用；高风险修改仍应接受 fresh independent review。
-
-Review findings 是独立证据，不会自动触发另一轮实现：P0/P1，或直接违反请求 completion criteria 的 finding 必须解决；P2/lower 只有在实质影响 correctness、requested behavior、regression safety 或已接受的 Modification Boundary 时，Controller 才会安排另一轮实现。Review 不是迭代式 cleanup loop。
-
-Reviewer 会被刻意隔离于：
-
-* 此前的 reviewer findings；
-* implementer 的自我辩护；
-* 原始调查历史；
-* 评分 rubric；
-* 不必要的调试历史。
-
-它返回包含影响和证据的结构化问题。需要大范围机械核查时，支持该能力的 adapter 可以让 Reviewer 委派 Investigator 做扫描，而 Reviewer 保留独立判断。
-
-Controller 决定这些 findings 是否应影响 Decision Context。
-
----
-
-## 典型工作流
-
-### Microtask
-
-对于明显、局部且低风险的修改：
-
-```text
-Controller
-    ↓
-Implementer
-    ↓
-deterministic verification
-    ↓
-done
-```
-
-即使是 microtask，persistent Controller 也不直接编辑源文件。
-
----
-
-### 常规实现
-
-```text
-Controller
-    ↓
-Implementer
-    ↓
-确定性检查
-    ↓
-需要时由 Investigator 验证
-```
-
----
-
-### 调查
-
-```text
-Controller
-    ↓
-Investigator
-    ↓
-压缩后的 findings + evidence
-    ↓
-Controller
-
-        ├─ 问题和边界明确 → Implementer
-        └─ 问题定义/抽象本身不清楚 → Reasoning Specialist
-```
-
----
-
-### 复杂修改
-
-```text
-Controller
-        ↓
-适合该复杂度的执行角色
-        ├─ 直接读取少量关键文件
-        └─ 需要时 → Investigator 大规模扫描
-                       ↓
-                 压缩事实与证据
-                       ↓
-             返回同一执行 working set
-        ↓
-推理 + 实现 + 确定性检查
-```
-
-对于风险足够高的修改：
-
-```text
-        ↓
-fresh Independent Review
-        ↓
-Controller 决策
-```
-
-默认并发数为一。
-
-只对明确独立的工作使用并行。
-
----
+这些边界见[路由协议](docs/thaliris-routing-protocol.md)和[提示词归属与研究动机](docs/thaliris-prompt-design.md)。全局、项目及角色提示词的生成和原生运行时执行由 Host adapters 负责。ABCD 结果只适用于各自原有的实验设置；本次规范化没有经过基准测试，提示词变短也不能证明质量提升。
 
 ## 安装
 
@@ -850,22 +551,13 @@ Independent Reviewer：
 
 ---
 
-## 研究背景
+## 研究动机与适用边界
 
-下列工作为 side-constraint retention、异质状态、外置上下文、handoff continuity、陈旧探索干扰和 evidence-grounded checking 提供经验动机；它们不证明 Thaliris 本身有效，也不证明 task purity 必然优于 context length 或 role projection 必然改善 SWE 表现。
-
-* [Lost in Compaction: Evaluating Side-Constraint Loss under Context Compaction](https://arxiv.org/abs/2608.11242)
-* [The Compaction Cliff in Long-Running AI Agent Memory](https://arxiv.org/abs/2608.22752)
-* [SKILL.state: Scalable Long-Horizon Agent Skills](https://arxiv.org/abs/2608.26263)
-* [Context as an Environment: Programmatic Context Management for Long-Horizon Agents](https://arxiv.org/abs/2608.21690)
-* [Handoff Debt: The Rediscovery Cost When Coding Agents Take Over Interrupted Tasks](https://arxiv.org/abs/2606.02875)
-* [Harness-of-Harness: Multi-Day Autonomous Software Development with Continual Improvement](https://arxiv.org/abs/2609.01481)
-* [AutoCompact: Learning When to Compact Context in Long-Horizon Coding Agents](https://autocompact.github.io/)
-* [Adversarial Review: Structured Disagreement for Grounded Agentic Code Review](https://arxiv.org/abs/2608.18167)
-
-实现细节、证据契约和迁移策略见 [DESIGN.md](DESIGN.md)。
-
----
+这些论文为设计选择提供动机依据，但不能验证 Thaliris 或其压缩比例。
+[Liu 等人（2024）的 Lost in the Middle](https://doi.org/10.1162/tacl_a_00638)研究上下文的位置和结构如何影响利用效果。[Jiang 等人（2024）的 LongLLMLingua](https://doi.org/10.18653/v1/2024.acl-long.91)报告了其测试任务中的信息密度、效率和性能影响。
+[Mondshine、Paz-Argaman 与 Tsarfaty（2025）的 Beyond English](https://doi.org/10.18653/v1/2025.findings-naacl.73)支持按任务处理语言；[Kim 等人（2025）](https://doi.org/10.18653/v1/2025.findings-emnlp.1215)研究英语和韩语中的语言特有细节与知识线索，并未声称这种处理普遍有益。
+[Park 等人（2026）的研究](https://arxiv.org/abs/2606.19668)提示应谨慎对待随机语言切换和锚定效应。这里列出的文献仅作为动机依据，并非本次重新复现的实验。
+ABCD 结果只适用于各自原有的实验设置；本次没有对提示词规范化进行基准测试，字节数和 token 数估算也仅用于观察长度。
 
 ## Host adapters
 
@@ -1015,7 +707,8 @@ D 的成本约为 C 的 **9.1 倍**，时间约为 **1.57 倍**，但它是唯�
 
 > **弱模型编排本身没有改善总质量。把更强智能有选择地放在语义实现、评审和收尾环节，确实带来了提升。**
 
-它也指出了下一步优化目标：**不是减少高能力实现，而是缩短昂贵上下文的生命周期**。高能力模型应继续用于执行期间确实需要其推理的工作；语义方案收敛后，可以把确定性的收尾交给成本更低的新工作节点，避免反复重放庞大的 Sol 上下文。
+目前已经修正为了缩短昂贵上下文的生命周期。高能力模型应继续用于执行期间确实需要其推理的工作；语义方案收敛后，可以把确定性的收尾交给成本更低的新工作节点，避免反复重放庞大的 Sol 上下文。
+但我没钱继续跑基准测试了
 
 ## Benchmark 边界
 

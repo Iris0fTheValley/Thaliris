@@ -78,312 +78,29 @@ information, and isolate unrelated working sets.
 
 ---
 
-## Design philosophy
-
-### One dominant objective per reasoning context
-
-Strong models already contain substantial learned engineering knowledge.
-
-The goal is not to tell them every reasoning procedure they should execute. The goal is to give them:
-
-* the problem;
-* confirmed facts;
-* relevant evidence;
-* hard constraints;
-* unresolved questions.
-
-Then let the model reason.
-
-The system tries to avoid explicitly combining unrelated cognitive roles inside the same context.
-
-For example:
-
-```text
-investigate → summarize evidence → reason → implement → verify
-```
-
-is preferred over:
-
-```text
-one agent investigates
-        + designs
-        + implements
-        + judges its own design
-        + verifies everything
-        + rereads all previous logs
-```
-
----
-
-### Weak models need procedure; strong models need evidence
-
-Different capabilities benefit from different amounts of scaffolding.
-
-A useful approximation is:
-
-```text
-weaker model
-    → WHAT + HOW + CHECKLIST
-
-mid-level model
-    → WHAT + BOUNDARY + SOME HOW
-
-strong reasoning model
-    → WHAT + FACTS + HARD CONSTRAINTS
-```
-
-Thaliris therefore does not try to give every agent the same prompt.
-
-Investigation and mechanical verification can use explicit schemas and procedures.
-
-High-reasoning roles receive a much smaller evidence-oriented context.
-
----
-
-### Working set is not handoff set
-
-An investigator may need to inspect hundreds of files, searches, symbols, and intermediate hypotheses.
-
-That does not mean the next agent should receive all of them.
-
-The intended flow is:
-
-```text
-large investigation working set
-            ↓
-compressed findings + evidence refs
-            ↓
-selected Controller / Executor / Reviewer context
-            ↓
-focused reasoning, implementation, or review
-```
-
-Raw exploration remains available for traceability, but it does not automatically gain the right to enter every downstream context.
-
----
-
-### Evidence over memory
-
-Project memory is useful, but memory is not truth.
-
-The effective precedence is:
-
-```text
-current source / Git / tests / runtime
-                ↓
-fresh verified project memory
-                ↓
-milestone state
-                ↓
-historical memory
-```
-
-A stored interpretation can become stale when its supporting evidence changes.
-
-An unchanged hash proves that the referenced evidence did not change. It does **not** prove that the previous interpretation was correct.
-
----
-
-### Optimization must not become a correctness dependency
-
-Optional tools may reduce repeated reads or accelerate navigation.
-
-They must never be required for correctness.
-
-If Serena, cachebro, agentmemory, or another optimization layer fails, the workflow should become slower—not less correct.
-
----
-
-## Architecture
-
-The default roles are intentionally narrow.
-
-### Controller / Control Plane
-
-Core defines semantic roles only; runtime and model selection belong to an adapter.
-
-The parent Controller owns:
-
-* task routing;
-* task state;
-* context promotion;
-* phase transitions;
-* integration;
-* final acceptance.
-
-The Controller owns top-level routing and task ownership. An adapter may explicitly allow an execution or review role to delegate bounded large-scale investigation to Investigator; that subordinate delegation returns compressed facts and evidence without transferring task ownership.
-
-The Controller should operate on bounded task views rather than raw investigation transcripts.
-
----
-
-### Investigator
-
-Runtime and model selection belong to an adapter.
-
-Used for large-working-set investigation, repository scanning, and mechanical evidence gathering:
-
-* repository search;
-* symbol discovery;
-* reference lookup;
-* Git inspection;
-* targeted verification;
-* structured extraction;
-* test execution;
-* residual-reference checks.
-
-An Investigator may have a very large working set and compress searches, call sites, tests, and intermediate exploration into facts, locations, evidence, and unknowns.
-
-Its output is a task-local structured handoff of findings and evidence references, not its transcript. Only an explicit Controller retention decision followed by `task-promote` can write `.agent-memory/` or `.milestones/`.
-
----
-
-### Curator
-
-Runtime and model selection belong to an adapter.
-
-Curator is an optional knowledge-enhancement role, not a compression stage in the investigation pipeline. It is used only after the Controller has explicitly selected material worth preserving, to de-task, compress, deduplicate, or reorganize that material into reusable project knowledge.
-
-Curator does not decide what is important, choose the next role, or route work for the Controller. It also cannot manufacture stronger certainty than its source material supports.
-
-Curation changes representation and reusability, not evidence.
-
----
-
-### Reasoning Specialist
-
-Runtime and model selection belong to an adapter.
-
-Reasoning Specialist is an optional meta-reasoning role. It is not selected merely because implementation is difficult; complex concrete implementation should still be reasoned through and performed by the appropriate executor.
-
-Use it when the problem definition, abstraction level, objective, or assumptions are themselves unclear, for example when:
-
-* every proposed solution feels structurally wrong;
-* competing solutions are actually solving different problems;
-* the user or Controller is not yet sure what must be decided;
-* hidden assumptions or the core tension need to be surfaced and reframed.
-
-It does not maintain task state, perform large-scale repository investigation, or do routine evidence bookkeeping. Its output should help the Controller reframe the problem, decision basis, and remaining decision-changing unknowns.
-
----
-
-### Implementer
-
-Runtime and model selection belong to an adapter.
-
-Receives an explicit implementation boundary and the facts necessary to perform the change.
-
-Its job is to understand, implement, and verify within that boundary, not to expand task ownership. For complex implementation, an adapter may choose a more focused, higher-capability execution binding so reasoning and modification remain in the same working set.
-
-An Implementer may read the small number of key files it needs directly. When broad repository search, exhaustive call-site enumeration, or another large mechanical working set is required, an adapter that supports it may let the Implementer delegate that investigation to Investigator and continue from the compressed facts.
-
-When key assumptions fail, the problem definition must be reopened, or the required scope expands materially, control returns to the Controller.
-
----
-
-### Independent Reviewer
-
-Runtime and model selection belong to an adapter.
-
-Invoke a Reviewer according to risk and independent review value; high-risk changes still require a fresh independent review.
-
-Review findings are independent evidence, not an automatic repair loop: P0/P1, or a finding that directly violates the requested completion criteria, must be resolved. The Controller schedules another implementation pass for P2/lower findings only when they materially affect correctness, requested behavior, regression safety, or the accepted Modification Boundary.
-
-The reviewer is deliberately isolated from:
-
-* previous reviewer findings;
-* implementer self-justification;
-* raw investigation history;
-* scoring rubrics;
-* unnecessary debugging history.
-
-It returns structured issues with impact and evidence. When broad mechanical checking is needed, an adapter that supports it may let Reviewer delegate scanning to Investigator while Reviewer retains the independent judgment.
-
-The Controller decides whether those findings should affect Decision Context.
-
----
-
-## Typical workflows
-
-### Microtask
-
-For an obvious, local, low-risk change:
-
-```text
-Controller
-    ↓
-Implementer
-    ↓
-deterministic verification
-    ↓
-done
-```
-
-Even a microtask does not permit a persistent Controller to edit source files directly.
-
----
-
-### Normal implementation
-
-```text
-Controller
-    ↓
-Implementer
-    ↓
-deterministic checks
-    ↓
-Investigator verification when useful
-```
-
----
-
-### Investigation
-
-```text
-Controller
-    ↓
-Investigator
-    ↓
-compressed findings + evidence
-    ↓
-Controller
-
-        ├─ problem and boundary are clear → Implementer
-        └─ problem framing / abstraction is unclear → Reasoning Specialist
-```
-
----
-
-### Complex change
-
-```text
-Controller
-        ↓
-executor appropriate to the task complexity
-        ├─ reads a small number of key files directly
-        └─ when needed → Investigator large-scale scan
-                              ↓
-                        compressed facts + evidence
-                              ↓
-                    return to the same executor working set
-        ↓
-reasoning + implementation + deterministic checks
-```
-
-For sufficiently risky changes:
-
-```text
-        ↓
-fresh Independent Review
-        ↓
-Controller decision
-```
-
-Default concurrency is one.
-
-Parallelism is reserved for clearly independent work.
-
----
+## Context and runtime contracts
+
+Context quality is not context quantity. Runtime prompts are themselves part of the
+working context: repeated rules, unrelated history and competing objectives can dilute
+the evidence needed for reasoning. Preserve necessary facts and hard invariants while
+giving high-capability models dense, low-noise working context. Each invariant has one
+authoritative normal runtime expression and a meaningful boundary; explanations and
+history live in docs. Selective multilingual islands preserve language-specific meaning
+and optimize representation; random switching or adding languages is not the objective.
+
+Controller owns direction, scope, acceptance and next routing, while executor owns
+implementation design. Decision-complete handoffs reuse selected evidence and established
+inventory. Ordinary Implementer converges stable direction; Focused Implementer owns the
+full reasoning/implementation/runtime-feedback/revision loop until semantic convergence,
+then releases that working context for fresh ordinary deterministic closure. Reviewer is
+independent and non-writing; critical acceptance needs supporting evidence. Core records
+mechanical facts without interpreting role applicability or semantic completion.
+
+The [routing protocol](docs/thaliris-routing-protocol.md) and
+[prompt ownership/research motivation](docs/thaliris-prompt-design.md) explain these boundaries.
+Global/project/role prompt generation and native enforcement belong to Host adapters.
+ABCD results remain historical evidence for their original setups; this normalization
+was not benchmarked, and smaller prompt sizes do not establish quality gains.
 
 ## Installation
 
@@ -825,22 +542,19 @@ The intended principle is narrower:
 
 ---
 
-## Research influences
+## Research motivation and limits
 
-The following work motivates side-constraint retention, heterogeneous state, externalized context, handoff continuity, stale-exploration interference, and evidence-grounded checking. It does not prove Thaliris, show that task purity necessarily outweighs context length, or establish that role projections improve SWE performance.
-
-* [Lost in Compaction: Evaluating Side-Constraint Loss under Context Compaction](https://arxiv.org/abs/2608.11242)
-* [The Compaction Cliff in Long-Running AI Agent Memory](https://arxiv.org/abs/2608.22752)
-* [SKILL.state: Scalable Long-Horizon Agent Skills](https://arxiv.org/abs/2608.26263)
-* [Context as an Environment: Programmatic Context Management for Long-Horizon Agents](https://arxiv.org/abs/2608.21690)
-* [Handoff Debt: The Rediscovery Cost When Coding Agents Take Over Interrupted Tasks](https://arxiv.org/abs/2606.02875)
-* [Harness-of-Harness: Multi-Day Autonomous Software Development with Continual Improvement](https://arxiv.org/abs/2609.01481)
-* [AutoCompact: Learning When to Compact Context in Long-Horizon Coding Agents](https://autocompact.github.io/)
-* [Adversarial Review: Structured Disagreement for Grounded Agentic Code Review](https://arxiv.org/abs/2608.18167)
-
-See [DESIGN.md](DESIGN.md) for the implementation, evidence, and migration contracts.
-
----
+These papers motivate design choices; they do not validate Thaliris or its compression ratios.
+[Liu et al. (2024), Lost in the Middle](https://doi.org/10.1162/tacl_a_00638) examines positional
+and structural context utilization. [Jiang et al. (2024), LongLLMLingua](https://doi.org/10.18653/v1/2024.acl-long.91)
+reports information-density/efficiency and performance effects on its tested tasks.
+[Mondshine, Paz-Argaman and Tsarfaty (2025), Beyond English](https://doi.org/10.18653/v1/2025.findings-naacl.73)
+supports task-dependent language treatment; [Kim et al. (2025)](https://doi.org/10.18653/v1/2025.findings-emnlp.1215)
+examines English-Korean language-specific nuances and knowledge cues, not a universal benefit.
+[Park et al. (2026)](https://arxiv.org/abs/2606.19668) motivates caution about random switching
+and anchoring. These supplied references are motivation, not newly reproduced experiments.
+ABCD results remain historical evidence for their original setups; prompt normalization was
+not benchmarked here, and byte/token estimates are sizing observations only.
 
 ## Host adapters
 

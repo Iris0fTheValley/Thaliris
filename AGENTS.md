@@ -97,8 +97,8 @@ completion; missing evidence keeps closure UNKNOWN. The last Controller-direct
 handoff must complete with no pending/active descendants. Host instruction/catalog
 activation remains UNKNOWN without native evidence; changed disk files alone do not
 prove activation. Keep security/control-state mutations and live Host installation
-outside child source work. See [Codex protocol](adapter/codex/README.md),
-[role profiles](docs/thaliris-role-packs.md), and [task authority](docs/thaliris-task-authority.md).
+outside child source work. See the [Codex protocol](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/adapter/codex/README.md),
+[role profiles](docs/thaliris-role-packs.md), and [task authority](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/docs/thaliris-task-authority.md).
 <!-- thaliris:end -->
 ## Thaliris Core
 

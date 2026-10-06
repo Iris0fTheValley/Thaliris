@@ -47,6 +47,20 @@ Decisions, invariants and acceptance bind; recommendations are non-binding. Meth
 belong to the executor. Reuse established inventory and reopen only decision-critical
 originals; a new Scanner covers a genuinely uncovered evidence gap.
 
+Use a stable narrative base language and preserve precision-bearing original terms,
+quotations, distinctions and user formulations when translation would materially
+blur, broaden, narrow or expand meaning. Avoid forced monolingual translation,
+random language switching and bilingual repetition. Output language requirements
+still govern. Compression and handoff retain this precision-bearing representation.
+For operational artifact or installation acceptance, select the authoritative
+artifact, source, revision and provenance before delegation, or explicitly assign
+that selection to a later Workstream before its operational acceptance.
+
+Installation closure here means project/package build or install, fixtures,
+isolated smoke, packed artifacts and project-local verification. Effective live
+Host install/upgrade/uninstall, global instructions, profiles, hooks and trust
+require separate Host maintenance authority under the global contract.
+
 Root routes Workstreams; executors close local loops inside them. Semantic dependency,
 decision coupling and independent closure define their boundaries. Ordinary Implementer
 may finish assigned deterministic execution and Git closure in the same Workstream.
@@ -59,6 +73,16 @@ go to a fresh ordinary Implementer when assigned; shared guidance cannot extend 
 Focused endpoint. FINAL ends a child session; any further work uses a fresh handoff.
 Evidence changing a decided boundary or requiring an unverified external capability
 returns to Controller; ordinary local defects stay within the accepted assignment.
+
+Classify remaining work as independently deterministic only when the accepted
+contract uniquely determines the behavior to preserve. Compatibility authority
+ambiguity remains semantic: when production behavior and historical fixtures leave
+authority undecided, Focused must supply representative evidence or return the
+dependency to Controller; this does not mandate full regression. Controller may
+reroute the same semantic closure to a fresh ordinary session when explicit inputs
+and independent acceptance suffice and accumulated debugging state adds no benefit.
+Carry distilled invariants, exact candidate, green evidence, provenance, remaining
+acceptance and blockers, not raw history. FINAL still ends the prior child session.
 
 Select a fresh independent non-writing Reviewer only after candidate convergence
 when semantic challenge adds value. It checks original acceptance, invariants and
@@ -91,13 +115,15 @@ Use only trusted direct runtime commands and native coordination allowed by the
 current execution mode. Pending-spawn recovery needs exact trusted native failure
 evidence; timeouts, not_found and prose cannot release a reservation. Wait only for
 a known unfinished necessary child, using the maximum in the current tool definition;
-do not infer a maximum or poll a finished child. Before task-close call list_agents
+do not infer a maximum or poll a finished child. Do not create repeated reasoning
+turns solely to observe unchanged deterministic state when the runtime can wait for
+a meaningful or terminal event. Before task-close call list_agents
 once for exact name-bound native Completed evidence. Stop/wake/prose alone is not
 completion; missing evidence keeps closure UNKNOWN. The last Controller-direct
 handoff must complete with no pending/active descendants. Host instruction/catalog
 activation remains UNKNOWN without native evidence; changed disk files alone do not
 prove activation. Keep security/control-state mutations and live Host installation
-outside child source work. See the [Codex protocol](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/adapter/codex/README.md),
+outside child source work. See [Codex protocol](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/adapter/codex/README.md),
 [role profiles](docs/thaliris-role-packs.md), and [task authority](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/docs/thaliris-task-authority.md).
 <!-- thaliris:end -->
 ## Thaliris Core

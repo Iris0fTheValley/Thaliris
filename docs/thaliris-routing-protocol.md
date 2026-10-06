@@ -17,6 +17,16 @@ unknowns. Include source locations and covered/uncovered scope from selected dis
 Resolve ambiguity from the request and confirmed facts; bound the transformation in
 cleanup, synchronization or migration. Recommendations are non-binding.
 
+Use a stable narrative base language and preserve precision-bearing original terms,
+quotations, distinctions and user formulations when translation would materially
+blur, broaden, narrow or expand meaning. Avoid forced monolingual translation,
+random language switching and bilingual repetition. Output language requirements
+still govern. Compression and handoff retain this precision-bearing representation.
+For operational artifact or installation acceptance, Controller selects the
+authoritative artifact, source, revision and provenance before delegation, or
+explicitly assigns that selection to a later Workstream before its operational
+acceptance.
+
 Fresh children receive only the authorized parent's native handoff and explicitly
 selected material, not an automatic task-state/memory projection. Their private
 working set is larger than the distilled result sent back. Reuse established
@@ -41,6 +51,16 @@ Implementer. Controller routes Workstreams by semantic dependencies, decision co
 and independent closure. Executors close local loops inside them; a semantic checkpoint
 is not necessarily a scheduling checkpoint. Count-based thresholds do not route work.
 
+Remaining work is independently deterministic only when the accepted contract
+uniquely determines the behavior to preserve. Compatibility authority ambiguity
+remains semantic. When production behavior and historical fixtures leave authority
+undecided, Focused supplies representative evidence or returns the dependency to
+Controller; full regression is not mandatory by default. Controller may reroute the
+same semantic closure to a fresh ordinary session when explicit inputs and independent
+acceptance suffice and accumulated debugging state adds no benefit. Its handoff carries
+distilled invariants, exact candidate, green evidence, provenance, remaining acceptance
+and blockers, not raw history. FINAL ends the prior child session.
+
 ## Mutation and evidence
 
 Before first mutation, executor establishes acceptance-relevant current mutation
@@ -54,6 +74,9 @@ for changing methods. Cwd, quoting and known environment command mistakes are me
 recovery, not reasons to restart semantic inquiry. No retry or tool/token/time threshold
 decides convergence. External Host protocol/schema/identity dependencies need source or
 real-shaped proof; unresolved direction-changing dependencies return to Controller.
+Authority ambiguity affecting compatibility, ownership, security, lifecycle or
+contract also returns to Controller. Many failures, many files or long regression
+alone do not require escalation.
 
 ## Endpoints and review
 
@@ -70,6 +93,12 @@ deterministic defects, installation and Git closure go to a fresh ordinary Imple
 when assigned. Shared Executor guidance never extends the Focused endpoint. Its result
 identifies exact candidate sources/diff, invariants, evidence and limits, remaining
 tasks, acceptance and escalation boundary. FINAL ends the child; further work is fresh.
+
+Installation closure means project/package build or install, fixtures, isolated smoke,
+packed artifacts and project-local verification. Effective live Host installation,
+upgrade or uninstall, global instructions, profiles, hooks and trust require separate
+Host authority under the adapter's maintenance contract. Project operational acceptance
+does not grant that authority.
 
 Reviewer is fresh, independent and non-writing after candidate convergence. It challenges
 original acceptance, invariants and affected cross-boundary behavior, not only the diff.

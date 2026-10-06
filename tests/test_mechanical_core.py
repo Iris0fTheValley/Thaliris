@@ -125,25 +125,18 @@ def test_routing_guidance_permits_the_bounded_implementer_only_path() -> None:
     root = Path(__file__).resolve().parents[1]
     protocol = (root / "docs" / "thaliris-routing-protocol.md").read_text(encoding="utf-8")
     role_packs = (root / "docs" / "thaliris-role-packs.md").read_text(encoding="utf-8")
-    normalized_protocol = " ".join(protocol.split())
-    assert "For every task, the Controller selects the minimum necessary fresh semantic\nroles" in protocol
-    assert "Roles are capabilities, not mandatory workflow stages." in protocol
-    assert "policy is identical for ACTIVE and degraded work" in protocol
-    assert "Controller -> fresh Implementer -> done" in protocol
-    assert "Reviewer is conditional, not a mechanical post-implementation gate" in protocol
-    assert "Curator and Reasoning Specialist are optional" in protocol
-    assert "For divisible work, Root routes by semantic Workstream" in protocol
-    assert "a semantic checkpoint is not necessarily a scheduling checkpoint" in normalized_protocol.lower()
-    assert "root routes workstreams. executors close local loops inside them" in normalized_protocol.lower()
-    assert "not by token, file, or task-count thresholds" in normalized_protocol
-    assert "Before choosing an opportunistic discovered slice" in normalized_protocol
-    assert "Decision-changing investigation belongs to the\nInvestigator role" in protocol
-    assert "needed for implementation may stay inside Implementer or Focused Implementer" in protocol
-    assert "bounded local reading, implementation, and deterministic verification" in role_packs.replace("\n", " ")
-    assert "an Investigator is needed only when missing facts could change" in role_packs
-    assert "Work only within the assigned semantic Workstream" in role_packs
-    assert "distilled state, its commit reference, and verification evidence" in role_packs
-    assert "not a mechanical post-implementation gate" in role_packs
+    normalized_protocol = " ".join(protocol.split()).lower()
+    normalized_roles = " ".join(role_packs.split()).lower()
+    assert "roles are capabilities, not mandatory stages." in normalized_protocol
+    assert "stable accepted direction and deterministic convergence use ordinary implementer." in normalized_protocol
+    assert "ordinary implementer may finish assigned verification, deterministic fixes" in normalized_protocol
+    assert "integration checks, installation and git closure in the same workstream." in normalized_protocol
+    assert "stop at original acceptance." in normalized_protocol
+    assert "controller routes workstreams by semantic dependencies, decision coupling and independent closure." in normalized_protocol
+    assert "count-based thresholds do not route work." in normalized_protocol
+    assert "before opportunistic work, controller accounts for every explicit user goal" in normalized_protocol
+    assert "implementer | stable accepted direction through deterministic convergence and assigned local closure." in normalized_roles
+    assert "decision-changing dependencies end the workstream in final for controller judgment." in normalized_roles
 
 
 

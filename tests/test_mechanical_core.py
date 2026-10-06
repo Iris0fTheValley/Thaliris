@@ -130,7 +130,7 @@ def test_routing_guidance_permits_the_bounded_implementer_only_path() -> None:
     assert "roles are capabilities, not mandatory stages." in normalized_protocol
     assert "stable accepted direction and deterministic convergence use ordinary implementer." in normalized_protocol
     assert "ordinary implementer may finish assigned verification, deterministic fixes" in normalized_protocol
-    assert "integration checks, installation and git closure in the same workstream." in normalized_protocol
+    assert "integration checks, project/package install-smoke checks and git closure in the same workstream." in normalized_protocol
     assert "stop at original acceptance." in normalized_protocol
     assert "controller routes workstreams by semantic dependencies, decision coupling and independent closure." in normalized_protocol
     assert "count-based thresholds do not route work." in normalized_protocol

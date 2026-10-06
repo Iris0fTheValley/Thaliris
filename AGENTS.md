@@ -56,7 +56,7 @@ For operational artifact or installation acceptance, select the authoritative
 artifact, source, revision and provenance before delegation, or explicitly assign
 that selection to a later Workstream before its operational acceptance.
 
-Installation closure here means project/package build or install, fixtures,
+Project/package install-smoke closure here covers builds, installs, fixtures,
 isolated smoke, packed artifacts and project-local verification. Effective live
 Host install/upgrade/uninstall, global instructions, profiles, hooks and trust
 require separate Host maintenance authority under the global contract.
@@ -68,7 +68,7 @@ Focused Implementer returns at semantic convergence: core solution/invariants ho
 direction-changing unknowns are resolved, focused evidence supports core semantics,
 and remaining work cannot materially change causal model, architecture, contract,
 scope, acceptance or direction. A test PASS alone is insufficient. Remaining ordinary
-regression, lint/build, sync, deterministic defects, installation and Git closure then
+regression, lint/build, sync, deterministic defects, project/package install-smoke checks and Git closure then
 go to a fresh ordinary Implementer when assigned; shared guidance cannot extend the
 Focused endpoint. FINAL ends a child session; any further work uses a fresh handoff.
 Evidence changing a decided boundary or requiring an unverified external capability

@@ -81,20 +81,20 @@ alone do not require escalation.
 ## Endpoints and review
 
 Ordinary Implementer may finish assigned verification, deterministic fixes,
-generated/documentation sync, integration checks, installation and Git closure in the
+generated/documentation sync, integration checks, project/package install-smoke checks and Git closure in the
 same Workstream. Stop at original acceptance. Focused Implementer owns the full reasoning,
 implementation, runtime-feedback and revision loop. It returns FINAL when core solution
 and invariants hold, decision-changing unknowns are resolved, focused evidence supports
 core semantics, and remaining tasks cannot materially change causal model, architecture,
 contract, scope, acceptance or direction. A focused-test PASS alone is insufficient.
-Before that endpoint, installation/smoke feedback that exposes a semantic defect stays
+Before that endpoint, project/package install or smoke feedback that exposes a semantic defect stays
 in its loop. Afterward, ordinary regression/lint/build/sync, mechanical compatibility,
-deterministic defects, installation and Git closure go to a fresh ordinary Implementer
+deterministic defects, project/package install-smoke checks and Git closure go to a fresh ordinary Implementer
 when assigned. Shared Executor guidance never extends the Focused endpoint. Its result
 identifies exact candidate sources/diff, invariants, evidence and limits, remaining
 tasks, acceptance and escalation boundary. FINAL ends the child; further work is fresh.
 
-Installation closure means project/package build or install, fixtures, isolated smoke,
+Project/package install-smoke closure covers builds, installs, fixtures, isolated smoke,
 packed artifacts and project-local verification. Effective live Host installation,
 upgrade or uninstall, global instructions, profiles, hooks and trust require separate
 Host authority under the adapter's maintenance contract. Project operational acceptance

@@ -7,11 +7,19 @@ and a meaningful boundary, rather than an old rule followed by overrides/excepti
 
 | Layer | Runtime responsibility | Canonical source |
 | --- | --- | --- |
-| Codex global | Startup, human authority/security, recovery, project entry | `_global_agents_block()` in the Codex adapter |
-| Codex project | Controller ownership, role selection, shared invariants, Workstream routing/closure | `render_managed()` in the Codex adapter |
+| Codex global/project | Cross-role authority/isolation boundaries, one-shot startup entry and canonical procedure pointers | `_global_agents_block()` and `render_managed()` in the Codex adapter |
+| Codex Controller bootstrap response | Resident normal orchestration delivered through already-required startup; exceptional recovery/maintenance retrieved only when needed | `controller_instructions.md` rendered by `codex_bootstrap.controller_guidance()` |
 | Codex native role | Own responsibility/style/delegation/endpoint/output | `thaliris_codex.roles`; native TOMLs are generated |
 | Core documents | Shared semantic explanation, rationale and protocol | Shared routing/role/task-authority documents |
 | DSH native policy | User-editable Controller/role records, model/tool/context grants | `policy.mjs`, `role-templates.mjs`; bundle patch is generated |
+
+Normal routing, decision-complete handoffs, evidence reuse, waiting, Focused convergence,
+ordinary autonomous closure, acceptance/review selection and causal diagnosis stay
+resident for Controller use through the normal bootstrap response, without another
+procedure get or full Controller-routine injection into every fresh child. Rare
+Host maintenance, exceptional recovery and historical
+migration steps are retrieved on demand. Compare total normal task context and retrieval
+cost with delivered quality; fewer prompt bytes alone do not establish savings.
 
 Full mechanical design stays in protocol docs; runtime retains consequences the model
 must act upon. Controller determines acceptance and handoff boundaries, not the executor's

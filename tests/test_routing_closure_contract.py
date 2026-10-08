@@ -1,5 +1,6 @@
 """Focused checks of the shared semantic contract; no Host behavior claims."""
 from pathlib import Path
+import re
 
 
 def shared_contract():
@@ -28,3 +29,20 @@ def test_shared_compatibility_ambiguity_and_same_closure_rerouting():
                  "green evidence, provenance, remaining acceptance and blockers, not raw history",
                  "many failures, many files or long regression alone do not require escalation"):
         assert term in text
+
+
+def test_shared_observation_frequency_and_wait_capacity_contract():
+    text = shared_contract()
+    for terms in (("normal controller", "directly available", "exceptional recovery", "when needed"),
+                  ("complete task context", "retrieval", "delivered quality"),
+                  ("one observation owner", "executors", "tests", "processes", "ci", "child result"),
+                  ("tool maximum", "capacity", "higher-level limits", "precedence"),
+                  ("simultaneous", "active/pending", "not a lifetime quota", "terminal completion"),
+                  ("original failure", "local reproduction", "failed boundaries", "inferred deeper root cause"),
+                  ("review ready", "selected candidate", "final product acceptance")):
+        assert all(term in text for term in terms)
+    def prohibits_recommendation(value):
+        return any("maximum" in clause and "recommended" in clause and "duration" in clause and "not" in clause
+                   for clause in re.split(r"[.!?;]", value))
+    assert prohibits_recommendation(text)
+    assert not prohibits_recommendation(text.replace("not a recommended duration", "a recommended duration"))

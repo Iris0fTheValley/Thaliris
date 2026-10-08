@@ -33,6 +33,31 @@ working set is larger than the distilled result sent back. Reuse established
 inventory; reopening decision-critical originals is part of execution. A Scanner
 collects only an independent uncovered discovery gap, not a duplicate inventory.
 
+## Context frequency, waiting and observation
+
+Keep normal Controller routing, handoffs, evidence reuse, Workstream endpoints,
+acceptance and causal diagnosis directly available in its normal task context.
+Retrieve exceptional recovery, Host maintenance and historical migration procedures
+when needed. Shared instructions carry genuinely cross-role boundaries; role-owned
+methods stay with the role. Judge complete task context plus retrieval/reconstruction
+cost and delivered quality, not the shortest prompt or number of calls alone.
+
+Choose waiting from available capability, expected meaningful event and necessary
+dependency; prefer native notifications. A tool maximum is capacity, not a recommended
+duration. Higher-level limits take precedence; neither a universal maximum nor a fixed
+wait duration is the shared policy. Give each necessary dependency one observation
+owner: executors run/wait on their tests, processes and CI and report substantive
+changes or terminal evidence; Controller waits for the necessary child result without
+rechecking the same job. Do not create status-only reasoning rounds for unchanged
+state or poll completed work. A timeout alone supplies no new decision or evidence.
+
+Native capacity never expands adapter-managed authorization. A simultaneous
+active/pending delegation slot is not a lifetime quota; after proved terminal
+completion it may serve another necessary uncovered gap within the accepted boundary,
+where the adapter supports that shape. Unknown overlap evidence does not authorize
+bypassing admission or disabling all future supported delegation. Core does not set
+Host concurrency limits.
+
 ## Role selection and Workstreams
 
 Roles are capabilities, not mandatory stages. Choose one profile for the Workstream's
@@ -78,6 +103,12 @@ Authority ambiguity affecting compatibility, ownership, security, lifecycle or
 contract also returns to Controller. Many failures, many files or long regression
 alone do not require escalation.
 
+Reuse the original failure and smallest local reproduction before changing behavior.
+Distinguish actual failed boundaries (transport, decoding, shape, dispatch, contract,
+identity) from an inferred deeper root cause. Keep secrets, payloads, raw contracts
+and unbounded exception objects out of diagnostics. Preserve actual refusal, identity,
+ownership and acceptance behavior when repairing CI; tests must not weaken it.
+
 ## Endpoints and review
 
 Ordinary Implementer may finish assigned verification, deterministic fixes,
@@ -107,6 +138,9 @@ requires supported critical closure. No blocker found is not verified acceptance
 Accepted design unchanged and bounded defect supports fresh ordinary correction;
 architecture/contract/invariant/scope/acceptance or decision-basis changes reopen Controller.
 Core test PASS and lifecycle completion are observations, not semantic completion authority.
+Review READY covers its selected candidate and criteria, not final product acceptance.
+Choose fresh sessions by remaining independence and total context reconstruction cost,
+never by a mechanical duration/call threshold or a local PASS alone.
 
 Before opportunistic work, Controller accounts for every explicit user goal as addressed,
 explicitly deferred or blocked by a decision-changing dependency. Near natural task closure

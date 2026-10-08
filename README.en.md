@@ -88,6 +88,8 @@ authoritative normal runtime expression and a meaningful boundary; explanations 
 history live in docs. Selective multilingual islands preserve language-specific meaning
 and optimize representation; random switching or adding languages is not the objective.
 
+Normal Controller routing, handoffs, evidence reuse, waiting, endpoints, acceptance and causal diagnosis stay resident; exceptional recovery, Host maintenance and historical migration steps are retrieved on demand. Each necessary dependency has one observation owner: executors wait on their tests, processes and CI; Controller waits for the necessary child result without checking the same job again. Tool maximum is capacity, higher-level duration limits take precedence, and cost assessment includes normal task context, retrieval/reconstruction and delivered quality.
+
 Controller owns direction, scope, acceptance and next routing, while executor owns
 implementation design. Decision-complete handoffs reuse selected evidence and established
 inventory. Ordinary Implementer converges stable direction; Focused Implementer owns the

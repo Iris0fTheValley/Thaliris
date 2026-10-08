@@ -93,8 +93,9 @@ architecture, contract, invariant, scope, acceptance or decision basis reopen Co
 Before opportunistic work, account for every explicit user goal as addressed,
 explicitly deferred, or blocked by a decision-changing dependency.
 
-Fresh role sessions use `fork_turns="none"` and only the authorized parent's native
-spawn message plus explicitly selected information. Controller may spawn registered
+Fresh role sessions explicitly select the native Host isolation form: V2 uses
+`fork_turns="none"`; V1 uses `fork_context=false`. Only the authorized parent's native
+spawn message plus explicitly selected information is task-specific input. Controller may spawn registered
 roles; Implementer, Focused Implementer and Reviewer may spawn one fresh Investigator
 doing Scanner work. Other children cannot delegate. Maximum managed depth is two,
 one top-level child and its nested Investigator, never sibling workers.
@@ -113,14 +114,19 @@ CHANGED is an observation, not semantic invalidation; Controller decides revalid
 
 Use only trusted direct runtime commands and native coordination allowed by the
 current execution mode. Pending-spawn recovery needs exact trusted native failure
-evidence; timeouts, not_found and prose cannot release a reservation. Wait only for
-a known unfinished necessary child, using the maximum in the current tool definition;
-do not infer a maximum or poll a finished child. Do not create repeated reasoning
-turns solely to observe unchanged deterministic state when the runtime can wait for
-a meaningful or terminal event. Before task-close call list_agents
-once for exact name-bound native Completed evidence. Stop/wake/prose alone is not
-completion; missing evidence keeps closure UNKNOWN. The last Controller-direct
-handoff must complete with no pending/active descendants. Host instruction/catalog
+evidence bound to the reservation by its V2 task name or V1 agent ID; timeouts,
+not_found, Completed, and prose cannot release a reservation. Recovery remains
+explicit. Wait only for a known unfinished necessary child, using the maximum in the
+current tool definition; do not infer a maximum or poll a finished child. Do not
+create repeated reasoning turns solely to observe unchanged deterministic state when
+the runtime can wait for a meaningful or terminal event. For V1, `wait_agent` may
+provide terminal evidence only through an exact native agent-ID status-map entry;
+V2 `wait_agent` is wake-only, so use exact canonical task-name status from
+`list_agents`. `Completed(null)` is execution-terminal evidence without a child result
+and never supplies semantic acceptance. `close_agent.previous_status`, Stop,
+wake-only waits, and prose alone do not prove completion for task closure; missing
+evidence keeps closure UNKNOWN. The last Controller-direct handoff must complete
+with no pending/active descendants. Host instruction/catalog
 activation remains UNKNOWN without native evidence; changed disk files alone do not
 prove activation. Keep security/control-state mutations and live Host installation
 outside child source work. See [Codex protocol](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/adapter/codex/README.md),

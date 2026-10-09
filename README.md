@@ -86,9 +86,9 @@ Thaliris 由 Thalamus（丘脑） 与 Iris（虹膜） 组合而来。
 
 上下文质量不等于上下文数量。运行时提示词本身也是工作上下文的一部分：重复规则、无关历史和相互竞争的目标会稀释推理所需的证据。保留必要事实和硬不变量，同时为高能力模型提供信息密集、噪声较低的工作上下文。每项不变量在常规运行时提示词中只有一个权威表达，并有清晰边界；解释和历史背景放在文档中。选择性地使用多语言内容片段，以保留语言特有的含义并优化表达；目标不是随机切换语言或单纯增加语言种类。
 
-正常 Controller 的路由、交接、证据复用、等待、终点、验收与因果诊断应直接常驻；异常恢复、Host 维护与历史迁移步骤按需检索。每个必要依赖有一个观察 owner：执行角色等待自己的测试、process 与 CI，Controller 等待必要 child 结果，不重复查同一作业。工具最长等待是 capacity，高层时长限制优先；成本评价包含正常任务上下文、检索重建与交付质量。
+正常 Controller 的路由、交接、证据复用、等待、终点、验收与因果诊断应直接常驻；异常恢复、Host 维护与历史迁移步骤按需检索。每个必要依赖有一个观察 owner：执行角色等待自己的测试、process 与 CI；Controller 只在已知子代理尚未结束且其结果仍属必要依赖时等待，不重复观察同一作业。child 返回 FINAL 或 decision-changing unknown 时，该 slice 已结束，不继续等待。工具最长等待是 capacity，不是默认时长；高层时长限制优先。成本评价包含正常任务上下文、检索重建与交付质量。
 
-Controller 负责方向、范围、验收和后续路由，执行角色负责实现方案。决策完备的交接应复用已选择的证据和既有清单。普通 Implementer 负责收敛稳定方向；Focused Implementer 负责完整的推理、实现、运行时反馈和修订循环，直到核心语义收敛，然后把工作上下文释放给新的普通 Implementer 完成确定性收尾。Reviewer 独立且只读；关键验收需要支持证据。Core 记录机械事实，但不判定角色适用性或语义完成状态。
+Controller 负责方向、范围、验收和后续路由，执行角色负责实现方案。默认采用 delegated：长期 Controller 将开放式、跨文件、多步和重复调查交给短期 Investigator，将稳定方向的实施交给 Implementer。Controller 可以直接读取一次或极少数互相关联、已经准确定位且对当前决策必要的事实；开放式迭代调查或把一次调查拆成连续小查询都仍须委派。用户明确选择 `controller-direct` 或 `single-agent` 时，该选择优先于效率默认，同时继续遵守任务范围、角色只读限制和用户文件保护。Controller 可按依赖关系选择是否并行安排写入互不冲突的独立 Workstream；同一工作树中的重叠写入仍需协调。决策完备的交接复用已选证据和既有清单。普通 Implementer 收敛稳定方向；Focused Implementer 负责完整推理、实现、运行时反馈和修订循环，直到核心语义收敛，再将工作上下文释放给新的普通 Implementer 完成确定性收尾。Reviewer 独立且只读；关键验收需要支持证据。Core 记录机械事实，但不判断角色适用性、不认证 Host actor，也不判定语义完成状态。
 
 这些边界见[路由协议](docs/thaliris-routing-protocol.md)和[提示词归属与研究动机](docs/thaliris-prompt-design.md)。全局、项目及角色提示词的生成和原生运行时执行由 Host adapters 负责。ABCD 结果只适用于各自原有的实验设置；本次规范化没有经过基准测试，提示词变短也不能证明质量提升。
 
@@ -136,6 +136,8 @@ thaliris-core --root . milestone-check
 
 这些输出记录机械事实，不选择 Investigator、Implementer、Reviewer 等语义角色，也不决定任务是否在语义上完成或验收。Host adapter 与 Controller 负责原生准入、执行关联、路由和语义验收。
 
+每个新任务都有独立的 Task ID 账本；任务状态位于 `.context/tasks/<task-id>/state.json`，Authority、恢复证据和机械记录也按该 Task ID 关联。即使同一仓库中的另一个任务仍为 `ACTIVE`、`UNKNOWN` 或 Authority 损坏，`task-start` 也会创建新的 Task ID。保存 `task-start` 返回的 `task_id`，并在后续任务操作中显式传入 `--task-id`。当前会话关联与 Authority 不会从旧工作区状态自动推断；未选择的旧单例数据只可供只读 legacy 诊断查看，任何 legacy 恢复操作都必须明确选择其任务。Task ID 选择只建立导航，不授予 Host 权限，也不认证调用者。
+
 ### 旧版 Codex `context` 命令示例
 
 本文其他保留的 `context` 命令是旧版 Codex adapter 命令面，不能当作当前 Core CLI 使用说明。`context prepare`、`context recall`、`context doctor` 和 `context migrate` 不属于 Core CLI；旧版 `context init` 与 Host/Hook 设置也属于 Codex adapter。Core 中仍存在的机械记录操作需使用 `thaliris-core` 命令名及其参数。Adapter 提供的命令与实际启动/恢复流程见 [Codex 指南](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md)。
@@ -172,11 +174,12 @@ AGENTS.md
 
 .context/
 ├── config.json
-├── state.json
-└── backups/
+├── tasks/
+│   └── <task-id>/state.json
+└── backups/  # Core 共享备份目录
 ```
 
-`.context/state.json` 是瞬态文件，Git 会忽略它。
+每个 Task ID 的状态文件都是瞬态数据，Git 会忽略它。
 
 项目记忆和里程碑文档由 Git 管理。
 
@@ -215,19 +218,22 @@ Review findings
 
 任务状态拒绝原始 transcript 和 tool-log 字段。
 
-其目标是保留可追溯性，同时避免把 `.context/state.json` 变成第二份对话历史。语义记录具有稳定 ID 和显式状态转换；verification target 存在时，关闭任务需要受信 runtime observation 绑定当前 target、source identity 和 task surface。模型写下“测试通过”本身不是证明。
+其目标是保留可追溯性，同时避免把任务状态变成第二份对话历史。每个 Task ID 的语义记录具有稳定 ID 和显式状态转换；verification target 存在时，关闭该任务需要受信 runtime observation 绑定当前 target、source identity 和 task surface。模型写下“测试通过”本身不是证明。
 
 ### 有界 durable promotion
 
-task-end 的顺序是：`task-local state -> Controller 判断是否值得长期保留 -> 最小 durable promotion -> task-close`。这不是自动总结；没有 durable knowledge 就不写 durable 内容。只有 Controller 可以运行 `task-promote`，且只能提交显式的 `decision`、`invariant`、`failure_mode`、`constraint`，或当前 milestone 的 `progress`/`verification`。连续 feature 且有 current milestone 时，优先保留实际进度和验证到该 milestone；`.agent-memory/` 只保留跨任务可复用的 decision、constraint、invariant、failure mode。Repository task 除非用户明确要求，不主动读取或写入 `~/.codex/memories`、`MEMORY.md` 等个人/global Codex memory；项目连续性走 `.agent-memory/`、`.milestones/`、`task-promote` 和 tracked-document maintenance。输入只能使用当前 ACTIVE task 的 evidence refs，并且必须通过 fresh native file/git evidence，或带 fresh native `source_refs` 的 test/runtime evidence；CONFIRMED promotion 还必须直接引用 fresh CONFIRMED file/git evidence。raw findings、transcript、log 和未知字段都会被拒绝。Promotion 使用 base revision 的 CAS，但不修改 task revision。每个 task 最多消耗 16 个 promotion units（每个 memory record 及每个 milestone progress/verification 字段各 1）；计数器只是有界 task-local bookkeeping，不是长期 memory 或 framework。
+task-end 的顺序是：`task-local state -> Controller 判断是否值得长期保留 -> 最小 durable promotion -> task-close`。这不是自动总结；没有 durable knowledge 就不写 durable 内容。只有 Controller 可以运行 `task-promote`，且只能提交显式的 `decision`、`invariant`、`failure_mode`、`constraint`，或当前 milestone 的 `progress`/`verification`。连续 feature 且有 current milestone 时，优先保留实际进度和验证到该 milestone；`.agent-memory/` 只保留跨任务可复用的 decision、constraint、invariant、failure mode。Repository task 除非用户明确要求，不主动读取或写入 `~/.codex/memories`、`MEMORY.md` 等个人/global Codex memory；项目连续性走 `.agent-memory/`、`.milestones/`、`task-promote` 和 tracked-document maintenance。输入只能使用所选 Task ID 中已有的 evidence refs，并且必须通过 fresh native file/git evidence，或带 fresh native `source_refs` 的 test/runtime evidence；CONFIRMED promotion 还必须直接引用 fresh CONFIRMED file/git evidence。raw findings、transcript、log 和未知字段都会被拒绝。Promotion 使用 base revision 的 CAS，但不修改 task revision。每个 task 最多消耗 16 个 promotion units（每个 memory record 及每个 milestone progress/verification 字段各 1）；计数器只是有界 task-local bookkeeping，不是长期 memory 或 framework。
 
 Core-only 的机械记录示例（不构成 Host task admission 或语义验收）：
 
 ```bash
-thaliris-core --root . task-start "adopt request policy"
-# ...Controller receives task-local evidence and decides retention...
-thaliris-core --root . task-promote --actor controller --base-revision <revision> --input promote.json
-thaliris-core --root . task-close --base-revision <revision>
+TASK_ID=$(thaliris-core --root . task-start "adopt request policy" | python -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+# task-start 返回的 revision 为 1；任何任务状态修改后都重新读取当前 revision。
+BASE_REVISION=1
+# ...Controller 收到 task-local evidence 并判断是否值得保留...
+# promote.json 中的 evidence refs 必须已记录在该 Task ID 中。
+thaliris-core --root . --task-id "$TASK_ID" task-promote --actor controller --base-revision "$BASE_REVISION" --input promote.json
+thaliris-core --root . --task-id "$TASK_ID" task-close --base-revision "$BASE_REVISION"
 ```
 
 `--actor` 是 adapter 提供的标签，不是身份凭证；Core CLI 单独运行不能证明调用者是 Controller。通过 Host adapter 时，adapter 会在允许的边界内执行授权检查。
@@ -240,7 +246,7 @@ Memory 只追加新 entry，并在现有 INDEX 中追加单条 router link；mil
 
 ### Child lifecycle epistemic/control policy
 
-尚未观察到结果不等于失败；timeout、slow 或 incomplete observation 也不等于 capability limitation。没有明确证据时 child 状态保持 `UNKNOWN`。`RUNNING` 只能 wait/re-observe；`UNKNOWN` 只能 keep `UNKNOWN`/re-observe，不能因为一次等待窗口结束就关闭、替换或 takeover。只有明确的 `FAILED`、`CANCELLED`、`UNAVAILABLE` 或 deterministic spawn failure 才能 narrower fresh delegation。只有 objective capability unavailable 才允许最小 capability fallback，且不能借机由 Controller 自行调查或实现；child failure 后优先缩小范围重新委派 fresh child。这是针对 Codex-native observations 的 managed Controller policy，不是 Thaliris runtime、scheduler、heartbeat、retry state machine 或 agent framework；Thaliris 只确定性执行自身的字段校验、evidence/freshness、CAS、role projection 和 capture filtering。
+执行状态、结果验收和任务处置是三件不同的事。缺少终态证据时，子代理状态仍为 `RUNNING` 或 `UNKNOWN`；超时、不活跃或卡片消失都不会证明 `Completed`。Controller 仍可通过有界 adapter 路径显式取消、放弃或恢复对应任务。该处置保留已观察状态并隔离迟到结果，不会伪造执行完成或语义验收。旧任务 `ACTIVE`/`UNKNOWN` 或孤立预约本身不构成新 Task ID 冲突证据；共享文件是否冲突取决于实际重叠写入。这些工作由 Controller 与 adapter 负责，Core 不充当任务调度器或通用 Host 身份系统；Core 提供 task-scoped 记录、CAS 和证据引用。
 
 ---
 
@@ -337,7 +343,8 @@ verification.md
 * 角色隔离；
 * 调查/curation；
 * Decision Context promotion；
-* 默认顺序委派；
+* 默认 delegated 路由与独立 Workstream；
+* 同一工作树中重叠写入的协调；
 * microtask fast path；
 * 原生 correctness fallback。
 

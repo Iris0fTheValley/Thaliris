@@ -88,15 +88,25 @@ authoritative normal runtime expression and a meaningful boundary; explanations 
 history live in docs. Selective multilingual islands preserve language-specific meaning
 and optimize representation; random switching or adding languages is not the objective.
 
-Normal Controller routing, handoffs, evidence reuse, waiting, endpoints, acceptance and causal diagnosis stay resident; exceptional recovery, Host maintenance and historical migration steps are retrieved on demand. Each necessary dependency has one observation owner: executors wait on their tests, processes and CI; Controller waits for the necessary child result without checking the same job again. Tool maximum is capacity, higher-level duration limits take precedence, and cost assessment includes normal task context, retrieval/reconstruction and delivered quality.
+Normal Controller routing, handoffs, evidence reuse, waiting, endpoints, acceptance and causal diagnosis stay resident; exceptional recovery, Host maintenance and historical migration steps are retrieved on demand. Each necessary dependency has one observation owner: executors wait on their tests, processes and CI; the Controller waits only for a known unfinished child result that remains necessary, without checking the same job again. A FINAL result or a decision-changing unknown ends that child slice; do not keep waiting for it. Tool maximum is capacity, not a default duration, and higher-level duration limits take precedence. Cost assessment includes normal task context, retrieval/reconstruction and delivered quality.
 
 Controller owns direction, scope, acceptance and next routing, while executor owns
-implementation design. Decision-complete handoffs reuse selected evidence and established
-inventory. Ordinary Implementer converges stable direction; Focused Implementer owns the
-full reasoning/implementation/runtime-feedback/revision loop until semantic convergence,
-then releases that working context for fresh ordinary deterministic closure. Reviewer is
-independent and non-writing; critical acceptance needs supporting evidence. Core records
-mechanical facts without interpreting role applicability or semantic completion.
+implementation design. The default is delegated: a long-lived Controller sends open-ended,
+cross-file, multi-step and repeated investigation to a short-lived Investigator, and sends
+stable implementation work to an Implementer. A one-time or very small number of related,
+precisely located, decision-critical facts may be read directly; open-ended iteration or
+splitting an investigation into successive small queries does not turn it into ordinary
+Controller work. An explicit user choice of
+`controller-direct` or `single-agent` takes precedence over this efficiency default while
+preserving task scope, read-only role boundaries and protection of user-owned files. Independent workstreams
+may run in parallel when their writes do not conflict; overlapping writes in one working
+tree still need coordination. Decision-complete handoffs reuse selected evidence and
+established inventory. Ordinary Implementer converges stable direction; Focused Implementer
+owns the full reasoning/implementation/runtime-feedback/revision loop until semantic
+convergence, then releases that working context for fresh ordinary deterministic closure.
+Reviewer is independent and non-writing; critical acceptance needs supporting evidence.
+Core records mechanical facts without interpreting role applicability, authenticating a
+Host actor, or deciding semantic completion.
 
 The [routing protocol](docs/thaliris-routing-protocol.md) and
 [prompt ownership/research motivation](docs/thaliris-prompt-design.md) explain these boundaries.
@@ -148,6 +158,16 @@ thaliris-core --root . milestone-check
 
 These outputs record mechanical facts. They do not select semantic roles such as Investigator, Implementer, or Reviewer, and they do not decide semantic completion or acceptance. The Host adapter and Controller own native admission, execution association, routing, and semantic acceptance.
 
+Each new task has an independent Task ID ledger. Task state lives at
+`.context/tasks/<task-id>/state.json`; Authority, recovery evidence and mechanical records are
+also associated with that Task ID. `task-start` creates a new Task ID even when another task in
+the same repository remains `ACTIVE`, `UNKNOWN` or has damaged Authority. Save the `task_id` returned by
+`task-start` and pass `--task-id` explicitly to later task operations. Current-session
+association and Authority are not inferred from older workspace state. An unselected legacy
+singleton is available only to read-only diagnostics; legacy recovery must explicitly select
+its task. Neither path associates it with the current session. Selecting a Task ID is navigation,
+not Host authorization or actor authentication.
+
 ### Legacy Codex `context` examples
 
 Other retained `context` commands in this README describe the former Codex-adapter command surface, not the current Core CLI. `context prepare`, `context recall`, `context doctor`, and `context migrate` are not Core CLI commands; the former `context init` and Host/Hook setup also belong to the Codex adapter. Mechanical record operations still available in Core use the `thaliris-core` command name and its arguments. See the [Codex guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) for adapter commands and actual startup/recovery procedures.
@@ -184,11 +204,12 @@ AGENTS.md
 
 .context/
 ├── config.json
-├── state.json
-└── backups/
+├── tasks/
+│   └── <task-id>/state.json
+└── backups/  # shared Core backup directory
 ```
 
-`.context/state.json` is transient and ignored by Git.
+Each Task ID's state file is transient and ignored by Git.
 
 Project memory and milestone documents are Git-owned.
 
@@ -227,19 +248,22 @@ Typical Decision Context contains:
 
 Task state rejects raw transcript and tool-log fields.
 
-The intent is to preserve traceability without converting `.context/state.json` into a second conversation history. Semantic records have stable IDs and explicit transitions. When a verification target exists, close requires a trusted runtime observation bound to the current target, source identity, and task surface; a model saying that tests passed is not proof.
+The intent is to preserve traceability without turning task state into a second conversation history. Each Task ID's semantic records have stable IDs and explicit transitions. When a verification target exists, closing that task requires a trusted runtime observation bound to the current target, source identity, and task surface; a model saying that tests passed is not proof.
 
 ### Bounded durable promotion
 
-The task-end order is `task-local state -> Controller retention decision -> minimal durable promotion -> task-close`. This is explicit persistence, not automatic summarization; if there is no durable knowledge, no durable content is written. Only the Controller may run `task-promote`, and it may submit only explicit `decision`, `invariant`, `failure_mode`, or `constraint` records, or explicit `progress`/`verification` fields for the current milestone. For continuous feature work with a current milestone, retain actual progress and verification there first; `.agent-memory/` retains only cross-task reusable decisions, constraints, invariants, and failure modes. Unless the user explicitly asks, a repository task does not proactively read or write personal/global Codex memory such as `~/.codex/memories` or `MEMORY.md`; project continuity uses `.agent-memory/`, `.milestones/`, `task-promote`, and tracked-document maintenance. Inputs must use only evidence refs already in the ACTIVE task and must pass fresh native file/git evidence or fresh test/runtime evidence with native `source_refs`; a CONFIRMED promotion must also directly reference fresh CONFIRMED file/git evidence. Raw findings, transcripts, logs, and unknown fields are rejected. Promotion uses a base-revision CAS and does not change the task revision. Each task may consume at most 16 promotion units (one per memory record and per milestone progress/verification field); the counter is bounded task-local bookkeeping, not long-term memory or a framework.
+The task-end order is `task-local state -> Controller retention decision -> minimal durable promotion -> task-close`. This is explicit persistence, not automatic summarization; if there is no durable knowledge, no durable content is written. Only the Controller may run `task-promote`, and it may submit only explicit `decision`, `invariant`, `failure_mode`, or `constraint` records, or explicit `progress`/`verification` fields for the current milestone. For continuous feature work with a current milestone, retain actual progress and verification there first; `.agent-memory/` retains only cross-task reusable decisions, constraints, invariants, and failure modes. Unless the user explicitly asks, a repository task does not proactively read or write personal/global Codex memory such as `~/.codex/memories` or `MEMORY.md`; project continuity uses `.agent-memory/`, `.milestones/`, `task-promote`, and tracked-document maintenance. Inputs must use only evidence refs in the selected Task ID and must pass fresh native file/git evidence or fresh test/runtime evidence with native `source_refs`; a CONFIRMED promotion must also directly reference fresh CONFIRMED file/git evidence. Raw findings, transcripts, logs, and unknown fields are rejected. Promotion uses a base-revision CAS and does not change the task revision. Each task may consume at most 16 promotion units (one per memory record and per milestone progress/verification field); the counter is bounded task-local bookkeeping, not long-term memory or a framework.
 
 Core-only mechanical record example (this does not admit a Host task or provide semantic acceptance):
 
 ```bash
-thaliris-core --root . task-start "adopt request policy"
-# ...the Controller receives task-local evidence and decides retention...
-thaliris-core --root . task-promote --actor controller --base-revision <revision> --input promote.json
-thaliris-core --root . task-close --base-revision <revision>
+TASK_ID=$(thaliris-core --root . task-start "adopt request policy" | python -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+# task-start returns revision 1. Refresh this value after any task-state mutation.
+BASE_REVISION=1
+# Prepare promote.json using evidence refs already recorded in this Task ID.
+# The Controller decides whether to retain the supported decision...
+thaliris-core --root . --task-id "$TASK_ID" task-promote --actor controller --base-revision "$BASE_REVISION" --input promote.json
+thaliris-core --root . --task-id "$TASK_ID" task-close --base-revision "$BASE_REVISION"
 ```
 
 `--actor` is a label supplied by the adapter, not an identity credential. Running Core CLI alone cannot prove that the caller is the Controller; a Host adapter performs authorization checks within its boundary.
@@ -252,7 +276,15 @@ Memory only appends a new entry and one router link to the existing INDEX; miles
 
 ### Child lifecycle epistemic/control policy
 
-No result observed yet does not mean failed; timeout, slow, or incomplete observation does not mean capability limitation. Without explicit evidence, a child state remains `UNKNOWN`. `RUNNING` means wait/re-observe; `UNKNOWN` means keep `UNKNOWN`/re-observe. A single wait-window expiry must not close, replace, or take over the child. Only explicit `FAILED`, `CANCELLED`, `UNAVAILABLE`, or deterministic spawn failure permits narrower fresh delegation. A minimal capability fallback is allowed only when the objective capability is unavailable, and it must not become an excuse for Controller investigation or implementation. After child failure, first narrow the scope and delegate a fresh child. This is managed Controller policy over Codex-native observations, not a Thaliris runtime, scheduler, heartbeat, retry state machine, or agent framework; Thaliris deterministically enforces only its fields, evidence/freshness, CAS, role projection, and capture filtering.
+Execution state, result acceptance and task disposition are separate facts. Without terminal
+evidence, a child remains `RUNNING` or `UNKNOWN`; timeout, inactivity or a missing card does
+not make it `Completed`. The Controller may still explicitly cancel, abandon or recover the
+associated task through its bounded adapter path. That disposition preserves the observed
+state and fences late results; it does not fabricate execution completion or semantic
+acceptance. An older task's `ACTIVE`/`UNKNOWN` state or orphan reservation is not, by itself,
+evidence of a conflict with a new Task ID. Coordinate shared-file work when actual writes
+overlap. These are Controller and adapter responsibilities, not a Core task scheduler or
+universal Host identity system. Core supplies task-scoped records, CAS and evidence links.
 
 ---
 
@@ -349,7 +381,8 @@ The managed block acts as a router for:
 * role isolation;
 * investigation/curation;
 * Decision Context promotion;
-* default sequential delegation;
+* default delegated routing and independent workstreams;
+* coordination for overlapping writes in a shared working tree;
 * microtask fast path;
 * native correctness fallbacks.
 

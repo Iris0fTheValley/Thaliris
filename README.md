@@ -239,8 +239,10 @@ thaliris-core --root . --task-id "$TASK_ID" task-close --base-revision "$BASE_RE
 `--actor` 是 adapter 提供的标签，不是身份凭证；Core CLI 单独运行不能证明调用者是 Controller。通过 Host adapter 时，adapter 会在允许的边界内执行授权检查。
 
 ```json
-{"records":[{"type":"decision","id":"D-001","title":"Use X","text":"Adopt X.","evidence_refs":["e1"],"confidence":"SUPPORTED"}]}
+{"records":[{"id":"D-001","path":".agent-memory/decisions/request-policy.md","title":"Use X","text":"Adopt X.","source_refs":["e1"]}]}
 ```
+
+将 `e1` 替换为该 Task ID 中已经记录的 evidence ID。
 
 Memory 只追加新 entry，并在现有 INDEX 中追加单条 router link；milestone 只更新显式提供的字段并使用 atomic backup。大型历史读取、去重、stale cleanup、冲突判断、INDEX 重构或批量 milestone 整理必须缩小范围后交给 fresh child。
 

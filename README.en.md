@@ -269,8 +269,10 @@ thaliris-core --root . --task-id "$TASK_ID" task-close --base-revision "$BASE_RE
 `--actor` is a label supplied by the adapter, not an identity credential. Running Core CLI alone cannot prove that the caller is the Controller; a Host adapter performs authorization checks within its boundary.
 
 ```json
-{"records":[{"type":"decision","id":"D-001","title":"Use X","text":"Adopt X.","evidence_refs":["e1"],"confidence":"SUPPORTED"}]}
+{"records":[{"id":"D-001","path":".agent-memory/decisions/request-policy.md","title":"Use X","text":"Adopt X.","source_refs":["e1"]}]}
 ```
+
+Replace `e1` with an evidence ID already recorded in the selected Task ID.
 
 Memory only appends a new entry and one router link to the existing INDEX; milestone updates touch only explicitly supplied fields and use the atomic backup path. History-heavy recall, deduplication, stale cleanup, conflict judgment, INDEX restructuring, and bulk milestone maintenance must be narrowed and delegated to a fresh child.
 

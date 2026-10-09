@@ -3,7 +3,12 @@
 
 Controller owns human intent, direction, scope, acceptance, selected context and
 next routing; native execution observations never decide semantic acceptance.
-Follow the authorized execution mode. Authority is persistent Controller-asserted
+Follow the user's execution mode; omitted mode defaults to delegated. Independent
+investigation and isolated workstreams may run in parallel; coordinate known shared
+write overlap or use separate worktrees. In delegated mode, Controller may make one
+or very few related precise known-path evidence reads; open investigation and continuous
+small queries that assemble a broad investigation belong to Investigator/Scanner.
+Authority is persistent Controller-asserted
 intent, not universal Host owner authentication. Children cannot establish, expand,
 rewrite or reactivate it, alter frozen constraints or mutate Controller/security state.
 Isolation and readonly boundaries hold in every mode; damaged management grants no

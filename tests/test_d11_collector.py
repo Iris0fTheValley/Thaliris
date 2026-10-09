@@ -119,6 +119,20 @@ def test_collector_derives_artifact_identity_order_and_consumer(tmp_path: Path) 
     assert sha != actual
 
 
+def test_collector_uses_only_selected_task_ledger(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    core.init(root)
+    first = core.task_start(root, "first evidence task", None, None)
+    first_bytes = core._state_path(root).read_bytes()
+    second = core.task_start(root, "second evidence task", None, None)
+    assert d11_collector._state(root)["task_id"] == second["task_id"]
+    assert d11_collector._state(root, first["task_id"])["task_id"] == first["task_id"]
+    assert core.selected_task(root) == second["task_id"]
+    assert core._state_path(root, first["task_id"]).read_bytes() == first_bytes
+    (root / ".context/state.json").write_text('{"task_id":"unrelated-legacy","goal":"old evidence"}', encoding="utf-8")
+    assert d11_collector._state(root)["goal"] == "second evidence task"
+
+
 def test_collector_does_not_accept_report_booleans_or_unproven_consumption(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.init(root)

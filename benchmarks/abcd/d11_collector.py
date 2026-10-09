@@ -14,6 +14,8 @@ from typing import Any, Iterable
 import time
 import uuid
 
+from thaliris import core
+
 from candidate_manifest import MANIFEST_VERSION, build_manifest
 from d11_sources import AuthorityRegistry, SOURCE_EVENTS, SOURCE_KINDS, _sha_prefix, chain_payload, create_source_registry, hash_chain_record, registry_sources, validate_event_shape
 
@@ -601,8 +603,16 @@ def _canonical_event_identity(event: dict[str, Any]) -> str | None:
     return f"native:{native}" if isinstance(native, str) and native else None
 
 
-def _state(root: Path) -> dict[str, Any]:
-    value = json.loads((root / ".context" / "state.json").read_text(encoding="utf-8"))
+def _state(root: Path, task_id: str | None = None) -> dict[str, Any]:
+    # Offline diagnosis may select an exact task. Never infer one by scanning
+    # workspace ACTIVE records; legacy singleton diagnosis remains explicit.
+    prior = core.selected_task(root)
+    try:
+        if task_id is not None:
+            core.select_task(root, task_id)
+        value = json.loads(core._state_path(root).read_text(encoding="utf-8"))
+    finally:
+        core.select_task(root, prior)
     if not isinstance(value, dict):
         raise ValueError("Core state is not an object")
     return value
@@ -774,9 +784,9 @@ def _producer_lifecycle(envelope: dict[str, Any] | None, artifact_id: str, produ
     return True, None
 
 
-def collect_evidence(root: Path, events: Iterable[dict[str, Any]]) -> dict[str, Any]:
+def collect_evidence(root: Path, events: Iterable[dict[str, Any]], *, task_id: str | None = None) -> dict[str, Any]:
     """Derive the reusable-evidence lifecycle from state, bytes, and events."""
-    state = _state(root)
+    state = _state(root, task_id)
     ordered = sorted(_require_trusted(events), key=lambda item: _order(item, -1))
     roles = {str(event.get("role") or event.get("consumer_role")) for event in ordered if event.get("role") or event.get("consumer_role")}
     downstream_roles = {"controller", "reasoning-specialist", "implementer", "focused-implementer", "reviewer"}

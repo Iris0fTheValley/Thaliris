@@ -16,6 +16,16 @@ a universal PASS. Known child and readonly restrictions, fences, retired tasks,
 exact Workstream association, conflicting evidence, user-owned bytes and separate
 Host-maintenance authority remain binding.
 
+Tasks have explicit Task IDs. State, authority, reservations and recovery evidence
+belong to that task; a shared workspace's old ACTIVE record does not select a new
+session's task or prove a write conflict. Preserve old evidence for explicit recovery.
+Missing Host fields are UNKNOWN, distinct from actual identity conflict or role
+violation. Damaged authority restricts the managed controls and certifications that
+depend on it; ordinary diagnostics and independent work retain their role boundaries.
+Preserve user-owned unknown bytes, file CAS, immutable raw contracts and history.
+Authorized independent tasks may establish current baselines; software/configuration
+evolution does not permanently bind ordinary work to an old runtime baseline.
+
 ## Ownership and handoff
 
 Controller owns the user objective, direction, scope, hard invariants, acceptance,
@@ -68,6 +78,16 @@ where the adapter supports that shape. Unknown overlap evidence does not authori
 bypassing admission or disabling all future supported delegation. Core does not set
 Host concurrency limits.
 
+Independent investigation and workstreams with isolated writes may run in parallel.
+Coordinate known shared-file overlap or use separate worktrees before dispatch;
+file CAS detects lost updates, not semantic overlap. An adapter may retain one
+task-local unbound dispatch while precise native identity is unavailable, without
+blocking other tasks or already bound independent siblings. Native execution,
+Controller acceptance and task/dependency disposition are separate facts. Explicit
+management abandonment may release a dependency while native execution and writing
+risk remain UNKNOWN; fence its grants and reject late reactivation, without claiming
+the process stopped. Unknown actual writes still need isolation or coordination.
+
 ## Role selection and Workstreams
 
 Roles are capabilities, not mandatory stages. Choose one profile for the Workstream's
@@ -79,6 +99,20 @@ challenges framing when that may change direction. Curator maintains selected re
 knowledge; Verifier remains read-only compatibility, not a recommended stage.
 Native role/model bindings, readonly enforcement, execution modes and delegation
 capabilities are adapter-owned. Profiles do not alter semantic responsibilities.
+
+Respect the human's delegated, controller-direct or single-agent selection; omitted
+selection defaults to delegated. Controller strategy may change through authorized
+task/revision CAS without expanding the original goal, scope or hard constraints.
+Existing child role and readonly boundaries remain fixed. In delegated mode,
+Controller may retrieve one or very few related precise known-path evidence fragments
+for an immediate decision. Prefer bounded catalog/document/task/artifact retrieval
+and exact instruction sections. Explicit task-show diagnosis is available; delegate
+large diagnostics and open investigation. Continuous small queries cannot assemble
+a broad investigation. Hooks cannot prove cumulative semantic scope or all third-party
+MCP behavior; this is an agent behavior rule, not a numeric query quota.
+An active child may receive selected supplemental evidence and factual corrections
+inside its accepted goal and role. Communication cannot change authorization. After
+FINAL, new work uses a fresh child.
 
 Stable accepted direction and deterministic convergence use ordinary Implementer.
 Coupled invariants or nonlocal constraints needing sustained reasoning use Focused

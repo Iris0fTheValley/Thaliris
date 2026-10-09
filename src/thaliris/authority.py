@@ -96,17 +96,25 @@ class AuthorityStore:
         key = hashlib.sha256(identity.encode()).hexdigest()
         task_id = self.task_id or core.selected_task(self.root)
         legacy = location / (key + ".json")
+        def checked(target: Path) -> Path:
+            # A workspace-key directory is mutable too. Checking only the
+            # storage root would follow a Junction into user/project files.
+            if (_is_link(target) or _is_link(target.parent)
+                    or not target.resolve().is_relative_to(location.resolve())
+                    or target.resolve().is_relative_to(self.root.resolve())):
+                raise ValueError("TASK_AUTHORITY_EXTERNAL_LOCATION_UNSAFE")
+            return target
         if task_id is None:
-            return legacy
+            return checked(legacy)
         if str(uuid.UUID(task_id)) != task_id:
             raise ValueError("TASK_AUTHORITY_INVALID_TASK_ID")
-        indexed = location / key / (task_id + ".json")
+        indexed = checked(location / key / (task_id + ".json"))
         if indexed.exists():
             return indexed
         if legacy.is_file():
             try:
                 if json.loads(legacy.read_text(encoding="utf-8")).get("task_id") == task_id:
-                    return legacy
+                    return checked(legacy)
             except (OSError, ValueError, AttributeError):
                 pass
         return indexed

@@ -423,7 +423,7 @@ def test_promoted_provenance_survives_task_state_and_round_trips(tmp_path: Path)
     }]})
     result = core.task_promote(root, "controller", registered["revision"], promotion)
     durable_path = result["promoted"][0]
-    (root / ".context" / "state.json").unlink()
+    (core._state_path(root)).unlink()
 
     fetched = core.document_get(root, durable_path)["documents"][0]
     assert "artifact-7" in fetched["body"]
@@ -950,7 +950,7 @@ def test_production_package_has_no_benchmark_authority_module() -> None:
 def test_only_current_task_state_schema_is_accepted(tmp_path: Path) -> None:
     root = repo(tmp_path)
     core.task_start(root, "current schema", None, None)
-    path = root / ".context" / "state.json"
+    path = core._state_path(root)
     state = json.loads(path.read_text(encoding="utf-8"))
     state["schema_version"] -= 1
     path.write_text(json.dumps(state), encoding="utf-8")
@@ -967,7 +967,7 @@ def test_revision_cas_rejects_stale_writer_without_mutating_state(tmp_path: Path
         "records": [{"id": "r1", "kind": "note", "text": "first"}],
     })
     first = core.task_update(root, "controller", started["revision"], update)
-    before = (root / ".context" / "state.json").read_bytes()
+    before = (core._state_path(root)).read_bytes()
 
     try:
         core.task_update(root, "controller", started["revision"], update)
@@ -976,7 +976,7 @@ def test_revision_cas_rejects_stale_writer_without_mutating_state(tmp_path: Path
     else:
         raise AssertionError("stale CAS writer was accepted")
 
-    assert (root / ".context" / "state.json").read_bytes() == before
+    assert (core._state_path(root)).read_bytes() == before
     assert core.task_show(root)["state"]["revision"] == first["revision"]
 
 
@@ -1070,7 +1070,7 @@ def test_routing_state_has_one_small_total_byte_budget(tmp_path: Path) -> None:
     second_root = repo(tmp_path / "second")
     with pytest.raises(ValueError, match="store long content as a Record or Artifact"):
         core.task_start(second_root, "oversized start", None, oversized)
-    assert not (second_root / ".context" / "state.json").exists()
+    assert not (core._state_path(second_root)).exists()
 
 
 def test_large_task_status_is_bounded_while_task_show_retains_full_ledger(tmp_path: Path) -> None:

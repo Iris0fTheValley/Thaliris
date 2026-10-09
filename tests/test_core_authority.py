@@ -64,7 +64,7 @@ def test_core_create_checkpoint_retire_without_host(store, mode):
 def test_core_recovery_restores_original_bytes_and_archives_conflicts(store):
     original = start(store)
     anchor_bytes = store.path().read_bytes()
-    state_path = store.root / ".context/state.json"
+    state_path = core._state_path(store.root)
     security_path = store.root / ".context/config.json"
     state_bytes, security_bytes = state_path.read_bytes(), security_path.read_bytes()
     state_path.write_bytes(b'{"tampered":true}\r\n')
@@ -86,14 +86,14 @@ def test_core_recovery_restores_original_bytes_and_archives_conflicts(store):
     assert store.check()["contract"] == original["contract"]
     archive = Path(store.read()["recoveries"][0]["archive"])
     assert (archive / "authority.json").read_bytes() == anchor_bytes
-    assert (archive / ".context/state.json").read_bytes() == b'{"tampered":true}\r\n'
+    assert (archive / state_path.relative_to(store.root)).read_bytes() == b'{"tampered":true}\r\n'
     assert (archive / ".context/config.json").read_bytes() == b'changed security bytes\r\n'
     assert (archive / "host/security.json").read_bytes() == b'not the original baseline'
 
 
 def test_retired_authority_cannot_reactivate_copied_state(store):
     start(store)
-    state_path = store.root / ".context/state.json"
+    state_path = core._state_path(store.root)
     previous = state_path.read_bytes()
     state_path.unlink()
     store.checkpoint()
@@ -113,7 +113,7 @@ def test_contract_and_task_identity_are_not_inferred_or_expanded(store):
         store.establish(core.task_show(store.root)["state"], intent("single-agent"))
     with pytest.raises(ValueError, match="TASK_AUTHORITY_IDENTITY_CHANGED"):
         store.establish(core.task_show(store.root)["state"], intent(), adapter_fields={"contract": intent("single-agent")})
-    state_path = store.root / ".context/state.json"
+    state_path = core._state_path(store.root)
     state = json.loads(state_path.read_bytes())
     state["goal"] = "Expanded task"
     state_path.write_text(json.dumps(state))
@@ -181,7 +181,7 @@ intent = {"human_instruction":"Selected instruction", "boundary":"Example", "inv
 anchor = store.establish(core.task_show(root)["state"], intent)
 assert store.check()["task_id"] == anchor["task_id"]
 assert anchor["provenance"] == "SELECTED_TASK_INTENT" and "host_actor_assurance" not in anchor
-(root / ".context/state.json").write_bytes(b"corrupt")
+core._state_path(root).write_bytes(b"corrupt")
 recovered = store.recover(authority.digest(store.path()), "Restore neutral authority")
 assert "host_actor_assurance" not in recovered and "child_death_proof" not in recovered
 assert "death_proof" not in store.read()["recoveries"][-1]
@@ -231,7 +231,7 @@ def test_recovery_adapter_cannot_change_protected_intent(store):
 def test_recovery_archive_cannot_replace_core_evidence(store):
     start(store)
     with pytest.raises(ValueError, match="TASK_AUTHORITY_ARCHIVE_PATH_CONFLICT"):
-        store.recover(authority.digest(store.path()), "Keep archive evidence", archive_paths={"authority.json": store.root / ".context/state.json"})
+        store.recover(authority.digest(store.path()), "Keep archive evidence", archive_paths={"authority.json": core._state_path(store.root)})
     assert not (store.directory / "recovery").exists()
 
 
@@ -280,7 +280,7 @@ def test_optional_constraint_is_core_owned_opaque_intent(store, constraint):
     assert anchor["contract"] == selected
     store.checkpoint()
     assert store.check()["contract"] == selected
-    (store.root / ".context/state.json").write_bytes(b"conflict")
+    (core._state_path(store.root)).write_bytes(b"conflict")
     store.recover(authority.digest(store.path()), "Restore selected execution intent")
     assert store.check()["contract"] == selected
     core.task_close(store.root, 1)
@@ -379,3 +379,48 @@ def test_omitted_mode_defaults_to_delegated_without_expanding_intent():
     del selected["execution_mode"]
     assert authority.validate_contract(selected) == {**selected, "execution_mode": "delegated"}
     assert "execution_mode" not in selected
+
+
+def test_missing_old_state_recovery_cannot_overwrite_fresh_task(store):
+    first = start(store)
+    first_store = authority.AuthorityStore(store.root, store.directory, task_id=first["task_id"])
+    first_state = core._state_path(store.root)
+    first_state.unlink()
+    second = core.task_start(store.root, "Fresh task after missing old bytes", None, None)
+    second_state = core._state_path(store.root)
+    second_bytes = second_state.read_bytes()
+    assert second_state != first_state
+    second_store = authority.AuthorityStore(store.root, store.directory, task_id=second["task_id"])
+    second_store.establish(core._load_state(store.root), intent("single-agent"))
+    second_anchor = second_store.path().read_bytes()
+    core.select_task(store.root, first["task_id"])
+    first_store.recover(authority.digest(first_store.path()), "Restore only this task's missing bytes")
+    assert second_state.read_bytes() == second_bytes
+    assert second_store.path().read_bytes() == second_anchor
+    core.select_task(store.root, second["task_id"])
+    assert second_store.check()["task_id"] == second["task_id"]
+
+
+def test_task_authority_key_directory_cannot_redirect_to_workspace(store):
+    core.task_start(store.root, "Guard task-key location", None, None)
+    task_id = core.selected_task(store.root)
+    scoped = authority.AuthorityStore(store.root, store.directory, task_id=task_id)
+    destination = store.root / "user-anchor-files"
+    destination.mkdir()
+    key_directory = scoped.path().parent
+    key_directory.parent.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        created = subprocess.run(["cmd", "/c", "mklink", "/J", str(key_directory), str(destination)], capture_output=True, text=True)
+        if created.returncode:
+            pytest.skip("Windows Junction creation unavailable")
+    else:
+        key_directory.symlink_to(destination, target_is_directory=True)
+    try:
+        with pytest.raises(ValueError, match="TASK_AUTHORITY_EXTERNAL_LOCATION_UNSAFE"):
+            scoped.establish(core._load_state(store.root), intent())
+        assert list(destination.iterdir()) == []
+    finally:
+        if os.name == "nt":
+            key_directory.rmdir()
+        else:
+            key_directory.unlink()

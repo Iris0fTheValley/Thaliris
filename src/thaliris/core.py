@@ -960,14 +960,12 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
             record = _normalize_new_record(item, producer=actor, revision=1, known_sources=source_ids, known_records=known)
             state["records"].append(record)
             known.add(str(record["id"]))
-        # Keep the historical singleton untouched after its first occupant.
+        # Every new task gets its own ledger. The historical singleton is never
+        # a vacant slot: its missing bytes may still belong to a recovery anchor.
         # New tasks have independent ledgers even when the old one is ACTIVE,
         # corrupt, or carries unresolved native dependencies.
-        legacy = root / _STATE_NAME
-        target = legacy if not legacy.exists() and not legacy.is_symlink() else _safe_without_final_symlink(root, f".context/tasks/{state['task_id']}/state.json")
+        target = _safe_without_final_symlink(root, f".context/tasks/{state['task_id']}/state.json")
         _atomic_write(target, _state_payload(root, state))
-        if target == legacy:
-            remember_legacy_task(root, str(state["task_id"]))
         select_task(root, str(state["task_id"]))
     return _task_ack(state, ["task"])
 

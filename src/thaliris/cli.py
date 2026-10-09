@@ -21,6 +21,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = _Parser(prog="thaliris-core", description="Host-neutral task records, evidence, explicit retrieval, memory and authority")
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--task-id", help="explicit task ledger selection; never an authority grant")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("init", "uninstall", "stale", "milestone-check", "task-show", "task-status", "version"):
         commands.add_parser(name)
@@ -65,7 +66,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = _parser().parse_args(argv)
         root = args.root.resolve()
+        core.select_task(root, args.task_id)
         name = args.command
+        if name.startswith("task-") and name not in {"task-start", "task-show", "task-status", "task-get"} and args.task_id is None:
+            raise ValueError("explicit --task-id required for task mutation")
         if name == "version":
             out = {"ok": True, "version": __version__}
         elif name in {"init", "uninstall", "stale", "milestone-check", "task-show", "task-status"}:

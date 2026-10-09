@@ -1135,3 +1135,27 @@ def test_large_task_status_is_bounded_while_task_show_retains_full_ledger(tmp_pa
     assert len(shown["state"]["artifact_refs"]) == 200
     assert len(shown["state"]["verification_results"]) == 200
     assert "HISTORICAL_RECORD_BODY" in json.dumps(shown)
+
+
+def test_independent_tasks_preserve_real_shared_index_cas_conflict(tmp_path):
+    root = repo(tmp_path / "shared")
+    first = core.task_start(root, "First", None, None)
+    baseline = hashlib.sha256((root / ".agent-memory/INDEX.md").read_bytes()).hexdigest()
+    second = core.task_start(root, "Second", None, None)
+    def packet(identifier):
+        return {"records": [{"id": identifier, "path": f".agent-memory/{identifier}.md", "text": identifier}],
+            "index_update": {"path": ".agent-memory/INDEX.md", "base_sha256": baseline,
+                "content": core._entry("Map", "Updated by " + identifier).decode()}}
+    core.select_task(root, first["task_id"])
+    core.task_promote(root, "controller", 1, write_json(tmp_path / "first.json", packet("one")))
+    first_index = (root / ".agent-memory/INDEX.md").read_bytes()
+    core.select_task(root, second["task_id"])
+    with pytest.raises(ValueError, match="INDEX revision conflict"):
+        core.task_promote(root, "controller", 1, write_json(tmp_path / "second.json", packet("two")))
+    assert (root / ".agent-memory/INDEX.md").read_bytes() == first_index
+    assert not (root / ".agent-memory/two.md").exists()
+    assert core._load_state(root)["status"] == "ACTIVE"
+    isolated = repo(tmp_path / "isolated")
+    core.task_start(isolated, "Independent checkout", None, None)
+    core.task_promote(isolated, "controller", 1, write_json(tmp_path / "isolated.json", packet("two")))
+    assert (isolated / ".agent-memory/two.md").is_file()

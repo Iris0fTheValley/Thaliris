@@ -33,6 +33,8 @@ def _truth(record: dict) -> dict:
 
 def validate_contract(value: object) -> dict:
     """Validate selected intent mechanically, without inferring its author."""
+    if isinstance(value, dict) and "execution_mode" not in value:
+        value = {**value, "execution_mode": "delegated"}
     if (not isinstance(value, dict) or not _CONTRACT_FIELDS <= set(value)
             or set(value) - _CONTRACT_FIELDS - _OPTIONAL_CONTRACT_FIELDS
             or value.get("execution_mode") not in MODES):
@@ -70,7 +72,7 @@ def _relative(root: Path, name: str) -> str:
 
 
 class AuthorityStore:
-    """One external anchor for the Core task ledger in a resolved workspace.
+    """Task ID scoped external anchors, with exact legacy-byte preservation.
 
     ``storage_directory`` is explicit and outside the workspace. Protected
     configuration paths are chosen by the adapter, never read from mutable
@@ -80,8 +82,9 @@ class AuthorityStore:
     ledger operations use Core's lock; recovery holds that same lock throughout.
     """
 
-    def __init__(self, root: Path, storage_directory: Path, *, protected_paths: tuple[str, ...] = ()):
+    def __init__(self, root: Path, storage_directory: Path, *, protected_paths: tuple[str, ...] = (), task_id: str | None = None):
         self.root = root
+        self.task_id = task_id
         self.directory = storage_directory
         self.protected_paths = tuple(_relative(root, name) for name in protected_paths)
 
@@ -90,7 +93,23 @@ class AuthorityStore:
         if location.resolve().is_relative_to(self.root.resolve()) or any(_is_link(item) for item in (location, *location.parents)):
             raise ValueError("TASK_AUTHORITY_EXTERNAL_LOCATION_UNSAFE")
         identity = str(self.root.resolve()).casefold() if os.name == "nt" else str(self.root.resolve())
-        return location / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
+        key = hashlib.sha256(identity.encode()).hexdigest()
+        task_id = self.task_id or core.selected_task(self.root)
+        legacy = location / (key + ".json")
+        if task_id is None:
+            return legacy
+        if str(uuid.UUID(task_id)) != task_id:
+            raise ValueError("TASK_AUTHORITY_INVALID_TASK_ID")
+        indexed = location / key / (task_id + ".json")
+        if indexed.exists():
+            return indexed
+        if legacy.is_file():
+            try:
+                if json.loads(legacy.read_text(encoding="utf-8")).get("task_id") == task_id:
+                    return legacy
+            except (OSError, ValueError, AttributeError):
+                pass
+        return indexed
 
     def read(self) -> dict | None:
         target = self.path()
@@ -100,6 +119,12 @@ class AuthorityStore:
         if (not isinstance(record, dict) or record.get("version") != 1 or not isinstance(record.get("project"), str)
                 or Path(record["project"]).resolve() != self.root.resolve()):
             raise ValueError("TASK_AUTHORITY_INVALID")
+        selected = self.task_id or core.selected_task(self.root)
+        if selected is not None and record.get("task_id") != selected:
+            raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
+        self.task_id = record.get("task_id")
+        if ".context/state.json" in record.get("snapshots", {}):
+            core.remember_legacy_task(self.root, self.task_id)
         return record
 
     def write(self, record: dict) -> None:
@@ -113,24 +138,25 @@ class AuthorityStore:
             raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
         # Only an existing ACTIVE Core ledger can be anchored. No second task
         # state or host-specific task identity is created here.
-        current = json.loads(core._state_path(self.root).read_text(encoding="utf-8"))
+        self.task_id = state["task_id"]
+        current = json.loads(core._state_path(self.root, self.task_id).read_text(encoding="utf-8"))
         if current.get("task_id") != state["task_id"] or current.get("goal") != state["goal"] or current.get("status") != "ACTIVE":
             raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
         prior = self.read()
-        if prior is not None and prior["status"] == "ACTIVE":
-            raise ValueError("TASK_AUTHORITY_ALREADY_ACTIVE")
+        if prior is not None:
+            raise ValueError("TASK_AUTHORITY_ALREADY_ACTIVE" if prior["status"] == "ACTIVE" else "TASK_AUTHORITY_RETIRED_NO_REESTABLISH")
         if prior is not None:
             core._atomic_write(self.directory / "history" / f"{self.path().stem}-{prior['task_id']}.json", self.path().read_bytes())
         record = {"version": 1, "project": str(self.root.resolve()), "task_id": state["task_id"],
                   "goal": state["goal"], "contract": intent, "status": "ACTIVE",
                   "provenance": "SELECTED_TASK_INTENT",
-                  "state_sha256": digest(core._state_path(self.root)),
+                  "state_sha256": digest(core._state_path(self.root, self.task_id)),
                   "security": {name: digest(self.root / name) for name in self.protected_paths},
                   "history": prior.get("history", []) + [{"task_id": prior["task_id"], "goal": prior["goal"],
                       "status": prior["status"], "contract": prior["contract"]}] if prior else [], **fields}
         record["snapshots"] = {name: base64.b64encode((self.root / name).read_bytes()).decode()
                                if digest(self.root / name) != "ABSENT" else None
-                               for name in (*self.protected_paths, ".context/state.json")}
+                               for name in (*self.protected_paths, core._state_path(self.root, self.task_id).relative_to(self.root).as_posix())}
         self.write(record)
         return record
 
@@ -139,14 +165,14 @@ class AuthorityStore:
         if record is None:
             return None
         if record["status"] != "ACTIVE":
-            if digest(core._state_path(self.root)) != record["state_sha256"]:
+            if digest(core._state_path(self.root, self.task_id)) != record["state_sha256"]:
                 raise ValueError("TASK_AUTHORITY_RETIRED_STATE_CHANGED")
             return None
-        if digest(core._state_path(self.root)) != record["state_sha256"]:
+        if digest(core._state_path(self.root, self.task_id)) != record["state_sha256"]:
             raise ValueError("TASK_AUTHORITY_STATE_CHANGED")
         if any(digest(self.root / name) != expected for name, expected in record["security"].items()):
             raise ValueError("TASK_AUTHORITY_SECURITY_CHANGED")
-        state = json.loads(core._state_path(self.root).read_text(encoding="utf-8"))
+        state = json.loads(core._state_path(self.root, self.task_id).read_text(encoding="utf-8"))
         if state.get("task_id") != record["task_id"] or state.get("goal") != record["goal"] or state.get("status") != "ACTIVE":
             raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
         for field, (target, error) in (evidence or {}).items():
@@ -163,16 +189,44 @@ class AuthorityStore:
         record = self.read()
         if record is None or record["status"] != "ACTIVE":
             return
-        record["state_sha256"] = digest(core._state_path(self.root))
-        record["snapshots"][".context/state.json"] = base64.b64encode(core._state_path(self.root).read_bytes()).decode() if record["state_sha256"] != "ABSENT" else None
+        record["state_sha256"] = digest(core._state_path(self.root, self.task_id))
+        record["snapshots"][core._state_path(self.root, self.task_id).relative_to(self.root).as_posix()] = base64.b64encode(core._state_path(self.root, self.task_id).read_bytes()).decode() if record["state_sha256"] != "ABSENT" else None
         if record["state_sha256"] == "ABSENT":
             record["status"] = "ABANDONED"
         else:
-            state = json.loads(core._state_path(self.root).read_text(encoding="utf-8"))
+            state = json.loads(core._state_path(self.root, self.task_id).read_text(encoding="utf-8"))
             if state["task_id"] != record["task_id"] or state["goal"] != record["goal"]:
                 raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
             record["status"] = state["status"]
         self.write(record)
+
+    def switch_mode(self, expected: str, base_revision: int, mode: str, human_instruction: str) -> dict:
+        """Apply an adapter-authorized selection; all other intent stays frozen.
+
+        The CAS prevents a stale Controller decision changing a newer contract.
+        Native descendants are observed/handled by the adapter before calling.
+        """
+        if mode not in MODES or not isinstance(human_instruction, str) or not human_instruction.strip() or len(human_instruction) > 16384:
+            raise ValueError("TASK_AUTHORITY_MODE_SELECTION_REQUIRED")
+        with core._lock(self.root):
+            if digest(self.path()) != expected:
+                raise ValueError("TASK_AUTHORITY_CHANGED")
+            record = self.check()
+            if record is None:
+                raise ValueError("TASK_AUTHORITY_NOT_ACTIVE")
+            state = core._load_state(self.root, active=True)
+            if state["task_id"] != record["task_id"] or state["revision"] != base_revision:
+                raise ValueError("task revision conflict")
+            record.setdefault("mode_history", []).append({"execution_mode": record["contract"]["execution_mode"],
+                "human_instruction": human_instruction, "revision": base_revision})
+            record["contract"] = {**record["contract"], "execution_mode": mode}
+            state["revision"] += 1
+            core._write_state(self.root, state)
+            state_path = core._state_path(self.root, record["task_id"])
+            record["state_sha256"] = digest(state_path)
+            record["snapshots"][state_path.relative_to(self.root).as_posix()] = base64.b64encode(state_path.read_bytes()).decode()
+            self.write(record)
+        return {"ok": True, "task_id": record["task_id"], "revision": state["revision"], "execution_mode": mode}
 
     def recover(self, expected: str, reason: str, *,
                 archive_paths: Mapping[str, Path] | Callable[[dict], Mapping[str, Path]] | None = None,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 import base64
 import hashlib
@@ -45,6 +46,7 @@ IGNORE_RULES = (
     ".context/backups/",
     ".context/recovery/",
     ".context/state.json",
+    ".context/tasks/",
     ".context/context.lock",
 )
 
@@ -353,8 +355,65 @@ class TaskStateSchemaIncompatible(ValueError):
         super().__init__("invalid task state schema")
 
 
-def _state_path(root: Path) -> Path:
-    return _safe(root, _STATE_NAME)
+_selected_tasks: ContextVar[dict[str, str]] = ContextVar("thaliris_selected_tasks", default={})
+_legacy_tasks: ContextVar[dict[str, str]] = ContextVar("thaliris_legacy_tasks", default={})
+
+
+def _selection_key(root: Path) -> str:
+    key = str(root.resolve())
+    return key.casefold() if os.name == "nt" else key
+
+
+def remember_legacy_task(root: Path, task_id: str) -> None:
+    """Retain an exact legacy location learned from ledger/anchor evidence."""
+    known = dict(_legacy_tasks.get())
+    known[_selection_key(root)] = task_id
+    _legacy_tasks.set(known)
+
+
+def select_task(root: Path, task_id: str | None) -> None:
+    """Select an opaque task explicitly for this operation context.
+
+    Selection is navigation, not authorization, and is never persisted as a
+    workspace-wide current task. Adapters associate their own session facts.
+    """
+    selected = dict(_selected_tasks.get())
+    key = _selection_key(root)
+    if task_id is None:
+        selected.pop(key, None)
+    else:
+        if not isinstance(task_id, str) or str(uuid.UUID(task_id)) != task_id:
+            raise ValueError("invalid task id")
+        selected[key] = task_id
+    _selected_tasks.set(selected)
+
+
+def selected_task(root: Path) -> str | None:
+    return _selected_tasks.get().get(_selection_key(root))
+
+
+def _state_path(root: Path, task_id: str | None = None) -> Path:
+    task_id = task_id or selected_task(root)
+    legacy = root / _STATE_NAME
+    if task_id is None:
+        # Legacy navigation is available for explicit diagnostics only. Native
+        # adapters must not infer a session association from this fallback.
+        return legacy
+    if str(uuid.UUID(task_id)) != task_id:
+        raise ValueError("invalid task id")
+    indexed = _safe_without_final_symlink(root, f".context/tasks/{task_id}/state.json")
+    if indexed.exists():
+        return indexed
+    if _legacy_tasks.get().get(_selection_key(root)) == task_id:
+        return legacy
+    if legacy.is_file():
+        try:
+            if json.loads(legacy.read_text(encoding="utf-8")).get("task_id") == task_id:
+                remember_legacy_task(root, task_id)
+                return legacy
+        except (OSError, ValueError, AttributeError):
+            pass
+    return indexed
 
 
 def _task_state_schema_diagnostic(raw: object, raw_bytes: bytes) -> dict[str, object] | None:
@@ -765,9 +824,10 @@ def _write_state(root: Path, state: dict[str, object]) -> None:
 
 
 def _load_state(root: Path, *, active: bool = False) -> dict[str, object]:
-    if (root / _STATE_NAME).is_symlink():
-        raise ValueError("task state final component must not be a symlink")
     path = _state_path(root)
+    if path.is_symlink():
+        raise ValueError("task state final component must not be a symlink")
+    _safe_without_final_symlink(root, path.relative_to(root).as_posix())
     if not path.is_file():
         raise ValueError("no current task state")
     if path.stat().st_size > 512 * 1024:
@@ -787,6 +847,8 @@ def _load_state(root: Path, *, active: bool = False) -> dict[str, object]:
         task_id = raw.get("task_id") if isinstance(raw, dict) and isinstance(raw.get("task_id"), str) else None
         raise TaskStateSchemaIncompatible(incompatible, task_id)
     state = _validate_state(root, raw)
+    if selected_task(root) is not None and state["task_id"] != selected_task(root):
+        raise ValueError("task identity conflict")
     if active and state["status"] != "ACTIVE":
         raise ValueError("current task is not ACTIVE")
     return state
@@ -887,9 +949,6 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
     if set(partial) - allowed:
         raise ValueError("task-start accepts only mechanical ledger fields")
     with _lock(root):
-        path = _state_path(root)
-        if path.is_file() and _load_state(root)["status"] == "ACTIVE":
-            raise ValueError("an ACTIVE task already exists")
         _ensure_root_navigation(root)
         state = _blank_state(root, goal, milestone)
         state["active_work"] = partial.get("active_work", [])
@@ -901,7 +960,15 @@ def task_start(root: Path, goal: str, milestone: str | None, input_file: str | N
             record = _normalize_new_record(item, producer=actor, revision=1, known_sources=source_ids, known_records=known)
             state["records"].append(record)
             known.add(str(record["id"]))
-        _write_state(root, state)
+        # Keep the historical singleton untouched after its first occupant.
+        # New tasks have independent ledgers even when the old one is ACTIVE,
+        # corrupt, or carries unresolved native dependencies.
+        legacy = root / _STATE_NAME
+        target = legacy if not legacy.exists() and not legacy.is_symlink() else _safe_without_final_symlink(root, f".context/tasks/{state['task_id']}/state.json")
+        _atomic_write(target, _state_payload(root, state))
+        if target == legacy:
+            remember_legacy_task(root, str(state["task_id"]))
+        select_task(root, str(state["task_id"]))
     return _task_ack(state, ["task"])
 
 

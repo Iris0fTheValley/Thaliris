@@ -31,3 +31,22 @@ raise SystemExit(cli.main(['version']))
 '''
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
     assert json.loads(result.stdout)["version"] == "0.4.3"
+
+
+def test_cli_explicit_task_selector_interleaves_without_legacy_adoption(tmp_path, capsys):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    cli.main(["--root", str(tmp_path), "init"])
+    capsys.readouterr()
+    cli.main(["--root", str(tmp_path), "task-start", "First"])
+    first = json.loads(capsys.readouterr().out)["task_id"]
+    cli.main(["--root", str(tmp_path), "task-start", "Second"])
+    second = json.loads(capsys.readouterr().out)["task_id"]
+    for identifier, goal in ((first, "First"), (second, "Second")):
+        assert cli.main(["--root", str(tmp_path), "--task-id", identifier, "task-show"]) == 0
+        assert json.loads(capsys.readouterr().out)["state"]["goal"] == goal
+    assert cli.main(["--root", str(tmp_path), "task-close", "--base-revision", "1"]) == 2
+    assert "explicit --task-id" in json.loads(capsys.readouterr().out)["error"]
+    assert cli.main(["--root", str(tmp_path), "--task-id", second, "task-close", "--base-revision", "1"]) == 0
+    capsys.readouterr()
+    core.select_task(tmp_path, first)
+    assert core._load_state(tmp_path)["status"] == "ACTIVE"

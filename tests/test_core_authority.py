@@ -52,12 +52,12 @@ def test_core_create_checkpoint_retire_without_host(store, mode):
     assert store.check() is None
     assert store.read()["status"] == "DONE"
     # A fresh task archives the retired bytes and retains selected history.
-    retired = store.path().read_bytes()
+    retired_path = store.path()
+    retired = retired_path.read_bytes()
     core.task_start(store.root, "Second task", None, None)
     new = store.establish(core.task_show(store.root)["state"], intent(mode))
-    history = store.directory / "history" / f"{store.path().stem}-{anchor['task_id']}.json"
-    assert history.read_bytes() == retired
-    assert new["history"][0]["contract"] == anchor["contract"]
+    assert retired_path.read_bytes() == retired
+    assert new["history"] == []
     assert new["task_id"] != anchor["task_id"]
 
 
@@ -287,7 +287,8 @@ def test_optional_constraint_is_core_owned_opaque_intent(store, constraint):
     store.checkpoint()
     core.task_start(store.root, "Second task", None, None)
     next_anchor = store.establish(core.task_show(store.root)["state"], intent())
-    assert next_anchor["history"][0]["contract"] == selected
+    assert next_anchor["history"] == []
+    assert authority.AuthorityStore(store.root, store.directory, task_id=anchor["task_id"]).read()["contract"] == selected
     assert "execution_constraint" not in next_anchor["contract"]
 
 
@@ -322,3 +323,59 @@ def test_recovery_cannot_change_optional_execution_intent(store, mutation):
         store.recover(authority.digest(store.path()), "Preserve execution intent", restore_adapter=expand)
     assert store.path().read_bytes() == original
     assert store.check()["contract"] == selected
+
+
+def test_interleaved_tasks_keep_state_authority_and_recovery_independent(store):
+    first = start(store)
+    first_store = authority.AuthorityStore(store.root, store.directory, task_id=first["task_id"])
+    first_path = core._state_path(store.root)
+    first_bytes, first_anchor = first_path.read_bytes(), first_store.path().read_bytes()
+    # Unknown/corrupt old management does not qualify or block the new task.
+    first_path.write_bytes(b"unknown old task")
+    first_store.path().write_bytes(b"unknown old authority")
+    second = core.task_start(store.root, "Independent task", None, None)
+    second_store = authority.AuthorityStore(store.root, store.directory, task_id=second["task_id"])
+    second_store.establish(core._load_state(store.root), intent("single-agent"))
+    assert first_path.read_bytes() == b"unknown old task"
+    assert first_store.path().read_bytes() == b"unknown old authority"
+    second_bytes = core._state_path(store.root).read_bytes()
+    first_store.path().write_bytes(first_anchor)
+    core.select_task(store.root, first["task_id"])
+    first_store.recover(authority.digest(first_store.path()), "Recover only the selected old task")
+    assert first_path.read_bytes() == first_bytes
+    core.task_update(store.root, "controller", 1, str(_packet(store.root, {"active_work": ["one"]})))
+    first_store.checkpoint()
+    core.select_task(store.root, second["task_id"])
+    assert core._state_path(store.root).read_bytes() == second_bytes
+    assert core._load_state(store.root)["revision"] == 1
+    core.task_close(store.root, 1)
+    second_store.checkpoint()
+    core.select_task(store.root, first["task_id"])
+    assert core._load_state(store.root)["status"] == "ACTIVE"
+    assert first_store.check()["contract"]["execution_mode"] == "delegated"
+
+
+def _packet(root, value):
+    path = root / "packet.json"
+    path.write_text(json.dumps(value))
+    return path
+
+
+def test_mode_transition_cas_preserves_scope_and_other_task(store):
+    original = start(store)
+    expected = authority.digest(store.path())
+    with pytest.raises(ValueError, match="TASK_AUTHORITY_CHANGED"):
+        store.switch_mode("0" * 64, 1, "single-agent", "Use a single agent")
+    result = store.switch_mode(expected, 1, "single-agent", "Use a single agent")
+    assert result["revision"] == 2
+    assert store.check()["contract"] == {**original["contract"], "execution_mode": "single-agent"}
+    assert store.read()["mode_history"][0]["execution_mode"] == "delegated"
+    with pytest.raises(ValueError, match="task revision conflict"):
+        store.switch_mode(authority.digest(store.path()), 1, "controller-direct", "Use Controller direct")
+
+
+def test_omitted_mode_defaults_to_delegated_without_expanding_intent():
+    selected = intent()
+    del selected["execution_mode"]
+    assert authority.validate_contract(selected) == {**selected, "execution_mode": "delegated"}
+    assert "execution_mode" not in selected

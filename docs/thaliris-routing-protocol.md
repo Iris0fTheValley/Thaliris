@@ -6,6 +6,16 @@ The historical routing marker is retained for benchmark compatibility. This
 document explains shared semantics; Host mechanics and native profiles belong
 to adapters. Core stores observations and selected intent, not semantic decisions.
 
+Thaliris is a Git-native context orchestration controller. Its guards prevent
+ordinary agents from acting outside their selected task, role or lifecycle;
+they are not an authentication or privilege framework for malicious actors
+with the same OS access. Selected human intent and its persistent task contract
+authorize work. Native session, Hook and runtime observations describe execution
+and association; missing observation is not itself a violation and never becomes
+a universal PASS. Known child and readonly restrictions, fences, retired tasks,
+exact Workstream association, conflicting evidence, user-owned bytes and separate
+Host-maintenance authority remain binding.
+
 ## Ownership and handoff
 
 Controller owns the user objective, direction, scope, hard invariants, acceptance,

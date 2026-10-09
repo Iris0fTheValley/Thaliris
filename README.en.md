@@ -1,6 +1,6 @@
 # Thaliris
 
-Main now distributes Host-neutral Core, shared semantic guidance and ABCD benchmark protocol/history. `thaliris-core` exposes Core operations. Native integration lives in [Thaliris-Codex](https://github.com/Iris0fTheValley/Thaliris-Codex) and [Thaliris-DSH](https://github.com/Iris0fTheValley/Thaliris-DSH). See [installation and API boundaries](docs/host-neutral-packaging.md).
+Main now distributes Host-neutral Core, shared semantic guidance and ABCD benchmark protocol/history. `thaliris-core` exposes Host-neutral record and evidence operations. Native Codex integration lives in [Thaliris-Codex](https://github.com/Iris0fTheValley/Thaliris-Codex), and DSH integration lives in [Thaliris-DSH](https://github.com/Iris0fTheValley/Thaliris-DSH). Core does not install Host hooks or perform native task admission or role execution. See [installation and API boundaries](docs/host-neutral-packaging.md).
 
 [中文](README.md)
 
@@ -106,93 +106,51 @@ was not benchmarked, and smaller prompt sizes do not establish quality gains.
 
 ## Installation
 
-The legacy `context` command examples in this README describe Codex-adapter behavior and are retained as design background. Core no longer exposes prepare/recall, doctor, migrate or native role packs. See [Core and Host adapter boundaries](docs/host-neutral-packaging.md), the [current Codex adapter guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md), and the [DSH adapter guide](https://github.com/Iris0fTheValley/Thaliris-DSH).
-
-Python 3.11 or newer and Git are required.
-
-Install directly from the repository:
+The Core CLI requires Python 3.11 or newer and Git. Install the Host-neutral `thaliris-core` command provided by this repository:
 
 ```bash
 uv tool install git+https://github.com/Iris0fTheValley/Thaliris
+thaliris-core version
 ```
 
-Attach it to an existing Git repository:
+Initialize or inspect Core records in an existing Git repository:
 
 ```bash
 cd your-repository
-context init
-context doctor --pretty
+thaliris-core --root . init
+thaliris-core --root . task-status
 ```
+
+Installing and initializing Core does not install or enable Host hooks, generate Codex profiles, start an Agent, create a native task session, or prove that the current Host loaded any configuration. For native Codex or DSH integration, follow the adapter installation and startup guides: [Codex](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) and [DSH](https://github.com/Iris0fTheValley/Thaliris-DSH). See [Core and Host adapter boundaries](docs/host-neutral-packaging.md).
 
 For local development:
 
 ```bash
 git clone https://github.com/Iris0fTheValley/Thaliris
 cd Thaliris
-
 uv run --extra test pytest
-uv run context version
+uv run thaliris-core version
 ```
 
 ---
 
-## Quick start
+## Core-only quick start
 
-Start a task:
-
-```bash
-context task-start "fix request cancellation"
-```
-
-Inspect the Controller view:
+The Core CLI provides Host-neutral records, explicit retrieval, freshness, and milestone operations. `task-status` is a bounded routing observation; use `task-show` only when explicit diagnostic detail is needed:
 
 ```bash
-context prepare --role controller --pretty
+cd your-repository
+thaliris-core --root . task-status
+thaliris-core --root . task-show
+thaliris-core --root . stale
+thaliris-core --root . milestone-check
 ```
 
-Prepare an investigation:
+These outputs record mechanical facts. They do not select semantic roles such as Investigator, Implementer, or Reviewer, and they do not decide semantic completion or acceptance. The Host adapter and Controller own native admission, execution association, routing, and semantic acceptance.
 
-```bash
-context prepare --role investigator --pretty
-```
+### Legacy Codex `context` examples
 
-Prepare a curator when investigation findings need compaction:
-
-```bash
-context prepare --role curator --pretty
-```
-
-Prepare deep reasoning context:
-
-```bash
-context prepare --role reasoning-specialist --pretty
-```
-
-Prepare implementation:
-
-```bash
-context prepare --role implementer --pretty
-```
-
-Prepare an independent review:
-
-```bash
-context prepare --role reviewer --pretty
-```
-
-Inspect diagnostic state:
-
-```bash
-context doctor --pretty
-context stale --pretty
-context milestone-check --pretty
-```
-
-Close the current task using its current revision:
-
-```bash
-context task-close --base-revision <revision>
-```
+Other retained `context` commands in this README describe the former Codex-adapter command surface, not the current Core CLI. `context prepare`, `context recall`, `context doctor`, and `context migrate` are not Core CLI commands; the former `context init` and Host/Hook setup also belong to the Codex adapter. Mechanical record operations still available in Core use the `thaliris-core` command name and its arguments. See the [Codex guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) for adapter commands and actual startup/recovery procedures.
 
 ---
 
@@ -238,7 +196,7 @@ Project memory and milestone documents are Git-owned.
 
 ## Task state
 
-A task keeps structured state rather than conversation transcripts.
+Core stores structured facts and evidence rather than conversation transcripts. It can validate record fields, source freshness, provenance, CAS, and consistency of selected persistent intent; it does not authenticate a Host actor, decide semantic role applicability, or provide final task acceptance. Core CLI `task-start` is a record operation; the Codex/DSH adapters own their native admission and lifecycle boundaries.
 
 Conceptually it separates:
 
@@ -275,14 +233,16 @@ The intent is to preserve traceability without converting `.context/state.json` 
 
 The task-end order is `task-local state -> Controller retention decision -> minimal durable promotion -> task-close`. This is explicit persistence, not automatic summarization; if there is no durable knowledge, no durable content is written. Only the Controller may run `task-promote`, and it may submit only explicit `decision`, `invariant`, `failure_mode`, or `constraint` records, or explicit `progress`/`verification` fields for the current milestone. For continuous feature work with a current milestone, retain actual progress and verification there first; `.agent-memory/` retains only cross-task reusable decisions, constraints, invariants, and failure modes. Unless the user explicitly asks, a repository task does not proactively read or write personal/global Codex memory such as `~/.codex/memories` or `MEMORY.md`; project continuity uses `.agent-memory/`, `.milestones/`, `task-promote`, and tracked-document maintenance. Inputs must use only evidence refs already in the ACTIVE task and must pass fresh native file/git evidence or fresh test/runtime evidence with native `source_refs`; a CONFIRMED promotion must also directly reference fresh CONFIRMED file/git evidence. Raw findings, transcripts, logs, and unknown fields are rejected. Promotion uses a base-revision CAS and does not change the task revision. Each task may consume at most 16 promotion units (one per memory record and per milestone progress/verification field); the counter is bounded task-local bookkeeping, not long-term memory or a framework.
 
-Minimal order and JSON example:
+Core-only mechanical record example (this does not admit a Host task or provide semantic acceptance):
 
 ```bash
-context task-start "adopt request policy"
+thaliris-core --root . task-start "adopt request policy"
 # ...the Controller receives task-local evidence and decides retention...
-context task-promote --role controller --base-revision <revision> --input promote.json
-context task-close --base-revision <revision>
+thaliris-core --root . task-promote --actor controller --base-revision <revision> --input promote.json
+thaliris-core --root . task-close --base-revision <revision>
 ```
+
+`--actor` is a label supplied by the adapter, not an identity credential. Running Core CLI alone cannot prove that the caller is the Controller; a Host adapter performs authorization checks within its boundary.
 
 ```json
 {"records":[{"type":"decision","id":"D-001","title":"Use X","text":"Adopt X.","evidence_refs":["e1"],"confidence":"SUPPORTED"}]}
@@ -349,7 +309,7 @@ Symbols: ["Request.cancel"]
 
 The INDEX files are routers, not summary documents.
 
-The former Codex-adapter `context recall` command provided explicit, conservative lexical retrieval. Durable memory was not injected into ordinary role packs; recall returned candidates without accepting them into task state or propagating them downstream. Core-only CLI does not provide this command; see the [current Codex adapter guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) for supported commands.
+The former Codex-adapter `context recall` command provided explicit, conservative lexical retrieval; it is not a Core-only CLI command. Durable memory is a selectable knowledge source, not the complete task context: the existence or indexing of a record does not mean it is injected into every role, added to the current task, or propagated downstream with a handoff. The Controller selects relevant material and decides whether to promote it explicitly. See the [Codex guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) for current adapter commands.
 
 ---
 
@@ -379,7 +339,7 @@ Milestone documents are project state, not agent transcripts.
 
 ## Managed `AGENTS.md`
 
-The Codex adapter's `context init` maintains a small marked block inside the repository's existing `AGENTS.md`. Core-only CLI does not provide this Host setup command; see the [current Codex adapter guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md).
+The Codex adapter initialization flow maintains a small marked block inside the repository's existing `AGENTS.md`. Core-only CLI does not install Hooks or maintain Codex Host instructions; see the [Codex adapter guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md).
 
 It is deliberately short.
 
@@ -417,11 +377,16 @@ If they are unavailable, use native source inspection, Git, search, compilers, t
 
 ## Diagnostics
 
-Run:
+For Core-only diagnostics, use:
 
 ```bash
-context doctor --pretty
+thaliris-core --root . task-status
+thaliris-core --root . task-show
+thaliris-core --root . stale
+thaliris-core --root . milestone-check
 ```
+
+Codex adapter `context doctor` is a legacy adapter command. See the [Codex guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) for current diagnostics and native identity/Hook status. Core output cannot prove authorization, Host health, runtime activation, or subagent lifecycle. A status remains `UNKNOWN` when the corresponding adapter cannot prove it through an observation.
 
 Diagnostics intentionally distinguish states such as:
 
@@ -448,25 +413,19 @@ Initialization and managed mutations use:
 * local backups;
 * hash-guarded rollback.
 
-Rollback:
+Core-only recovery operations:
 
 ```bash
-context rollback <backup-id>
-```
-
-Migration:
-
-```bash
-context migrate
+thaliris-core --root . rollback <backup-id>
 ```
 
 Uninstall:
 
 ```bash
-context uninstall
+thaliris-core --root . uninstall
 ```
 
-User-modified project memory is preserved rather than silently overwritten.
+`context migrate` is a legacy Codex-adapter example, not a current Core command. Core rollback/uninstall operate only on project records they manage and preserve user-modified project memory; they do not maintain or recover Host installations, Hooks, profiles, or active sessions. Follow the [Codex](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) or [DSH](https://github.com/Iris0fTheValley/Thaliris-DSH) guide for adapter recovery.
 
 ---
 

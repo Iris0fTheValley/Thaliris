@@ -1,6 +1,6 @@
 # Thaliris
 
-主仓库现在发布 Host 无关的 Core、共享语义文档和 ABCD 基准协议/历史证据。`thaliris-core` 仅提供 Core 操作；Codex 集成位于 [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex)，DSH 集成位于 [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh)。安装与 API 边界见 [分包说明](docs/host-neutral-packaging.md)。
+主仓库现在发布 Host 无关的 Core、共享语义文档和 ABCD 基准协议/历史证据。`thaliris-core` 提供 Host-neutral 记录与证据操作；Codex 原生集成位于 [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex)，DSH 集成位于 [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh)。Core 不安装 Host hooks，也不负责原生任务准入或角色执行。安装与 API 边界见 [分包说明](docs/host-neutral-packaging.md)。
 
 [English](README.en.md)
 
@@ -94,114 +94,51 @@ Controller 负责方向、范围、验收和后续路由，执行角色负责实
 
 ## 安装
 
-本文中的旧版 `context` 命令示例描述 Codex adapter 的行为，并作为设计背景保留。Core 不再提供 prepare/recall、doctor、migrate 或原生角色包。Core 与 Host 边界见[分包说明](docs/host-neutral-packaging.md)；当前命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) 与 [DSH adapter 指南](https://github.com/Iris0fTheValley/Thaliris-dsh)。
-
-需要 Python 3.11 或更高版本，以及 Git。
-
-直接从仓库安装：
+Core CLI 需要 Python 3.11 或更高版本以及 Git。安装本仓库提供的 Host-neutral `thaliris-core` 命令：
 
 ```bash
 uv tool install git+https://github.com/Iris0fTheValley/Thaliris
+thaliris-core version
 ```
 
-接入现有 Git 仓库：
+在现有 Git 仓库中初始化或检查 Core 记录：
 
 ```bash
 cd your-repository
-context init
-context doctor --pretty
+thaliris-core --root . init
+thaliris-core --root . task-status
 ```
 
-用于本地开发：
+Core 安装和初始化不会安装或启用 Host hooks、生成 Codex profiles、启动 Agent、创建原生任务会话，也不证明当前 Host 已加载任何配置。需要 Codex 或 DSH 原生集成时，请按各自 adapter 指南安装并启动：[Codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) 与 [DSH](https://github.com/Iris0fTheValley/Thaliris-dsh)。Core/Host API 边界见[分包说明](docs/host-neutral-packaging.md)。
+
+本地开发：
 
 ```bash
 git clone https://github.com/Iris0fTheValley/Thaliris
 cd Thaliris
-
 uv run --extra test pytest
-uv run context version
+uv run thaliris-core version
 ```
 
 ---
 
-## Agent 接入
+## Core-only 快速开始
 
-在已有 Git 仓库中开始实质性工作前，先显式检查并初始化 Thaliris 控制层：
-
-Git repository
-      ↓
-Thaliris ready?
-      ├─ no  → context init
-      ├─ old → context migrate
-      └─ yes → continue
-      ↓
-context doctor --pretty
-      ↓
-normal task routing
-
-上面的初始化流程由 [Codex adapter](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) 提供。Core 不会自动初始化 Git、安装 Host hooks 或自行 bootstrap runtime；这些能力属于具体 adapter。非 Git 工作区不会仅为了启用 Thaliris 而执行 git init。
-
-
-
-## 快速开始
-
-以下 `context prepare` 示例是 Codex adapter 的历史用法，当前 Core CLI 不提供；当前支持的命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md)。
-
-启动一个任务：
+Core CLI 提供 Host-neutral 记录、显式检索、freshness 与里程碑操作。`task-status` 是有界路由观察；只有在明确需要诊断细节时才运行 `task-show`：
 
 ```bash
-context task-start "fix request cancellation"
+cd your-repository
+thaliris-core --root . task-status
+thaliris-core --root . task-show
+thaliris-core --root . stale
+thaliris-core --root . milestone-check
 ```
 
-查看 Controller 视图：
+这些输出记录机械事实，不选择 Investigator、Implementer、Reviewer 等语义角色，也不决定任务是否在语义上完成或验收。Host adapter 与 Controller 负责原生准入、执行关联、路由和语义验收。
 
-```bash
-context prepare --role controller --pretty
-```
+### 旧版 Codex `context` 命令示例
 
-准备调查上下文：
-
-```bash
-context prepare --role investigator --pretty
-```
-
-当 investigation findings 需要压缩时准备 curator：
-
-```bash
-context prepare --role curator --pretty
-```
-
-准备深度推理上下文：
-
-```bash
-context prepare --role reasoning-specialist --pretty
-```
-
-准备实现上下文：
-
-```bash
-context prepare --role implementer --pretty
-```
-
-准备独立审查上下文：
-
-```bash
-context prepare --role reviewer --pretty
-```
-
-检查诊断状态：
-
-```bash
-context doctor --pretty
-context stale --pretty
-context milestone-check --pretty
-```
-
-使用当前 revision 关闭当前任务：
-
-```bash
-context task-close --base-revision <revision>
-```
+本文其他保留的 `context` 命令是旧版 Codex adapter 命令面，不能当作当前 Core CLI 使用说明。`context prepare`、`context recall`、`context doctor` 和 `context migrate` 不属于 Core CLI；旧版 `context init` 与 Host/Hook 设置也属于 Codex adapter。Core 中仍存在的机械记录操作需使用 `thaliris-core` 命令名及其参数。Adapter 提供的命令与实际启动/恢复流程见 [Codex 指南](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md)。
 
 ---
 
@@ -247,7 +184,7 @@ AGENTS.md
 
 ## 任务状态
 
-任务保存的是结构化状态，而不是对话 transcript。
+Core 保存结构化事实和证据，而不是对话 transcript。它可验证记录字段、source freshness、provenance、CAS 和已选择持久意图的一致性；它不验证 Host actor 身份，不决定语义角色是否适用，也不作最终任务验收。Core CLI 的 `task-start` 只是记录操作；Codex/DSH adapter 才负责各自原生的准入与生命周期边界。
 
 从概念上看，它分为：
 
@@ -284,14 +221,16 @@ Review findings
 
 task-end 的顺序是：`task-local state -> Controller 判断是否值得长期保留 -> 最小 durable promotion -> task-close`。这不是自动总结；没有 durable knowledge 就不写 durable 内容。只有 Controller 可以运行 `task-promote`，且只能提交显式的 `decision`、`invariant`、`failure_mode`、`constraint`，或当前 milestone 的 `progress`/`verification`。连续 feature 且有 current milestone 时，优先保留实际进度和验证到该 milestone；`.agent-memory/` 只保留跨任务可复用的 decision、constraint、invariant、failure mode。Repository task 除非用户明确要求，不主动读取或写入 `~/.codex/memories`、`MEMORY.md` 等个人/global Codex memory；项目连续性走 `.agent-memory/`、`.milestones/`、`task-promote` 和 tracked-document maintenance。输入只能使用当前 ACTIVE task 的 evidence refs，并且必须通过 fresh native file/git evidence，或带 fresh native `source_refs` 的 test/runtime evidence；CONFIRMED promotion 还必须直接引用 fresh CONFIRMED file/git evidence。raw findings、transcript、log 和未知字段都会被拒绝。Promotion 使用 base revision 的 CAS，但不修改 task revision。每个 task 最多消耗 16 个 promotion units（每个 memory record 及每个 milestone progress/verification 字段各 1）；计数器只是有界 task-local bookkeeping，不是长期 memory 或 framework。
 
-最小顺序和 JSON 示例：
+Core-only 的机械记录示例（不构成 Host task admission 或语义验收）：
 
 ```bash
-context task-start "adopt request policy"
+thaliris-core --root . task-start "adopt request policy"
 # ...Controller receives task-local evidence and decides retention...
-context task-promote --role controller --base-revision <revision> --input promote.json
-context task-close --base-revision <revision>
+thaliris-core --root . task-promote --actor controller --base-revision <revision> --input promote.json
+thaliris-core --root . task-close --base-revision <revision>
 ```
+
+`--actor` 是 adapter 提供的标签，不是身份凭证；Core CLI 单独运行不能证明调用者是 Controller。通过 Host adapter 时，adapter 会在允许的边界内执行授权检查。
 
 ```json
 {"records":[{"type":"decision","id":"D-001","title":"Use X","text":"Adopt X.","evidence_refs":["e1"],"confidence":"SUPPORTED"}]}
@@ -358,7 +297,7 @@ Symbols: ["Request.cancel"]
 
 INDEX 文件是 router，而不是总结文档。
 
-旧版 Codex adapter 的 `context recall` 命令用于显式、保守的 lexical retrieval。durable memory 默认不会进入普通 role pack；recall 返回 candidates，既不自动接受进 task state，也不自动向下游传播。Core-only CLI 不提供此命令；当前支持的命令见 [Codex adapter 指南](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md)。
+旧版 Codex adapter 的 `context recall` 命令用于显式、保守的 lexical retrieval；它不是 Core-only CLI 命令。Durable memory 是可选择的知识来源，不等于完整 task context：记录存在或被索引，不代表会自动注入每个角色、进入当前任务，或随 handoff 向下游传播。Controller 选择实际相关内容并决定是否显式 promotion。当前 Codex adapter 命令见 [Codex 指南](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md)。
 
 ---
 
@@ -388,7 +327,7 @@ verification.md
 
 ## 托管的 `AGENTS.md`
 
-[Codex adapter](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) 的 `context init` 会在仓库现有的 `AGENTS.md` 中维护一个带标记的小型区块。Core-only CLI 不提供此 Host 初始化命令。
+[Codex adapter](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) 的初始化流程会在仓库现有的 `AGENTS.md` 中维护一个带标记的小型区块。Core-only CLI 不安装 Hooks，也不维护 Codex 的 Host 指令。
 
 它被有意保持简短。
 
@@ -426,11 +365,16 @@ verification.md
 
 ## 诊断
 
-运行：
+Core-only 诊断可使用：
 
 ```bash
-context doctor --pretty
+thaliris-core --root . task-status
+thaliris-core --root . task-show
+thaliris-core --root . stale
+thaliris-core --root . milestone-check
 ```
+
+Codex adapter 的 `context doctor` 是历史 adapter 命令，当前诊断与原生身份/Hook 状态见 [Codex 指南](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md)。Core 输出不能证明 authorization、Host health、runtime activation 或 subagent lifecycle；无法由对应 adapter 观察证明的状态保持 `UNKNOWN`。
 
 诊断会刻意区分以下状态：
 
@@ -457,25 +401,19 @@ version validated
 * 本地备份；
 * hash guard rollback。
 
-回滚：
+Core-only 恢复操作：
 
 ```bash
-context rollback <backup-id>
-```
-
-迁移：
-
-```bash
-context migrate
+thaliris-core --root . rollback <backup-id>
 ```
 
 卸载：
 
 ```bash
-context uninstall
+thaliris-core --root . uninstall
 ```
 
-用户修改过的项目记忆会被保留，而不会被静默覆盖。
+`context migrate` 是旧 Codex adapter 示例，不是当前 Core 命令。Core rollback/uninstall 只处理其管理的项目记录，并保留用户修改的项目记忆；它们不会维护或恢复 Host 安装、Hooks、profiles 或活动会话。相关 adapter 恢复按 [Codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) 或 [DSH](https://github.com/Iris0fTheValley/Thaliris-dsh) 指南执行。
 
 ---
 

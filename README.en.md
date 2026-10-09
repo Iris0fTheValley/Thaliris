@@ -1,31 +1,16 @@
 # Thaliris
 
-Main now distributes Host-neutral Core, shared semantic guidance and ABCD benchmark protocol/history. `thaliris-core` exposes Host-neutral record and evidence operations. Native Codex integration lives in [Thaliris-Codex](https://github.com/Iris0fTheValley/Thaliris-Codex), and DSH integration lives in [Thaliris-DSH](https://github.com/Iris0fTheValley/Thaliris-DSH). Core does not install Host hooks or perform native task admission or role execution. See [installation and API boundaries](docs/host-neutral-packaging.md).
-
 [中文](README.md)
 
 A lightweight, Git-native context and orchestration layer for AI coding workflows.
 
-Thaliris helps multi-agent coding workflows keep the right information in the right reasoning context without turning the repository into an agent framework.
+Thaliris selects necessary facts, constraints and evidence to protect effective reasoning by high-capability models in focused contexts. Context quality is not context quantity; runtime prompts are part of the working context too. Irrelevant information, competing objectives and accumulated history can dilute or interfere with the evidence that actually needs reasoning.
 
-It manages the conditions under which information enters a reasoning path, not agents as a general-purpose lifecycle system. Evidence, freshness, memory, and adapter safeguards exist only to prevent incorrect, stale, irrelevant, or role-mismatched information from being propagated. Lower cost is a possible result, never a reason to discard necessary context.
+**Attention is the most expensive resource.** Here, attention means a capable model's effective cognitive budget for solving difficult problems in a clean, focused context. It is neither simply the price of tokens nor the Attention algorithm.
 
-It provides:
+Thaliris manages the conditions under which information enters a reasoning path rather than rebuilding a general-purpose Agent Framework. Evidence, freshness, memory, task state and adapter mechanisms serve correct information transfer and task execution, rather than adding process for its own sake. Cognitive isolation and appropriate allocation of model capabilities aim to improve complex-task quality and overall efficiency without sacrificing necessary reasoning or evidence.
 
-* shared semantic guidance for role-specific work;
-* evidence-backed project memory;
-* transient task state;
-* investigation and review handoffs;
-* freshness tracking;
-* milestone state;
-* conservative routing;
-* deterministic validation and recovery.
-
-With the Codex adapter, Codex is the runtime and controller. With any adapter, source code, Git, tests, compilers, and runtime behavior remain the correctness core.
-
-> **Status:** Beta. The current implementation is intentionally small and is still being evaluated on real coding workloads.
-
----
+> **Status:** Beta. Design goals are not demonstrated gains. Historical ABCD results apply to their original setups; recent prompt, orchestration and waiting-rule changes have no new controlled quality or cost comparison.
 
 ## Why this project exists
 
@@ -77,6 +62,51 @@ context: control what reaches a reasoning path, preserve evidence-backed
 information, and isolate unrelated working sets.
 
 ---
+
+## How the principles shape work
+
+### Long-lived decisions, short-lived working contexts
+
+The long-lived Controller retains the user objective, scope, hard invariants, acceptance conditions and selected decision basis, then decides what work is needed next. Short-lived roles carry the investigation or implementation working set. Search paths, debugging traces and raw logs stay in the responsible context; the return carries conclusions, source locations, verification, contradictions and unknowns that could change a decision. The Controller need not carry the entire process again, and executors need not carry the project's entire history.
+
+A Fresh Child is a new native role session receiving the facts, constraints, sources and acceptance needed for its work through a selective Handoff. Isolating history does not discard evidence: necessary originals can be reopened at their source locations, while established inventories and facts should be reused. A working set is not a handoff set. Recording or retaining information does not automatically pass it to every role.
+
+| Role | Work it handles | Why separate it |
+| --- | --- | --- |
+| Investigator | Facts within the selected scope, exact sources, coverage, contradictions and unknowns | Keeps exploration history in the investigation context without deciding architecture for the Controller |
+| Implementer | An accepted, stable direction through necessary verification, local repair and assigned closure | Lets deterministic work reuse an explicit contract without reopening architectural decisions |
+| Focused Implementer | Sustained reasoning, implementation, runtime feedback and revision across coupled invariants until core semantics converge | Protects focused cognitive budget while the solution can still change; a fresh ordinary Implementer then handles assigned deterministic closure |
+| Reviewer | Independent, non-writing challenge of original acceptance, invariants and cross-boundary behavior after candidate convergence | Examines evidence without carrying the implementer's full debugging trajectory or continuing its code changes |
+
+Roles are capabilities selected by work shape, not stages every task must traverse. Multiple Agents, fixed review rounds and uniform steps are not mandatory; an explicit single-agent execution choice should also be preserved. Investigation, independent review and parallelism depend on evidence, decision coupling and actual write conflicts rather than file, call or elapsed-time thresholds. Native role bindings and execution modes belong to each Host adapter.
+
+### Evidence, task records and reusable knowledge
+
+Conclusions should identify their evidence and applicability. File hashes, Git blobs and test/runtime observations can identify the version observed. Freshness checks only declared sources for change; they cannot prove every dependency unchanged or decide whether a conclusion still applies. Insufficiently established conclusions remain `UNVERIFIED`; missing execution or identity observations remain `UNKNOWN`, rather than turning inference into confirmation. Existing records are retrievable material, not facts downstream roles must accept.
+
+Short-term records retain facts, pending work and evidence for the current Task ID rather than copying conversation transcripts. In Core project records, `.agent-memory/` holds selected knowledge reusable across tasks and `.milestones/` holds continuing project progress and verification. The Controller decides what merits long-term retention and what matters only to this task. Persistence and transmission to the next role are separate choices. Optional Host memory integrations have their own storage and authorization contracts.
+
+Each independent task has a UUID Task ID and its own local state file. Continuing a task means selecting its Task ID and relevant evidence; starting another creates a new Task ID rather than inferring the current task from old workspace state. Old `ACTIVE`, `UNKNOWN` or damaged records do not automatically occupy a singleton task slot. Actual overlapping writes to shared files still need coordination. Native session association, recovery and permission checks belong to adapters; a Task ID grants no authority and does not authenticate a Host actor.
+
+Completion requires Controller semantic acceptance against the user's original objective. A test `PASS` establishes the result of the checks run; child completion establishes execution termination; a clean diff does not establish the requested product behavior. Each necessary dependency has one observation owner. Use reliable results once available, without waiting for the same completion again or repeatedly waking a model to observe unchanged state. Verification and waiting serve actual unresolved questions.
+
+## A cross-module coding example
+
+Suppose a user requests cancellation for an export feature spanning an API, queue and storage layer while preserving older requests. This illustrates the mechanism, not a product test or performance experiment, and is not a mandatory workflow.
+
+1. The Controller establishes cancellation semantics, compatibility boundaries and acceptance scenarios. An Investigator maps request entry, queue transitions and storage writes, returning sourced call relationships, existing tests and unresolved races. Failed searches and raw logs stay in its working set.
+2. The Controller selects relevant facts, hard invariants and unknowns for the Handoff. Where cancellation, completion and writes are coupled, a Fresh Focused Implementer implements and verifies those invariants. Independent changes with stable direction can go to an ordinary Implementer.
+3. The executor returns the exact candidate, source versions, test coverage and uncovered cases. After core semantic convergence, a fresh ordinary Implementer can handle remaining deterministic synchronization, regression or Git closure without extending the original focused context.
+4. Where independent challenge could affect acceptance, a Fresh Reviewer examines boundaries such as simultaneous cancellation and completion or older API compatibility. Unverified runtime behavior remains unknown; findings return with evidence rather than becoming accepted conclusions automatically.
+5. The Controller compares the results with the original request and decides to repair, gather further evidence or accept. Only cancellation invariants or verified failure modes with value beyond this task enter project memory; other records remain with their Task ID.
+
+Source code, Git, tests, compilers and actual runtime behavior remain the basis for correctness. Thaliris reuses native sessions, Agents and execution in Codex and DSH, adding context selection, handoffs, records and evidence boundaries rather than constructing another Agent Runtime.
+
+## Core responsibilities and capabilities
+
+The main repository distributes Host-neutral Core, shared semantic guidance and ABCD benchmark protocol and historical evidence. `thaliris-core` provides mechanical records for independent Task IDs, explicit retrieval, evidence and freshness, project memory, milestones, and bounded validation and recovery. Shared semantics explain how the Controller and roles use these capabilities; adapters own native admission and execution.
+
+Core neither selects native models nor schedules Agents, installs Host hooks or authenticates Host actors. Codex integration lives in [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex), and DSH integration in [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh). See [installation and API boundaries](docs/host-neutral-packaging.md).
 
 ## Context and runtime contracts
 
@@ -541,7 +571,7 @@ The intended principle is narrower:
 ## Research motivation and limits
 
 These papers motivate design choices; they do not validate Thaliris or its compression ratios.
-[Liu et al. (2024), Lost in the Middle](https://doi.org/10.1162/tacl_a_00638) examines positional
+[Liu et al. (2024), Lost in the Middle](https://aclanthology.org/2024.tacl-1.9/) examines positional
 and structural context utilization. [Jiang et al. (2024), LongLLMLingua](https://doi.org/10.18653/v1/2024.acl-long.91)
 reports information-density/efficiency and performance effects on its tested tasks.
 [Mondshine, Paz-Argaman and Tsarfaty (2025), Beyond English](https://doi.org/10.18653/v1/2025.findings-naacl.73)
@@ -564,7 +594,7 @@ The project is still early.
 Current limitations include:
 
 * routing is intentionally conservative;
-* task state is local and single-task rather than a task database;
+* task state is local and isolated by explicit Task ID, not a task database or native Agent scheduler;
 * evidence freshness cannot prove undeclared dependencies;
 * role execution is supplied by host adapters rather than by Core;
 * external adapter health cannot always be observed directly;

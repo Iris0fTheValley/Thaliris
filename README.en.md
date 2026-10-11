@@ -88,7 +88,7 @@ Short-term records retain facts, pending work and evidence for the current Task 
 
 Each independent task has a UUID Task ID and its own local state file. Continuing a task means selecting its Task ID and relevant evidence; starting another creates a new Task ID rather than inferring the current task from old workspace state. Old `ACTIVE`, `UNKNOWN` or damaged records do not automatically occupy a singleton task slot. Actual overlapping writes to shared files still need coordination. Native session association, recovery and permission checks belong to adapters; a Task ID grants no authority and does not authenticate a Host actor.
 
-Completion requires Controller semantic acceptance against the user's original objective. A test `PASS` establishes the result of the checks run; child completion establishes execution termination; a clean diff does not establish the requested product behavior. Each necessary dependency has one observation owner. Use reliable results once available, without waiting for the same completion again or repeatedly waking a model to observe unchanged state. Verification and waiting serve actual unresolved questions.
+Final product acceptance uses a separate explicit closing handoff to a suitable existing executor, which checks the user's original objective and criteria and returns a conclusion, criterion-linked evidence and `UNKNOWN`. Controller integrates that result, routes unmet criteria or decision-changing unknowns, and records mechanical closure; it does not perform final acceptance itself. Reviewer remains an independent challenge, and its READY cannot replace this acceptance. Human-selected single-agent or controller-direct execution stays in that mode: use an already authorized available executor or human acceptance; without independent closing evidence, report acceptance unverified and return the closing decision to the human. A test `PASS` establishes the result of the checks run; child completion establishes execution termination; a clean diff does not establish the requested product behavior. Each necessary dependency has one observation owner. Use reliable results once available, without waiting for the same completion again or repeatedly waking a model to observe unchanged state. Verification and waiting serve actual unresolved questions.
 
 ## A cross-module coding example
 
@@ -98,7 +98,7 @@ Suppose a user requests cancellation for an export feature spanning an API, queu
 2. The Controller selects relevant facts, hard invariants and unknowns for the Handoff. Where cancellation, completion and writes are coupled, a Fresh Focused Implementer implements and verifies those invariants. Independent changes with stable direction can go to an ordinary Implementer.
 3. The executor returns the exact candidate, source versions, test coverage and uncovered cases. After core semantic convergence, a fresh ordinary Implementer can handle remaining deterministic synchronization, regression or Git closure without extending the original focused context.
 4. Where independent challenge could affect acceptance, a Fresh Reviewer examines boundaries such as simultaneous cancellation and completion or older API compatibility. Unverified runtime behavior remains unknown; findings return with evidence rather than becoming accepted conclusions automatically.
-5. The Controller compares the results with the original request and decides to repair, gather further evidence or accept. Only cancellation invariants or verified failure modes with value beyond this task enter project memory; other records remain with their Task ID.
+5. A suitable existing executor receives an explicit closing handoff and verifies the candidate against the original request. Controller integrates its conclusion, evidence and unknowns, routes further work when needed and records mechanical closure. Only cancellation invariants or verified failure modes with value beyond this task enter project memory; other records remain with their Task ID.
 
 Source code, Git, tests, compilers and actual runtime behavior remain the basis for correctness. Thaliris reuses native sessions, Agents and execution in Codex and DSH, adding context selection, handoffs, records and evidence boundaries rather than constructing another Agent Runtime.
 
@@ -120,13 +120,12 @@ and optimize representation; random switching or adding languages is not the obj
 
 Normal Controller routing, handoffs, evidence reuse, waiting, endpoints, acceptance and causal diagnosis stay resident; exceptional recovery, Host maintenance and historical migration steps are retrieved on demand. Each necessary dependency has one observation owner: executors wait on their tests, processes and CI; the Controller waits only for a known unfinished child result that remains necessary, without checking the same job again. A FINAL result or a decision-changing unknown ends that child slice; do not keep waiting for it. Tool maximum is capacity, not a default duration, and higher-level duration limits take precedence. Cost assessment includes normal task context, retrieval/reconstruction and delivered quality.
 
-Controller owns direction, scope, acceptance and next routing, while executor owns
+Controller owns direction, scope, acceptance criteria and next routing, while executor owns
 implementation design. The default is delegated: a long-lived Controller sends open-ended,
 cross-file, multi-step and repeated investigation to a short-lived Investigator, and sends
-stable implementation work to an Implementer. A one-time or very small number of related,
-precisely located, decision-critical facts may be read directly; open-ended iteration or
-splitting an investigation into successive small queries does not turn it into ordinary
-Controller work. An explicit user choice of
+stable implementation work to an Implementer. Ordinary Controller reads, Git and diagnostics are legal within the task boundary.
+Delegate substantial investigation and implementation by purpose and working set;
+numeric limits do not grant or deny permission. An explicit user choice of
 `controller-direct` or `single-agent` takes precedence over this efficiency default while
 preserving task scope, read-only role boundaries and protection of user-owned files. Independent workstreams
 may run in parallel when their writes do not conflict; overlapping writes in one working
@@ -186,7 +185,7 @@ thaliris-core --root . stale
 thaliris-core --root . milestone-check
 ```
 
-These outputs record mechanical facts. They do not select semantic roles such as Investigator, Implementer, or Reviewer, and they do not decide semantic completion or acceptance. The Host adapter and Controller own native admission, execution association, routing, and semantic acceptance.
+These outputs record mechanical facts. They do not select semantic roles such as Investigator, Implementer, or Reviewer, and they do not decide semantic completion or acceptance. The Host adapter and Controller own native admission, execution association and routing; an explicit closing handoff supplies final acceptance for Controller integration and mechanical closure.
 
 Each new task has an independent Task ID ledger. Task state lives at
 `.context/tasks/<task-id>/state.json`; Authority, recovery evidence and mechanical records are

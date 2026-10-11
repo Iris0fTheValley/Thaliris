@@ -85,7 +85,7 @@ Fresh Child 是新的原生角色会话，通过选择性 Handoff 接收完成�
 
 每个独立任务都有以 UUID 标识的 Task ID 和自己的本地状态文件。继续已有任务时明确选择 Task ID 与相关证据；开始新任务时创建新的 Task ID，不从旧工作区状态推断当前任务。旧 `ACTIVE`、`UNKNOWN` 或损坏记录不会自动占住唯一任务槽位，但真实的共享文件重叠写入仍需协调。原生会话关联、恢复和权限检查属于 adapter；Task ID 本身不授予权限，也不构成 Host 身份认证。
 
-任务完成需要 Controller 按用户原始目标进行语义验收。测试 `PASS` 只证明所运行检查的结果，子代理结束只证明执行终止，干净的 diff 也不证明产品行为符合要求。每个必要依赖由一个观察 owner 负责；已经得到可靠结果就使用它，不重复等待完成或因状态未变化而反复唤醒模型。验证与等待服务于尚未解决的实际问题。
+最终产品验收通过一份独立、明确的 closing handoff，交给适当的现有执行角色：它按用户原始目标和标准检查候选，返回结论、对应证据与 `UNKNOWN`。Controller 整合该结果，对未满足标准或改变决策的未知项继续路由，并记录机械关闭；Controller 不自行完成最终验收。Reviewer 仍负责独立挑战，其 READY 不替代这份验收。人选 single-agent 或 controller-direct 时保持原模式，由已授权且可用的执行角色或人类提供验收；没有独立 closing 证据时明确验收未验证，交还人类作关闭决定。测试 `PASS` 只证明所运行检查的结果，子代理结束只证明执行终止，干净的 diff 也不证明产品行为符合要求。每个必要依赖由一个观察 owner 负责；已经得到可靠结果就使用它，不重复等待完成或因状态未变化而反复唤醒模型。验证与等待服务于尚未解决的实际问题。
 
 ## 一个跨模块编码场景
 
@@ -95,7 +95,7 @@ Fresh Child 是新的原生角色会话，通过选择性 Handoff 接收完成�
 2. Controller 选择相关事实、硬不变量和未知项形成 Handoff。若取消、完成与写入互相耦合，Fresh Focused Implementer 围绕这些不变量实现并验证；方向稳定的独立修改可以交给普通 Implementer。
 3. 实现者返回具体候选、来源版本、测试覆盖和未覆盖情形。核心语义收敛后，剩余确定性同步、回归或 Git 收尾可交给新的普通 Implementer，而不延长原聚焦上下文。
 4. 如果独立挑战会影响验收，Fresh Reviewer 检查诸如「取消与完成同时发生」及旧 API 兼容等边界。未验证的运行时行为继续标记未知；审查发现带着依据返回，而不是自动视为结论。
-5. Controller 将结果与原始需求对照，决定修复、补充验证或接受。只有跨任务仍有价值的取消不变量或已验证 failure mode 才进入项目记忆；其余记录留在对应 Task ID 中。
+5. 适当的现有执行角色通过明确的 closing handoff，按原始需求验收候选。Controller 整合其结论、证据和未知项，必要时继续路由，并记录机械关闭。只有跨任务仍有价值的取消不变量或已验证 failure mode 才进入项目记忆；其余记录留在对应 Task ID 中。
 
 源码、Git、测试、编译器和实际运行时行为仍然是正确性的依据。Thaliris 复用 Codex、DSH 的原生会话、Agent 与执行能力：它补充上下文选择、交接、记录与证据边界，不另造一套 Agent Runtime。
 
@@ -111,7 +111,7 @@ Core 不选择原生模型、不调度 Agent、不安装 Host hooks，也不认�
 
 正常 Controller 的路由、交接、证据复用、等待、终点、验收与因果诊断应直接常驻；异常恢复、Host 维护与历史迁移步骤按需检索。每个必要依赖有一个观察 owner：执行角色等待自己的测试、process 与 CI；Controller 只在已知子代理尚未结束且其结果仍属必要依赖时等待，不重复观察同一作业。child 返回 FINAL 或 decision-changing unknown 时，该 slice 已结束，不继续等待。工具最长等待是 capacity，不是默认时长；高层时长限制优先。成本评价包含正常任务上下文、检索重建与交付质量。
 
-Controller 负责方向、范围、验收和后续路由，执行角色负责实现方案。默认采用 delegated：长期 Controller 将开放式、跨文件、多步和重复调查交给短期 Investigator，将稳定方向的实施交给 Implementer。Controller 可以直接读取一次或极少数互相关联、已经准确定位且对当前决策必要的事实；开放式迭代调查或把一次调查拆成连续小查询都仍须委派。用户明确选择 `controller-direct` 或 `single-agent` 时，该选择优先于效率默认，同时继续遵守任务范围、角色只读限制和用户文件保护。Controller 可按依赖关系选择是否并行安排写入互不冲突的独立 Workstream；同一工作树中的重叠写入仍需协调。决策完备的交接复用已选证据和既有清单。普通 Implementer 收敛稳定方向；Focused Implementer 负责完整推理、实现、运行时反馈和修订循环，直到核心语义收敛，再将工作上下文释放给新的普通 Implementer 完成确定性收尾。Reviewer 独立且只读；关键验收需要支持证据。Core 记录机械事实，但不判断角色适用性、不认证 Host actor，也不判定语义完成状态。
+Controller 负责方向、范围、验收标准和后续路由，执行角色负责实现方案。默认采用 delegated：长期 Controller 将开放式、跨文件、多步和重复调查交给短期 Investigator，将稳定方向的实施交给 Implementer。Controller 在任务边界内的普通读取、Git 和诊断合法；按用途与工作集选择委派，不设数值权限门槛。用户明确选择 `controller-direct` 或 `single-agent` 时，该选择优先于效率默认，同时继续遵守任务范围、角色只读限制和用户文件保护。Controller 可按依赖关系选择是否并行安排写入互不冲突的独立 Workstream；同一工作树中的重叠写入仍需协调。决策完备的交接复用已选证据和既有清单。普通 Implementer 收敛稳定方向；Focused Implementer 负责完整推理、实现、运行时反馈和修订循环，直到核心语义收敛，再将工作上下文释放给新的普通 Implementer 完成确定性收尾。Reviewer 独立且只读；关键验收需要支持证据。Core 记录机械事实，但不判断角色适用性、不认证 Host actor，也不判定语义完成状态。
 
 这些边界见[路由协议](docs/thaliris-routing-protocol.md)和[提示词归属与研究动机](docs/thaliris-prompt-design.md)。全局、项目及角色提示词的生成和原生运行时执行由 Host adapters 负责。ABCD 结果只适用于各自原有的实验设置；本次规范化没有经过基准测试，提示词变短也不能证明质量提升。
 
@@ -157,7 +157,7 @@ thaliris-core --root . stale
 thaliris-core --root . milestone-check
 ```
 
-这些输出记录机械事实，不选择 Investigator、Implementer、Reviewer 等语义角色，也不决定任务是否在语义上完成或验收。Host adapter 与 Controller 负责原生准入、执行关联、路由和语义验收。
+这些输出记录机械事实，不选择 Investigator、Implementer、Reviewer 等语义角色，也不决定任务是否在语义上完成或验收。Host adapter 与 Controller 负责原生准入、执行关联和路由；closing handoff 提供最终验收结果，由 Controller 整合并记录机械关闭。
 
 每个新任务都有独立的 Task ID 账本；任务状态位于 `.context/tasks/<task-id>/state.json`，Authority、恢复证据和机械记录也按该 Task ID 关联。即使同一仓库中的另一个任务仍为 `ACTIVE`、`UNKNOWN` 或 Authority 损坏，`task-start` 也会创建新的 Task ID。保存 `task-start` 返回的 `task_id`，并在后续任务操作中显式传入 `--task-id`。当前会话关联与 Authority 不会从旧工作区状态自动推断；未选择的旧单例数据只可供只读 legacy 诊断查看，任何 legacy 恢复操作都必须明确选择其任务。Task ID 选择只建立导航，不授予 Host 权限，也不认证调用者。
 

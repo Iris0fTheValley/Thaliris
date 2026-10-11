@@ -28,7 +28,7 @@ evolution does not permanently bind ordinary work to an old runtime baseline.
 
 ## Ownership and handoff
 
-Controller owns the user objective, direction, scope, hard invariants, acceptance,
+Controller owns the user objective, direction, scope, hard invariants, acceptance criteria,
 context selection and next routing. Executor owns implementation design and methods
 within that boundary. A decision-complete handoff carries goal/original acceptance,
 confirmed facts, authoritative source and derived relationships, affected surfaces,
@@ -83,7 +83,7 @@ Coordinate known shared-file overlap or use separate worktrees before dispatch;
 file CAS detects lost updates, not semantic overlap. An adapter may retain one
 task-local unbound dispatch while precise native identity is unavailable, without
 blocking other tasks or already bound independent siblings. Native execution,
-Controller acceptance and task/dependency disposition are separate facts. Explicit
+product acceptance and task/dependency disposition are separate facts. Explicit
 management abandonment may release a dependency while native execution and writing
 risk remain UNKNOWN; fence its grants and reject late reactivation, without claiming
 the process stopped. Unknown actual writes still need isolation or coordination.
@@ -104,12 +104,12 @@ Respect the human's delegated, controller-direct or single-agent selection; omit
 selection defaults to delegated. Controller strategy may change through authorized
 task/revision CAS without expanding the original goal, scope or hard constraints.
 Existing child role and readonly boundaries remain fixed. In delegated mode,
-Controller may retrieve one or very few related precise known-path evidence fragments
-for an immediate decision. Prefer bounded catalog/document/task/artifact retrieval
-and exact instruction sections. Explicit task-show diagnosis is available; delegate
-large diagnostics and open investigation. Continuous small queries cannot assemble
-a broad investigation. Hooks cannot prove cumulative semantic scope or all third-party
-MCP behavior; this is an agent behavior rule, not a numeric query quota.
+Ordinary Controller reads, Git and diagnostics are legal within the task boundary.
+Default routing recommends delegating open investigation, large diagnostics and
+substantial implementation to suitable fresh roles. Choose by purpose and working
+set; file, line, token and query counts do not grant or deny permission. Prefer
+bounded catalog/document/task/artifact retrieval and exact instruction sections
+when useful. Hooks cannot prove cumulative semantic scope or all third-party MCP behavior.
 An active child may receive selected supplemental evidence and factual corrections
 inside its accepted goal and role. Communication cannot change authorization. After
 FINAL, new work uses a fresh child.
@@ -183,6 +183,20 @@ Accepted design unchanged and bounded defect supports fresh ordinary correction;
 architecture/contract/invariant/scope/acceptance or decision-basis changes reopen Controller.
 Core test PASS and lifecycle completion are observations, not semantic completion authority.
 Review READY covers its selected candidate and criteria, not final product acceptance.
+Final product acceptance uses a separate explicit closing handoff to a suitable
+existing executor, with the user's original objective, criteria, exact candidate,
+evidence and unverified dependencies. That executor returns a conclusion,
+criterion-linked evidence and UNKNOWN for unverified behavior. Local tests,
+native completion and Reviewer challenge/READY cannot replace this acceptance.
+Controller integrates that result, routes unmet criteria or decision-changing
+unknowns, and records mechanical closure; it does not perform final acceptance
+itself. This handoff adds no role or lifecycle stage, and Core task-close remains
+a mechanical record operation.
+Closing responsibility does not require a spawn in every mode. Preserve human-selected
+single-agent or controller-direct execution; an already authorized available executor
+or human may provide final acceptance. Without independent closing evidence, report
+acceptance unverified and return the closing decision to the human. Do not automatically
+create children or change mode, or substitute Controller integration for acceptance.
 Choose fresh sessions by remaining independence and total context reconstruction cost,
 never by a mechanical duration/call threshold or a local PASS alone.
 

@@ -1,13 +1,15 @@
 <!-- thaliris:begin -->
 ## Thaliris shared boundaries
 
-Controller owns human intent, direction, scope, acceptance, selected context and
+Controller owns human intent, direction, scope, acceptance criteria, selected context and
 next routing; native execution observations never decide semantic acceptance.
 Follow the user's execution mode; omitted mode defaults to delegated. Independent
 investigation and isolated workstreams may run in parallel; coordinate known shared
-write overlap or use separate worktrees. In delegated mode, Controller may make one
-or very few related precise known-path evidence reads; open investigation and continuous
-small queries that assemble a broad investigation belong to Investigator/Scanner.
+write overlap or use separate worktrees. Ordinary Controller reads, Git and diagnostics
+are legal within the task boundary; default routing recommends delegating open
+investigation and substantial implementation by purpose and working set, without
+numeric permission thresholds. Final acceptance uses an explicit closing handoff to
+a suitable existing executor; Controller integrates that result for mechanical closure.
 Authority is persistent Controller-asserted
 intent, not universal Host owner authentication. Children cannot establish, expand,
 rewrite or reactivate it, alter frozen constraints or mutate Controller/security state.

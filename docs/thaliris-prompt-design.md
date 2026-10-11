@@ -22,7 +22,7 @@ migration steps are retrieved on demand. Compare total normal task context and r
 cost with delivered quality; fewer prompt bytes alone do not establish savings.
 
 Full mechanical design stays in protocol docs; runtime retains consequences the model
-must act upon. Controller determines acceptance and handoff boundaries, not the executor's
+must act upon. Controller determines acceptance criteria and handoff boundaries, not the executor's
 implementation algorithm. Ordinary execution closes deterministic local loops. Focused
 execution includes runtime feedback and revision until the core semantic candidate converges,
 then releases that working context for fresh ordinary closure. Independent review uses evidence

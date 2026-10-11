@@ -7,7 +7,7 @@ native role instructions from their own canonical sources.
 
 | Role | Responsibility and boundary |
 | --- | --- |
-| Controller | Direction, scope, invariants, acceptance, context selection, next routing; implementation methods belong to executor. |
+| Controller | Direction, scope, invariants, acceptance criteria, context selection, next routing; assign final acceptance by explicit closing handoff and integrate its result for mechanical closure. |
 | Investigator | Broad facts and evidence with exact locations, covered/uncovered scope and unknowns; no architecture decisions. Scanner is its nested discovery pattern. |
 | Implementer | Stable accepted direction through deterministic convergence and assigned local closure. |
 | Focused Implementer | Full reasoning/implementation/runtime-feedback/revision loop across coupled invariants; returns at semantic convergence before ordinary closure. |
@@ -23,3 +23,9 @@ Decision-changing dependencies end the Workstream in FINAL for Controller judgme
 Native delegation capability and isolation remain adapter-specific. See the
 [Codex generated profiles](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/docs/thaliris-role-packs.md)
 and DSH's editable role templates; they are not interchangeable Host contracts.
+
+A separate explicit closing handoff can assign final product acceptance to a
+suitable existing executor, which returns a conclusion, criterion-linked evidence
+and UNKNOWN. Reviewer remains an independent challenge. Controller integrates the
+acceptance result and records mechanical closure, without performing acceptance
+itself or introducing a new role or lifecycle stage.

@@ -36,15 +36,17 @@ def test_shared_observation_frequency_and_wait_capacity_contract():
     for terms in (("normal controller", "directly available", "exceptional recovery", "when needed"),
                   ("complete task context", "retrieval", "delivered quality"),
                   ("one observation owner", "executors", "tests", "processes", "ci", "child result"),
-                  ("tool's actual maximum", "meaningful events", "child completion", "user input", "interruption"),
-                  ("confirmed", "no interim decision", "default", "timeout_ms=3600000"),
-                  ("60 minutes", "not a deadline", "60 seconds", "10–60 minutes", "30 minutes"),
-                  ("actual tool limits", "stricter higher-level limits", "take precedence"),
+                  ("tool maximum", "capacity", "higher-level limits", "precedence"),
                   ("simultaneous", "active/pending", "not a lifetime quota", "terminal completion"),
                   ("original failure", "local reproduction", "failed boundaries", "inferred deeper root cause"),
                   ("controller owns product acceptance", "reviewer is an optional", "selected review",
                    "native child completed", "task-close done")):
         assert all(term in text for term in terms)
+    def prohibits_recommendation(value):
+        return any("maximum" in clause and "recommended" in clause and "duration" in clause and "not" in clause
+                   for clause in re.split(r"[.!?;]", value))
+    assert prohibits_recommendation(text)
+    assert not prohibits_recommendation(text.replace("not a recommended duration", "a recommended duration"))
 
 
 def test_controller_acceptance_and_optional_review_are_shared_across_docs():

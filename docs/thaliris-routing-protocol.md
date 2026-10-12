@@ -62,15 +62,10 @@ when needed. Shared instructions carry genuinely cross-role boundaries; role-own
 methods stay with the role. Judge complete task context plus retrieval/reconstruction
 cost and delivered quality, not the shortest prompt or number of calls alone.
 
-Before waiting, confirm the tool's actual maximum and whether meaningful events,
-child completion, user input and interruption can return control early. When event
-notifications, user interruption, early return and the tool maximum window are
-confirmed, and no interim decision is needed, default to the supported 60-minute
-window (`timeout_ms=3600000`); it is an interruptible maximum, not a deadline. If those
-capabilities are unconfirmed or a stage decision is needed, choose a task-appropriate
-check: about 60 seconds for very short work, 10–60 minutes for ordinary work, or
-about 30 minutes for longer-task stage checks. Actual tool limits and stricter
-higher-level limits take precedence. Give each necessary dependency one observation
+Choose waiting from available capability, expected meaningful event and necessary
+dependency; prefer native notifications. A tool maximum is capacity, not a recommended
+duration. Higher-level limits take precedence; neither a universal maximum nor a fixed
+wait duration is the shared policy. Give each necessary dependency one observation
 owner: executors run/wait on their tests, processes and CI and report substantive
 changes or terminal evidence; Controller waits for the necessary child result without
 rechecking the same job. Do not create status-only reasoning rounds for unchanged

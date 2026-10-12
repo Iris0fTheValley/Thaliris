@@ -37,6 +37,7 @@ def test_shared_observation_frequency_and_wait_capacity_contract():
                   ("complete task context", "retrieval", "delivered quality"),
                   ("one observation owner", "executors", "tests", "processes", "ci", "child result"),
                   ("tool's actual maximum", "meaningful events", "child completion", "user input", "interruption"),
+                  ("confirmed", "no interim decision", "default", "timeout_ms=3600000"),
                   ("60 minutes", "not a deadline", "60 seconds", "10–60 minutes", "30 minutes"),
                   ("actual tool limits", "stricter higher-level limits", "take precedence"),
                   ("simultaneous", "active/pending", "not a lifetime quota", "terminal completion"),

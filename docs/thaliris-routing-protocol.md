@@ -64,9 +64,9 @@ cost and delivered quality, not the shortest prompt or number of calls alone.
 
 Before waiting, confirm the tool's actual maximum and whether meaningful events,
 child completion, user input and interruption can return control early. When event
-notifications, user interruption and early return are confirmed, and no interim
-decision is needed, use the supported longest observation window (up to 60 minutes
-on the current Host); it is an interruptible maximum, not a deadline. If those
+notifications, user interruption, early return and the tool maximum window are
+confirmed, and no interim decision is needed, default to the supported 60-minute
+window (`timeout_ms=3600000`); it is an interruptible maximum, not a deadline. If those
 capabilities are unconfirmed or a stage decision is needed, choose a task-appropriate
 check: about 60 seconds for very short work, 10–60 minutes for ordinary work, or
 about 30 minutes for longer-task stage checks. Actual tool limits and stricter

@@ -62,10 +62,15 @@ when needed. Shared instructions carry genuinely cross-role boundaries; role-own
 methods stay with the role. Judge complete task context plus retrieval/reconstruction
 cost and delivered quality, not the shortest prompt or number of calls alone.
 
-Choose waiting from available capability, expected meaningful event and necessary
-dependency; prefer native notifications. A tool maximum is capacity, not a recommended
-duration. Higher-level limits take precedence; neither a universal maximum nor a fixed
-wait duration is the shared policy. Give each necessary dependency one observation
+Before waiting, confirm the tool's actual maximum and whether meaningful events,
+child completion, user input and interruption can return control early. When event
+notifications, user interruption and early return are confirmed, and no interim
+decision is needed, use the supported longest observation window (up to 60 minutes
+on the current Host); it is an interruptible maximum, not a deadline. If those
+capabilities are unconfirmed or a stage decision is needed, choose a task-appropriate
+check: about 60 seconds for very short work, 10–60 minutes for ordinary work, or
+about 30 minutes for longer-task stage checks. Actual tool limits and stricter
+higher-level limits take precedence. Give each necessary dependency one observation
 owner: executors run/wait on their tests, processes and CI and report substantive
 changes or terminal evidence; Controller waits for the necessary child result without
 rechecking the same job. Do not create status-only reasoning rounds for unchanged
@@ -175,28 +180,27 @@ upgrade or uninstall, global instructions, profiles, hooks and trust require sep
 Host authority under the adapter's maintenance contract. Project operational acceptance
 does not grant that authority.
 
-Reviewer is fresh, independent and non-writing after candidate convergence. It challenges
-original acceptance, invariants and affected cross-boundary behavior, not only the diff.
-Counterevidence is a finding; inadequate evidence remains unverified/insufficient; READY
-requires supported critical closure. No blocker found is not verified acceptance.
-Accepted design unchanged and bounded defect supports fresh ordinary correction;
-architecture/contract/invariant/scope/acceptance or decision-basis changes reopen Controller.
-Core test PASS and lifecycle completion are observations, not semantic completion authority.
-Review READY covers its selected candidate and criteria, not final product acceptance.
-Final product acceptance uses a separate explicit closing handoff to a suitable
-existing executor, with the user's original objective, criteria, exact candidate,
-evidence and unverified dependencies. That executor returns a conclusion,
-criterion-linked evidence and UNKNOWN for unverified behavior. Local tests,
-native completion and Reviewer challenge/READY cannot replace this acceptance.
-Controller integrates that result, routes unmet criteria or decision-changing
-unknowns, and records mechanical closure; it does not perform final acceptance
-itself. This handoff adds no role or lifecycle stage, and Core task-close remains
-a mechanical record operation.
-Closing responsibility does not require a spawn in every mode. Preserve human-selected
-single-agent or controller-direct execution; an already authorized available executor
-or human may provide final acceptance. Without independent closing evidence, report
-acceptance unverified and return the closing decision to the human. Do not automatically
-create children or change mode, or substitute Controller integration for acceptance.
+Reviewer is an optional fresh, independent and non-writing challenge after candidate
+convergence. It challenges the original criteria, invariants and affected cross-boundary
+behavior, not only the diff. Counterevidence is a finding; inadequate evidence remains
+unverified/insufficient; READY requires supported critical closure for the selected
+review. No blocker found is not verified acceptance. Accepted design unchanged and
+bounded defect supports fresh ordinary correction; architecture/contract/invariant/
+scope/acceptance or decision-basis changes reopen Controller.
+
+Controller owns product acceptance. It integrates the user's original objective,
+acceptance criteria, candidate, criterion-linked evidence and UNKNOWN from the
+Implementer or Focused Implementer, and existing evidence, then decides whether the
+product meets the request. Implementer and Focused Implementer implement, verify and
+report within their assigned boundaries.
+Controller may request additional verification or route repair when a criterion is
+unmet or a decision-changing UNKNOWN remains; no fixed closing handoff, lifecycle
+stage or new Agent is required. Preserve the user's selected execution mode.
+
+Keep execution, review, product acceptance and mechanical closure distinct: test PASS
+reports the checks run; native child Completed reports execution termination; Reviewer
+READY reports supported critical closure for its selected review; Core task-close DONE
+records mechanical closure. None alone decides semantic product acceptance.
 Choose fresh sessions by remaining independence and total context reconstruction cost,
 never by a mechanical duration/call threshold or a local PASS alone.
 

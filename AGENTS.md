@@ -8,8 +8,15 @@ investigation and isolated workstreams may run in parallel; coordinate known sha
 write overlap or use separate worktrees. Ordinary Controller reads, Git and diagnostics
 are legal within the task boundary; default routing recommends delegating open
 investigation and substantial implementation by purpose and working set, without
-numeric permission thresholds. Final acceptance uses an explicit closing handoff to
-a suitable existing executor; Controller integrates that result for mechanical closure.
+numeric permission thresholds. Controller integrates the original objective,
+acceptance criteria, Implementer or Focused Implementer reports and existing
+evidence, then decides product acceptance. Implementer and Focused Implementer
+implement, verify and report criterion-linked evidence and `UNKNOWN`; Reviewer may
+provide an independent, read-only challenge. No fixed closing handoff, extra
+lifecycle stage or new Agent is required. `PASS` describes checks run, `READY`
+describes the selected review, native child `Completed` describes execution
+termination, and Core `DONE` records mechanical closure; none alone decides product
+acceptance.
 Authority is persistent Controller-asserted
 intent, not universal Host owner authentication. Children cannot establish, expand,
 rewrite or reactivate it, alter frozen constraints or mutate Controller/security state.
@@ -39,9 +46,10 @@ memory, milestones and authority bounded and evidence-backed. Core never chooses
 a native model or authenticates a Host actor.
 
 Working set is not handoff set. Retained information is not automatically
-propagated. Use `thaliris-core task-status` for bounded routing observations and
-`thaliris-core task-show` only for explicit diagnostics. Artifact contents are
-external to normal role results. Authorization belongs to the adapter.
+propagated. Use `thaliris-core --task-id <id> task-status` for bounded routing
+observations and `thaliris-core --task-id <id> task-show` only for explicit
+diagnostics. Artifact contents are external to normal role results. Authorization
+belongs to the adapter.
 
 Native integration, trust and generated profiles live in the separate Codex and
 DSH repositories. Shared role responsibilities are documented in

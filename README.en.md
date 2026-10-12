@@ -88,7 +88,7 @@ Short-term records retain facts, pending work and evidence for the current Task 
 
 Each independent task has a UUID Task ID and its own local state file. Continuing a task means selecting its Task ID and relevant evidence; starting another creates a new Task ID rather than inferring the current task from old workspace state. Old `ACTIVE`, `UNKNOWN` or damaged records do not automatically occupy a singleton task slot. Actual overlapping writes to shared files still need coordination. Native session association, recovery and permission checks belong to adapters; a Task ID grants no authority and does not authenticate a Host actor.
 
-Final product acceptance uses a separate explicit closing handoff to a suitable existing executor, which checks the user's original objective and criteria and returns a conclusion, criterion-linked evidence and `UNKNOWN`. Controller integrates that result, routes unmet criteria or decision-changing unknowns, and records mechanical closure; it does not perform final acceptance itself. Reviewer remains an independent challenge, and its READY cannot replace this acceptance. Human-selected single-agent or controller-direct execution stays in that mode: use an already authorized available executor or human acceptance; without independent closing evidence, report acceptance unverified and return the closing decision to the human. A test `PASS` establishes the result of the checks run; child completion establishes execution termination; a clean diff does not establish the requested product behavior. Each necessary dependency has one observation owner. Use reliable results once available, without waiting for the same completion again or repeatedly waking a model to observe unchanged state. Verification and waiting serve actual unresolved questions.
+The Controller decides product acceptance by integrating the user's original objective, acceptance criteria, candidate, criterion-linked evidence and `UNKNOWN` from the Implementer or Focused Implementer, and existing evidence. Implementer and Focused Implementer implement, verify and report within their assigned boundaries. A Reviewer may provide an independent read-only challenge; `READY` covers only the selected candidate and criteria for that review. The Controller may request additional verification or route repair when evidence calls for it; no fixed closing handoff, lifecycle stage or new Agent is required. A test `PASS` reports the checks run, native child `Completed` reports execution termination, Reviewer `READY` reports supported critical closure for its selected review, and Core `task-close` `DONE` records mechanical closure. None alone decides product acceptance. Preserve the user's selected `single-agent`, `controller-direct` or `delegated` mode; when evidence is incomplete, the Controller keeps `UNKNOWN` and describes the remaining work. Each necessary dependency has one observation owner. Use reliable results once available, without waiting for the same completion again or repeatedly waking a model to observe unchanged state. Verification and waiting serve actual unresolved questions.
 
 ## A cross-module coding example
 
@@ -98,7 +98,7 @@ Suppose a user requests cancellation for an export feature spanning an API, queu
 2. The Controller selects relevant facts, hard invariants and unknowns for the Handoff. Where cancellation, completion and writes are coupled, a Fresh Focused Implementer implements and verifies those invariants. Independent changes with stable direction can go to an ordinary Implementer.
 3. The executor returns the exact candidate, source versions, test coverage and uncovered cases. After core semantic convergence, a fresh ordinary Implementer can handle remaining deterministic synchronization, regression or Git closure without extending the original focused context.
 4. Where independent challenge could affect acceptance, a Fresh Reviewer examines boundaries such as simultaneous cancellation and completion or older API compatibility. Unverified runtime behavior remains unknown; findings return with evidence rather than becoming accepted conclusions automatically.
-5. A suitable existing executor receives an explicit closing handoff and verifies the candidate against the original request. Controller integrates its conclusion, evidence and unknowns, routes further work when needed and records mechanical closure. Only cancellation invariants or verified failure modes with value beyond this task enter project memory; other records remain with their Task ID.
+5. The Implementer or Focused Implementer returns the candidate, criterion-linked evidence and `UNKNOWN`. Controller integrates that report with the original request and existing evidence, decides whether the criteria are met, and routes repair or additional verification when needed. A Reviewer may independently challenge the candidate; no fixed closing handoff is required. Only cancellation invariants or verified failure modes with value beyond this task enter project memory; other records remain with their Task ID.
 
 Source code, Git, tests, compilers and actual runtime behavior remain the basis for correctness. Thaliris reuses native sessions, Agents and execution in Codex and DSH, adding context selection, handoffs, records and evidence boundaries rather than constructing another Agent Runtime.
 
@@ -118,7 +118,7 @@ authoritative normal runtime expression and a meaningful boundary; explanations 
 history live in docs. Selective multilingual islands preserve language-specific meaning
 and optimize representation; random switching or adding languages is not the objective.
 
-Normal Controller routing, handoffs, evidence reuse, waiting, endpoints, acceptance and causal diagnosis stay resident; exceptional recovery, Host maintenance and historical migration steps are retrieved on demand. Each necessary dependency has one observation owner: executors wait on their tests, processes and CI; the Controller waits only for a known unfinished child result that remains necessary, without checking the same job again. A FINAL result or a decision-changing unknown ends that child slice; do not keep waiting for it. Tool maximum is capacity, not a default duration, and higher-level duration limits take precedence. Cost assessment includes normal task context, retrieval/reconstruction and delivered quality.
+Normal Controller routing, handoffs, evidence reuse, waiting, endpoints, acceptance and causal diagnosis stay resident; exceptional recovery, Host maintenance and historical migration steps are retrieved on demand. Each necessary dependency has one observation owner: executors wait on their tests, processes and CI; the Controller waits only for a known unfinished child result that remains necessary, without checking the same job again. A FINAL result or a decision-changing unknown ends that child slice; do not keep waiting for it. Before waiting, confirm the tool's actual maximum and whether meaningful event notifications, child completion, user input and interruption can return control early. When event notification, user interruption and early return are confirmed, and no interim decision is needed, use the supported longest observation window (up to 60 minutes on the current Host); events may return control earlier, so this is not a task deadline. If capabilities are unconfirmed or a stage decision is needed, choose a task-appropriate check: about 60 seconds for very short work, 10–60 minutes for ordinary work, or about 30 minutes for longer-task stage checks. Actual tool limits and stricter higher-level limits take precedence. Cost assessment includes normal task context, retrieval/reconstruction and delivered quality.
 
 Controller owns direction, scope, acceptance criteria and next routing, while executor owns
 implementation design. The default is delegated: a long-lived Controller sends open-ended,
@@ -157,7 +157,8 @@ Initialize or inspect Core records in an existing Git repository:
 ```bash
 cd your-repository
 thaliris-core --root . init
-thaliris-core --root . task-status
+TASK_ID=$(thaliris-core --root . task-start "example task" | python -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+thaliris-core --root . --task-id "$TASK_ID" task-status
 ```
 
 Installing and initializing Core does not install or enable Host hooks, generate Codex profiles, start an Agent, create a native task session, or prove that the current Host loaded any configuration. For native Codex or DSH integration, follow the adapter installation and startup guides: [Codex](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) and [DSH](https://github.com/Iris0fTheValley/Thaliris-DSH). See [Core and Host adapter boundaries](docs/host-neutral-packaging.md).
@@ -179,13 +180,15 @@ The Core CLI provides Host-neutral records, explicit retrieval, freshness, and m
 
 ```bash
 cd your-repository
-thaliris-core --root . task-status
-thaliris-core --root . task-show
+thaliris-core --root . init
+TASK_ID=$(thaliris-core --root . task-start "example task" | python -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+thaliris-core --root . --task-id "$TASK_ID" task-status
+thaliris-core --root . --task-id "$TASK_ID" task-show
 thaliris-core --root . stale
 thaliris-core --root . milestone-check
 ```
 
-These outputs record mechanical facts. They do not select semantic roles such as Investigator, Implementer, or Reviewer, and they do not decide semantic completion or acceptance. The Host adapter and Controller own native admission, execution association and routing; an explicit closing handoff supplies final acceptance for Controller integration and mechanical closure.
+These outputs record mechanical facts and do not select semantic roles. Controller integrates the user objective, acceptance criteria, candidate, Implementer or Focused Implementer report and existing evidence, then decides product acceptance. Implementer and Focused Implementer implement, verify and report criterion-linked evidence and `UNKNOWN` within their assigned boundaries; Reviewer is an optional independent read-only challenge. `PASS` reports checks run, native child `Completed` reports execution termination, Reviewer `READY` covers its selected review, and Core `task-close` `DONE` records mechanical closure; none replaces Controller acceptance. The Host adapter and Controller own native admission, execution association and routing. Controller may request more verification or route repair based on the evidence, without a fixed closing handoff or new Agent.
 
 Each new task has an independent Task ID ledger. Task state lives at
 `.context/tasks/<task-id>/state.json`; Authority, recovery evidence and mechanical records are
@@ -277,16 +280,18 @@ Typical Decision Context contains:
 
 Task state rejects raw transcript and tool-log fields.
 
-The intent is to preserve traceability without turning task state into a second conversation history. Each Task ID's semantic records have stable IDs and explicit transitions. When a verification target exists, closing that task requires a trusted runtime observation bound to the current target, source identity, and task surface; a model saying that tests passed is not proof.
+The intent is to preserve traceability without turning task state into a second conversation history. Each Task ID's records retain stable IDs, sources, revisions and references. Core `task-close` records `DONE` for the selected active Task ID at the requested revision; it does not require a verification target to be bound to a runtime observation or decide product completion from test results. Verification and task-surface changes are observations the Controller may use; a model saying that tests passed is not proof.
 
 ### Bounded durable promotion
 
-The task-end order is `task-local state -> Controller retention decision -> minimal durable promotion -> task-close`. This is explicit persistence, not automatic summarization; if there is no durable knowledge, no durable content is written. Only the Controller may run `task-promote`, and it may submit only explicit `decision`, `invariant`, `failure_mode`, or `constraint` records, or explicit `progress`/`verification` fields for the current milestone. For continuous feature work with a current milestone, retain actual progress and verification there first; `.agent-memory/` retains only cross-task reusable decisions, constraints, invariants, and failure modes. Unless the user explicitly asks, a repository task does not proactively read or write personal/global Codex memory such as `~/.codex/memories` or `MEMORY.md`; project continuity uses `.agent-memory/`, `.milestones/`, `task-promote`, and tracked-document maintenance. Inputs must use only evidence refs in the selected Task ID and must pass fresh native file/git evidence or fresh test/runtime evidence with native `source_refs`; a CONFIRMED promotion must also directly reference fresh CONFIRMED file/git evidence. Raw findings, transcripts, logs, and unknown fields are rejected. Promotion uses a base-revision CAS and does not change the task revision. Each task may consume at most 16 promotion units (one per memory record and per milestone progress/verification field); the counter is bounded task-local bookkeeping, not long-term memory or a framework.
+Task closure and project-memory maintenance are independent operations with no required order or promotion step. `task-promote` creates only new Markdown documents under `.agent-memory/` and refuses to overwrite an existing target; project authors edit existing documents through normal file maintenance. The same `task-promote` input may include a complete update to an existing INDEX.md under `.agent-memory/` or `.milestones/`, including nested namespaces, which is written in the same transaction as the new documents. Each document's `source_refs` must identify evidence or artifacts recorded in the selected Task ID. Promotion uses task-revision CAS but does not advance that revision. An INDEX update supplies the complete content and its `base_sha256`; Core checks the baseline, size and links, then writes through its backup path. Core does not impose semantic categories, source freshness or `CONFIRMED` thresholds, a promotion-count quota, or milestone fields. The Controller/Curator chooses whether to retain material, how to structure documents and how to update indexes; milestone documents are maintained as ordinary project files. Unless the user explicitly asks, a repository task does not proactively read or write personal/global Codex memory such as `~/.codex/memories` or `MEMORY.md`.
 
 Core-only mechanical record example (this does not admit a Host task or provide semantic acceptance):
 
 ```bash
 TASK_ID=$(thaliris-core --root . task-start "adopt request policy" | python -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
+# Every later task-specific operation explicitly selects this ledger.
+thaliris-core --root . --task-id "$TASK_ID" task-show
 # task-start returns revision 1. Refresh this value after any task-state mutation.
 BASE_REVISION=1
 # Prepare promote.json using evidence refs already recorded in this Task ID.
@@ -303,7 +308,7 @@ thaliris-core --root . --task-id "$TASK_ID" task-close --base-revision "$BASE_RE
 
 Replace `e1` with an evidence ID already recorded in the selected Task ID.
 
-Memory only appends a new entry and one router link to the existing INDEX; milestone updates touch only explicitly supplied fields and use the atomic backup path. History-heavy recall, deduplication, stale cleanup, conflict judgment, INDEX restructuring, and bulk milestone maintenance must be narrowed and delegated to a fresh child.
+Core-generated durable entries use `Evidence` and `Revision` frontmatter, with source descriptors included when references are supplied. Other frontmatter is descriptive content maintained by the model or user; Core does not treat it as mandatory semantic classification or role authorization. The same `task-promote` input can update the complete content of an existing INDEX under `.agent-memory/` or `.milestones/`, including nested namespaces, in the transaction that creates new memory documents, after validating its target, revision hash, size and references. Core uses its backup-backed write path; it does not only append one link.
 
 ### Child lifecycle epistemic/control policy
 
@@ -356,21 +361,19 @@ Examples include:
 * adopted decisions;
 * verified recurring failure modes.
 
-Memory entries use metadata such as:
+Core-generated durable entry frontmatter, when source references are recorded:
 
 ```yaml
-Evidence: file:src/example.py#...
+Evidence: DURABLE_SOURCE_DESCRIPTORS
 Revision: 1
-Status: ACTIVE
-Applicability: src/example.py
-Confidence: SUPPORTED
-Kind: MEMORY
-Audience: ["sol-high", "terra-implementer"]
-Topics: ["request cancellation"]
-Symbols: ["Request.cancel"]
 ```
 
 The INDEX files are routers, not summary documents.
+
+Core-generated durable entries default to `Evidence` and `Revision` only. If a
+project needs additional descriptive fields such as `Status`, `Applicability`,
+`Confidence`, `Topics`, or `Symbols`, its authors maintain them. Core does not
+validate those descriptions or use them to authorize semantic roles.
 
 The former Codex-adapter `context recall` command provided explicit, conservative lexical retrieval; it is not a Core-only CLI command. Durable memory is a selectable knowledge source, not the complete task context: the existence or indexing of a record does not mean it is injected into every role, added to the current task, or propagated downstream with a handoff. The Controller selects relevant material and decides whether to promote it explicitly. See the [Codex guide](https://github.com/Iris0fTheValley/Thaliris-Codex/blob/main/README.md) for current adapter commands.
 
@@ -444,8 +447,10 @@ If they are unavailable, use native source inspection, Git, search, compilers, t
 For Core-only diagnostics, use:
 
 ```bash
-thaliris-core --root . task-status
-thaliris-core --root . task-show
+# Set this to the task_id returned by task-start for the task being diagnosed.
+TASK_ID="<task_id>"
+thaliris-core --root . --task-id "$TASK_ID" task-status
+thaliris-core --root . --task-id "$TASK_ID" task-show
 thaliris-core --root . stale
 thaliris-core --root . milestone-check
 ```
@@ -543,7 +548,7 @@ Investigator:
 large-scale scan
 → compressed facts and evidence
 
-Focused Executor:
+Focused Implementer:
 read a small number of key materials
 → focused reasoning
 → implementation
@@ -721,7 +726,7 @@ D cost about **9.1× C** and took about **1.57× longer**, but it was the only a
 
 **E — All-Sol counterfactual.** Keep D's task, topology, role sequence and lifecycle unchanged, but replace Luna Investigator/Implementer nodes with Sol. Input/context replay is held approximately constant; only output is adjusted using the observed A/B output-efficiency ratio (`79.8k / 30.3k ≈ 2.64×`). This predicts approximately **$3.67** for an all-Sol D-shaped run versus **$2.475 observed**, implying roughly **32.6% routing savings** from heterogeneous execution if D-level quality is preserved. Without the output-efficiency adjustment, the simple same-token estimate is about **$3.94**. This remains a counterfactual until run.
 
-**F — Semantic-Convergence Cut.** Keep D's architecture and high-capability semantic nodes, but terminate the Sol Focused Implementer once the core implementation and hard invariants are established. Broad tests, build/lint closure, deterministic compatibility fallout and small repairs move to a fresh Luna Implementer; a fresh Sol Reviewer remains responsible for semantic acceptance. Trace-based estimation removes roughly **1.87M Sol input / 15.3k Sol output** and adds approximately **0.7–1.3M Luna input / 8–16k output**, predicting **~$2.06–2.07**, or roughly **16–17% below D**, while targeting the same 8.3-level result. Quality remains explicitly unknown until tested.
+**F — Semantic-Convergence Cut.** Keep D's architecture and high-capability semantic nodes, but terminate the Sol Focused Implementer once the core implementation and hard invariants are established. Broad tests, build/lint closure, deterministic compatibility fallout and small repairs move to a fresh Luna Implementer; this historical counterfactual cost estimate retained a fresh Sol Reviewer for independent challenge, but it does not establish a current mandatory Reviewer stage or transfer product acceptance away from the Controller. Trace-based estimation removes roughly **1.87M Sol input / 15.3k Sol output** and adds approximately **0.7–1.3M Luna input / 8–16k output**, predicting **~$2.06–2.07**, or roughly **16–17% below D**, while targeting the same 8.3-level result. Quality remains explicitly unknown until tested.
 
 ### Bottom line
 

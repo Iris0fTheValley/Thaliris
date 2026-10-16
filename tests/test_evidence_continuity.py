@@ -154,6 +154,7 @@ def test_cross_candidate_judgment_and_new_evidence_preserve_history(tmp_path):
 
 def test_controller_cas_racing_children_never_overwrites_observations(tmp_path):
     task_id = setup(tmp_path)
+    base_revision = core.task_show(tmp_path)["state"]["revision"]
     children = [payload(tmp_path, "race" + str(i), observation("race" + str(i))) for i in range(2)]
     update = payload(tmp_path, "controller", {"pending_results": ["controller routing"]})
     code = """
@@ -174,7 +175,8 @@ else:
             future.result()
     state = core.task_show(tmp_path)["state"]
     assert {item["id"] for item in state["evidence_continuity"]["observations"]} == {"race0", "race1"}
-    assert state["revision"] in {4, 5}
+    # Both child appends commit. The Controller may commit first or lose CAS.
+    assert state["revision"] in {base_revision + 2, base_revision + 3}
 
 
 def test_maintenance_cas_split_delete_links_and_rollback(tmp_path):

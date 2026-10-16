@@ -93,13 +93,19 @@ def test_provenance_sources_and_candidate_validation(tmp_path):
     oversized_submitter["submitted_by"] = "x" * 65
     with pytest.raises(ValueError, match="observation submitter"):
         core.task_observe(tmp_path, "child", payload(tmp_path, "oversized-submitter", oversized_submitter))
+    invalid_status = observation("invalid-status")
+    invalid_status["native_status_conflict"] = "false"
+    with pytest.raises(ValueError, match="native status conflict"):
+        core.task_observe(tmp_path, "child", invalid_status)
     value = observation("O1")
-    value.update(native_actor="native-hash", submitted_by="controller")
+    value.update(native_actor="native-hash", submitted_by="controller", native_status="UNKNOWN", native_status_conflict=True)
     core.task_observe(tmp_path, "child", payload(tmp_path, "valid", value))
     assert core.task_get(tmp_path, "S1")["object"]["locator"] == "tests/result.txt"
     saved = core.task_get(tmp_path, "O1")["object"]
     assert saved["candidate"] == "C1" and saved["producer"] == "child" and saved["handoff_id"] == "H2"
     assert saved["native_actor"] == "native-hash" and saved["submitted_by"] == "controller"
+    assert saved["native_status"] == "UNKNOWN" and saved["native_status_conflict"] is True
+    assert core.task_status(tmp_path)["Evidence Continuity"]["unincorporated_total"] == 1
     with pytest.raises(ValueError, match="observation refs"):
         core.task_judge(tmp_path, "controller", 4, payload(tmp_path, "empty-judgment", {"id": "J-empty", "candidate": "C2", "requirement_ref": "R1", "observation_refs": [], "outcome": "satisfied", "reasoning": "must cite an observation"}))
 

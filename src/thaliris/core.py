@@ -1043,7 +1043,7 @@ def _validate_continuity(state: dict[str, object]) -> None:
         if not isinstance(values, list):
             raise ValueError("invalid continuity collection")
         for item in values:
-            optional = {"durable_paths"} if kind == "handoffs" else {"native_actor", "submitted_by"} if kind == "observations" else set()
+            optional = {"durable_paths"} if kind == "handoffs" else {"native_actor", "submitted_by", "native_status", "native_status_conflict"} if kind == "observations" else set()
             if not isinstance(item, dict) or set(item) - optional != fields:
                 raise ValueError("invalid continuity object")
             identifier = _bounded_label(item["id"], "continuity id")
@@ -1066,9 +1066,11 @@ def _validate_continuity(state: dict[str, object]) -> None:
                         raise ValueError("invalid parent handoff provenance")
                 handoffs[identifier] = item
             elif kind == "observations":
-                for field, label in (("native_actor", "native actor"), ("submitted_by", "observation submitter")):
+                for field, label in (("native_actor", "native actor"), ("submitted_by", "observation submitter"), ("native_status", "observed native status")):
                     if field in item:
                         _bounded_label(item[field], label)
+                if "native_status_conflict" in item and type(item["native_status_conflict"]) is not bool:
+                    raise ValueError("invalid observed native status conflict")
                 handoff = handoffs.get(item["handoff_id"])
                 if handoff is None or item["producer"] != handoff["producer"] or item["candidate"] != handoff["candidate"]:
                     raise ValueError("observation handoff provenance conflict")

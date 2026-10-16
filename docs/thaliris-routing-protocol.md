@@ -30,7 +30,7 @@ evolution does not permanently bind ordinary work to an old runtime baseline.
 
 Controller owns the user objective, direction, scope, hard invariants, acceptance criteria,
 context selection and next routing. Executor owns implementation design and methods
-within that boundary. A decision-complete handoff carries goal/original acceptance,
+within that boundary. A decision-complete handoff carries selected local goal/acceptance,
 confirmed facts, authoritative source and derived relationships, affected surfaces,
 hard invariants/decided boundaries, usable verification entry and decision-changing
 unknowns. Include source locations and covered/uncovered scope from selected discovery.
@@ -52,6 +52,28 @@ selected material, not an automatic task-state/memory projection. Their private
 working set is larger than the distilled result sent back. Reuse established
 inventory; reopening decision-critical originals is part of execution. A Scanner
 collects only an independent uncovered discovery gap, not a duplicate inventory.
+
+Controller owns the full user requirements and global acceptance; children receive only
+selected local goals, acceptance, facts and source pointers. Carry opaque related requirement
+refs and handoff/workchain provenance without projecting global task history into children.
+When an already discovered fact changes a child's local conclusion, local acceptance or a
+critical UNKNOWN, the child records it with source refs and selected handoff/requirement provenance.
+This creates no additional search duty or global-importance judgment, model call or acceptance gate.
+
+Keep critical observations globally visible across later handoffs until Controller explicitly
+reassesses each related USER REQUIREMENT for the current candidate: satisfied, unknown,
+repair, or a reason it no longer affects that candidate. Reading, retrieving, acknowledging,
+or forwarding evidence is not disposition. Neither test PASS, Reviewer READY, native
+Completed nor mechanical DONE substitutes for this requirement judgment. Incorporated
+unknown/repair judgments remain visible as unresolved requirements; an incorporation record
+alone does not mean satisfaction. Preserve previous observations and judgments as history;
+an old handoff observation is not automatically current truth. An observation keeps its immutable
+observed candidate (for example C1); Controller may assess it against a different current candidate
+(C2), explicitly recording that candidate and reasoning for its present applicability.
+
+Core stores model-authored observations and judgments with opaque requirement and handoff
+references, provenance and append-only history. It does not classify importance, infer
+acceptance, route work or prescribe approval, roles, stages, model calls or polling.
 
 ## Context frequency, waiting and observation
 
@@ -96,7 +118,12 @@ Investigator gathers broad facts without architecture decisions. Scanner is its
 nested discovery working pattern, not a role. Executor covers Implementer and
 Focused Implementer, not a spawnable identity. Reasoning Specialist independently
 challenges framing when that may change direction. Curator maintains selected reusable
-knowledge; Verifier remains read-only compatibility, not a recommended stage.
+knowledge and linked INDEX entries: edit, merge, split, replace, supersede or delete using
+exact selected material. No corpus scan, delegation, architecture/product acceptance or
+real-time evidence duty belongs to Curator. Concise future decision value belongs in memory;
+raw detail stays in canonical Artifacts, Git or rollout records. Core supports CAS document
+maintenance and validates paths/links; models choose semantic reconciliation.
+Verifier remains read-only compatibility, not a recommended stage.
 Native role/model bindings, readonly enforcement, execution modes and delegation
 capabilities are adapter-owned. Profiles do not alter semantic responsibilities.
 

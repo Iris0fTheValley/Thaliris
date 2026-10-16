@@ -87,6 +87,19 @@ Fresh Child 是新的原生角色会话，通过选择性 Handoff 接收完成�
 
 最终产品验收由 Controller 决定：它综合用户原始目标、验收标准、候选实现、Implementer 或 Focused Implementer 返回的标准关联证据与 `UNKNOWN`，以及已有证据，判断请求是否得到满足。Implementer 或 Focused Implementer 在分配边界内实现、验证并报告标准关联证据与 `UNKNOWN`。Reviewer 可以提供独立只读挑战；`READY` 只覆盖该次审查所选候选和标准。Controller 可按证据需要补充验证或路由修复，但不需要固定 closing handoff、额外生命周期阶段或新 Agent。测试 `PASS` 只表示所运行检查的结果，native child `Completed` 只表示执行终止，Reviewer `READY` 只表示所选审查有支持的关键闭合，Core `task-close` 的 `DONE` 只表示机械记录关闭；它们都不能单独决定产品验收。用户选择的 `single-agent`、`controller-direct` 或 `delegated` 模式保持不变；证据仍不完整时，Controller 保留 `UNKNOWN` 并说明需要的后续工作。每个必要依赖由一个观察 owner 负责；已经得到可靠结果就使用它，不重复等待完成或因状态未变化而反复唤醒模型。验证与等待服务于尚未解决的实际问题。
 
+Controller 保留全局用户需求与验收条件；Child 只接收所选局部目标、局部验收与来源指针。
+当已发现的事实改变局部结论、局部验收或关键 UNKNOWN 时，Child 应记录该事实，保留来源、
+handoff 链路与不透明 requirement refs；这不增加搜索义务、全局重要性判断、模型调用或验收 gate。
+关键证据跨后续 Handoff 保持可见，直到 Controller 明确重评当前候选所关联的用户需求：
+satisfied、unknown、repair，或说明为何已不影响当前候选。读取或确认收到不算处置，
+PASS、READY、Completed、DONE 不能替代需求判断。旧观察与判断保留为历史，不自动成为当前真相。
+观察保留其原候选 C1；Controller 可针对当前候选 C2 判断其适用性，并明确记录当前候选与理由。
+
+Curator 只维护精确选定的持久知识与 INDEX，可编辑、合并、拆分、替换或删除已有条目。
+Core 提供带 CAS 的文档维护与来源记录，模型决定语义协调。Curator 不扫描知识库、不委派、
+不决定产品验收，也不负责实时证据连续性。记忆保留简洁的未来决策价值；原始细节留在
+canonical Artifact、Git 或 rollout 记录中。
+
 ## 一个跨模块编码场景
 
 假设用户要求为一个跨 API、队列与存储层的导出功能增加取消能力，同时保持旧请求兼容。以下是机制示例，不是产品测试或性能实验结果，也不是强制工作流。

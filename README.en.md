@@ -90,6 +90,23 @@ Each independent task has a UUID Task ID and its own local state file. Continuin
 
 The Controller decides product acceptance by integrating the user's original objective, acceptance criteria, candidate, criterion-linked evidence and `UNKNOWN` from the Implementer or Focused Implementer, and existing evidence. Implementer and Focused Implementer implement, verify and report within their assigned boundaries. A Reviewer may provide an independent read-only challenge; `READY` covers only the selected candidate and criteria for that review. The Controller may request additional verification or route repair when evidence calls for it; no fixed closing handoff, lifecycle stage or new Agent is required. A test `PASS` reports the checks run, native child `Completed` reports execution termination, Reviewer `READY` reports supported critical closure for its selected review, and Core `task-close` `DONE` records mechanical closure. None alone decides product acceptance. Preserve the user's selected `single-agent`, `controller-direct` or `delegated` mode; when evidence is incomplete, the Controller keeps `UNKNOWN` and describes the remaining work. Each necessary dependency has one observation owner. Use reliable results once available, without waiting for the same completion again or repeatedly waking a model to observe unchanged state. Verification and waiting serve actual unresolved questions.
 
+Controller keeps global user requirements and acceptance. A child receives selected local goals,
+acceptance and source pointers. When an already discovered local fact changes its conclusion,
+local acceptance or critical UNKNOWN, the child records it with source refs, handoff provenance
+and opaque requirement refs. This adds no search duty, global-importance judgment, model call or gate. Critical evidence stays visible
+across handoffs until Controller explicitly reassesses the related user requirement for the current
+candidate as satisfied, unknown or repair, or explains why it no longer affects the candidate.
+Reading or acknowledgement is not disposition; PASS, READY, Completed and DONE cannot substitute.
+Prior observations and judgments stay in history without becoming automatic current truth.
+An observation retains its observed candidate C1; Controller may assess it against current candidate
+C2 with explicit reasoning about its present applicability.
+
+Curator maintains exact selected durable knowledge and INDEX entries, including editing, merging,
+splitting, replacing or deleting existing entries. Core provides CAS document maintenance and
+provenance storage; the model chooses semantic reconciliation. Curator does not scan the corpus,
+delegate, decide product acceptance or own real-time evidence continuity. Concise future decision
+value stays in memory; raw detail stays in canonical Artifacts, Git or rollout records.
+
 ## A cross-module coding example
 
 Suppose a user requests cancellation for an export feature spanning an API, queue and storage layer while preserving older requests. This illustrates the mechanism, not a product test or performance experiment, and is not a mandatory workflow.

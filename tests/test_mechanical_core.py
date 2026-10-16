@@ -135,7 +135,8 @@ def test_routing_guidance_permits_the_bounded_implementer_only_path() -> None:
     assert "controller routes workstreams by semantic dependencies, decision coupling and independent closure." in normalized_protocol
     assert "count-based thresholds do not route work." in normalized_protocol
     assert "before opportunistic work, controller accounts for every explicit user goal" in normalized_protocol
-    assert "implementer | stable accepted direction through deterministic convergence and assigned local closure." in normalized_roles
+    assert "implementer | implement and verify stable accepted direction within the assigned boundary" in normalized_roles
+    assert "through deterministic convergence and assigned local closure." in normalized_roles
     assert "decision-changing dependencies end the workstream in final for controller judgment." in normalized_roles
 
 

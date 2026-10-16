@@ -26,6 +26,12 @@ additional authority. Effective live Host maintenance needs separate human autho
 Assigned children use current-role native instructions and their authorized parent's
 selected spawn handoff, V2 fork_turns="none" or V1 fork_context=false; unselected material stays outside the
 Workstream. Methods and ordinary local repair belong to the assigned executor.
+Children receive selected local goals and acceptance, with opaque requirement refs and
+handoff provenance; they record already discovered local conclusion-changing facts
+or critical UNKNOWN without a new search or global-importance duty. Controller owns
+global user requirements and explicitly reassesses their current candidate satisfaction;
+reading or acknowledgement is not disposition. Preserve observations through handoffs
+and retain prior observations as history, not automatic current truth.
 Return decision-changing unknowns to Controller. Rules are retrievable on demand
 within authority; contextual selection is not secrecy.
 

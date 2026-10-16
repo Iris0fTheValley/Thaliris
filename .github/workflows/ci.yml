@@ -36,6 +36,9 @@ jobs:
       - name: Core CLI regression
         if: ${{ !cancelled() }}
         run: python -m pytest tests/test_core_cli.py --junitxml=results/core-cli.xml
+      - name: Evidence continuity regression
+        if: ${{ !cancelled() }}
+        run: python -m pytest tests/test_evidence_continuity.py --junitxml=results/evidence-continuity.xml
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:

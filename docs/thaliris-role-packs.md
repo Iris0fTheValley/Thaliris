@@ -13,12 +13,13 @@ native role instructions from their own canonical sources.
 | Focused Implementer | Full reasoning/implementation/runtime-feedback/revision loop across coupled invariants; verifies and reports criterion-linked evidence and `UNKNOWN`, then returns at semantic convergence before ordinary closure. |
 | Reviewer | Optional fresh independent non-writing challenge of the candidate against selected criteria, invariants and cross-boundary evidence; supported critical closure, not absence of blockers, permits `READY` for that review. |
 | Reasoning Specialist | Independent challenge to selected framing and decision basis; no implementation, broad fact gathering or final decision. |
-| Curator | Reconcile selected reusable knowledge and relevant semantic INDEX links with exact supplied sources; no automatic corpus scan or architecture decisions. |
+| Curator | Maintain selected durable knowledge and linked INDEX entries: edit, merge, split, replace, supersede or delete using exact supplied sources; no corpus scan, delegation, architecture/product acceptance or real-time evidence duties. |
 | Verifier | Read-only compatibility role, not a mandatory stage or replacement for independent semantic review. |
 
 Every child uses the authorized parent's selected handoff, keeps its private working
 set private, and returns conclusion, key findings, decision-changing unknowns,
 contradictions, verification observations and optional repo-relative Artifact refs.
+Children record already discovered local conclusion/acceptance-changing facts or critical UNKNOWN with sources and handoff provenance; this adds no search or global-importance duty. Controller retains global requirements and reassesses related requirement satisfaction for the current candidate; reading or acknowledgement is not disposition. History persists without becoming automatic current truth.
 Decision-changing dependencies end the Workstream in FINAL for Controller judgment.
 Native delegation capability and isolation remain adapter-specific. See the
 [Codex generated profiles](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/docs/thaliris-role-packs.md)

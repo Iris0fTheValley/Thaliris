@@ -23,8 +23,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--pretty", action="store_true")
     parser.add_argument("--task-id", help="explicit task ledger selection; never an authority grant")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("init", "uninstall", "stale", "milestone-check", "task-show", "task-status", "version"):
+    for name in ("init", "uninstall", "stale", "milestone-check", "task-show", "version"):
         commands.add_parser(name)
+    command = commands.add_parser("task-status")
+    command.add_argument("--evidence-offset", type=int, default=0)
     command = commands.add_parser("catalog")
     command.add_argument("path", nargs="?")
     command = commands.add_parser("document-get")
@@ -34,11 +36,14 @@ def _parser() -> argparse.ArgumentParser:
     command.add_argument("--milestone")
     command.add_argument("--input")
     command.add_argument("--actor", default="unspecified")
-    for name in ("task-update", "task-promote"):
+    for name in ("task-update", "task-promote", "task-evidence-register", "task-judge", "document-maintain"):
         command = commands.add_parser(name)
         command.add_argument("--actor", required=True)
         command.add_argument("--base-revision", type=int, required=True)
         command.add_argument("--input", required=True)
+    command = commands.add_parser("task-observe")
+    command.add_argument("--actor", required=True)
+    command.add_argument("--input", required=True)
     for name in ("task-get", "artifact-get"):
         command = commands.add_parser(name)
         command.add_argument("id")
@@ -68,11 +73,15 @@ def main(argv: list[str] | None = None) -> int:
         root = args.root.resolve()
         core.select_task(root, args.task_id)
         name = args.command
+        if name == "document-maintain" and args.task_id is None:
+            raise ValueError("explicit --task-id required for task mutation")
         if name.startswith("task-") and name not in {"task-start", "task-show", "task-status", "task-get"} and args.task_id is None:
             raise ValueError("explicit --task-id required for task mutation")
         if name == "version":
             out = {"ok": True, "version": __version__}
-        elif name in {"init", "uninstall", "stale", "milestone-check", "task-show", "task-status"}:
+        elif name == "task-status":
+            out = core.task_status(root, args.evidence_offset)
+        elif name in {"init", "uninstall", "stale", "milestone-check", "task-show"}:
             out = getattr(core, name.replace("-", "_"))(root)
         elif name == "catalog":
             out = core.catalog(root, args.path)
@@ -80,8 +89,10 @@ def main(argv: list[str] | None = None) -> int:
             out = core.document_get(root, args.paths)
         elif name == "task-start":
             out = core.task_start(root, args.goal, args.milestone, args.input, actor=args.actor)
-        elif name in {"task-update", "task-promote"}:
+        elif name in {"task-update", "task-promote", "task-evidence-register", "task-judge", "document-maintain"}:
             out = getattr(core, name.replace("-", "_"))(root, args.actor, args.base_revision, args.input)
+        elif name == "task-observe":
+            out = core.task_observe(root, args.actor, args.input)
         elif name in {"task-get", "artifact-get"}:
             out = getattr(core, name.replace("-", "_"))(root, args.id)
         elif name == "task-artifact":

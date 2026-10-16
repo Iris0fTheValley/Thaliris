@@ -723,7 +723,7 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
     _check_json(state)
     if not isinstance(state, dict):
         raise ValueError("invalid task state schema")
-    if set(state) != _STATE_FIELDS or state.get("schema_version") != _STATE_SCHEMA_VERSION:
+    if set(state) - {"evidence_continuity"} != _STATE_FIELDS or state.get("schema_version") != _STATE_SCHEMA_VERSION:
         raise ValueError("invalid task state schema")
     if type(state.get("revision")) is not int or state["revision"] < 1:
         raise ValueError("invalid task state revision")
@@ -808,6 +808,7 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
     base_head = state.get("task_base_head")
     if base_head is not None and (not isinstance(base_head, str) or not re.fullmatch(r"[0-9a-f]{40,64}", base_head)):
         raise ValueError("invalid task base head")
+    _validate_continuity(state)
     return state
 
 
@@ -860,7 +861,7 @@ def _task_object_ids(state: dict[str, object]) -> set[str]:
         str(item["id"])
         for field in ("evidence_refs", "records", "artifact_refs", "verification_results")
         for item in state[field]
-    }
+    } | {str(item["id"]) for values in state.get("evidence_continuity", {}).values() for item in values}
 
 
 def _read_input(value: str | None) -> dict[str, object]:
@@ -1015,6 +1016,180 @@ def task_update(root: Path, actor: str, base_revision: int, input_file: str | No
     return _task_ack(state, changed)
 
 
+def _continuity(state: dict[str, object]) -> dict[str, list]:
+    return state.setdefault("evidence_continuity", {name: [] for name in ("requirements", "handoffs", "observations", "judgments")})
+
+
+def _validate_continuity(state: dict[str, object]) -> None:
+    data = state.get("evidence_continuity")
+    if "evidence_continuity" not in state:
+        return
+    if not isinstance(data, dict) or set(data) != {"requirements", "handoffs", "observations", "judgments"}:
+        raise ValueError("invalid evidence continuity")
+    ids = {str(item["id"]) for field in ("records", "evidence_refs", "artifact_refs", "verification_results") for item in state[field]}
+    requirements, handoffs, observations = {}, {}, {}
+    sources = {item["id"] for item in state["evidence_refs"]}
+    schemas = {
+        "requirements": {"id", "workchain_ref"},
+        "handoffs": {"id", "parent_handoff_id", "candidate", "producer", "requirement_refs"},
+        "observations": {"id", "task_id", "producer", "candidate", "handoff_id", "requirement_refs", "source_refs", "text"},
+        "judgments": {"id", "task_id", "producer", "candidate", "requirement_ref", "observation_refs", "outcome", "reasoning"},
+    }
+    def refs(value, known):
+        if not isinstance(value, list) or len(value) > 64 or not all(isinstance(ref, str) for ref in value) or len(set(value)) != len(value) or any(ref not in known for ref in value):
+            raise ValueError("invalid continuity references")
+    for kind, fields in schemas.items():
+        values = data[kind]
+        if not isinstance(values, list):
+            raise ValueError("invalid continuity collection")
+        for item in values:
+            optional = {"durable_paths"} if kind == "handoffs" else {"native_actor", "submitted_by"} if kind == "observations" else set()
+            if not isinstance(item, dict) or set(item) - optional != fields:
+                raise ValueError("invalid continuity object")
+            identifier = _bounded_label(item["id"], "continuity id")
+            if identifier in ids:
+                raise ValueError("task object id collision")
+            ids.add(identifier)
+            for field in fields - {"parent_handoff_id", "requirement_refs", "source_refs", "observation_refs", "text", "reasoning"}:
+                _bounded_label(item[field], field)
+            if kind == "requirements":
+                requirements[identifier] = item
+            elif kind == "handoffs":
+                if "durable_paths" in item and (not isinstance(item["durable_paths"], list) or not all(isinstance(path, str) for path in item["durable_paths"])):
+                    raise ValueError("invalid handoff durable paths")
+                refs(item["requirement_refs"], requirements)
+                if not item["requirement_refs"]:
+                    raise ValueError("handoff requires requirement refs")
+                parent = item["parent_handoff_id"]
+                if parent is not None:
+                    if not isinstance(parent, str) or parent not in handoffs or not set(item["requirement_refs"]) <= set(handoffs[parent]["requirement_refs"]):
+                        raise ValueError("invalid parent handoff provenance")
+                handoffs[identifier] = item
+            elif kind == "observations":
+                for field, label in (("native_actor", "native actor"), ("submitted_by", "observation submitter")):
+                    if field in item:
+                        _bounded_label(item[field], label)
+                handoff = handoffs.get(item["handoff_id"])
+                if handoff is None or item["producer"] != handoff["producer"] or item["candidate"] != handoff["candidate"]:
+                    raise ValueError("observation handoff provenance conflict")
+                refs(item["requirement_refs"], handoff["requirement_refs"])
+                if not item["requirement_refs"]:
+                    raise ValueError("observation requires requirement refs")
+                source_refs = item["source_refs"]
+                if not isinstance(source_refs, list) or not source_refs or len(source_refs) > 64 or not all(isinstance(ref, str) and ref in sources for ref in source_refs) or len(source_refs) != len(set(source_refs)):
+                    raise ValueError("invalid observation source refs")
+                observations[identifier] = item
+            else:
+                if not item["observation_refs"]:
+                    raise ValueError("judgment requires exact observation refs")
+                if item["requirement_ref"] not in requirements or item["outcome"] not in {"satisfied", "unknown", "repair", "no-current-impact"}:
+                    raise ValueError("invalid requirement judgment")
+                refs(item["observation_refs"], observations)
+                # Applicability to the selected candidate and requirement is a model
+                # judgment. Observations retain their original provenance unchanged.
+            if kind in {"observations", "judgments"}:
+                if item["task_id"] != state["task_id"]:
+                    raise ValueError("continuity task identity conflict")
+                body = item["text" if kind == "observations" else "reasoning"]
+                if not isinstance(body, str) or not body.strip() or len(body) > 16_384:
+                    raise ValueError("invalid continuity reasoning or text")
+
+
+def _continuity_status(state: dict[str, object], offset: int = 0) -> dict[str, object]:
+    if type(offset) is not int or offset < 0:
+        raise ValueError("invalid evidence offset")
+    data = state.get("evidence_continuity", {})
+    judgments = data.get("judgments", [])
+    incorporated = {(j["requirement_ref"], ref) for j in judgments for ref in j["observation_refs"]}
+    latest = {}
+    for judgment in judgments:
+        latest[(judgment["requirement_ref"], judgment["candidate"])] = judgment
+    pending = [{"requirement_ref": ref, "observation_id": observation["id"], "candidate": observation["candidate"], "handoff_id": observation["handoff_id"]}
+               for observation in data.get("observations", []) for ref in observation["requirement_refs"] if (ref, observation["id"]) not in incorporated]
+    judgments = [{**{key: item[key] for key in ("id", "candidate", "requirement_ref", "outcome")}, "observation_ref_count": len(item["observation_refs"])} for item in latest.values()]
+    entries = [("unincorporated", item) for item in pending] + [("latest_judgments", item) for item in judgments]
+    response = {"unincorporated": [], "latest_judgments": [], "unincorporated_total": len(pending), "latest_judgments_total": len(judgments), "offset": offset, "next_offset": None}
+    for index in range(offset, len(entries)):
+        kind, item = entries[index]
+        response[kind].append(item)
+        response["next_offset"] = index + 1 if index + 1 < len(entries) else None
+        if len(json.dumps(response, ensure_ascii=False).encode("utf-8")) > 4096:
+            response[kind].pop()
+            response["next_offset"] = index
+            break
+    return response
+
+
+def _append_continuity(
+    root: Path,
+    actor: str,
+    base_revision: int | None,
+    input_file: str | None,
+    kind: str,
+    *,
+    parsed_payload: dict[str, object] | None = None,
+) -> dict[str, object]:
+    root = _repo_root(root)
+    _bounded_label(actor, "continuity actor")
+    if parsed_payload is not None:
+        if kind != "observations" or input_file is not None or not isinstance(parsed_payload, dict):
+            raise ValueError("inline continuity payload is only supported for observations")
+        _check_json(parsed_payload)
+        payload = dict(parsed_payload)
+    else:
+        payload = _read_input(input_file)
+    with _lock(root):
+        state = _load_state(root, active=True)
+        if base_revision is not None and state["revision"] != base_revision:
+            raise ValueError("task revision conflict")
+        data = _continuity(state)
+        if kind == "register":
+            if not payload or set(payload) - {"requirements", "handoffs"}:
+                raise ValueError("invalid evidence registration")
+            for field, values in payload.items():
+                if not isinstance(values, list) or not values:
+                    raise ValueError("registration requires append-only additions")
+                data[field].extend(values)
+        else:
+            if kind == "observations" and "sources" in payload:
+                additions = payload.pop("sources")
+                if not isinstance(additions, list):
+                    raise ValueError("invalid observation sources")
+                known = {item["id"] for item in state["evidence_refs"]}
+                for source in additions:
+                    _evidence_ref(source, known)
+                    state["evidence_refs"].append(source)
+                    known.add(source["id"])
+            if {"task_id", "producer"} & set(payload):
+                raise ValueError("continuity producer and task are assigned by Core")
+            data[kind].append({**payload, "task_id": state["task_id"], "producer": actor})
+        state["revision"] += 1
+        _write_state(root, state)
+    return _task_ack(state, ["evidence_continuity"])
+
+
+def task_evidence_register(root: Path, actor: str, base_revision: int, input_file: str | None) -> dict[str, object]:
+    return _append_continuity(root, actor, base_revision, input_file, "register")
+
+
+def _register_evidence_handoff(state: dict[str, object], record: dict[str, object]) -> None:
+    """Append to an already locked adapter transaction; caller writes the state."""
+    _continuity(state)["handoffs"].append(record)
+    _validate_continuity(state)
+
+
+def task_observe(root: Path, actor: str, input_file: str | dict[str, object] | None) -> dict[str, object]:
+    if isinstance(input_file, dict):
+        return _append_continuity(root, actor, None, None, "observations", parsed_payload=input_file)
+    if input_file is not None and not isinstance(input_file, str):
+        raise ValueError("invalid observation input")
+    return _append_continuity(root, actor, None, input_file, "observations")
+
+
+def task_judge(root: Path, actor: str, base_revision: int, input_file: str | None) -> dict[str, object]:
+    return _append_continuity(root, actor, base_revision, input_file, "judgments")
+
+
 def task_show(root: Path) -> dict[str, object]:
     root = _repo_root(root)
     state = _load_state(root)
@@ -1031,7 +1206,7 @@ def task_get(root: Path, object_id: str) -> dict[str, object]:
         ("record", state["records"]),
         ("artifact", state["artifact_refs"]),
         ("verification", state["verification_results"]),
-    )
+    ) + tuple((kind, values) for kind, values in state.get("evidence_continuity", {}).items())
     matches = [(kind, item) for kind, values in collections for item in values if item.get("id") == identifier]
     if len(matches) != 1:
         raise ValueError("task object not found")
@@ -1064,7 +1239,7 @@ def artifact_get(root: Path, artifact_id: str) -> dict[str, object]:
     return {**found, "body": text, "current_sha256": _file_digest(target), "freshness": _artifact_freshness(root, artifact)}
 
 
-def _task_status_packet(state: dict[str, object]) -> dict[str, object]:
+def _task_status_packet(state: dict[str, object], evidence_offset: int = 0) -> dict[str, object]:
     """Return current routing mechanics without replaying the durable ledger."""
     goal = str(state["goal"])
     artifact_ids = [str(item["id"]) for item in state["artifact_refs"]]
@@ -1089,13 +1264,14 @@ def _task_status_packet(state: dict[str, object]) -> dict[str, object]:
         },
         "Recent Artifact IDs": artifact_ids[-8:],
         "Active Artifact Count": len(_artifact_activity(state["artifact_refs"])),
+        "Evidence Continuity": _continuity_status(state, evidence_offset),
     }
 
 
-def task_status(root: Path) -> dict[str, object]:
+def task_status(root: Path, evidence_offset: int = 0) -> dict[str, object]:
     root = _repo_root(root)
     state = _load_state(root)
-    return _task_status_packet(state)
+    return _task_status_packet(state, evidence_offset)
 
 
 def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer: str | None = None, registered_by: str = "unspecified", scope: str | None = None, evidence_refs: list[str] | None = None, supersedes: list[str] | None = None) -> dict[str, object]:
@@ -1377,6 +1553,72 @@ def task_promote(root: Path, actor: str, base_revision: int, input_file: str | N
     return {"ok": True, "task_id": state["task_id"], "state_revision": state["revision"], "promoted": promoted, "index_updated": index_updated, "backup": backup}
 
 
+def document_maintain(root: Path, actor: str, base_revision: int, input_file: str | None) -> dict[str, object]:
+    """Apply exact model-selected durable edits with digest CAS and recovery."""
+    root = _repo_root(root)
+    _bounded_label(actor, "maintenance actor")
+    payload = _read_input(input_file)
+    if not payload or set(payload) - {"writes", "deletes", "index_update"}:
+        raise ValueError("invalid durable maintenance transaction")
+    with _lock(root):
+        state = _load_state(root, active=True)
+        if state["revision"] != base_revision:
+            raise ValueError("task revision conflict")
+        writes, deletes, selected = {}, [], set()
+        inputs = []
+        for kind in ("writes", "deletes"):
+            values = payload.get(kind, [])
+            if not isinstance(values, list):
+                raise ValueError("invalid durable maintenance entries")
+            inputs.extend((kind, value) for value in values)
+        if "index_update" in payload:
+            inputs.append(("index_update", payload["index_update"]))
+        if not inputs:
+            raise ValueError("empty durable maintenance transaction")
+        for kind, value in inputs:
+            fields = {"path", "base_sha256"} | ({"content"} if kind != "deletes" else set())
+            if not isinstance(value, dict) or set(value) != fields:
+                raise ValueError("invalid durable maintenance entry")
+            relative = _valid_relative(root, value["path"])
+            relative, target = _durable_relative_path(root, relative)
+            if not relative.endswith(".md") or relative in selected:
+                raise ValueError("maintenance requires unique Markdown paths")
+            if (kind == "index_update") != relative.endswith("/INDEX.md"):
+                raise ValueError("INDEX must use index_update")
+            selected.add(relative)
+            old = target.read_bytes() if target.is_file() else None
+            base = value["base_sha256"]
+            if base is not None and (not isinstance(base, str) or not re.fullmatch(r"[0-9a-f]{64}", base)):
+                raise ValueError("invalid durable base_sha256")
+            if base != _digest(old) or (kind in {"deletes", "index_update"} and old is None):
+                raise ValueError("durable revision conflict")
+            if kind == "deletes":
+                deletes.append(relative)
+            else:
+                content = value["content"]
+                if not isinstance(content, str):
+                    raise ValueError("invalid durable content")
+                encoded = content.encode("utf-8")
+                limit = DURABLE_INDEX_HARD_MAX_BYTES if kind == "index_update" else EXPLICIT_DOCUMENT_MAX_BYTES
+                if len(encoded) > limit:
+                    raise ValueError("durable content exceeds retrieval limit")
+                entry = parse_text(content, Path(relative))
+                if kind != "index_update":
+                    item = _document_get_item(root, relative, encoded, entry)
+                    item["freshness"] = "MISSING"
+                    item["freshness_detail"] = freshness_detail_budget_placeholder()
+                    if _document_response_size({"ok": True, "documents": [item]}) > EXPLICIT_DOCUMENT_MAX_BYTES:
+                        raise ValueError("durable content exceeds retrieval limit")
+                writes[relative] = encoded
+        for relative, encoded in writes.items():
+            errors = _index_reference_errors(root, root / relative, parse_text(encoded.decode("utf-8"), Path(relative)).body,
+                                            planned_paths=set(writes), deleted_paths=set(deletes))
+            if errors:
+                raise ValueError("invalid durable references: " + "; ".join(errors))
+        backup = _apply_with_backup(root, writes, deletes, "document-maintain")
+    return {"ok": True, "task_id": state["task_id"], "state_revision": state["revision"], "written": sorted(writes), "deleted": sorted(deletes), "backup": backup}
+
+
 def _durable_relative_path(root: Path, path: str) -> tuple[str, Path]:
     relative = path.rstrip("/")
     _valid_relative(root, relative)
@@ -1385,7 +1627,7 @@ def _durable_relative_path(root: Path, path: str) -> tuple[str, Path]:
     return relative, _safe_without_final_symlink(root, relative)
 
 
-def _index_reference_errors(root: Path, index: Path, body: str, *, planned_paths: set[str] | None = None) -> list[str]:
+def _index_reference_errors(root: Path, index: Path, body: str, *, planned_paths: set[str] | None = None, deleted_paths: set[str] | None = None) -> list[str]:
     """Validate explicit Markdown links without deriving a filesystem catalog."""
     errors: list[str] = []
     for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", body):
@@ -1402,7 +1644,7 @@ def _index_reference_errors(root: Path, index: Path, body: str, *, planned_paths
         except (OSError, ValueError):
             errors.append(f"{index.relative_to(root).as_posix()}: invalid link {target}")
             continue
-        if relative not in (planned_paths or set()) and (final_symlink or not candidate.exists()):
+        if relative in (deleted_paths or set()) or (relative not in (planned_paths or set()) and (final_symlink or not candidate.exists())):
             errors.append(f"{index.relative_to(root).as_posix()}: missing link target {relative}")
     return errors
 

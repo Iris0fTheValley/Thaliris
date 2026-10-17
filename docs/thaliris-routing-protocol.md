@@ -28,9 +28,11 @@ evolution does not permanently bind ordinary work to an old runtime baseline.
 
 ## Ownership and handoff
 
-Controller owns the user objective, direction, scope, hard invariants, acceptance criteria,
-context selection and next routing. Executor owns implementation design and methods
-within that boundary. A decision-complete handoff carries selected local goal/acceptance,
+Controller retains the full original goal, direction, scope and acceptance criteria, global facts and hard
+invariants, distilled child conclusions, contradictions and UNKNOWN, current candidate
+judgments, context selection and next routing. The child owns the delegated investigation,
+implementation and local verification working set. Executor owns implementation design
+and methods within that boundary. A decision-complete handoff carries selected local goal/acceptance,
 confirmed facts, authoritative source and derived relationships, affected surfaces,
 hard invariants/decided boundaries, usable verification entry and decision-changing
 unknowns. Include source locations and covered/uncovered scope from selected discovery.
@@ -83,6 +85,16 @@ does not remove an earlier unaddressed repair/unknown basis from the bounded vie
 Controller explicitly addresses that basis through prior `judgment_refs` and reasoning,
 or its complete observation refs. These append-only mechanical links avoid repeating
 the full history and create no semantic acceptance or task-close gate.
+
+An adapter whose native dispatch text is opaque may let Controller preselect exact
+role/profile and opaque evidence association through its existing registration operation.
+Bind the generated handoff during the existing reservation before native execution so
+the child's first observation and nested lineage do not depend on a later Controller
+acknowledgement. Consume that selection only for its matching owning top-level dispatch;
+children cannot select global relevance or consume the Controller's next selection.
+Keep append and protected checkpoint operations under the existing task lock so concurrent
+child observations and reservations retain all evidence. Core supplies only the shared
+append contract; adapter authority and native identity remain adapter responsibilities.
 
 Adapters should reintroduce bounded evidence during ordinary Controller result delivery,
 before its next broad completion/requirement judgment, rather than relying on the
@@ -147,11 +159,20 @@ capabilities are adapter-owned. Profiles do not alter semantic responsibilities.
 Respect the human's delegated, controller-direct or single-agent selection; omitted
 selection defaults to delegated. Controller strategy may change through authorized
 task/revision CAS without expanding the original goal, scope or hard constraints.
-Existing child role and readonly boundaries remain fixed. In delegated mode,
-Ordinary Controller reads, Git and diagnostics are legal within the task boundary.
-Default routing recommends delegating open investigation, large diagnostics and
-substantial implementation to suitable fresh roles. Choose by purpose and working
-set; file, line, token and query counts do not grant or deny permission. Prefer
+Existing child role and readonly boundaries remain fixed. Ordinary Controller reads,
+Git and diagnostics are legal within the task boundary. Legal capability is separate
+from cognitive responsibility. In delegated mode, delegate broad repository investigation,
+searches and call-site collection, log cleaning, tests, local analysis and implementation
+to suitable fresh roles. A direct Controller read is a precise source spot-check for a
+pending immediate decision, not an alternate investigation. After complete dispatch,
+reading, searching, testing, diff review, runtime probing and implementation analysis
+within that Workstream remain the child's work, even when useful to global acceptance;
+they are not independent global decision work. Finish genuinely independent global
+decision work first; when none remains and a necessary child is unfinished, wait normally.
+Do not invent busywork to delay waiting. Integrate the distilled result with retained
+global facts and acceptance; reopen a precise original for a pending immediate decision.
+Controller-direct and single-agent permit direct execution. No file, line, token, query
+or tool-count quota or privilege denial enforces cognitive ownership. Prefer
 bounded catalog/document/task/artifact retrieval and exact instruction sections
 when useful. Hooks cannot prove cumulative semantic scope or all third-party MCP behavior.
 An active child may receive selected supplemental evidence and factual corrections

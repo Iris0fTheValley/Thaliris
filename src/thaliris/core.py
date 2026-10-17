@@ -1162,30 +1162,43 @@ def _append_continuity(
         state = _load_state(root, active=True)
         if base_revision is not None and state["revision"] != base_revision:
             raise ValueError("task revision conflict")
-        data = _continuity(state)
-        if kind == "register":
-            if not payload or set(payload) - {"requirements", "handoffs"}:
-                raise ValueError("invalid evidence registration")
-            for field, values in payload.items():
-                if not isinstance(values, list) or not values:
-                    raise ValueError("registration requires append-only additions")
-                data[field].extend(values)
-        else:
-            if kind == "observations" and "sources" in payload:
-                additions = payload.pop("sources")
-                if not isinstance(additions, list):
-                    raise ValueError("invalid observation sources")
-                known = {item["id"] for item in state["evidence_refs"]}
-                for source in additions:
-                    _evidence_ref(source, known)
-                    state["evidence_refs"].append(source)
-                    known.add(source["id"])
-            if {"task_id", "producer"} & set(payload):
-                raise ValueError("continuity producer and task are assigned by Core")
-            data[kind].append({**payload, "task_id": state["task_id"], "producer": actor})
-        state["revision"] += 1
+        _append_continuity_state(state, actor, payload, kind)
         _write_state(root, state)
     return _task_ack(state, ["evidence_continuity"])
+
+
+def _append_continuity_state(state: dict[str, object], actor: str,
+                             payload: dict[str, object], kind: str) -> None:
+    """Apply the shared append contract to an adapter-owned locked transaction.
+
+    The caller loads and writes state under the normal task lock. This pure
+    mutation has no Host, authority, relevance or acceptance policy.
+    """
+    _bounded_label(actor, "continuity actor")
+    _check_json(payload)
+    payload = dict(payload)
+    data = _continuity(state)
+    if kind == "register":
+        if not payload or set(payload) - {"requirements", "handoffs"}:
+            raise ValueError("invalid evidence registration")
+        for field, values in payload.items():
+            if not isinstance(values, list) or not values:
+                raise ValueError("registration requires append-only additions")
+            data[field].extend(values)
+    else:
+        if kind == "observations" and "sources" in payload:
+            additions = payload.pop("sources")
+            if not isinstance(additions, list):
+                raise ValueError("invalid observation sources")
+            known = {item["id"] for item in state["evidence_refs"]}
+            for source in additions:
+                _evidence_ref(source, known)
+                state["evidence_refs"].append(source)
+                known.add(source["id"])
+        if {"task_id", "producer"} & set(payload):
+            raise ValueError("continuity producer and task are assigned by Core")
+        data[kind].append({**payload, "task_id": state["task_id"], "producer": actor})
+    state["revision"] += 1
 
 
 def task_evidence_register(root: Path, actor: str, base_revision: int, input_file: str | None) -> dict[str, object]:

@@ -67,9 +67,26 @@ or forwarding evidence is not disposition. Neither test PASS, Reviewer READY, na
 Completed nor mechanical DONE substitutes for this requirement judgment. Incorporated
 unknown/repair judgments remain visible as unresolved requirements; an incorporation record
 alone does not mean satisfaction. Preserve previous observations and judgments as history;
-an old handoff observation is not automatically current truth. An observation keeps its immutable
-observed candidate (for example C1); Controller may assess it against a different current candidate
-(C2), explicitly recording that candidate and reasoning for its present applicability.
+an old handoff observation is not automatically current truth. The immutable `candidate`
+on a handoff/observation is a logical workstream label, not a repository snapshot. Repair
+may change files within that label. Source refs and optional producer-selected
+`observed_state` distinguish local observations; absent state identity remains UNKNOWN.
+Matching candidate labels do not establish identical actual states. The existing
+verification-result `candidate_identity` describes its dedicated verification snapshot;
+it is not an automatic identity for every observation.
+
+Nested delegation retains parent provenance without inferring global relevance. A nested
+handoff may have empty requirement refs; its observation stays visible as unassigned
+until Controller cites it in a selected requirement judgment. Children never select
+global relevance. A subsequent satisfied judgment citing fresh positive evidence alone
+does not remove an earlier unaddressed repair/unknown basis from the bounded view.
+Controller explicitly addresses that basis through prior `judgment_refs` and reasoning,
+or its complete observation refs. These append-only mechanical links avoid repeating
+the full history and create no semantic acceptance or task-close gate.
+
+Adapters should reintroduce bounded evidence during ordinary Controller result delivery,
+before its next broad completion/requirement judgment, rather than relying on the
+task-close response. This requires no extra Agent, mandatory stage, polling or heartbeat.
 
 Core stores model-authored observations and judgments with opaque requirement and handoff
 references, provenance and append-only history. It does not classify importance, infer

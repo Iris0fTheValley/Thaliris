@@ -241,3 +241,53 @@ def test_maintenance_failure_rolls_back_applied_writes(tmp_path, monkeypatch):
     assert not (tmp_path / ".agent-memory/one.md").exists()
     assert not (tmp_path / ".agent-memory/two.md").exists()
     assert list((tmp_path / ".context/backups").glob("*.json"))
+
+
+def test_satisfied_does_not_hide_unaddressed_prior_repair_basis(tmp_path):
+    setup(tmp_path)
+    core.task_observe(tmp_path, "child", observation("O1"))
+    core.task_judge(tmp_path, "controller", 4, payload(tmp_path, "repair", {
+        "id": "J1", "candidate": "C1", "requirement_ref": "R1", "observation_refs": ["O1"],
+        "outcome": "repair", "reasoning": "Controller found repair necessary",
+    }))
+    core.task_observe(tmp_path, "child", observation("O2"))
+    core.task_judge(tmp_path, "controller", 6, payload(tmp_path, "positive-only", {
+        "id": "J2", "candidate": "C1", "requirement_ref": "R1", "observation_refs": ["O2"],
+        "outcome": "satisfied", "reasoning": "Later positive evidence only",
+    }))
+    status = core.task_status(tmp_path)["Evidence Continuity"]
+    assert status["unincorporated_total"] == 0
+    assert status["latest_judgments"][0]["id"] == "J2"
+    assert status["unresolved_judgments"][0]["id"] == "J1"
+    core.task_judge(tmp_path, "controller", 7, payload(tmp_path, "reassess", {
+        "id": "J3", "candidate": "C2", "requirement_ref": "R1", "observation_refs": ["O2"],
+        "judgment_refs": ["J1"], "outcome": "satisfied", "reasoning": "Controller explicitly explains why J1's basis is resolved in C2",
+    }))
+    assert core.task_status(tmp_path)["Evidence Continuity"]["unresolved_judgments_total"] == 0
+    assert core.task_get(tmp_path, "J1")["object"]["observation_refs"] == ["O1"]
+    for name, requirement, refs in (("self", "R1", ["J-self"]), ("missing", "R1", ["future"]), ("foreign", "R2", ["J1"])):
+        with pytest.raises(ValueError):
+            core.task_judge(tmp_path, "controller", 8, payload(tmp_path, "invalid-" + name, {
+                "id": "J-" + name, "candidate": "C2", "requirement_ref": requirement,
+                "observation_refs": ["O2"], "judgment_refs": refs, "outcome": "satisfied", "reasoning": "Invalid mechanical continuity edge",
+            }))
+
+
+def test_nested_provenance_does_not_guess_requirement_relevance_or_observed_state(tmp_path):
+    setup(tmp_path)
+    core.task_evidence_register(tmp_path, "controller", 3, payload(tmp_path, "nested", {
+        "handoffs": [{"id": "H3", "parent_handoff_id": "H1", "candidate": "C1", "producer": "scanner", "requirement_refs": []}],
+    }))
+    for index, state in enumerate(("before-fix", "after-fix")):
+        core.task_observe(tmp_path, "scanner", {**observation("O" + str(index), handoff_id="H3", requirement_refs=[]), "observed_state": state})
+    packet = core.task_status(tmp_path)["Evidence Continuity"]
+    assert packet["unincorporated_total"] == 2
+    assert all(item["requirement_ref"] is None for item in packet["unincorporated"])
+    core.task_judge(tmp_path, "controller", 6, payload(tmp_path, "selected-relevance", {
+        "id": "J1", "candidate": "C2", "requirement_ref": "R1", "observation_refs": ["O0", "O1"],
+        "outcome": "satisfied", "reasoning": "Controller relates this Scanner finding only to R1",
+    }))
+    assert core.task_status(tmp_path)["Evidence Continuity"]["unincorporated_total"] == 0
+    assert core.task_get(tmp_path, "O0")["object"]["observed_state"] == "before-fix"
+    assert core.task_get(tmp_path, "O1")["object"]["observed_state"] == "after-fix"
+    assert core.task_get(tmp_path, "O0")["object"]["candidate"] == "C1"

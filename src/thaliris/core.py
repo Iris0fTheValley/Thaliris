@@ -1043,7 +1043,7 @@ def _validate_continuity(state: dict[str, object]) -> None:
         if not isinstance(values, list):
             raise ValueError("invalid continuity collection")
         for item in values:
-            optional = {"durable_paths"} if kind == "handoffs" else {"native_actor", "submitted_by", "native_status", "native_status_conflict"} if kind == "observations" else set()
+            optional = {"durable_paths"} if kind == "handoffs" else {"native_actor", "submitted_by", "native_status", "native_status_conflict", "observed_state"} if kind == "observations" else {"judgment_refs"} if kind == "judgments" else set()
             if not isinstance(item, dict) or set(item) - optional != fields:
                 raise ValueError("invalid continuity object")
             identifier = _bounded_label(item["id"], "continuity id")
@@ -1058,7 +1058,7 @@ def _validate_continuity(state: dict[str, object]) -> None:
                 if "durable_paths" in item and (not isinstance(item["durable_paths"], list) or not all(isinstance(path, str) for path in item["durable_paths"])):
                     raise ValueError("invalid handoff durable paths")
                 refs(item["requirement_refs"], requirements)
-                if not item["requirement_refs"]:
+                if not item["requirement_refs"] and item["parent_handoff_id"] is None:
                     raise ValueError("handoff requires requirement refs")
                 parent = item["parent_handoff_id"]
                 if parent is not None:
@@ -1066,7 +1066,7 @@ def _validate_continuity(state: dict[str, object]) -> None:
                         raise ValueError("invalid parent handoff provenance")
                 handoffs[identifier] = item
             elif kind == "observations":
-                for field, label in (("native_actor", "native actor"), ("submitted_by", "observation submitter"), ("native_status", "observed native status")):
+                for field, label in (("native_actor", "native actor"), ("submitted_by", "observation submitter"), ("native_status", "observed native status"), ("observed_state", "observed local state")):
                     if field in item:
                         _bounded_label(item[field], label)
                 if "native_status_conflict" in item and type(item["native_status_conflict"]) is not bool:
@@ -1075,7 +1075,7 @@ def _validate_continuity(state: dict[str, object]) -> None:
                 if handoff is None or item["producer"] != handoff["producer"] or item["candidate"] != handoff["candidate"]:
                     raise ValueError("observation handoff provenance conflict")
                 refs(item["requirement_refs"], handoff["requirement_refs"])
-                if not item["requirement_refs"]:
+                if not item["requirement_refs"] and handoff["requirement_refs"]:
                     raise ValueError("observation requires requirement refs")
                 source_refs = item["source_refs"]
                 if not isinstance(source_refs, list) or not source_refs or len(source_refs) > 64 or not all(isinstance(ref, str) and ref in sources for ref in source_refs) or len(source_refs) != len(set(source_refs)):
@@ -1087,6 +1087,10 @@ def _validate_continuity(state: dict[str, object]) -> None:
                 if item["requirement_ref"] not in requirements or item["outcome"] not in {"satisfied", "unknown", "repair", "no-current-impact"}:
                     raise ValueError("invalid requirement judgment")
                 refs(item["observation_refs"], observations)
+                prior = {j["id"]: j for j in data["judgments"][:data["judgments"].index(item)]}
+                refs(item.get("judgment_refs", []), prior)
+                if any(prior[ref]["requirement_ref"] != item["requirement_ref"] for ref in item.get("judgment_refs", [])):
+                    raise ValueError("judgment continuity requirement conflict")
                 # Applicability to the selected candidate and requirement is a model
                 # judgment. Observations retain their original provenance unchanged.
             if kind in {"observations", "judgments"}:
@@ -1108,9 +1112,23 @@ def _continuity_status(state: dict[str, object], offset: int = 0) -> dict[str, o
         latest[(judgment["requirement_ref"], judgment["candidate"])] = judgment
     pending = [{"requirement_ref": ref, "observation_id": observation["id"], "candidate": observation["candidate"], "handoff_id": observation["handoff_id"]}
                for observation in data.get("observations", []) for ref in observation["requirement_refs"] if (ref, observation["id"]) not in incorporated]
+    cited = {ref for j in judgments for ref in j["observation_refs"]}
+    pending.extend({"requirement_ref": None, "observation_id": o["id"], "candidate": o["candidate"], "handoff_id": o["handoff_id"]}
+                   for o in data.get("observations", []) if not o["requirement_refs"] and o["id"] not in cited)
+    # Explicit model-authored continuity edges address a prior decision basis.
+    # Legacy exact recitation of its complete observation basis also suffices.
+    addressed = {ref for j in judgments for ref in j.get("judgment_refs", [])}
+    unresolved = []
+    for index, j in enumerate(judgments):
+        if j["outcome"] not in {"repair", "unknown"} or j["id"] in addressed:
+            continue
+        if any(later["requirement_ref"] == j["requirement_ref"] and set(j["observation_refs"]) <= set(later["observation_refs"])
+               for later in judgments[index + 1:]):
+            continue
+        unresolved.append({key: j[key] for key in ("id", "candidate", "requirement_ref", "outcome")})
     judgments = [{**{key: item[key] for key in ("id", "candidate", "requirement_ref", "outcome")}, "observation_ref_count": len(item["observation_refs"])} for item in latest.values()]
-    entries = [("unincorporated", item) for item in pending] + [("latest_judgments", item) for item in judgments]
-    response = {"unincorporated": [], "latest_judgments": [], "unincorporated_total": len(pending), "latest_judgments_total": len(judgments), "offset": offset, "next_offset": None}
+    entries = [("unincorporated", item) for item in pending] + [("unresolved_judgments", item) for item in unresolved] + [("latest_judgments", item) for item in judgments]
+    response = {"unincorporated": [], "unresolved_judgments": [], "latest_judgments": [], "unincorporated_total": len(pending), "unresolved_judgments_total": len(unresolved), "latest_judgments_total": len(judgments), "offset": offset, "next_offset": None}
     for index in range(offset, len(entries)):
         kind, item = entries[index]
         response[kind].append(item)

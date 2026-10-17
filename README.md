@@ -93,7 +93,10 @@ handoff 链路与不透明 requirement refs；这不增加搜索义务、全局�
 关键证据跨后续 Handoff 保持可见，直到 Controller 明确重评当前候选所关联的用户需求：
 satisfied、unknown、repair，或说明为何已不影响当前候选。读取或确认收到不算处置，
 PASS、READY、Completed、DONE 不能替代需求判断。旧观察与判断保留为历史，不自动成为当前真相。
-观察保留其原候选 C1；Controller 可针对当前候选 C2 判断其适用性，并明确记录当前候选与理由。
+不可变的 candidate 是 handoff 逻辑标签，不是仓库快照；来源与可选的 `observed_state` 区分局部观察，缺失实际状态身份时保留 UNKNOWN。
+Nested Scanner 保留 parent provenance，但不推断全局 requirement relevance，未关联观察由 Controller 选择适用需求。
+后续 judgment 用 `judgment_refs` 与理由或完整 observation basis 显式处理此前 repair/unknown 依据；只有新正面证据不会让旧依据退场。
+Adapter 在普通 Controller 结果交付时重新呈现 bounded evidence，时序早于下一次 broad completion 判断；不增加轮询、固定阶段、Agent 或 close gate。
 
 Curator 只维护精确选定的持久知识与 INDEX，可编辑、合并、拆分、替换或删除已有条目。
 Core 提供带 CAS 的文档维护与来源记录，模型决定语义协调。Curator 不扫描知识库、不委派、

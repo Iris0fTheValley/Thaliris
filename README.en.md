@@ -98,8 +98,13 @@ across handoffs until Controller explicitly reassesses the related user requirem
 candidate as satisfied, unknown or repair, or explains why it no longer affects the candidate.
 Reading or acknowledgement is not disposition; PASS, READY, Completed and DONE cannot substitute.
 Prior observations and judgments stay in history without becoming automatic current truth.
-An observation retains its observed candidate C1; Controller may assess it against current candidate
-C2 with explicit reasoning about its present applicability.
+The immutable candidate is a logical handoff label, not a repository snapshot. Source refs and optional
+producer-selected `observed_state` distinguish local observations; absent state identity remains UNKNOWN.
+Nested Scanner lineage does not infer requirement relevance: unassigned observations await Controller selection.
+A later judgment explicitly addresses prior repair/unknown basis through `judgment_refs` and reasoning
+or its complete observation refs. Fresh positive evidence alone does not remove that basis.
+Adapters reintroduce bounded evidence during ordinary Controller result delivery, before its next broad
+completion decision; this adds no polling, mandatory stage, Agent or mechanical close gate.
 
 Curator maintains exact selected durable knowledge and INDEX entries, including editing, merging,
 splitting, replacing or deleting existing entries. Core provides CAS document maintenance and

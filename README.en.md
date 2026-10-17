@@ -167,14 +167,14 @@ was not benchmarked, and smaller prompt sizes do not establish quality gains.
 
 ## Installation
 
-The Core CLI requires Python 3.11 or newer and Git. Install the Host-neutral `thaliris-core` command provided by this repository:
+The Core CLI requires Python 3.11 or newer. Git is optional; installing source through a Git URL still requires Git. Install the Host-neutral `thaliris-core` command provided by this repository:
 
 ```bash
 uv tool install git+https://github.com/Iris0fTheValley/Thaliris
 thaliris-core version
 ```
 
-Initialize or inspect Core records in an existing Git repository:
+Initialize or inspect Core records in an explicit existing project directory without creating a Git repository first. Initialization never runs `git init`; existing Git projects still require the exact worktree root. Without Git, HEAD is null, Git surface is `UNAVAILABLE`, and Git evidence freshness is `UNKNOWN`; task records and authority remain available:
 
 ```bash
 cd your-repository
@@ -263,9 +263,9 @@ AGENTS.md
 └── backups/  # shared Core backup directory
 ```
 
-Each Task ID's state file is transient and ignored by Git.
+Each Task ID's state file is transient; in Git projects, initialization generates rules to ignore it.
 
-Project memory and milestone documents are Git-owned.
+Project memory and milestone documents can be managed by the project's version control.
 
 ---
 

@@ -133,14 +133,14 @@ Controller 负责方向、范围、验收标准和后续路由，执行角色负
 
 ## 安装
 
-Core CLI 需要 Python 3.11 或更高版本以及 Git。安装本仓库提供的 Host-neutral `thaliris-core` 命令：
+Core CLI 需要 Python 3.11 或更高版本。Git 是可选能力；通过 Git URL 安装源码时仍需要 Git。安装本仓库提供的 Host-neutral `thaliris-core` 命令：
 
 ```bash
 uv tool install git+https://github.com/Iris0fTheValley/Thaliris
 thaliris-core version
 ```
 
-在现有 Git 仓库中初始化或检查 Core 记录：
+在显式指定的现有项目目录中初始化或检查 Core 记录，无需先创建 Git 仓库。初始化不运行 `git init`；既有 Git 项目仍要求根目录精确匹配 worktree root。无 Git 时 HEAD 为 null、Git surface 为 `UNAVAILABLE`、Git evidence freshness 为 `UNKNOWN`，任务记录与 authority 仍可使用：
 
 ```bash
 cd your-repository
@@ -221,9 +221,9 @@ AGENTS.md
 └── backups/  # Core 共享备份目录
 ```
 
-每个 Task ID 的状态文件都是瞬态数据，Git 会忽略它。
+每个 Task ID 的状态文件都是瞬态数据；在 Git 项目中，初始化生成的规则会忽略它。
 
-项目记忆和里程碑文档由 Git 管理。
+项目记忆和里程碑文档可以由项目的版本控制管理。
 
 ---
 

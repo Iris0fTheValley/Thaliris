@@ -101,6 +101,14 @@ def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
             continue
         kind = spec.split(":", 1)[0]
         if kind == "git":
+            from . import core
+            try:
+                git_root = core._git_root(root)
+            except (OSError, ValueError):
+                git_root = None
+            if git_root is None:
+                invalid.append(spec)
+                continue
             relative = str(candidate.relative_to(root)).replace("\\", "/")
             tracked = subprocess.run(["git", "ls-files", "--error-unmatch", "--", relative], cwd=root, capture_output=True, text=True, check=False)
             indexed = subprocess.run(["git", "rev-parse", "--verify", f":{relative}"], cwd=root, capture_output=True, text=True, check=False)

@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -73,14 +74,80 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _git_root(root: Path) -> Path | None:
+    """Return an established Git root, None for a proven non-Git directory.
+
+    An unavailable Git executable remains optional for ordinary directories.
+    Existing repository metadata or an unexpected discovery failure stays
+    UNKNOWN so callers cannot silently adopt a different managed identity.
+    """
+    root = root.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("--root must be an existing directory")
+
+    def entry_kind(target: Path, *, directory: bool) -> bool:
+        try:
+            mode = target.stat().st_mode
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise ValueError("Git metadata status is UNKNOWN; refusing to select a managed root") from exc
+        return stat.S_ISDIR(mode) if directory else stat.S_ISREG(mode)
+
+    metadata = (
+        entry_kind(root / "HEAD", directory=False)
+        and entry_kind(root / "config", directory=False)
+        and entry_kind(root / "objects", directory=True)
+    )
+    current = root
+    while True:
+        marker = current / ".git"
+        try:
+            marker.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise ValueError("Git metadata status is UNKNOWN; refusing to select a managed root") from exc
+        else:
+            metadata = True
+            break
+        if current == current.parent:
+            break
+        current = current.parent
+
+    discovery_environment = any(
+        os.environ.get(name) for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
+    )
+    try:
+        proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, text=True, check=False)
+    except FileNotFoundError as exc:
+        missing_program = exc.filename is None or Path(exc.filename).name.casefold() in {"git", "git.exe"}
+        if missing_program and root.is_dir() and not metadata and not discovery_environment:
+            return None
+        raise ValueError("Git root discovery is UNKNOWN; refusing to select a managed root") from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("Git root discovery is UNKNOWN; refusing to select a managed root") from exc
+    if proc.returncode == 0 and proc.stdout.strip():
+        return Path(proc.stdout.strip()).resolve()
+    if (
+        proc.returncode != 0
+        and not metadata
+        and not discovery_environment
+        and "not a git repository" in (proc.stderr or "").casefold()
+    ):
+        return None
+    raise ValueError("Git root discovery is UNKNOWN; refusing to select a managed root")
+
+
 def _repo_root(root: Path) -> Path:
-    proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, text=True, check=False)
-    if proc.returncode or not proc.stdout.strip():
-        raise ValueError("init requires an existing git repository")
-    actual = Path(proc.stdout.strip()).resolve()
-    if root.resolve() != actual:
+    """Validate an explicit managed directory, retaining Git root semantics."""
+    root = root.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("--root must be an existing directory")
+    actual = _git_root(root)
+    if actual is not None and root != actual:
         raise ValueError("--root must be the git repository root")
-    return actual
+    return root
 
 
 @contextmanager
@@ -579,7 +646,10 @@ def _surface_delta(root: Path, baseline: list[dict[str, object]] | str) -> dict[
 
 
 def _git_head(root: Path) -> str | None:
-    proc = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=root, capture_output=True, text=True, check=False)
+    try:
+        proc = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=root, capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
     value = proc.stdout.strip().lower()
     return value if proc.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", value) else None
 
@@ -941,7 +1011,7 @@ def _task_ack(state: dict[str, object], changed: list[str]) -> dict[str, object]
 
 def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None, *, actor: str = "unspecified") -> dict[str, object]:
     root = _repo_root(root)
-    if not _state_ignored(root):
+    if _git_root(root) is not None and not _state_ignored(root):
         raise ValueError("task state is not ignored; run context init first")
     if not isinstance(goal, str) or not goal.strip() or len(goal) > 16_384:
         raise ValueError("goal must not be empty")

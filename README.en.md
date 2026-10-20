@@ -15,7 +15,7 @@ Thaliris builds on the native Agent capabilities of Hosts such as Codex and Deep
 
 > **Status: Beta.** Real refactoring work has shown an implementer dispatching an investigation, a Controller starting an independent review, and counterevidence driving repairs. The sample is too small to establish a general quality or cost advantage. See [empirical observations](#empirical-observations).
 
-## Why this is not context management
+## Why more than context management
 
 Common approaches manage more context within one Agent through compaction, retrieval or memory. Thaliris sees a larger problem than token count: too many competing goals share one reasoning path. The same Agent may be expected to investigate, design, implement, debug, review its own work and remember earlier failures.
 
@@ -76,22 +76,26 @@ There is one shared Core. Core does not run models, schedule Agents or authentic
 
 ## Empirical observations
 
-**What this benchmark measures:** We chose a difficult single-turn refactor: desktop and WebUI share Live2D behavior, with model selection, voice/action queues and exit lifecycle involved. The goal is not to fix every bug in one turn. It is to observe whether original requirements keep influencing decisions through investigation, implementation, handoffs, review and repair.
+**What this benchmark measures:** We chose a difficult single-turn refactor: desktop and WebUI share Live2D behavior, with model selection, voice/action queues and exit lifecycle involved. The benchmark does not rank candidates by how many bugs remain. It compares how original requirements guide investigation, plan convergence, implementation and verification, especially whether checks cover real consumer paths and whether counterevidence changes the plan. A/B are single-agent runs; C/D provide collaborative comparisons.
 
-**How to read the results:** Each frozen candidate received an independent, strict product post-review that continued looking for counterexamples. Every row therefore has residual defects, many of which existed in the starting code. Compare whether severe P1 gaps were contained and whether the collaboration behavior actually occurred.
+**How to read the results:** Frozen candidates received independent product post-reviews. The table separates in-run independent review and repair from the later post-review. A/B had no independent Reviewer during their runs; their later GPT-6.1 Sol/high reviews were separate assessments, not in-run self-review or repair. Their original high/medium severity labels and V3 coverage finding are preserved rather than converted to this table's P1/P2 scale. Each sample has unresolved requirements, some of which were already present in the starting code; defect counts are not a quality score.
 
-| Sample | Execution | Independent review drove repair | Residual P1 after review (original requirement gaps) | P2 | Runtime | API-equivalent cost |
-| --- | --- | --- | ---: | ---: | ---: | ---: |
-| C · 10/14 | Luna multi-agent | Yes, local | 2 | 3 | 57.1 min | $0.46 |
-| D · 10/14 | Sol + Luna multi-agent | Yes | 1 | 2 | 40.4 min | $2.62 |
-| C · 10/19 | Luna (dispatch rejected; single-agent fallback) | No | 3 | 3 | 19.8 min | $0.22 |
-| **D · 10/19** | **Sol + Luna native multi-agent** | **Yes, two counterexamples triggered repairs** | **0** | **3** | **34.4 min** | **$2.91** |
+| Sample (execution date) | Execution | In-run independent review/repair | Independent post-review of frozen candidate | P1 | P2 | Runtime | API-equivalent cost |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| A · 10/03 | Single agent, Sol/medium | No | Oct 14–15: NOT_READY; 1 high, 2 medium, plus V3 renderer coverage gap | — | — | 21.6 min | $0.88 |
+| B · 10/03 | Single agent, Luna/xhigh | No | Oct 14–15: NOT_READY; 2 high, 3 medium | — | — | 54.1 min | $0.23 |
+| C · 10/14 | Luna multi-agent | Yes, local | NOT_READY | 2 | 3 | 57.1 min | $0.46 |
+| D · 10/14 | Sol + Luna multi-agent | Yes | NOT_READY | 1 | 2 | 40.4 min | $2.62 |
+| C · 10/19 | Luna (dispatch rejected; single-agent fallback) | No | NOT_READY | 3 | 3 | 19.8 min | $0.22 |
+| **D · 10/19** | **Sol + Luna native multi-agent** | **Yes, two counterexamples triggered repairs** | **PARTIALLY SUPPORTED / NOT_READY** | **0** | **3** | **34.4 min** | **$2.91** |
 
-The October 14 and October 19 C/D rows are separate runs. The frozen historical single-agent candidates A and B (October 14–15, 2026) each received a new independent product post-review by GPT-6.1 Sol High, and both reviews found concrete failure counterexamples; they were not assigned P1/P2 counts under this table's criteria.
+A and B ran on October 3, 2026; GPT-6.1 Sol/high independently reviewed their frozen candidates on October 14–15. API-equivalent costs are reference estimates for comparison, not actual billed amounts.
 
-Representative findings were that A's desktop conversion path replaced an explicitly selected custom model with a Sakiko costume and its Web presentation kept only the latest no-audio motion; B's backend missed some character-state and cancellation ingress, and bye did not preempt a playing segment. The original reviews used high/medium severity labels, which are not converted into this table's P1/P2 counts.
+A had a shared behavior-policy and renderer-adapter direction by 16:46 UTC, then brought desktop audio blocking and WebUI segment scheduling into implementation. Its final relevant Python suite reported 92 passed and 1 deselected, with 20 frontend tests and successful build/lint. Its post-review still found that desktop conversion replaced an explicitly selected custom model with a Sakiko costume and Web presentation kept only the latest no-audio motion. An early overall direction and local verification therefore left real consumer paths open. B spent longer on broad investigation; its explicit defect set and shared target/renderer plan arrived at 16:59 UTC. It then corrected test-fixture and lint issues and completed 84 Python tests, 16 frontend tests, build and lint. The separate post-review still reproduced incomplete character-state and cancellation ingress and bye leaving active audio playing. The two reviews were independent assessments, not Reviewers in the A/B runs.
 
-API-equivalent costs are reference estimates for comparison, not actual billed amounts. The D · 10/19 external post-review found no P0 or P1 issue, but reported three P2 classes and concluded PARTIALLY SUPPORTED / NOT_READY; this is not full product acceptance. The three classes were: a segment queued before cancellation could arrive afterward and resume playback; an in-flight producer could publish after the shutdown bye, while a separate frontend reproduction also accepted a later segment; and Web selected mouth-parameter names by model version, failing on supported alternate spellings that desktop selected from actual parameter IDs. A conflicting native Agent status during that run was handled as a Codex-native lifecycle anomaly.
+A/B and C/D are compared on investigation, plan convergence, requirement preservation, verification plans and revision after counterevidence—not on the number of bugs remaining in a frozen candidate.
+
+The D · 10/19 independent post-review found no P0 or P1 issue, but reported three P2 classes and concluded PARTIALLY SUPPORTED / NOT_READY; this is not full product acceptance. The three classes were: a segment queued before cancellation could arrive afterward and resume playback; an in-flight producer could publish after the shutdown bye, while a separate frontend reproduction also accepted a later segment; and Web selected mouth-parameter names by model version, failing on supported alternate spellings that desktop selected from actual parameter IDs. A conflicting native Agent status during that run was handled as a Codex-native lifecycle anomaly.
 
 **What happened in D · 10/19:**
 

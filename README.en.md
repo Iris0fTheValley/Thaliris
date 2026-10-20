@@ -87,9 +87,11 @@ There is one shared Core. Core does not run models, schedule Agents or authentic
 | C · 10/19 | Luna (dispatch rejected; single-agent fallback) | No | 3 | 3 | 19.8 min | $0.22 |
 | **D · 10/19** | **Sol + Luna native multi-agent** | **Yes, two counterexamples triggered repairs** | **0** | **3** | **34.4 min** | **$2.91** |
 
-The October 14 and October 19 C/D rows are separate runs. The frozen A and B single-agent candidates each received an independent product post-review by GPT-6.1 Sol High; both reviews found concrete failure counterexamples. A and B were not assigned P1/P2 counts using the same criteria.
+The October 14 and October 19 C/D rows are separate runs. The frozen historical single-agent candidates A (October 14) and B (October 15) each received a new independent product post-review by GPT-6.1 Sol High, and both reviews found concrete failure counterexamples; they were not assigned P1/P2 counts under this table's criteria.
 
-API-equivalent costs are reference estimates for comparison, not actual billed amounts. The D · 10/19 external post-review found no P0 or P1 issue, but reported three P2 classes; this is not full product acceptance. A conflicting native Agent status during that run was handled as a Codex-native lifecycle anomaly.
+Representative findings were that A's desktop conversion path replaced an explicitly selected custom model with a Sakiko costume and its Web presentation kept only the latest no-audio motion; B's backend missed some character-state and cancellation ingress, and bye did not preempt a playing segment. The original reviews used high/medium severity labels, which are not converted into this table's P1/P2 counts.
+
+API-equivalent costs are reference estimates for comparison, not actual billed amounts. The D · 10/19 external post-review found no P0 or P1 issue, but reported three P2 classes and concluded PARTIALLY SUPPORTED / NOT_READY; this is not full product acceptance. The three classes were: a segment queued before cancellation could arrive afterward and resume playback; an in-flight producer could publish after the shutdown bye, while a separate frontend reproduction also accepted a later segment; and Web selected mouth-parameter names by model version, failing on supported alternate spellings that desktop selected from actual parameter IDs. A conflicting native Agent status during that run was handled as a Codex-native lifecycle anomaly.
 
 **What happened in D · 10/19:**
 

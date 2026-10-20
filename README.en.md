@@ -87,7 +87,7 @@ There is one shared Core. Core does not run models, schedule Agents or authentic
 | C · 10/19 | Luna (dispatch rejected; single-agent fallback) | No | 3 | 3 | 19.8 min | $0.22 |
 | **D · 10/19** | **Sol + Luna native multi-agent** | **Yes, two counterexamples triggered repairs** | **0** | **3** | **34.4 min** | **$2.91** |
 
-The October 14 and October 19 C/D rows are separate runs. The frozen historical single-agent candidates A (October 14) and B (October 15) each received a new independent product post-review by GPT-6.1 Sol High, and both reviews found concrete failure counterexamples; they were not assigned P1/P2 counts under this table's criteria.
+The October 14 and October 19 C/D rows are separate runs. The frozen historical single-agent candidates A and B (October 14–15, 2026) each received a new independent product post-review by GPT-6.1 Sol High, and both reviews found concrete failure counterexamples; they were not assigned P1/P2 counts under this table's criteria.
 
 Representative findings were that A's desktop conversion path replaced an explicitly selected custom model with a Sakiko costume and its Web presentation kept only the latest no-audio motion; B's backend missed some character-state and cancellation ingress, and bye did not preempt a playing segment. The original reviews used high/medium severity labels, which are not converted into this table's P1/P2 counts.
 

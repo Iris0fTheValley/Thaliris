@@ -11,7 +11,7 @@ Thaliris is a **cognitive orchestration layer** for AI coding agents. It does no
 
 > **Protect the reasoning. Isolate the noise. Isolation without amnesia.**
 
-Thaliris builds on the native Agent capabilities of Hosts such as Codex and DeepSeek Harness, adding a layer for isolation, handoffs and evidence continuity rather than creating another Agent Runtime.
+Thaliris builds on the native Agent capabilities of Hosts such as Codex, DeepSeek Harness and Claude Code, adding a layer for isolation, handoffs and evidence continuity rather than creating another Agent Runtime.
 
 > **Status: Beta.** Real refactoring work has shown an implementer dispatching an investigation, a Controller starting an independent review, and counterevidence driving repairs. The sample is too small to establish a general quality or cost advantage. See [empirical observations](#empirical-observations).
 
@@ -71,6 +71,7 @@ The mechanical layer handles identity, sources, versions, continuity and bounded
 | **Thaliris Core** (this repository) | Task IDs and task records, observation/judgment links, evidence and freshness, project memory, milestones, compare-and-swap writes and rollback |
 | [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) | Native Codex integration: Fresh Children, role profiles, identity and lifecycle, and evidence re-presentation |
 | [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh/blob/main/README.md) | DeepSeek Harness plugin: Workspace/Session/Agent integration and optional Memory |
+| [Thaliris-claude](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.en.md) | Claude Code plugin: Controller skill, role subagents, hook-based identity binding and evidence re-presentation |
 
 There is one shared Core. Core does not run models, schedule Agents or authenticate callers; native execution belongs to each Adapter.
 
@@ -128,7 +129,7 @@ TASK_ID=$(thaliris-core --root . task-start "example task" | python -c 'import j
 thaliris-core --root . --task-id "$TASK_ID" task-status
 ~~~
 
-Each task has its own Task ID, which is passed explicitly to later operations. Installing Core alone does not enable multi-agent work. For native integration, follow the [Codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) or [DSH](https://github.com/Iris0fTheValley/Thaliris-dsh/blob/main/README.md) guide.
+Each task has its own Task ID, which is passed explicitly to later operations. Installing Core alone does not enable multi-agent work. For native integration, follow the [Codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md), [DSH](https://github.com/Iris0fTheValley/Thaliris-dsh/blob/main/README.md) or [Claude Code](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.en.md) guide.
 
 An initialized repository contains:
 

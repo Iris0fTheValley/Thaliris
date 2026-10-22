@@ -11,7 +11,7 @@ Thaliris 是一个面向 AI 编程 Agent 的**认知编排层**。它不负责�
 
 > **Protect the reasoning. Isolate the noise. Isolation without amnesia.**
 
-Thaliris 不另造 Agent Runtime，而是建在 Codex、DeepSeek Harness 这些 Host 的原生 Agent 能力之上，补上隔离、交接和证据连续性这一层。
+Thaliris 不另造 Agent Runtime，而是建在 Codex、DeepSeek Harness、Claude Code 这些 Host 的原生 Agent 能力之上，补上隔离、交接和证据连续性这一层。
 
 > **状态：Beta。** 在真实的复杂重构任务上，已经观察到实现者自主派发调查、Controller 发起独立审查、反证推动修复的完整链路。样本量还小，不足以证明普遍的质量或成本优势。见[实测观察](#实测观察)。
 
@@ -71,6 +71,7 @@ Controller 明确处置：已满足 / 未知 / 需修复 / 已不再相关
 | **Thaliris Core**（本仓库） | Task ID 与任务记录、observation / judgment 链接、证据与 freshness、项目记忆、里程碑、CAS 写入与回滚 |
 | [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex) | Codex 原生集成：Fresh Child、角色 profiles、身份与生命周期、证据重新呈现 |
 | [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh/blob/main/README.md) | DeepSeek Harness 插件：Workspace/Session/Agent 集成、可选 Memory |
+| [Thaliris-claude](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.md) | Claude Code 插件：Controller skill、角色子代理、Hooks 身份绑定与证据重新呈现 |
 
 只有一套共享 Core。Core 不运行模型、不调度 Agent、不认证调用者；原生执行由各 Adapter 负责。
 
@@ -128,7 +129,7 @@ TASK_ID=$(thaliris-core --root . task-start "example task" | python -c 'import j
 thaliris-core --root . --task-id "$TASK_ID" task-status
 ```
 
-每个任务有独立的 Task ID，后续操作显式传入 `--task-id`。只安装 Core 不会启用多代理；需要原生集成时，按 [Codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) 或 [DSH](https://github.com/Iris0fTheValley/Thaliris-dsh) 指南安装。
+每个任务有独立的 Task ID，后续操作显式传入 `--task-id`。只安装 Core 不会启用多代理；需要原生集成时，按 [Codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md)、[DSH](https://github.com/Iris0fTheValley/Thaliris-dsh) 或 [Claude Code](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.md) 指南安装。
 
 初始化后的仓库：
 

@@ -68,12 +68,14 @@ The mechanical layer handles identity, sources, versions, continuity and bounded
 
 | Component | Responsibility |
 | --- | --- |
-| **Thaliris Core** (this repository) | Task IDs and task records, observation/judgment links, evidence and freshness, project memory, milestones, compare-and-swap writes and rollback |
+| **Thaliris Core** (this repository) | Task IDs and task records, observation/judgment links, evidence and freshness, project memory, milestones, project identity, compare-and-swap writes and rollback |
 | [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) | Native Codex integration: Fresh Children, role profiles, identity and lifecycle, and evidence re-presentation |
 | [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh/blob/main/README.md) | DeepSeek Harness plugin: Workspace/Session/Agent integration and optional Memory |
 | [Thaliris-claude](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.en.md) | Claude Code plugin: Controller skill, role subagents, hook-based identity binding and evidence re-presentation |
 
 There is one shared Core. Core does not run models, schedule Agents or authenticate callers; native execution belongs to each Adapter.
+
+**Project identity** (Core 0.5.0, optional): the Git-tracked `.project-identity/` namespace holds a versioned, project-level, cross-task baseline (identity, invariants, principles, directions, non-goals) that changes only through an explicit amendment recording the human owner's decision. Evidence against identity is recorded as a challenge, and purpose relations for significant decisions can be registered and traced. Core records, versions, validates references and observes divergence; it makes no semantic judgment and propagates nothing. Projects without an identity behave exactly as before. See [Project identity](https://github.com/Iris0fTheValley/Thaliris/blob/main/docs/thaliris-project-identity.md).
 
 ## Role capabilities and recommended models
 
@@ -184,6 +186,7 @@ Removing Thaliris should not make the underlying development process incorrect.
 - [Core design](https://github.com/Iris0fTheValley/Thaliris/blob/main/DESIGN.md)
 - [Routing protocol](https://github.com/Iris0fTheValley/Thaliris/blob/main/docs/thaliris-routing-protocol.md)
 - [Task authority contract](https://github.com/Iris0fTheValley/Thaliris/blob/main/docs/thaliris-task-authority.md)
+- [Project identity](https://github.com/Iris0fTheValley/Thaliris/blob/main/docs/thaliris-project-identity.md)
 - [Prompt ownership and research motivation](https://github.com/Iris0fTheValley/Thaliris/blob/main/docs/thaliris-prompt-design.md)
 - [Role descriptions](https://github.com/Iris0fTheValley/Thaliris/blob/main/docs/thaliris-role-packs.md) · [Packaging and API boundaries](https://github.com/Iris0fTheValley/Thaliris/blob/main/docs/host-neutral-packaging.md)
 

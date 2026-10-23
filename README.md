@@ -68,12 +68,14 @@ Controller 明确处置：已满足 / 未知 / 需修复 / 已不再相关
 
 | 部分 | 职责 |
 | --- | --- |
-| **Thaliris Core**（本仓库） | Task ID 与任务记录、observation / judgment 链接、证据与 freshness、项目记忆、里程碑、CAS 写入与回滚 |
+| **Thaliris Core**（本仓库） | Task ID 与任务记录、observation / judgment 链接、证据与 freshness、项目记忆、里程碑、项目身份、CAS 写入与回滚 |
 | [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex) | Codex 原生集成：Fresh Child、角色 profiles、身份与生命周期、证据重新呈现 |
 | [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh/blob/main/README.md) | DeepSeek Harness 插件：Workspace/Session/Agent 集成、可选 Memory |
 | [Thaliris-claude](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.md) | Claude Code 插件：Controller skill、角色子代理、Hooks 身份绑定与证据重新呈现 |
 
 只有一套共享 Core。Core 不运行模型、不调度 Agent、不认证调用者；原生执行由各 Adapter 负责。
+
+**项目身份**（Core 0.5.0 起，可选）：受 Git 跟踪的 `.project-identity/` 保存项目级、跨任务的身份基线（身份、不变量、原则、方向、非目标），带版本，只能通过记录了人类所有者决定的显式 amendment 修改；证据对身份的质疑记为 challenge，重要决策的目的关系可以登记并追溯。Core 只记录、版本化、校验引用并观察偏离，不做语义判断，也不自动传播；没有身份的项目行为完全不变。见 [项目身份](docs/thaliris-project-identity.md)。
 
 ## 角色能力与推荐模型
 
@@ -184,6 +186,7 @@ thaliris-core --root . --task-id "$TASK_ID" task-status
 - [DESIGN.md](DESIGN.md) — Core 架构与契约
 - [路由协议](docs/thaliris-routing-protocol.md) — 路由、交接、Evidence Continuity、等待与验收
 - [任务授权契约](docs/thaliris-task-authority.md)
+- [项目身份](docs/thaliris-project-identity.md) — 版本化项目身份基线、challenge 与目的关系
 - [提示词归属与研究动机](docs/thaliris-prompt-design.md) — 含相关文献
 - [角色说明](docs/thaliris-role-packs.md) · [分包与 API 边界](docs/host-neutral-packaging.md)
 

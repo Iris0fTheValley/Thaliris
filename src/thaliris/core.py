@@ -313,6 +313,11 @@ def init(root: Path) -> dict[str, object]:
         return {"ok": True, "changed": True, "backup": _apply_with_backup(root, files, [], "init"), "files": sorted(files), "manual_action_required": manual}
 
 
+# Project identity history is append-only: its backups preserve prior bytes as
+# recovery evidence, never as a replayable undo (see thaliris.identity).
+_IDENTITY_BACKUP_PREFIX = "identity-"
+
+
 def rollback(root: Path, backup_id: str) -> dict[str, object]:
     root = _repo_root(root)
     if not re.fullmatch(r"[0-9TZ-]+-[0-9a-f]{8}", backup_id): raise ValueError("invalid backup id")
@@ -320,6 +325,9 @@ def rollback(root: Path, backup_id: str) -> dict[str, object]:
         path = _safe(root, f".context/backups/{backup_id}.json")
         if not path.is_file(): raise ValueError("backup not found")
         data = json.loads(path.read_text(encoding="utf-8")); guarded = []; applied = []
+        if isinstance(data, dict) and str(data.get("action", "")).startswith(_IDENTITY_BACKUP_PREFIX):
+            raise ValueError("backup was produced by a project identity mutation; rollback refuses it. "
+                             "Reverse an identity change with a new amendment, a challenge dismissal or a relation retraction")
         for change in data.get("changes", []):
             target = _safe(root, str(change["path"])); now = target.read_bytes() if target.is_file() else None
             current_hash = _digest(now)

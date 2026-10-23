@@ -9,7 +9,10 @@ import json
 from pathlib import Path
 import sys
 
-from . import __version__, core
+from . import __version__, core, identity
+
+
+_IDENTITY_MUTATIONS = ("identity-amend", "identity-challenge", "identity-relate")
 
 
 class _Parser(argparse.ArgumentParser):
@@ -18,7 +21,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = _Parser(prog="thaliris-core", description="Host-neutral task records, evidence, explicit retrieval, memory and authority")
+    parser = _Parser(prog="thaliris-core", description="Host-neutral task records, evidence, explicit retrieval, memory, authority and project identity")
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--pretty", action="store_true")
     parser.add_argument("--task-id", help="explicit task ledger selection; never an authority grant")
@@ -61,6 +64,21 @@ def _parser() -> argparse.ArgumentParser:
     command.add_argument("--expected-task-id")
     command = commands.add_parser("rollback")
     command.add_argument("backup")
+    commands.add_parser("identity-status")
+    command = commands.add_parser("identity-get")
+    command.add_argument("--version", type=int)
+    command.add_argument("--item", action="append")
+    command.add_argument("--amendment")
+    command.add_argument("--challenge")
+    command = commands.add_parser("identity-trace")
+    command.add_argument("ref")
+    command.add_argument("--direction", choices=("up", "down", "both"), default="both")
+    command.add_argument("--depth", type=int, default=1)
+    for name in _IDENTITY_MUTATIONS:
+        command = commands.add_parser(name)
+        command.add_argument("--actor", required=True)
+        command.add_argument("--base-revision", type=int, required=True)
+        command.add_argument("--input", required=True)
     return parser
 
 
@@ -73,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         root = args.root.resolve()
         core.select_task(root, args.task_id)
         name = args.command
-        if name == "document-maintain" and args.task_id is None:
+        if name in {"document-maintain", *_IDENTITY_MUTATIONS} and args.task_id is None:
             raise ValueError("explicit --task-id required for task mutation")
         if name.startswith("task-") and name not in {"task-start", "task-show", "task-status", "task-get"} and args.task_id is None:
             raise ValueError("explicit --task-id required for task mutation")
@@ -100,6 +118,15 @@ def main(argv: list[str] | None = None) -> int:
                 producer=args.producer, registered_by=args.actor, evidence_refs=args.source_ref, supersedes=args.supersedes)
         elif name == "task-close":
             out = core.task_close(root, args.base_revision, expected_task_id=args.expected_task_id)
+        elif name == "identity-status":
+            out = identity.identity_status(root)
+        elif name == "identity-get":
+            out = identity.identity_get(root, version=args.version, items=args.item,
+                                        amendment=args.amendment, challenge=args.challenge)
+        elif name == "identity-trace":
+            out = identity.identity_trace(root, args.ref, args.direction, args.depth)
+        elif name in _IDENTITY_MUTATIONS:
+            out = getattr(identity, name.replace("-", "_"))(root, args.actor, args.base_revision, args.input)
         else:
             out = core.rollback(root, args.backup)
         print(json.dumps(out, sort_keys=True, indent=2 if args.pretty else None))

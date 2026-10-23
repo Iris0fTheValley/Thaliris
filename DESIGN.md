@@ -193,6 +193,28 @@ Task start records Git HEAD and dirty-surface identities. Later reads expose
 before, after, and delta. Core does not attribute ownership or block close based
 on that delta.
 
+### Project identity
+
+The repository-tracked `.project-identity/` namespace holds one project-level,
+cross-task baseline: what the project is for and what must not change silently.
+It is versioned (v1, v2, …) and changes only through an immutable amendment that
+records the human owner's decision as asserted by its caller. Challenges record
+evidence against identity; typed purpose relations (`serves`, `supports`,
+`challenges`, `supersedes`) record why significant decisions exist. All are
+append-only files; resolution and retraction are new files.
+
+Core records, versions, validates ref syntax and existence at registration,
+enforces task-revision and baseline compare-and-swap, writes under the lock
+through backup and atomic write (ledger last), observes `UNRECORDED_CHANGE` and
+`INVALID`, and returns bounded content with canonical (LF-normalized) hashes. It
+does not decide layers, challenge validity, amendment wisdom, affected scope or
+revalidation; nothing propagates or is injected, and absent identity changes no
+existing behavior. Identity mutations do not bump task revision, do not alter
+Task Authority, and are refused by `rollback`. Reading Core's own bounded
+`challenges/` and `relations/` directories is not a corpus scan. Legacy memory
+metadata confers no identity authority. See
+[Project identity](docs/thaliris-project-identity.md).
+
 ## Retained guarantees
 
 - Git-native persistence

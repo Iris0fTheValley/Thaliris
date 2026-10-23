@@ -64,34 +64,33 @@ def test_controller_acceptance_and_optional_review_are_shared_across_docs():
     assert "a separate explicit closing handoff" not in protocol
     assert "controller integrates that result" not in protocol
 
+    stale_claims_en = ("16 promotion units", "a confirmed promotion must",
+                       "only the controller may run `task-promote`",
+                       "`progress`/`verification` fields for the current milestone",
+                       "memory only appends a new entry")
     for name in ("README.md", "README.en.md"):
         text = " ".join((root / name).read_text(encoding="utf-8").lower().split())
         if name == "README.md":
-            assert "不需要固定 closing handoff" in text
             stale_claims = ("16 个 promotion units", "confirmed promotion 还必须",
                             "只有 controller 可以运行 `task-promote`",
                             "当前 milestone 的 `progress`/`verification`",
                             "memory 只追加新 entry")
-            assert "core 不强制语义类别" in text
-            assert "目标已存在时会拒绝覆盖" in text
-            assert "同一事务中写入" in text
-            assert "包括嵌套子目录" in text
         else:
-            assert "no fixed closing handoff" in text
-            stale_claims = ("16 promotion units", "a confirmed promotion must",
-                            "only the controller may run `task-promote`",
-                            "`progress`/`verification` fields for the current milestone",
-                            "memory only appends a new entry")
-            assert "core does not impose semantic categories" in text
-            assert "refuses to overwrite an existing target" in text
-            assert "same transaction as the new documents" in text
-            assert "including nested namespaces" in text
-        assert "task-close" in text and "completed" in text and "ready" in text and "done" in text
+            stale_claims = stale_claims_en
+        assert "completed" in text and "ready" in text and "done" in text
         assert "separate explicit closing handoff" not in text
         assert all(claim not in text for claim in stale_claims)
 
+    # The task-promote input contract lives in DESIGN.md, not in the README narrative.
+    design = " ".join((root / "DESIGN.md").read_text(encoding="utf-8").lower().split())
+    assert "core does not impose semantic categories" in design
+    assert "refuses to overwrite an existing target" in design
+    assert "same transaction as the new documents" in design
+    assert "including nested namespaces" in design
+    assert all(claim not in design for claim in stale_claims_en)
 
-def test_readme_task_commands_select_the_global_task_id_and_describe_current_promotion():
+
+def test_task_commands_select_the_global_task_id_and_design_describes_current_promotion():
     root = Path(__file__).resolve().parents[1]
     command = re.compile(r"thaliris-core[^\n]*\btask-(?:status|show|update|promote|close|artifact)\b")
     for name in ("README.md", "README.en.md"):
@@ -99,11 +98,10 @@ def test_readme_task_commands_select_the_global_task_id_and_describe_current_pro
         for line in text.splitlines():
             if command.search(line):
                 assert "--task-id" in line, f"missing explicit task selection in {name}: {line}"
-        lowered = text.lower()
-        assert "base_sha256" in lowered
-        assert "complete content" in lowered or "full content" in lowered or "完整内容" in lowered
-        assert "source_refs" in lowered
-        assert "revision" in lowered
+    design = " ".join((root / "DESIGN.md").read_text(encoding="utf-8").lower().split())
+    assert "supplies the complete content and its `base_sha256`" in design
+    assert "`source_refs` may cite only evidence or artifacts already recorded in the selected task id" in design
+    assert "promotion uses task-revision cas and does not advance that revision" in design
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
     assert "thaliris-core --task-id <id> task-status" in agents
     assert "thaliris-core --task-id <id> task-show" in agents

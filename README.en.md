@@ -75,6 +75,38 @@ The mechanical layer handles identity, sources, versions, continuity and bounded
 
 There is one shared Core. Core does not run models, schedule Agents or authenticate callers; native execution belongs to each Adapter.
 
+## Role capabilities and recommended models
+
+> **Never use a small or low-capability model as the Controller.** Savings should come from giving narrow work to cheaper child roles, not from downgrading the Controller. A Controller's mistakes are not corrected by its children; they are amplified. In practice, weak Controllers skipped the managed flow, fell back to single-agent work after an isolation refusal, or declared completion while review counterevidence was still unresolved.
+
+The Controller needs all of these capabilities; each one matters:
+
+| Capability | The question the Controller must answer |
+| --- | --- |
+| Global Coherence | After dozens or hundreds of steps, does it still remember why the work is being done? |
+| Strategic Planning | Can it work backwards from the end goal, identify dependencies and allocate resources, rather than only looking at the next step? |
+| Retrospective Reasoning | Can it trace a root error in earlier decisions instead of repeatedly patching symptoms? |
+| Metacognitive Monitoring | Can it notice that it is drifting, duplicating work or stuck on an impossible task? |
+| Prospective Reasoning | Can it predict how a current decision affects later stages and avoid future structural problems? |
+| Adaptive Replanning | When the plan fails or conditions change, can it reorganize the overall work instead of mechanically continuing the old plan? |
+
+Capabilities each role needs, and recommended models:
+
+| Role | Capabilities needed | GPT (Codex) | Claude (Claude Code) |
+| --- | --- | --- | --- |
+| Controller | All six above; integrates the original objective, acceptance criteria and evidence to decide product acceptance | gpt-6.1-sol (high or above); gpt-6-astra with user authorization | Opus |
+| Investigator | Gathers facts and sources broadly and accurately within the selected scope, stating covered and uncovered scope | gpt-6-luna (max) | Sonnet |
+| Implementer | Implements, verifies and repairs ordinary defects within an accepted direction until deterministic convergence | gpt-6-luna (max) | Sonnet |
+| Focused Implementer | Sustained reasoning over coupled invariants, absorbing runtime feedback until semantic convergence | gpt-6.1-sol (high); gpt-6-astra with user authorization | Sonnet or Opus, chosen by the Controller per task difficulty |
+| Reviewer | Independently challenges a converged candidate and seeks cross-boundary counterevidence without adopting the author's framing | gpt-6.1-sol (high) | Opus |
+| Reasoning Specialist | Challenges the problem framing, causal model and decision basis | gpt-6.1-sol (high); gpt-6-astra with user authorization | Opus |
+| Curator | Maintains selected durable knowledge and INDEX entries precisely from supplied material | gpt-6-luna (max) | Sonnet |
+| Verifier (Codex compatibility role) | Read-only check of acceptance evidence, modification boundaries and synchronization | gpt-6-luna (max) | — |
+
+Recommendations are a starting point, not a quality guarantee. Role identity and execution model are independent; the model that actually ran is what the Host observed, not what a configuration file says.
+
+These are recommendations only. Choosing each role's model is the Controller's job, made freely within any constraint the user wrote into the task; where the adapter supports it (such as `register-role` in Claude Code), the Controller can also register new roles. A user may also have the Controller do all the work itself: whether and how much to delegate is the user's decision.
+
 ## Empirical observations
 
 **What this benchmark measures:** We chose a difficult single-turn refactor: desktop and WebUI share Live2D behavior, with model selection, voice/action queues and exit lifecycle involved. The benchmark does not rank candidates by how many bugs remain. It compares how original requirements guide investigation, plan convergence, implementation and verification, especially whether checks cover real consumer paths and whether counterevidence changes the plan. A/B are single-agent runs; C/D provide collaborative comparisons.

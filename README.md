@@ -75,6 +75,38 @@ Controller 明确处置：已满足 / 未知 / 需修复 / 已不再相关
 
 只有一套共享 Core。Core 不运行模型、不调度 Agent、不认证调用者；原生执行由各 Adapter 负责。
 
+## 角色能力与推荐模型
+
+> **绝对不要用小模型或低能力模型做控制层（Controller）。** 省钱应当来自把窄任务交给更便宜的子角色，而不是降级 Controller。Controller 的失误不会被子代理纠正，只会被放大：实测中，弱 Controller 会跳过受管流程、在隔离拒绝后退回单代理，或在审查反证仍未处置时就判定完成。
+
+Controller 必须同时具备以下能力，每一项都很重要：
+
+| 能力 | Controller 要回答的问题 |
+| --- | --- |
+| Global Coherence 全局一致性 | 做了几十上百步以后，是否还记得为什么要做这件事？ |
+| Strategic Planning 战略统筹 | 能不能从最终目标反推路径、识别依赖、分配资源，而不是只看下一步？ |
+| Retrospective Reasoning 回溯推理 | 能不能从历史决策中定位根本错误，而不是反复修补表象？ |
+| Metacognitive Monitoring 元认知监控 | 能不能发现自己正在跑偏、重复劳动，或者陷入不可能完成的任务？ |
+| Prospective Reasoning 前瞻推理 | 能不能预测当前决定对后续阶段的影响，主动避免未来的结构性问题？ |
+| Adaptive Replanning 动态重规划 | 当原计划失效、条件变化时，能否重新组织全局工作，而不是机械延续旧计划？ |
+
+各角色需要的能力与推荐模型：
+
+| 角色 | 需要的能力 | GPT（Codex） | Claude（Claude Code） |
+| --- | --- | --- | --- |
+| Controller | 上述六项；整合原始目标、验收标准与证据，判定产品验收 | gpt-6.1-sol（high 或以上）；用户授权时可用 gpt-6-astra | Opus |
+| Investigator | 在选定范围内广泛、准确地收集事实与来源，说明已覆盖与未覆盖范围 | gpt-6-luna（max） | Sonnet |
+| Implementer | 在已确定的方向内实现、验证并修复普通缺陷，直到确定性收敛 | gpt-6-luna（max） | Sonnet |
+| Focused Implementer | 对耦合的不变量持续推理，吸收运行反馈直到语义收敛 | gpt-6.1-sol（high）；用户授权时可用 gpt-6-astra | Sonnet 或 Opus，由 Controller 按任务难度选择 |
+| Reviewer | 独立挑战已收敛的候选，跨边界寻找反证，不被作者的框架带偏 | gpt-6.1-sol（high） | Opus |
+| Reasoning Specialist | 质疑问题框架、因果模型和决策依据 | gpt-6.1-sol（high）；用户授权时可用 gpt-6-astra | Opus |
+| Curator | 依据选定材料精确整理长期知识与 INDEX | gpt-6-luna（max） | Sonnet |
+| Verifier（Codex 兼容角色） | 只读检查验收证据、修改边界与同步 | gpt-6-luna（max） | — |
+
+推荐值是起点，不是质量保证。角色身份与执行模型相互独立；实际运行的模型以 Host 的观测为准，而不是配置文件。
+
+这些只是推荐。为每个角色选择模型是 Controller 的职责，在用户写入任务的约束之内可以自由选择；在 Adapter 支持时（如 Claude Code 的 `register-role`），Controller 也可以注册新角色。用户也可以让 Controller 独自完成全部工作：是否委派、委派多少，由用户决定。
+
 ## 实测观察
 
 **这项基准测什么：** 我们有意挑了一个很难的单轮重构任务：桌面与 WebUI 共享 Live2D 行为，涉及模型选择、语音/动作队列和退出生命周期。比较的不是候选还剩几个 bug，而是原始需求能否持续约束调查、方案收敛、实现和验证，尤其是检查是否覆盖真实消费者路径、反证是否推动方案修正。A/B 是单代理样本，C/D 提供协作执行对照。

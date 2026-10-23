@@ -522,3 +522,302 @@ raise SystemExit(cli.main(['version']))
     assert json.loads(result.stdout)["ok"] is True
     source = Path(identity.__file__).read_text(encoding="utf-8").lower()
     assert "controller" not in source
+
+
+# ---------------------------------------------------------------------------
+# Integrity regressions: history is never overwritten, `amended` comes from the chain,
+# interrupted amendments are recoverable, side-record damage keeps baseline reads.
+
+
+def snapshot_tree(root: Path) -> dict[str, bytes]:
+    return {path.relative_to(root).as_posix(): path.read_bytes() for path in (root / NS).rglob("*") if path.is_file()}
+
+
+def test_missing_ledger_with_history_is_invalid_and_history_is_never_overwritten(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    task = started(root)
+    establish(root, task["revision"])
+    identity.identity_amend(root, "c", task["revision"], amend_input(1, identity.identity_status(root)["on_disk_sha256"], TEXT_V1 + "\n## P-1 Small steps\n"))
+    (root / NS / "ledger.json").unlink()
+    status = identity.identity_status(root)
+    assert status["state"] == "INVALID" and status["version"] is None
+    assert "ledger.json is missing" in status["detail"][0] and "scope: chain" in status["detail"][0]
+    assert identity.identity_summary(root).startswith("Project identity INVALID")
+    with pytest.raises(ValueError, match="INVALID"):
+        identity.identity_get(root)
+    before = snapshot_tree(root)
+    with pytest.raises(ValueError, match="mutations refuse"):
+        identity.identity_amend(root, "c", task["revision"], amend_input(0, status["on_disk_sha256"], "## X-1 replacement\n"))
+    with pytest.raises(ValueError, match="mutations refuse"):
+        identity.identity_challenge(root, "c", task["revision"], {"targets": ["identity"], "summary": "s", "text": "t"})
+    assert snapshot_tree(root) == before
+    assert (root / NS / "versions/v0001.md").read_text(encoding="utf-8") == TEXT_V1
+    assert (root / NS / "versions/v0002.md").is_file() and (root / NS / "amendments/A-0001.md").is_file()
+    # Any leftover history file, even a single one, keeps the identity from being ABSENT.
+    (root / NS / "versions/v0001.md").unlink()
+    (root / NS / "versions/v0002.md").unlink()
+    (root / NS / "amendments/A-0002.md").unlink()
+    assert identity.identity_status(root)["state"] == "INVALID"
+    (root / NS / "amendments/A-0001.md").unlink()
+    assert identity.identity_status(root)["state"] == "ABSENT"  # only a hand-written IDENTITY.md is left
+
+
+def test_ledger_behind_its_files_is_invalid(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    task = started(root)
+    establish(root, task["revision"])
+    ledger = (root / NS / "ledger.json").read_bytes()
+    identity.identity_amend(root, "c", task["revision"], amend_input(1, identity.identity_status(root)["on_disk_sha256"], TEXT_V1 + "\n## P-1 a\n"))
+    identity.identity_amend(root, "c", task["revision"], amend_input(2, identity.identity_status(root)["on_disk_sha256"], TEXT_V1 + "\n## P-1 b\n"))
+    (root / NS / "ledger.json").write_bytes(ledger)  # regress the ledger to v1 while v2 and v3 files exist
+    status = identity.identity_status(root)
+    assert status["state"] == "INVALID" and "beyond ledger" in status["detail"][0]
+
+
+def forged_resolution(root: Path, challenge_id: str, amendment: str) -> Path:
+    path = root / NS / "challenges" / f"{challenge_id}.resolution.json"
+    path.write_text(json.dumps({"challenge": challenge_id, "resolution": "amended", "amendment": amendment, "reason": "merged",
+                                "task_id": "t", "actor": "c", "recorded_at": "2026-01-01T00:00:00+00:00"}), encoding="utf-8")
+    return path
+
+
+def test_amended_resolution_must_be_listed_by_a_committed_amendment(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    task = started(root)
+    rev = task["revision"]
+    establish(root, rev)
+    challenge = identity.identity_challenge(root, "c", rev, {"targets": ["identity:INV-2"], "summary": "s", "text": "t"})["challenge"]
+    # Another branch's amendment A-0002 wins the ledger conflict and does not resolve the challenge...
+    identity.identity_amend(root, "c", rev, amend_input(1, identity.identity_status(root)["on_disk_sha256"], TEXT_V1 + "\n## P-1 b\n"))
+    # ...but this branch's resolution file for the challenge merges in cleanly.
+    mirror = forged_resolution(root, challenge, "A-0002")
+    status = identity.identity_status(root)
+    assert status["state"] == "INVALID" and "scope: side_records" in status["detail"][0]
+    assert mirror.name in status["detail"][0] and "does not list" in status["detail"][0]
+    assert status["open_challenges_total"] == 1  # never reported as resolved
+    assert "INVALID" in status["summary"] and status["summary"].startswith("Project identity v2")
+    # Baseline reads stay available with an integrity notice; the bad record itself may refuse.
+    got = identity.identity_get(root)
+    assert got["version"] == 2 and "INVALID" in got["notice"]
+    assert identity.identity_get(root, version=1)["text"] == TEXT_V1
+    assert identity.identity_get(root, items=["INV-2"])["notice"]
+    assert identity.identity_get(root, amendment="A-0002")["record"]["resolves"] == []
+    with pytest.raises(ValueError, match="cannot be read"):
+        identity.identity_get(root, challenge=challenge)
+    # Every mutation refuses while side records are INVALID.
+    with pytest.raises(ValueError, match="mutations refuse"):
+        identity.identity_relate(root, "c", rev, {"add": [{"from": "commit:abcdef1", "rel": "serves", "to": "identity"}]})
+    with pytest.raises(ValueError, match="mutations refuse"):
+        identity.identity_challenge(root, "c", rev, {"dismiss": challenge, "reason": "r"})
+    with pytest.raises(ValueError, match="mutations refuse"):
+        identity.identity_amend(root, "c", rev, amend_input(2, status["on_disk_sha256"], TEXT_V1 + "\n## P-1 c\n"))
+    # A citation of an amendment that is not in the chain at all is equally refused.
+    mirror.unlink()
+    forged_resolution(root, challenge, "A-0009")
+    assert "not in the ledger chain" in identity.identity_status(root)["detail"][0]
+    forged_resolution(root, challenge, "A-0003")  # the next, uncommitted number is only a remnant: not INVALID
+    assert identity.identity_status(root)["state"] != "INVALID"
+    mirror.unlink()
+    assert identity.identity_status(root)["state"] == "CURRENT"
+
+
+def test_committed_amendment_resolves_even_without_its_mirror_file(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    task = started(root)
+    rev = task["revision"]
+    establish(root, rev)
+    challenge = identity.identity_challenge(root, "c", rev, {"targets": ["identity"], "summary": "s", "text": "t"})["challenge"]
+    other = identity.identity_challenge(root, "c", rev, {"targets": ["identity"], "summary": "o", "text": "t"})["challenge"]
+    result = identity.identity_amend(root, "c", rev, amend_input(
+        1, identity.identity_status(root)["on_disk_sha256"], TEXT_V1 + "\n## P-1 b\n", resolves=[challenge]))
+    assert result["written"][-1].endswith(f"{challenge}.resolution.json") and result["written"][-2].endswith("ledger.json")
+    (root / NS / "challenges" / f"{challenge}.resolution.json").unlink()
+    status = identity.identity_status(root)
+    assert status["state"] == "CURRENT" and status["open_challenges_total"] == 1
+    got = identity.identity_get(root, challenge=challenge)
+    assert got["status"] == "amended" and got["resolution"]["amendment"] == "A-0002"
+    with pytest.raises(ValueError, match="not open"):
+        identity.identity_challenge(root, "c", rev, {"dismiss": challenge, "reason": "again"})
+    # Dismissals stay file-based; a dismissal that contradicts a committed resolve is INVALID.
+    identity.identity_challenge(root, "c", rev, {"dismiss": other, "reason": "lower repair suffices"})
+    assert identity.identity_get(root, challenge=other)["status"] == "dismissed"
+    path = root / NS / "challenges" / f"{challenge}.resolution.json"
+    path.write_text(json.dumps({"challenge": challenge, "resolution": "dismissed", "amendment": None, "reason": "x",
+                                "task_id": "t", "actor": "c", "recorded_at": "z"}), encoding="utf-8")
+    status = identity.identity_status(root)
+    assert status["state"] == "INVALID" and "scope: side_records" in status["detail"][0]
+
+
+class SimulatedCrash(Exception):
+    pass
+
+
+def crashing_apply(stop_at: str, include_stop: bool = False):
+    """A hard crash: writes land in order up to `stop_at`, then the process 'dies' with no rollback."""
+    def apply(root, writes, deletes, action):
+        for relative, content in writes.items():
+            if relative.endswith(stop_at) and not include_stop:
+                break
+            core._atomic_write(core._safe(root, relative), content)
+            if relative.endswith(stop_at):
+                break
+        raise SimulatedCrash(action)
+    return apply
+
+
+def test_interrupted_amendment_is_readable_observable_and_retryable(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    task = started(root)
+    rev = task["revision"]
+    establish(root, rev)
+    challenge = identity.identity_challenge(root, "c", rev, {"targets": ["identity:INV-2"], "summary": "s", "text": "t"})["challenge"]
+    base = identity.identity_status(root)["on_disk_sha256"]
+    v2 = TEXT_V1.replace("Only the owner", "Owners and delegates")
+    committed = snapshot_tree(root)
+    # Hard crash: everything but the ledger (and the mirrors, which now follow it) is on disk.
+    monkeypatch.setattr(core, "_apply_with_backup", crashing_apply("ledger.json"))
+    with pytest.raises(SimulatedCrash):
+        identity.identity_amend(root, "c", rev, amend_input(1, base, v2, resolves=[challenge]))
+    monkeypatch.undo()
+    assert (root / NS / "versions/v0002.md").is_file() and (root / NS / "amendments/A-0002.md").is_file()
+    status = identity.identity_status(root)
+    assert status["state"] == "UNRECORDED_CHANGE" and status["version"] == 1
+    assert "interrupted amendment" in " ".join(status["detail"]) and "v0002.md" in " ".join(status["detail"])
+    assert status["open_challenges_total"] == 1
+    got = identity.identity_get(root)
+    assert got["version"] == 1 and got["text"] == TEXT_V1 and got["on_disk_divergent"] is True
+    assert identity.identity_get(root, challenge=challenge)["status"] == "open"
+    for path, data in committed.items():
+        if path != f"{NS}/IDENTITY.md":
+            assert (root / path).read_bytes() == data  # committed files untouched
+    # Retry: the changed IDENTITY.md is the base it must name; remnants are replaced.
+    retried = identity.identity_amend(root, "c", rev, amend_input(1, status["on_disk_sha256"], v2, resolves=[challenge]))
+    assert retried["version"] == 2 and retried["challenges_resolved"] == [challenge]
+    assert identity.identity_status(root)["state"] == "CURRENT"
+    assert identity.identity_get(root, challenge=challenge)["resolution"]["amendment"] == "A-0002"
+
+
+def test_interrupted_amendment_with_old_order_mirror_is_a_remnant_not_invalid(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    task = started(root)
+    rev = task["revision"]
+    establish(root, rev)
+    challenge = identity.identity_challenge(root, "c", rev, {"targets": ["identity"], "summary": "s", "text": "t"})["challenge"]
+    v2 = TEXT_V1 + "\n## P-1 b\n"
+    base = identity.identity_status(root)["on_disk_sha256"]
+
+    def apply_all_but_ledger(root_, writes, deletes, action):
+        for relative, content in writes.items():
+            if not relative.endswith("ledger.json"):
+                core._atomic_write(core._safe(root_, relative), content)
+        raise SimulatedCrash(action)
+
+    monkeypatch.setattr(core, "_apply_with_backup", apply_all_but_ledger)
+    with pytest.raises(SimulatedCrash):
+        identity.identity_amend(root, "c", rev, amend_input(1, base, v2, resolves=[challenge]))
+    monkeypatch.undo()
+    assert (root / NS / "challenges" / f"{challenge}.resolution.json").is_file()
+    status = identity.identity_status(root)
+    assert status["state"] == "UNRECORDED_CHANGE" and "resolution.json" in " ".join(status["detail"])
+    assert status["open_challenges_total"] == 1
+    assert identity.identity_get(root)["version"] == 1
+    assert identity.identity_amend(root, "c", rev, amend_input(1, status["on_disk_sha256"], v2, resolves=[challenge]))["version"] == 2
+    assert identity.identity_status(root)["state"] == "CURRENT"
+
+
+def test_crash_after_ledger_commit_leaves_a_consistent_resolved_identity(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    task = started(root)
+    rev = task["revision"]
+    establish(root, rev)
+    challenge = identity.identity_challenge(root, "c", rev, {"targets": ["identity"], "summary": "s", "text": "t"})["challenge"]
+    base = identity.identity_status(root)["on_disk_sha256"]
+    monkeypatch.setattr(core, "_apply_with_backup", crashing_apply("ledger.json", include_stop=True))
+    with pytest.raises(SimulatedCrash):
+        identity.identity_amend(root, "c", rev, amend_input(1, base, TEXT_V1 + "\n## P-1 b\n", resolves=[challenge]))
+    monkeypatch.undo()
+    status = identity.identity_status(root)
+    assert status["state"] == "CURRENT" and status["version"] == 2 and status["open_challenges_total"] == 0
+    assert not (root / NS / "challenges" / f"{challenge}.resolution.json").exists()
+    assert identity.identity_get(root, challenge=challenge)["status"] == "amended"
+
+
+def test_amend_response_is_bounded_to_64_kib(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    task = started(root)
+    rev = task["revision"]
+    establish(root, rev)
+    for batch in range(3):
+        identity.identity_relate(root, "c", rev, {"add": [
+            {"from": f"commit:{batch * 64 + index:07x}", "rel": "serves", "to": "identity", "note": "n" * 1000} for index in range(64)]})
+    result = identity.identity_amend(root, "c", rev, amend_input(1, identity.identity_status(root)["on_disk_sha256"], TEXT_V1 + "\n## P-1 b\n"))
+    size = len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    assert size <= identity.RESPONSE_MAX_BYTES
+    assert result["registered_dependents_total"] == 192 and result["registered_dependents_truncated"] is True
+    assert 0 < len(result["registered_dependents"]) < identity.DEPENDENTS_MAX
+    assert identity.identity_status(root)["version"] == 2
+
+
+def test_reserved_roots_are_refused_case_insensitively(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    task = started(root)
+    establish(root, task["revision"])
+    (root / "docs").mkdir()
+    (root / "docs/design.md").write_text("d\n", encoding="utf-8")
+    (root / "gitignore.md").write_text("g\n", encoding="utf-8")
+    for bad in (".Context/config.json", ".CONTEXT/x", ".GIT/config", ".Git/HEAD", ".git./config", ".context /x", ".context/config.json", ".git/config"):
+        with pytest.raises(ValueError, match="private control data"):
+            identity._path_target(root, bad)
+        with pytest.raises(ValueError, match="private control data"):
+            identity.identity_relate(root, "c", task["revision"], {"add": [{"from": f"path:{bad}", "rel": "serves", "to": "identity"}]})
+    assert identity._path_target(root, "docs/design.md").name == "design.md"
+    assert identity._path_target(root, "gitignore.md").name == "gitignore.md"
+
+
+def test_malformed_relation_keeps_baseline_reads_but_blocks_mutations_and_trace(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    task = started(root)
+    rev = task["revision"]
+    establish(root, rev)
+    keep = identity.identity_challenge(root, "c", rev, {"targets": ["identity"], "summary": "s", "text": "t"})["challenge"]
+    identity.identity_relate(root, "c", rev, {"add": [{"from": "commit:abcdef1", "rel": "serves", "to": "identity"}]})
+    bad = root / NS / "relations" / "REL-20260101T000000Z-aaaaaaaaaaaa.json"
+    bad.write_text("{not json", encoding="utf-8")
+    status = identity.identity_status(root)
+    assert status["state"] == "INVALID" and status["version"] == 1 and "scope: side_records" in status["detail"][0]
+    assert bad.name in status["detail"][0]
+    assert status["items_total"] == 4 and status["summary"].startswith("Project identity v1") and "INVALID" in status["summary"]
+    assert identity.identity_get(root)["text"] == TEXT_V1 and "INVALID" in identity.identity_get(root)["notice"]
+    assert identity.identity_get(root, version=1)["version"] == 1
+    assert identity.identity_get(root, items=["INV-1"])["items"][0]["id"] == "INV-1"
+    assert identity.identity_get(root, amendment="A-0001")["record"]["to_version"] == 1
+    assert identity.identity_get(root, challenge=keep)["status"] == "open"
+    with pytest.raises(ValueError, match="relations are INVALID"):
+        identity.identity_trace(root, "identity")
+    for call in (
+        lambda: identity.identity_relate(root, "c", rev, {"add": [{"from": "commit:abcdef2", "rel": "serves", "to": "identity"}]}),
+        lambda: identity.identity_challenge(root, "c", rev, {"targets": ["identity"], "summary": "s", "text": "t"}),
+        lambda: identity.identity_amend(root, "c", rev, amend_input(1, status["on_disk_sha256"], TEXT_V1 + "\nx\n")),
+    ):
+        with pytest.raises(ValueError, match="mutations refuse"):
+            call()
+    bad.write_text(json.dumps({"id": bad.stem, "unexpected": True}), encoding="utf-8")
+    assert "invalid relation record" in identity.identity_status(root)["detail"][0]
+    bad.unlink()
+    assert identity.identity_status(root)["state"] == "CURRENT"
+    assert len(identity.identity_trace(root, "identity")["edges"]) == 1
+
+
+def test_over_limit_challenge_count_is_a_side_record_problem(tmp_path: Path, monkeypatch) -> None:
+    root = repo(tmp_path)
+    task = started(root)
+    rev = task["revision"]
+    establish(root, rev)
+    for index in range(2):
+        identity.identity_challenge(root, "c", rev, {"targets": ["identity"], "summary": f"s{index}", "text": "t"})
+    monkeypatch.setattr(identity, "MAX_CHALLENGES", 1)
+    status = identity.identity_status(root)
+    assert status["state"] == "INVALID" and "scope: side_records" in status["detail"][0] and "exceeds" in status["detail"][0]
+    assert identity.identity_get(root)["version"] == 1
+    with pytest.raises(ValueError, match="mutations refuse"):
+        identity.identity_relate(root, "c", rev, {"add": [{"from": "commit:abcdef1", "rel": "serves", "to": "identity"}]})

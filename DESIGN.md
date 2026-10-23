@@ -205,7 +205,7 @@ append-only files; resolution and retraction are new files.
 
 Core records, versions, validates ref syntax and existence at registration,
 enforces task-revision and baseline compare-and-swap, writes under the lock
-through backup and atomic write (ledger last), observes `UNRECORDED_CHANGE` and
+through backup and atomic write (the ledger is the commit point), observes `UNRECORDED_CHANGE` and
 `INVALID`, and returns bounded content with canonical (LF-normalized) hashes. It
 does not decide layers, challenge validity, amendment wisdom, affected scope or
 revalidation; nothing propagates or is injected, and absent identity changes no

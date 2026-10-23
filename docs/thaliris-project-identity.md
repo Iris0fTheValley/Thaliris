@@ -44,7 +44,7 @@ tasks. A project without an identity is normal and is never blocked or nagged.
 ```text
 .project-identity/
   IDENTITY.md                         human-readable copy of the current recorded version
-  ledger.json                         baseline chain only; written last (commit point)
+  ledger.json                         baseline chain only; the commit point of an amendment
   versions/v0001.md                   immutable exact snapshot of each recorded version
   amendments/A-0001.md                immutable amendment record (A-000N produces v000N)
   challenges/<CH-id>.json             one immutable file per challenge
@@ -89,10 +89,48 @@ item text to diff versions.
 
 | State | Meaning |
 | --- | --- |
-| `ABSENT` | No recorded version (an unrecorded `IDENTITY.md` may exist and can become v1) |
+| `ABSENT` | No `ledger.json` and no recorded history (`versions/*`, `amendments/*`, resolution files). A hand-written `IDENTITY.md` alone is still `ABSENT` (reported in `detail`) and can become v1 |
 | `CURRENT` | `IDENTITY.md` canonically equals the recorded current version |
 | `UNRECORDED_CHANGE` | `IDENTITY.md` differs from (or is missing against) the recorded version. Core never adopts or reverts it; reads serve the recorded version and flag the divergence |
-| `INVALID` | Ledger or snapshot chain inconsistent (hash mismatch, missing or duplicate version, unknown format, conflict markers), or a malformed challenge/relation record. Reads other than status and all mutations refuse until repaired |
+| `INVALID` | An integrity check failed; `detail` states the scope (see below). All mutations refuse until repaired |
+
+`INVALID` has two scopes, stated in the first `detail` entry (`scope: chain` or
+`scope: side_records`):
+
+- **`chain`**: the baseline chain cannot be trusted (ledger unreadable, conflict markers,
+  unknown format, snapshot or amendment-record hash mismatch, missing or duplicate version,
+  files for versions beyond the ledger, or `ledger.json` missing while any recorded history
+  exists). Reads refuse; only `identity-status` answers.
+- **`side_records`**: the chain verified but a challenge, relation or resolution file is
+  malformed, over its count limit, or disagrees with the chain. Baseline reads
+  (default, `--version`, `--item`, `--amendment`) still succeed and carry an integrity
+  `notice`; `--challenge` refuses for a damaged record and `identity-trace` refuses while
+  relations are damaged.
+
+### Integrity rules
+
+- **History is never overwritten.** An amendment writes only the files of the one
+  uncommitted next version and `IDENTITY.md`; files at or below the committed ledger
+  version are never rewritten. A missing ledger with recorded history is `INVALID`
+  (`chain`), never `ABSENT`, so a retried establishment cannot erase it. Restore
+  `ledger.json` from Git history or a `.context/backups/` record. If an *establishment*
+  was interrupted before the ledger commit, its remnants (`versions/v0001.md`,
+  `amendments/A-0001.md`) cannot be told apart from a lost ledger and need the same
+  manual repair.
+- **`amended` comes from the chain.** A challenge is `amended` only when a committed,
+  hash-chained amendment record lists it in `resolves`; the `*.resolution.json` mirror is
+  derived, so a missing mirror changes nothing. A mirror that cites an amendment not in the
+  chain, or one whose record does not list that challenge (for example after a merge of
+  two branches that both amended v1), makes the state `INVALID` (`side_records`) and
+  names the file. `dismissed` resolutions remain file-based and may not contradict a
+  committed `resolves`.
+- **Interrupted amendments are recoverable.** The ledger is the commit point and
+  resolution mirrors are written after it. A crash before the commit leaves the identity
+  readable at the last committed version; remnants of exactly the next version
+  (`versions/vN+1.md`, `amendments/A-N+1.md`, a mirror citing it, the changed
+  `IDENTITY.md`) are listed in `detail`, the state is `UNRECORDED_CHANGE` when
+  `IDENTITY.md` differs, and retrying the same `identity-amend` (naming the on-disk
+  `base_sha256`) replaces them.
 
 `rollback` refuses backups produced by identity mutations. Reversing an identity
 change is a new amendment, a challenge dismissal or a relation retraction. Prior
@@ -106,7 +144,7 @@ bytes still remain in `.context/backups/` as recovery evidence.
 | `identity:INV-2` | item exists in the current recorded version | version and item canonical sha256 |
 | `amendment:A-0003` | exists in the ledger | — |
 | `challenge:<CH-id>` | exists | — |
-| `path:docs/design.md` (optional `#anchor`) | safe repo-relative file, exists, not under `.git`/`.context` | canonical sha256 |
+| `path:docs/design.md` (optional `#anchor`) | safe repo-relative file, exists, not under `.git`/`.context` (compared case-insensitively) | canonical sha256 |
 | `task:<task-uuid>/<object-id>` | if that task's ledger exists locally, the object must exist; otherwise accepted as unverified | `verified` |
 | `commit:<7-40 hex>` | syntax only | — |
 | `url:http(s)://...` | syntax only | — |
@@ -167,11 +205,12 @@ atomic-write path, and record `task_id`, `actor` and a UTC `recorded_at`. Each r
   equal the recorded version (0 to establish), `base_sha256` the canonical hash of the
   on-disk `IDENTITY.md` (null when absent). Text must be ≤ 64 KiB with unique anchors and
   differ from the current version; `resolves` must name open challenges. Writes the
-  snapshot, `IDENTITY.md`, the amendment record, `amended` resolutions, and the ledger
-  last. Returns `version`, `amendment`, `sha256`, `items{added, removed, changed}`,
+  snapshot, `IDENTITY.md`, the amendment record, the ledger (commit point), then the
+  `amended` resolution mirrors. Returns `version`, `amendment`, `sha256`, `items{added, removed, changed}`,
   `registered_dependents[{id, from, rel, to, to_state, note}]` (active relations to
-  `identity` or a removed/changed item), `registered_dependents_total`,
-  `registered_dependents_truncated`, `challenges_resolved`, `notice`, `written`.
+  `identity` or a removed/changed item, trimmed so the whole response stays within 64 KiB),
+  `registered_dependents_total`, `registered_dependents_truncated`,
+  `challenges_resolved`, `notice`, `written`.
   Core cannot verify a human: `decision` records the asserted decision, like Task
   Authority's `human_instruction`.
 - **identity-challenge** input: open `{targets[identity | identity:ID], summary, text,

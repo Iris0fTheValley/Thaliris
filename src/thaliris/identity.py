@@ -10,6 +10,7 @@ must be revalidated.  Nothing here propagates, gates or injects anything.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -67,6 +68,10 @@ _HEX64_RE = re.compile(r"[0-9a-f]{64}")
 _TASK_REF_RE = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/([A-Za-z0-9_.:-]{1,64})")
 _COMMIT_RE = re.compile(r"[0-9a-fA-F]{7,40}")
 _URL_RE = re.compile(r"https?://[^\s]+")
+_RESERVED_ROOTS = frozenset({".git", ".context"})
+_VERSION_FILE_RE = re.compile(r"v([0-9]{4})\.md")
+_AMENDMENT_FILE_RE = re.compile(r"A-([0-9]{4})\.md")
+_RESOLUTION_FILE_RE = re.compile(r"CH-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}\.resolution\.json")
 _AMENDMENT_RECORD_MARKER = "\n## Record\n\n```json\n"
 
 _VERSION_FIELDS = {"version", "path", "sha256", "raw_sha256", "amendment", "recorded_at"}
@@ -363,8 +368,10 @@ def _verify_task_ref(root: Path, task_id: str, object_id: str) -> bool:
 
 def _path_target(root: Path, relative: str) -> Path:
     normalized = core._valid_relative(root, relative)
-    first = normalized.split("/", 1)[0]
-    if first in {".git", ".context"}:
+    # Case-insensitive file systems (NTFS, default APFS) and NTFS trailing dot/space
+    # stripping resolve ".Context" and ".git." to the private control directories.
+    first = normalized.split("/", 1)[0].rstrip(". ").casefold()
+    if first in _RESERVED_ROOTS:
         raise ValueError("path ref targets private control data")
     return core._safe_without_final_symlink(root, normalized)
 
@@ -450,6 +457,10 @@ class _Invalid(Exception):
 @dataclass
 class _Context:
     state: str = "ABSENT"
+    # "chain": ledger, snapshots or amendment records cannot be trusted; nothing is served.
+    # "side_records": only challenges, relations or resolution mirrors are bad; the
+    # baseline chain verified, so baseline reads stay available.
+    invalid_scope: str | None = None
     detail: list[str] = field(default_factory=list)
     format: str | None = None
     ledger: dict[str, object] | None = None
@@ -459,11 +470,21 @@ class _Context:
     recorded_sha256: str | None = None
     on_disk_sha256: str | None = None
     on_disk_raw_sha256: str | None = None
+    divergent: bool = False
     amendment_ids: set[str] = field(default_factory=set)
+    # Per-amendment facts taken from the hash-chained records (the authority for `amended`).
+    amendment_meta: dict[str, dict[str, object]] = field(default_factory=dict)
+    # Uncommitted remnants of an interrupted amendment (exactly the next version).
+    remnants: list[str] = field(default_factory=list)
     challenges: dict[str, dict[str, object]] = field(default_factory=dict)
     resolutions: dict[str, dict[str, object]] = field(default_factory=dict)
+    pending_resolutions: dict[str, dict[str, object]] = field(default_factory=dict)
     relations: dict[str, dict[str, object]] = field(default_factory=dict)
     retractions: dict[str, dict[str, object]] = field(default_factory=dict)
+    side_problems: list[str] = field(default_factory=list)
+    bad_ids: set[str] = field(default_factory=set)
+    broken_sections: set[str] = field(default_factory=set)
+    fatal_sections: set[str] = field(default_factory=set)
 
     def scope(self) -> Scope:
         return [(self.version, self.items)] if self.version else []
@@ -504,6 +525,22 @@ def _load_json(root: Path, relative: str, maximum: int) -> object:
         raise _Invalid(f"{relative}: invalid JSON") from exc
 
 
+def _amendment_meta(record: bytes, number: int) -> dict[str, object]:
+    """Facts from a hash-verified amendment record; `resolves` is what makes challenges `amended`."""
+    where = _amendment_path(number)
+    try:
+        parsed = _parse_amendment_record(record, where)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise _Invalid(f"{where}: invalid amendment record block") from exc
+    resolves = parsed.get("resolves")
+    if (parsed.get("id") != _amendment_id(number) or parsed.get("to_version") != number or not isinstance(resolves, list)
+            or not all(isinstance(item, str) and _CHALLENGE_ID_RE.fullmatch(item) for item in resolves)):
+        raise _Invalid(f"{where}: amendment record does not match its chain position")
+    return {"resolves": list(resolves), "summary": str(parsed.get("summary", ""))[:SUMMARY_MAX],
+            "task_id": str(parsed.get("task_id", "")), "actor": str(parsed.get("actor", "")),
+            "recorded_at": str(parsed.get("recorded_at", ""))}
+
+
 def _validate_ledger(root: Path, ctx: _Context, raw: object) -> None:
     if not isinstance(raw, dict):
         raise _Invalid("ledger.json: not a JSON object")
@@ -519,6 +556,9 @@ def _validate_ledger(root: Path, ctx: _Context, raw: object) -> None:
     versions, amendments = raw["versions"], raw["amendments"]
     if not isinstance(versions, list) or not isinstance(amendments, list) or len(versions) != version or len(amendments) != version:
         raise _Invalid("ledger.json: version chain length does not match version (duplicate or missing version)")
+    meta: dict[str, dict[str, object]] = {}
+    text: str | None = None
+    items: dict[str, Item] = {}
     for number, (entry, amendment) in enumerate(zip(versions, amendments), start=1):
         if not isinstance(entry, dict) or set(entry) != _VERSION_FIELDS:
             raise _Invalid(f"ledger.json: invalid entry for v{number:04d}")
@@ -543,19 +583,64 @@ def _validate_ledger(root: Path, ctx: _Context, raw: object) -> None:
             raise _Invalid(f"missing amendment record {_amendment_path(number)}")
         if canonical_sha256(record) != amendment["sha256"]:
             raise _Invalid(f"amendment record hash mismatch for {_amendment_path(number)}")
+        meta[_amendment_id(number)] = _amendment_meta(record, number)
         if number == version:
             try:
-                ctx.text = canonical_bytes(snapshot).decode("utf-8")
+                text = canonical_bytes(snapshot).decode("utf-8")
             except UnicodeDecodeError as exc:
                 raise _Invalid(f"{_version_path(number)}: not UTF-8") from exc
             try:
-                ctx.items = parse_items(ctx.text)
+                items = parse_items(text)
             except ValueError as exc:
                 raise _Invalid(f"{_version_path(number)}: {exc}") from exc
+    ctx.text, ctx.items = text, items
     ctx.ledger = raw
     ctx.version = version
     ctx.recorded_sha256 = str(versions[-1]["sha256"])
     ctx.amendment_ids = {str(item["id"]) for item in amendments}
+    ctx.amendment_meta = meta
+
+
+def _history_files(root: Path) -> dict[str, list[str]]:
+    """Names of recorded-history files present, whether or not the ledger vouches for them."""
+    found: dict[str, list[str]] = {"versions": [], "amendments": [], "resolutions": []}
+    for key, sub, pattern, cap in (("versions", "versions", _VERSION_FILE_RE, 2 * MAX_VERSIONS + 64),
+                                   ("amendments", "amendments", _AMENDMENT_FILE_RE, 2 * MAX_VERSIONS + 64),
+                                   ("resolutions", "challenges", _RESOLUTION_FILE_RE, 4 * MAX_CHALLENGES + 64)):
+        relative = f"{NAMESPACE}/{sub}"
+        directory = core._safe_without_final_symlink(root, relative)
+        if not directory.exists():
+            continue
+        if not directory.is_dir():
+            raise _Invalid(f"{relative}: not a directory")
+        with os.scandir(directory) as entries:
+            for count, entry in enumerate(entries, start=1):
+                if count > cap:
+                    if key == "resolutions":
+                        break  # the challenges scan reports the over-limit directory itself
+                    raise _Invalid(f"{relative}: exceeds {cap} entries")
+                if pattern.fullmatch(entry.name):
+                    found[key].append(entry.name)
+                    if key == "resolutions":
+                        break  # existence is all the missing-ledger rule needs
+    for names in found.values():
+        names.sort()
+    return found
+
+
+def _check_history(ctx: _Context, history: dict[str, list[str]]) -> None:
+    """Ledger present: files for the one uncommitted next version are remnants; anything further is not."""
+    following = ctx.version + 1
+    remnants: list[str] = []
+    for key, pattern, make in (("versions", _VERSION_FILE_RE, _version_path), ("amendments", _AMENDMENT_FILE_RE, _amendment_path)):
+        for name in history[key]:
+            number = int(pattern.fullmatch(name).group(1))  # type: ignore[union-attr]
+            if number > following:
+                raise _Invalid(f"{make(number)} is recorded history beyond ledger v{ctx.version:04d}; the ledger is behind its files "
+                               "(bad merge or restored older ledger): restore ledger.json from Git history")
+            if number == following:
+                remnants.append(make(number)[len(NAMESPACE) + 1:])
+    ctx.remnants = remnants
 
 
 def _check_descriptor(value: object, where: str) -> None:
@@ -574,7 +659,9 @@ def _check_provenance(value: dict[str, object], where: str) -> None:
         raise _Invalid(f"{where}: invalid provenance")
 
 
-def _scan(root: Path, sub: str, id_re: re.Pattern[str], side_suffix: str, limit: int) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
+def _scan(root: Path, sub: str, id_re: re.Pattern[str], side_suffix: str, limit: int,
+          report: Callable[[str, str | None], None]) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
+    """Read one immutable-object directory. Section-level failures raise _Invalid; per-file ones are reported and skipped."""
     relative = f"{NAMESPACE}/{sub}"
     try:
         directory = core._safe_without_final_symlink(root, relative)
@@ -600,53 +687,155 @@ def _scan(root: Path, sub: str, id_re: re.Pattern[str], side_suffix: str, limit:
         identifier = stem[:-len(side_suffix)] if is_side else stem
         if not id_re.fullmatch(identifier):
             continue
-        value = _load_json(root, f"{relative}/{name}", RECORD_MAX_BYTES)
+        try:
+            value = _load_json(root, f"{relative}/{name}", RECORD_MAX_BYTES)
+        except (_Invalid, OSError, ValueError) as exc:
+            report(str(exc), identifier)
+            continue
         if not isinstance(value, dict):
-            raise _Invalid(f"{relative}/{name}: not a JSON object")
+            report(f"{relative}/{name}: not a JSON object", identifier)
+            continue
         (side if is_side else primary)[identifier] = value
     if len(primary) > limit:
         raise _Invalid(f"{relative}: exceeds {limit} records")
-    orphan = sorted(set(side) - set(primary))
-    if orphan:
-        raise _Invalid(f"{relative}/{orphan[0]}{side_suffix}.json: refers to a missing record")
+    for orphan in sorted(set(side) - set(primary)):
+        report(f"{relative}/{orphan}{side_suffix}.json: refers to a missing record", orphan)
+        del side[orphan]
     return primary, side
 
 
+def _valid_only(records: dict[str, dict[str, object]], check: Callable[[str, dict[str, object]], None],
+                report: Callable[[str, str | None], None]) -> dict[str, dict[str, object]]:
+    good: dict[str, dict[str, object]] = {}
+    for identifier, value in records.items():
+        try:
+            check(identifier, value)
+        except _Invalid as exc:
+            report(str(exc), identifier)
+        else:
+            good[identifier] = value
+    return good
+
+
+def _check_challenge(identifier: str, value: dict[str, object]) -> None:
+    where = f"challenges/{identifier}.json"
+    if set(value) != _CHALLENGE_FIELDS or value.get("id") != identifier:
+        raise _Invalid(f"{where}: invalid challenge record")
+    if not isinstance(value["targets"], list) or not value["targets"] or not isinstance(value["evidence_refs"], list):
+        raise _Invalid(f"{where}: invalid challenge refs")
+    for descriptor in [*value["targets"], *value["evidence_refs"]]:
+        _check_descriptor(descriptor, where)
+    if not isinstance(value["summary"], str) or not isinstance(value["text"], str):
+        raise _Invalid(f"{where}: invalid challenge text")
+    _check_provenance(value, where)
+
+
+def _check_resolution(identifier: str, value: dict[str, object]) -> None:
+    where = f"challenges/{identifier}.resolution.json"
+    if set(value) != _RESOLUTION_FIELDS or value.get("challenge") != identifier or value.get("resolution") not in {"amended", "dismissed"}:
+        raise _Invalid(f"{where}: invalid resolution record")
+    if value["resolution"] == "amended" and not isinstance(value.get("amendment"), str):
+        raise _Invalid(f"{where}: invalid resolution record")
+    _check_provenance(value, where)
+
+
+def _check_relation(identifier: str, value: dict[str, object]) -> None:
+    where = f"relations/{identifier}.json"
+    if set(value) != _RELATION_FIELDS or value.get("id") != identifier or value.get("rel") not in RELATION_TYPES:
+        raise _Invalid(f"{where}: invalid relation record")
+    _check_descriptor(value["from"], where)
+    _check_descriptor(value["to"], where)
+    _check_provenance(value, where)
+
+
+def _check_retraction(identifier: str, value: dict[str, object]) -> None:
+    where = f"relations/{identifier}.retraction.json"
+    if set(value) != _RETRACTION_FIELDS or value.get("relation") != identifier:
+        raise _Invalid(f"{where}: invalid retraction record")
+    _check_provenance(value, where)
+
+
 def _load_side_records(root: Path, ctx: _Context) -> None:
-    challenges, resolutions = _scan(root, "challenges", _CHALLENGE_ID_RE, ".resolution", MAX_CHALLENGES)
-    for identifier, value in challenges.items():
-        where = f"challenges/{identifier}.json"
-        if set(value) != _CHALLENGE_FIELDS or value.get("id") != identifier:
-            raise _Invalid(f"{where}: invalid challenge record")
-        if not isinstance(value["targets"], list) or not value["targets"] or not isinstance(value["evidence_refs"], list):
-            raise _Invalid(f"{where}: invalid challenge refs")
-        for descriptor in [*value["targets"], *value["evidence_refs"]]:
-            _check_descriptor(descriptor, where)
-        if not isinstance(value["summary"], str) or not isinstance(value["text"], str):
-            raise _Invalid(f"{where}: invalid challenge text")
-        _check_provenance(value, where)
-    for identifier, value in resolutions.items():
+    """Challenges, resolutions and relations.  Problems are collected, never raised: they make the
+    state INVALID with scope side_records while the verified baseline chain stays readable."""
+    section = "challenges"
+
+    def report(message: str, identifier: str | None = None) -> None:
+        if len(ctx.side_problems) < 64:
+            ctx.side_problems.append(message[:300])
+        ctx.broken_sections.add(section)
+        if identifier is not None:
+            ctx.bad_ids.add(identifier)
+
+    def fatal(exc: Exception) -> None:
+        report(str(exc))
+        ctx.fatal_sections.add(section)
+
+    challenges: dict[str, dict[str, object]] = {}
+    mirrors: dict[str, dict[str, object]] = {}
+    try:
+        found, mirror_files = _scan(root, "challenges", _CHALLENGE_ID_RE, ".resolution", MAX_CHALLENGES, report)
+        challenges = _valid_only(found, _check_challenge, report)
+        mirrors = _valid_only(mirror_files, _check_resolution, report)
+    except (_Invalid, OSError, ValueError) as exc:
+        fatal(exc)
+    ctx.challenges = challenges
+
+    # `amended` is authoritative only from a committed (hash-chained) amendment record that lists the challenge.
+    amended_by: dict[str, str] = {}
+    for number in range(1, ctx.version + 1):
+        amendment = _amendment_id(number)
+        for identifier in ctx.amendment_meta.get(amendment, {}).get("resolves", []):  # type: ignore[union-attr]
+            amended_by.setdefault(identifier, amendment)
+    following = _amendment_id(ctx.version + 1)
+    resolutions: dict[str, dict[str, object]] = {}
+    for identifier, value in mirrors.items():
         where = f"challenges/{identifier}.resolution.json"
-        if set(value) != _RESOLUTION_FIELDS or value.get("challenge") != identifier or value.get("resolution") not in {"amended", "dismissed"}:
-            raise _Invalid(f"{where}: invalid resolution record")
-        if value["resolution"] == "amended" and value.get("amendment") not in ctx.amendment_ids:
-            raise _Invalid(f"{where}: resolving amendment is not in the ledger chain")
-        _check_provenance(value, where)
-    relations, retractions = _scan(root, "relations", _RELATION_ID_RE, ".retraction", MAX_RELATIONS)
-    for identifier, value in relations.items():
-        where = f"relations/{identifier}.json"
-        if set(value) != _RELATION_FIELDS or value.get("id") != identifier or value.get("rel") not in RELATION_TYPES:
-            raise _Invalid(f"{where}: invalid relation record")
-        _check_descriptor(value["from"], where)
-        _check_descriptor(value["to"], where)
-        _check_provenance(value, where)
-    for identifier, value in retractions.items():
-        where = f"relations/{identifier}.retraction.json"
-        if set(value) != _RETRACTION_FIELDS or value.get("relation") != identifier:
-            raise _Invalid(f"{where}: invalid retraction record")
-        _check_provenance(value, where)
-    ctx.challenges, ctx.resolutions = challenges, resolutions
-    ctx.relations, ctx.retractions = relations, retractions
+        if value["resolution"] == "dismissed":
+            if identifier in amended_by:
+                report(f"{where}: dismissed, but committed amendment {amended_by[identifier]} lists the challenge in resolves", identifier)
+            else:
+                resolutions[identifier] = value
+            continue
+        cited = str(value["amendment"])
+        if cited in ctx.amendment_ids:
+            if identifier not in ctx.amendment_meta[cited]["resolves"]:  # type: ignore[operator]
+                report(f"{where}: cited amendment {cited} does not list this challenge in resolves", identifier)
+            elif amended_by.get(identifier) == cited:
+                resolutions[identifier] = value
+        elif cited == following:
+            ctx.pending_resolutions[identifier] = value  # remnant of an interrupted amendment; counts for nothing
+        else:
+            report(f"{where}: resolving amendment {cited} is not in the ledger chain", identifier)
+    for identifier, amendment in amended_by.items():
+        if identifier in resolutions and resolutions[identifier].get("resolution") == "amended":
+            continue
+        if identifier not in challenges:
+            if "challenges" not in ctx.fatal_sections:
+                report(f"amendment {amendment} lists challenge {identifier} in resolves, but no such challenge record exists", identifier)
+            continue
+        if identifier in resolutions:
+            continue
+        meta = ctx.amendment_meta[amendment]
+        resolutions[identifier] = {"challenge": identifier, "resolution": "amended", "amendment": amendment,
+                                   "reason": meta["summary"], "task_id": meta["task_id"], "actor": meta["actor"],
+                                   "recorded_at": meta["recorded_at"]}
+    ctx.resolutions = resolutions
+
+    section = "relations"
+    try:
+        found, retraction_files = _scan(root, "relations", _RELATION_ID_RE, ".retraction", MAX_RELATIONS, report)
+        ctx.relations = _valid_only(found, _check_relation, report)
+        ctx.retractions = _valid_only(retraction_files, _check_retraction, report)
+    except (_Invalid, OSError, ValueError) as exc:
+        fatal(exc)
+
+
+def _mark_invalid(ctx: _Context, scope: str, detail: list[str]) -> _Context:
+    ctx.state = "INVALID"
+    ctx.invalid_scope = scope
+    ctx.detail = detail
+    return ctx
 
 
 def _load(root: Path) -> _Context:
@@ -654,9 +843,7 @@ def _load(root: Path) -> _Context:
     ctx = _Context()
     namespace = root / NAMESPACE
     if namespace.is_symlink():
-        ctx.state = "INVALID"
-        ctx.detail = [f"{NAMESPACE} must not be a symlink"]
-        return ctx
+        return _mark_invalid(ctx, "chain", [f"{NAMESPACE} must not be a symlink"])
     if not namespace.exists():
         return ctx
     try:
@@ -669,38 +856,69 @@ def _load(root: Path) -> _Context:
             if not baseline.is_file():
                 raise _Invalid(f"{BASELINE_PATH} is not a regular file")
             ctx.on_disk_sha256, ctx.on_disk_raw_sha256 = _file_hashes(baseline)
+        history = _history_files(root)
         if (root / LEDGER_PATH).exists() or (root / LEDGER_PATH).is_symlink():
             if (root / LEDGER_PATH).is_symlink():
                 raise _Invalid(f"{LEDGER_PATH} must not be a symlink")
             _validate_ledger(root, ctx, _load_json(root, LEDGER_PATH, LEDGER_MAX_BYTES))
-        _load_side_records(root, ctx)
+            _check_history(ctx, history)
+        elif any(history.values()):
+            # Never ABSENT while history exists: a retried establishment would overwrite it.
+            shown = [f"{NAMESPACE}/{sub}/{names[0]}" for sub, names in (
+                ("versions", history["versions"]), ("amendments", history["amendments"]), ("challenges", history["resolutions"])) if names]
+            raise _Invalid(f"{LEDGER_PATH} is missing but recorded history exists ({', '.join(shown)}); not treating the identity as ABSENT "
+                           "and refusing to overwrite it: restore ledger.json from Git history or a .context/backups record")
     except (_Invalid, OSError, ValueError) as exc:
-        ctx.state = "INVALID"
-        ctx.detail = [str(exc)[:300]]
-        return ctx
+        return _mark_invalid(_Context(on_disk_sha256=ctx.on_disk_sha256, on_disk_raw_sha256=ctx.on_disk_raw_sha256, format=ctx.format),
+                             "chain", [str(exc)[:300]])
+    _load_side_records(root, ctx)
+    ctx.divergent = ctx.ledger is not None and ctx.on_disk_sha256 != ctx.recorded_sha256
+    notes: list[str] = []
+    if ctx.ledger is None:
+        if ctx.on_disk_sha256 is not None:
+            notes.append(f"{BASELINE_PATH} exists but no version is recorded; establish it with identity-amend (base_version 0, base_sha256 = its canonical sha256)")
+    elif ctx.divergent:
+        if ctx.on_disk_sha256 is None:
+            notes.append(f"{BASELINE_PATH} is missing; reads serve recorded v{ctx.version:04d}")
+        else:
+            notes.append(f"{BASELINE_PATH} differs canonically from recorded v{ctx.version:04d}; reads serve the recorded version")
+    if ctx.remnants or ctx.pending_resolutions:
+        names = [*ctx.remnants, *(f"challenges/{key}.resolution.json" for key in sorted(ctx.pending_resolutions))]
+        notes.append(f"uncommitted remnants of an interrupted amendment to v{ctx.version + 1:04d} ({', '.join(names)[:200]}); "
+                     f"reads serve recorded v{ctx.version:04d}; retrying the same identity-amend replaces them")
+    if ctx.side_problems:
+        problems = ctx.side_problems[:4]
+        if len(ctx.side_problems) > len(problems):
+            problems.append(f"{len(ctx.side_problems) - len(problems)} further side-record problems omitted")
+        return _mark_invalid(ctx, "side_records", [*problems, *notes][:DETAIL_MAX_ENTRIES - 1])
+    ctx.detail = notes
     if ctx.ledger is None:
         ctx.state = "ABSENT"
-        if ctx.on_disk_sha256 is not None:
-            ctx.detail = [f"{BASELINE_PATH} exists but no version is recorded; establish it with identity-amend (base_version 0, base_sha256 = its canonical sha256)"]
-    elif ctx.on_disk_sha256 == ctx.recorded_sha256:
-        ctx.state = "CURRENT"
     else:
-        ctx.state = "UNRECORDED_CHANGE"
-        if ctx.on_disk_sha256 is None:
-            ctx.detail = [f"{BASELINE_PATH} is missing; reads serve recorded v{ctx.version:04d}"]
-        else:
-            ctx.detail = [f"{BASELINE_PATH} differs canonically from recorded v{ctx.version:04d}; reads serve the recorded version"]
+        ctx.state = "UNRECORDED_CHANGE" if ctx.divergent else "CURRENT"
     return ctx
 
 
+def _invalid_text(ctx: _Context) -> str:
+    return f"scope: {ctx.invalid_scope}; {'; '.join(ctx.detail)}"
+
+
 def _require_readable(ctx: _Context) -> None:
-    if ctx.state == "INVALID":
-        raise ValueError(f"project identity is INVALID: {'; '.join(ctx.detail)}")
+    """Chain integrity gates reads; side-record problems leave baseline reads available."""
+    if ctx.state == "INVALID" and ctx.invalid_scope == "chain":
+        raise ValueError(f"project identity is INVALID: {_invalid_text(ctx)}")
 
 
 def _require_writable(ctx: _Context) -> None:
     if ctx.state == "INVALID":
-        raise ValueError(f"project identity is INVALID; identity mutations refuse until it is repaired: {'; '.join(ctx.detail)}")
+        raise ValueError(f"project identity is INVALID; identity mutations refuse until it is repaired: {_invalid_text(ctx)}")
+
+
+def _integrity_notice(ctx: _Context) -> str | None:
+    if ctx.state == "INVALID" and ctx.invalid_scope == "side_records":
+        return (f"Side records (challenges, relations or resolutions) are INVALID: {ctx.detail[0][:200]}. "
+                "The baseline chain verified, so this baseline response is served; identity mutations refuse until repaired. See identity-status.")
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -712,11 +930,14 @@ def _summary_line(ctx: _Context) -> str | None:
         return None
     if ctx.state == "INVALID":
         detail = ctx.detail[0] if ctx.detail else "integrity check failed"
-        return f"Project identity INVALID ({detail[:200]}); identity mutations refuse until repaired. Inspect: identity-status."
+        if ctx.invalid_scope == "side_records" and ctx.version:
+            return (f"Project identity v{ctx.version} ({_amendment_id(ctx.version)}, INVALID: side records; baseline reads remain available) "
+                    f"- {detail[:160]}. Identity mutations refuse until repaired. Inspect: identity-status.")
+        return f"Project identity INVALID (scope: {ctx.invalid_scope}; {detail[:200]}); identity mutations refuse until repaired. Inspect: identity-status."
     count = len(ctx.open_challenges())
     noun = "challenge" if count == 1 else "challenges"
     line = f"Project identity v{ctx.version} ({_amendment_id(ctx.version)}, {ctx.state}); {count} open {noun}."
-    if ctx.state == "UNRECORDED_CHANGE":
+    if ctx.divergent:
         line += " IDENTITY.md differs from the recorded version."
     return line + " Read on demand: identity-get."
 
@@ -755,7 +976,10 @@ def identity_status(root: Path) -> dict[str, object]:
         "truncated": truncated,
     }
     if ctx.detail:
-        out["detail"] = [entry[:300] for entry in ctx.detail[:DETAIL_MAX_ENTRIES]]
+        detail = [entry[:300] for entry in ctx.detail[:DETAIL_MAX_ENTRIES]]
+        if ctx.invalid_scope:
+            detail[0] = f"scope: {ctx.invalid_scope}; {detail[0]}"[:300]
+        out["detail"] = detail
     while _response_size(out) > STATUS_MAX_BYTES and (out["items"] or out["open_challenges"]):
         listed_items, listed_challenges = out["items"], out["open_challenges"]
         assert isinstance(listed_items, list) and isinstance(listed_challenges, list)
@@ -771,7 +995,7 @@ def identity_summary(root: Path) -> str | None:
 
 
 def _version_response(ctx: _Context, version: int, text: str, sha256: str) -> dict[str, object]:
-    divergent = ctx.state == "UNRECORDED_CHANGE"
+    divergent = ctx.divergent
     response: dict[str, object] = {
         "ok": True,
         "kind": "version",
@@ -784,8 +1008,12 @@ def _version_response(ctx: _Context, version: int, text: str, sha256: str) -> di
         "on_disk_divergent": divergent,
         "text": text,
     }
-    if divergent:
-        response["notice"] = "IDENTITY.md differs from the recorded current version; this response serves the recorded version."
+    notices = ["IDENTITY.md differs from the recorded current version; this response serves the recorded version."] if divergent else []
+    integrity = _integrity_notice(ctx)
+    if integrity:
+        notices.append(integrity)
+    if notices:
+        response["notice"] = " ".join(notices)
     return response
 
 
@@ -812,13 +1040,17 @@ def _parse_amendment_record(data: bytes, where: str) -> dict[str, object]:
 
 def _challenge_response(ctx: _Context, identifier: str) -> dict[str, object]:
     resolution = ctx.resolutions.get(identifier)
-    return {
+    response: dict[str, object] = {
         "ok": True,
         "kind": "challenge",
         "challenge": ctx.challenges[identifier],
         "status": "open" if resolution is None else str(resolution["resolution"]),
         "resolution": resolution,
     }
+    integrity = _integrity_notice(ctx)
+    if integrity:
+        response["notice"] = integrity
+    return response
 
 
 def identity_get(root: Path, *, version: int | None = None, items: list[str] | None = None,
@@ -839,16 +1071,20 @@ def identity_get(root: Path, *, version: int | None = None, items: list[str] | N
         data = _read_bounded(root, _amendment_path(number), RECORD_MAX_BYTES)
         assert data is not None
         record = _parse_amendment_record(data, _amendment_path(number))
-        return _check_response({"ok": True, "kind": "amendment", "amendment": amendment,
-                                "path": _amendment_path(number), "record": record}, "inspect the amendment file directly")
+        response = {"ok": True, "kind": "amendment", "amendment": amendment, "path": _amendment_path(number), "record": record}
+        if _integrity_notice(ctx):
+            response["notice"] = _integrity_notice(ctx)
+        return _check_response(response, "inspect the amendment file directly")
     if challenge is not None:
         if not isinstance(challenge, str) or not _CHALLENGE_ID_RE.fullmatch(challenge):
             raise ValueError("invalid challenge id")
+        if challenge in ctx.bad_ids or "challenges" in ctx.fatal_sections:
+            raise ValueError(f"challenge {challenge} cannot be read: its records are INVALID ({_invalid_text(ctx)})")
         if challenge not in ctx.challenges:
             raise ValueError(f"challenge {challenge} not found")
         return _check_response(_challenge_response(ctx, challenge), "inspect the challenge file directly")
     if ctx.version == 0:
-        raise ValueError("project identity is ABSENT; no version is recorded")
+        raise ValueError(f"project identity is {ctx.state}; no version is recorded")
     selected = ctx.version if version is None else version
     if type(selected) is not int or not 1 <= selected <= ctx.version:
         raise ValueError(f"identity version must be between 1 and {ctx.version}")
@@ -874,10 +1110,12 @@ def identity_get(root: Path, *, version: int | None = None, items: list[str] | N
             "state": ctx.state,
             "version": selected,
             "current_version": ctx.version,
-            "on_disk_divergent": ctx.state == "UNRECORDED_CHANGE",
+            "on_disk_divergent": ctx.divergent,
             "items": [{"id": item.id, "title": item.title, "level": item.level, "sha256": item.sha256, "text": item.text}
                       for item in (parsed[name] for name in requested)],
         }
+        if _integrity_notice(ctx):
+            response["notice"] = _integrity_notice(ctx)
         return _check_response(response, "request fewer items")
     return _check_response(_version_response(ctx, selected, text, str(entry["sha256"])), "request selected items with --item")
 
@@ -892,6 +1130,8 @@ def identity_trace(root: Path, ref: str, direction: str = "both", depth: int = 1
         raise ValueError(f"depth must be between 1 and {TRACE_MAX_DEPTH}")
     ctx = _load(root)
     _require_readable(ctx)
+    if "relations" in ctx.broken_sections:
+        raise ValueError(f"relations are INVALID; identity-trace refuses rather than omit relations silently ({_invalid_text(ctx)})")
     active = ctx.active_relations()
     cache: dict[str, str | None] = {}
     edges: list[dict[str, object]] = []
@@ -945,7 +1185,7 @@ def identity_trace(root: Path, ref: str, direction: str = "both", depth: int = 1
         "version": ctx.version or None,
         "edges": edges,
         "truncated": truncated,
-        "notice": NOTICE,
+        "notice": NOTICE if _integrity_notice(ctx) is None else f"{NOTICE} {_integrity_notice(ctx)}",
     }
     while _response_size(response) > RESPONSE_MAX_BYTES and edges:
         edges.pop()
@@ -1148,33 +1388,50 @@ def identity_amend(root: Path, actor: str, base_revision: int, input_file: str |
             "to_version": new_version, "sha256": canonical_sha256(rendered), "summary": summary,
             "recorded_at": provenance["recorded_at"],
         })
+        # Committed history is never rewritten: only files of the one uncommitted next version
+        # (possibly remnants of an interrupted attempt) and the working copy IDENTITY.md are written.
+        committed = {_version_path(number) for number in range(1, ctx.version + 1)} | {
+            _amendment_path(number) for number in range(1, ctx.version + 1)}
         writes: dict[str, bytes] = {
             _version_path(new_version): encoded,
             BASELINE_PATH: encoded,
             _amendment_path(new_version): rendered,
+            LEDGER_PATH: _json_bytes(ledger),  # commit point: nothing recorded after it is needed to read the amendment
         }
+        if new_version <= ctx.version or committed & set(writes):
+            raise ValueError("identity-amend would rewrite committed history; refusing")
+        # Resolution mirrors follow the commit point: `amended` is authoritative from the committed
+        # amendment record, so a crash before the ledger leaves nothing citing an uncommitted amendment.
         for identifier in resolves:
             writes[f"{NAMESPACE}/challenges/{identifier}.resolution.json"] = _json_bytes({
                 "challenge": identifier, "resolution": "amended", "amendment": amendment_id, "reason": summary, **provenance})
-        writes[LEDGER_PATH] = _json_bytes(ledger)  # commit point: written last
         dependents = _dependents(root, ctx, diff, new_version, new_items)
+        output: dict[str, object] = {
+            "ok": True,
+            "task_id": state["task_id"],
+            "state_revision": state["revision"],
+            "version": new_version,
+            "amendment": amendment_id,
+            "sha256": new_sha256,
+            "items": diff,
+            "registered_dependents": [],
+            "registered_dependents_total": len(dependents),
+            "registered_dependents_truncated": len(dependents) > 0,
+            "challenges_resolved": resolves,
+            "notice": NOTICE + " Nothing is revalidated or propagated automatically.",
+            "written": list(writes),
+            "backup": "00000000T000000Z-00000000",
+        }
+        # Refuse before any write when even the dependents-free response cannot fit.
+        _check_response(output, "shorten the identity text or declare fewer items")
         backup = core._apply_with_backup(root, writes, [], "identity-amend")
-    return {
-        "ok": True,
-        "task_id": state["task_id"],
-        "state_revision": state["revision"],
-        "version": new_version,
-        "amendment": amendment_id,
-        "sha256": new_sha256,
-        "items": diff,
-        "registered_dependents": dependents[:DEPENDENTS_MAX],
-        "registered_dependents_total": len(dependents),
-        "registered_dependents_truncated": len(dependents) > DEPENDENTS_MAX,
-        "challenges_resolved": resolves,
-        "notice": NOTICE + " Nothing is revalidated or propagated automatically.",
-        "written": list(writes),
-        "backup": backup,
-    }
+    output["backup"] = backup
+    shown = dependents[:DEPENDENTS_MAX]
+    output["registered_dependents"] = shown
+    while shown and _response_size(output) > RESPONSE_MAX_BYTES:
+        shown.pop()
+    output["registered_dependents_truncated"] = len(shown) < len(dependents)
+    return output
 
 
 def identity_challenge(root: Path, actor: str, base_revision: int, input_file: str | dict[str, object] | None) -> dict[str, object]:

@@ -264,12 +264,19 @@ def _read_identity_input(value: str | dict[str, object] | None) -> dict[str, obj
         raw: object = value
     elif isinstance(value, str):
         if value == "-":
-            source = sys.stdin.read(INPUT_MAX_BYTES + 1)
+            buffer = getattr(sys.stdin, "buffer", None)
+            if buffer is None:
+                source = sys.stdin.read(INPUT_MAX_BYTES + 1)
+            else:
+                data = buffer.read(INPUT_MAX_BYTES + 4)
+                if len(data) > INPUT_MAX_BYTES + 3:
+                    raise ValueError(f"identity input exceeds {INPUT_MAX_BYTES} bytes")
+                source = core.decode_input_bytes(data, "identity input")
         else:
             path = Path(value)
-            if path.stat().st_size > INPUT_MAX_BYTES:
+            if path.stat().st_size > INPUT_MAX_BYTES + 3:
                 raise ValueError(f"identity input exceeds {INPUT_MAX_BYTES} bytes")
-            source = path.read_text(encoding="utf-8")
+            source = core.decode_input_bytes(path.read_bytes(), "identity input")
         if len(source.encode("utf-8")) > INPUT_MAX_BYTES:
             raise ValueError(f"identity input exceeds {INPUT_MAX_BYTES} bytes")
         try:
@@ -1209,8 +1216,7 @@ def _begin(root: Path, actor: str, base_revision: int) -> tuple[Path, str]:
 
 def _task_for_mutation(root: Path, base_revision: int) -> dict[str, object]:
     state = core._load_state(root, active=True)
-    if state["revision"] != base_revision:
-        raise ValueError("task revision conflict")
+    core.check_revision(state, base_revision)
     return state
 
 

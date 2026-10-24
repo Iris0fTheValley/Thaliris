@@ -161,7 +161,10 @@ cd your-repository
 thaliris-core --root . init
 TASK_ID=$(thaliris-core --root . task-start "example task" | python -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
 thaliris-core --root . --task-id "$TASK_ID" task-status
+thaliris-core --root . --task-id "$TASK_ID" task-status --view compact --since-revision 1
 ~~~
+
+Failures print `{"ok": false, "error": ...}`; structured failures add a stable `code`, a `recovery` hint and bounded `details` (a `TASK_REVISION_CONFLICT` lists what was appended after your base revision).
 
 Each task has its own Task ID, which is passed explicitly to later operations. Installing Core alone does not enable multi-agent work. For native integration, follow the [Codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md), [DSH](https://github.com/Iris0fTheValley/Thaliris-dsh/blob/main/README.md) or [Claude Code](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.en.md) guide.
 

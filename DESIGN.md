@@ -122,6 +122,33 @@ It does not implement semantic transitions such as resolve, reopen,
 adjudicate, revalidation, correction routing, snapshot coverage, or epistemic
 promotion.
 
+Mechanical round-trip support (Core 0.5.1) keeps strict revision CAS while
+making each refusal actionable and each response small:
+
+- Failures raise `ThalirisError`, a `ValueError` with a stable UPPER_SNAKE
+  `code`, a short mechanical `recovery` hint and bounded `details`; `str(exc)`
+  keeps the historical message text. The CLI adds `code`, `recovery` and
+  `details` beside `error`.
+- `TASK_REVISION_CONFLICT` carries `base_revision`, `current_revision` and a
+  bounded `changes_since` summary of handoffs, observations, judgments,
+  records, artifacts and verification results appended after the base.
+  Nothing is rebased or merged. Continuity objects carry an optional
+  Core-assigned `revision` append stamp; unstamped legacy items make the
+  summary `incomplete` rather than guessed.
+- `task-judge` accepts one judgment or `{"judgments": [...]}`; observation
+  writes accept one observation or `{"observations": [...]}`. A batch
+  validates all-or-nothing, keeps list order and costs one revision.
+- `task-status --view compact` returns the routing header, counts, Active Work,
+  Pending Results, recent artifact ids and a compact evidence summary (totals
+  always, open items paged within a byte budget); `--since-revision N` adds a
+  bounded delta. The default full view is unchanged. Continuity writes accept
+  `--compact-evidence` to return the same summary instead of a status re-read.
+- Task ids for continuity objects remain opaque and unique per task; adapters
+  namespace child-chosen ids (for example `<handoff>.<id>`). A collision is
+  refused as `CONTINUITY_ID_COLLISION` with a suggested qualified id.
+- Input JSON is read as UTF-8, UTF-8 with BOM or UTF-16 with BOM; Git output is
+  decoded as UTF-8 independent of the console code page.
+
 ### Host adapters
 
 [Codex](https://github.com/Iris0fTheValley/Thaliris-Codex) and

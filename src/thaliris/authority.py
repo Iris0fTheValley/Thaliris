@@ -223,8 +223,10 @@ class AuthorityStore:
             if record is None:
                 raise ValueError("TASK_AUTHORITY_NOT_ACTIVE")
             state = core._load_state(self.root, active=True)
-            if state["task_id"] != record["task_id"] or state["revision"] != base_revision:
-                raise ValueError("task revision conflict")
+            if state["task_id"] != record["task_id"]:
+                raise core.ThalirisError(core.errors.TASK_IDENTITY_CONFLICT, "task revision conflict",
+                                         details={"expected_task_id": record["task_id"], "task_id": state["task_id"]})
+            core.check_revision(state, base_revision)
             record.setdefault("mode_history", []).append({"execution_mode": record["contract"]["execution_mode"],
                 "human_instruction": human_instruction, "revision": base_revision})
             record["contract"] = {**record["contract"], "execution_mode": mode}

@@ -13,6 +13,7 @@ from . import __version__, core, identity
 
 
 _IDENTITY_MUTATIONS = ("identity-amend", "identity-challenge", "identity-relate")
+_CONTINUITY_WRITES = ("task-evidence-register", "task-judge")
 
 
 class _Parser(argparse.ArgumentParser):
@@ -30,6 +31,8 @@ def _parser() -> argparse.ArgumentParser:
         commands.add_parser(name)
     command = commands.add_parser("task-status")
     command.add_argument("--evidence-offset", type=int, default=0)
+    command.add_argument("--view", choices=core.STATUS_VIEWS, default="full")
+    command.add_argument("--since-revision", type=int)
     command = commands.add_parser("catalog")
     command.add_argument("path", nargs="?")
     command = commands.add_parser("document-get")
@@ -44,9 +47,12 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--actor", required=True)
         command.add_argument("--base-revision", type=int, required=True)
         command.add_argument("--input", required=True)
+        if name in _CONTINUITY_WRITES:
+            command.add_argument("--compact-evidence", action="store_true")
     command = commands.add_parser("task-observe")
     command.add_argument("--actor", required=True)
     command.add_argument("--input", required=True)
+    command.add_argument("--compact-evidence", action="store_true")
     for name in ("task-get", "artifact-get"):
         command = commands.add_parser(name)
         command.add_argument("id")
@@ -98,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         if name == "version":
             out = {"ok": True, "version": __version__}
         elif name == "task-status":
-            out = core.task_status(root, args.evidence_offset)
+            out = core.task_status(root, args.evidence_offset, view=args.view, since_revision=args.since_revision)
         elif name in {"init", "uninstall", "stale", "milestone-check", "task-show"}:
             out = getattr(core, name.replace("-", "_"))(root)
         elif name == "catalog":
@@ -107,10 +113,13 @@ def main(argv: list[str] | None = None) -> int:
             out = core.document_get(root, args.paths)
         elif name == "task-start":
             out = core.task_start(root, args.goal, args.milestone, args.input, actor=args.actor)
-        elif name in {"task-update", "task-promote", "task-evidence-register", "task-judge", "document-maintain"}:
+        elif name in _CONTINUITY_WRITES:
+            out = getattr(core, name.replace("-", "_"))(root, args.actor, args.base_revision, args.input,
+                                                        compact_evidence=args.compact_evidence)
+        elif name in {"task-update", "task-promote", "document-maintain"}:
             out = getattr(core, name.replace("-", "_"))(root, args.actor, args.base_revision, args.input)
         elif name == "task-observe":
-            out = core.task_observe(root, args.actor, args.input)
+            out = core.task_observe(root, args.actor, args.input, compact_evidence=args.compact_evidence)
         elif name in {"task-get", "artifact-get"}:
             out = getattr(core, name.replace("-", "_"))(root, args.id)
         elif name == "task-artifact":
@@ -135,5 +144,6 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"ok": False, **exc.diagnostic}, sort_keys=True))
         return 3
     except (ValueError, OSError, RuntimeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True))
+        # Structured errors add code/recovery/details; others keep {ok,error}.
+        print(json.dumps(core.error_envelope(exc), sort_keys=True))
         return 2

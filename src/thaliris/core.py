@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -38,6 +39,10 @@ if os.name == "nt":
                                        wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(_Overlapped)]
     _kernel32.UnlockFileEx.restype = wintypes.BOOL
 
+from . import errors as _errors
+from .errors import ThalirisError, error_envelope
+
+errors = _errors
 from .markdown import Entry, durable_descriptors, evidence_status, freshness_detail_budget_placeholder, parse, parse_text
 from .models import ContextConfig
 
@@ -119,7 +124,11 @@ def _git_root(root: Path) -> Path | None:
         os.environ.get(name) for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
     )
     try:
-        proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, text=True, check=False)
+        # Git prints paths as UTF-8 regardless of the console code page. Decode
+        # explicitly (not via the locale) so non-ASCII roots survive on Windows;
+        # surrogateescape keeps undecodable POSIX bytes round-trippable.
+        proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True,
+                              text=True, encoding="utf-8", errors="surrogateescape", check=False)
     except FileNotFoundError as exc:
         missing_program = exc.filename is None or Path(exc.filename).name.casefold() in {"git", "git.exe"}
         if missing_program and root.is_dir() and not metadata and not discovery_environment:
@@ -655,7 +664,8 @@ def _surface_delta(root: Path, baseline: list[dict[str, object]] | str) -> dict[
 
 def _git_head(root: Path) -> str | None:
     try:
-        proc = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=root, capture_output=True, text=True, check=False)
+        proc = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=root, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", check=False)
     except (OSError, subprocess.SubprocessError):
         return None
     value = proc.stdout.strip().lower()
@@ -873,7 +883,10 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
 
     object_groups = (source_ids, record_ids, artifact_ids, result_ids)
     if sum(len(group) for group in object_groups) != len(set().union(*object_groups)):
-        raise ValueError("task object id collision")
+        seen: set[str] = set()
+        duplicates = sorted({identifier for group in object_groups for identifier in group if identifier in seen or seen.add(identifier)})
+        raise ThalirisError(_errors.TASK_OBJECT_ID_COLLISION, "task object id collision",
+                            details={"ids": duplicates[:8]})
 
     baseline = state.get("task_surface_baseline")
     if baseline != "UNAVAILABLE" and not isinstance(baseline, list):
@@ -908,7 +921,9 @@ def _load_state(root: Path, *, active: bool = False) -> dict[str, object]:
         raise ValueError("task state final component must not be a symlink")
     _safe_without_final_symlink(root, path.relative_to(root).as_posix())
     if not path.is_file():
-        raise ValueError("no current task state")
+        raise ThalirisError(_errors.TASK_STATE_MISSING, "no current task state",
+                            recovery="select an existing task with --task-id or start one with task-start",
+                            details={"task_id": selected_task(root)})
     if path.stat().st_size > 512 * 1024:
         raise ValueError("task state exceeds 512 KiB")
     try:
@@ -918,18 +933,21 @@ def _load_state(root: Path, *, active: bool = False) -> dict[str, object]:
             raise ValueError("task state exceeds 512 KiB")
         raw = json.loads(raw_bytes.decode("utf-8"))
     except json.JSONDecodeError as exc:
-        raise ValueError("invalid task state JSON") from exc
+        raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid task state JSON") from exc
     except UnicodeDecodeError as exc:
-        raise ValueError("invalid task state encoding") from exc
+        raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid task state encoding") from exc
     incompatible = _task_state_schema_diagnostic(raw, raw_bytes)
     if incompatible is not None:
         task_id = raw.get("task_id") if isinstance(raw, dict) and isinstance(raw.get("task_id"), str) else None
         raise TaskStateSchemaIncompatible(incompatible, task_id)
     state = _validate_state(root, raw)
     if selected_task(root) is not None and state["task_id"] != selected_task(root):
-        raise ValueError("task identity conflict")
+        raise ThalirisError(_errors.TASK_IDENTITY_CONFLICT, "task identity conflict",
+                            details={"selected_task_id": selected_task(root), "task_id": state["task_id"]})
     if active and state["status"] != "ACTIVE":
-        raise ValueError("current task is not ACTIVE")
+        raise ThalirisError(_errors.TASK_NOT_ACTIVE, "current task is not ACTIVE",
+                            recovery="start a new task; a DONE task accepts no writes",
+                            details={"task_id": state["task_id"], "status": state["status"]})
     return state
 
 
@@ -942,14 +960,71 @@ def _task_object_ids(state: dict[str, object]) -> set[str]:
     } | {str(item["id"]) for values in state.get("evidence_continuity", {}).values() for item in values}
 
 
+INPUT_ENCODINGS = ("UTF-8", "UTF-8 with BOM", "UTF-16 with BOM")
+
+
+def decode_input_bytes(raw: bytes, label: str = "task input") -> str:
+    """Decode JSON input bytes: UTF-8, UTF-8 with BOM or UTF-16 with BOM.
+
+    Shells on Windows commonly write UTF-8 with a BOM or UTF-16LE with a BOM.
+    Anything else (including BOM-less UTF-16 and UTF-32) is refused with a
+    stable decoding error instead of a locale guess.
+    """
+    if not isinstance(raw, (bytes, bytearray)):
+        raise TypeError("input bytes required")
+    raw = bytes(raw)
+    encoding = "utf-8"
+    if raw.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
+        encoding = None
+    elif raw.startswith(b"\xef\xbb\xbf"):
+        encoding = "utf-8-sig"
+    elif raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encoding = "utf-16"
+    try:
+        if encoding is None:
+            raise UnicodeDecodeError("utf-32", raw[:4], 0, 4, "UTF-32 is not accepted")
+        text = raw.decode(encoding)
+        if "\x00" in text:
+            # JSON text never contains a raw NUL; this is BOM-less UTF-16/32.
+            encoding = "utf-16 or utf-32 without BOM"
+            position = text.index("\x00")
+            raise UnicodeDecodeError("utf-8", raw, position, position + 1, "NUL byte in JSON input")
+        return text
+    except UnicodeDecodeError as exc:
+        raise ThalirisError(
+            _errors.INPUT_DECODING_ERROR,
+            f"{label} is not valid UTF-8, UTF-8 with BOM, or UTF-16 with BOM",
+            recovery="re-encode the input as UTF-8 (a BOM is accepted) and retry",
+            details={"expected_encodings": list(INPUT_ENCODINGS), "detected": encoding or "utf-32",
+                     "offset": exc.start},
+        ) from exc
+
+
+def _read_input_text(value: str) -> str:
+    if value == "-":
+        buffer = getattr(sys.stdin, "buffer", None)
+        if buffer is None:
+            return sys.stdin.read()
+        return decode_input_bytes(buffer.read())
+    return decode_input_bytes(Path(value).read_bytes())
+
+
 def _read_input(value: str | None) -> dict[str, object]:
     if value is None:
         return {}
-    source = sys.stdin.read() if value == "-" else Path(value).read_text(encoding="utf-8")
-    raw = json.loads(source)
+    source = _read_input_text(value)
+    try:
+        raw = json.loads(source)
+    except json.JSONDecodeError as exc:
+        raise ThalirisError(
+            _errors.INPUT_JSON_INVALID, str(exc),
+            recovery="supply one JSON object",
+            details={"line": exc.lineno, "column": exc.colno},
+        ) from exc
     _check_json(raw)
     if not isinstance(raw, dict):
-        raise ValueError("task input must be a JSON object")
+        raise ThalirisError(_errors.INPUT_NOT_OBJECT, "task input must be a JSON object",
+                            recovery="wrap the payload in a JSON object")
     return raw
 
 
@@ -1017,6 +1092,22 @@ def _task_ack(state: dict[str, object], changed: list[str]) -> dict[str, object]
     }
 
 
+def task_write_response(state: dict[str, object], changed: list[str], *, appended: list[str] | None = None,
+                        evidence_offset: int = 0, max_bytes: int | None = None) -> dict[str, object]:
+    """Compact write acknowledgement for adapters: ack plus evidence summary.
+
+    Replaces echoing the full Evidence Continuity page after each write. The
+    summary keeps totals and a bounded open-item listing (see
+    ``evidence_summary``).
+    """
+    response = _task_ack(state, changed)
+    if appended is not None:
+        response["appended"] = list(appended)
+    budget = {} if max_bytes is None else {"max_bytes": max_bytes}
+    response["evidence"] = evidence_summary(state, evidence_offset, **budget)
+    return response
+
+
 def task_start(root: Path, goal: str, milestone: str | None, input_file: str | None, *, actor: str = "unspecified") -> dict[str, object]:
     root = _repo_root(root)
     if _git_root(root) is not None and not _state_ignored(root):
@@ -1059,8 +1150,7 @@ def task_update(root: Path, actor: str, base_revision: int, input_file: str | No
         raise ValueError("task-update accepts only mechanical ledger fields")
     with _lock(root):
         state = _load_state(root, active=True)
-        if state["revision"] != base_revision:
-            raise ValueError("task revision conflict")
+        check_revision(state, base_revision)
         changed: list[str] = []
         if "evidence_refs" in partial:
             additions = partial["evidence_refs"]
@@ -1094,94 +1184,238 @@ def task_update(root: Path, actor: str, base_revision: int, input_file: str | No
     return _task_ack(state, changed)
 
 
+_CONTINUITY_KINDS = ("requirements", "handoffs", "observations", "judgments")
+_CONTINUITY_SCHEMAS = {
+    "requirements": {"id", "workchain_ref"},
+    "handoffs": {"id", "parent_handoff_id", "candidate", "producer", "requirement_refs"},
+    "observations": {"id", "task_id", "producer", "candidate", "handoff_id", "requirement_refs", "source_refs", "text"},
+    "judgments": {"id", "task_id", "producer", "candidate", "requirement_ref", "observation_refs", "outcome", "reasoning"},
+}
+# ``revision`` is an optional Core-assigned append stamp: the task revision at
+# which the item became visible. Items written before Core 0.5.1 lack it.
+_CONTINUITY_OPTIONAL = {
+    "requirements": {"revision"},
+    "handoffs": {"durable_paths", "revision"},
+    "observations": {"native_actor", "submitted_by", "native_status", "native_status_conflict", "observed_state", "revision"},
+    "judgments": {"judgment_refs", "revision"},
+}
+_JUDGMENT_OUTCOMES = ("satisfied", "unknown", "repair", "no-current-impact")
+_LABEL_EXPECTATION = "1-64 characters matching [A-Za-z0-9_.:-]+"
+CONTINUITY_BATCH_MAX = 64
+EVIDENCE_SUMMARY_MAX_BYTES = 1536
+CHANGES_SINCE_MAX_ITEMS = 32
+CHANGES_SINCE_MAX_BYTES = 2048
+
+
 def _continuity(state: dict[str, object]) -> dict[str, list]:
-    return state.setdefault("evidence_continuity", {name: [] for name in ("requirements", "handoffs", "observations", "judgments")})
+    return state.setdefault("evidence_continuity", {name: [] for name in _CONTINUITY_KINDS})
+
+
+def _preview(value: object, limit: int = 120) -> str:
+    text = json.dumps(value, ensure_ascii=False)
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _continuity_error(code: str, message: str, kind: str | None = None, index: int | None = None,
+                      item: object = None, *, field: str | None = None, expected: str | None = None,
+                      got: object = None, recovery: str | None = None,
+                      extra: dict[str, object] | None = None) -> ThalirisError:
+    """Name the offending collection, item, field and expected format.
+
+    ``str(error)`` starts with the historical generic message so existing
+    message checks keep matching; the location follows after ``": "``.
+    """
+    identifier = item.get("id") if isinstance(item, dict) and isinstance(item.get("id"), str) else None
+    parts: list[str] = []
+    if kind is not None:
+        parts.append(f"{kind}[{index}]" + (f" ({identifier})" if identifier else ""))
+    if field is not None:
+        parts.append(field)
+    text = message + (": " + " ".join(parts) if parts else "")
+    if expected is not None:
+        text += f" must be {expected}"
+    if got is not None:
+        text += f"; got {_preview(got)}"
+    details: dict[str, object] = {"collection": kind, "index": index, "id": identifier, "field": field, "expected": expected}
+    if got is not None:
+        details["got"] = _preview(got)
+    if extra:
+        details.update(extra)
+    return ThalirisError(code, text, recovery=recovery, details=details)
 
 
 def _validate_continuity(state: dict[str, object]) -> None:
     data = state.get("evidence_continuity")
     if "evidence_continuity" not in state:
         return
-    if not isinstance(data, dict) or set(data) != {"requirements", "handoffs", "observations", "judgments"}:
-        raise ValueError("invalid evidence continuity")
-    ids = {str(item["id"]) for field in ("records", "evidence_refs", "artifact_refs", "verification_results") for item in state[field]}
+    if not isinstance(data, dict) or set(data) != set(_CONTINUITY_KINDS):
+        raise ThalirisError(_errors.CONTINUITY_INVALID, "invalid evidence continuity",
+                            details={"expected": list(_CONTINUITY_KINDS)})
+    owners: dict[str, tuple[str, dict[str, object]]] = {}
+    for field in ("records", "evidence_refs", "artifact_refs", "verification_results"):
+        for item in state[field]:
+            owners[str(item["id"])] = (field, item)
     requirements, handoffs, observations = {}, {}, {}
     sources = {item["id"] for item in state["evidence_refs"]}
-    schemas = {
-        "requirements": {"id", "workchain_ref"},
-        "handoffs": {"id", "parent_handoff_id", "candidate", "producer", "requirement_refs"},
-        "observations": {"id", "task_id", "producer", "candidate", "handoff_id", "requirement_refs", "source_refs", "text"},
-        "judgments": {"id", "task_id", "producer", "candidate", "requirement_ref", "observation_refs", "outcome", "reasoning"},
-    }
-    def refs(value, known):
-        if not isinstance(value, list) or len(value) > 64 or not all(isinstance(ref, str) for ref in value) or len(set(value)) != len(value) or any(ref not in known for ref in value):
-            raise ValueError("invalid continuity references")
-    for kind, fields in schemas.items():
+
+    def label(kind, index, item, field, text):
+        value = item[field]
+        if not isinstance(value, str) or not value.strip() or len(value) > 64 or not re.fullmatch(r"[A-Za-z0-9_.:-]+", value):
+            raise _continuity_error(_errors.CONTINUITY_INVALID, f"invalid {text}", kind, index, item,
+                                    field=field, expected=_LABEL_EXPECTATION, got=value)
+
+    def refs(kind, index, item, field, known, expected, *, suggest=None):
+        value = item.get(field, []) if field == "judgment_refs" else item[field]
+        if not isinstance(value, list) or len(value) > 64 or not all(isinstance(ref, str) for ref in value):
+            raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "invalid continuity references", kind, index, item,
+                                    field=field, expected="a list of at most 64 id strings", got=value)
+        if len(set(value)) != len(value):
+            duplicates = sorted({ref for ref in value if value.count(ref) > 1})
+            raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "invalid continuity references", kind, index, item,
+                                    field=field, expected="unique ids", got=duplicates)
+        unknown = [ref for ref in value if ref not in known]
+        if unknown:
+            extra: dict[str, object] = {"unknown_refs": unknown[:8]}
+            if suggest is not None:
+                suggestions = {ref: suggest(ref) for ref in unknown[:8]}
+                suggestions = {ref: hits for ref, hits in suggestions.items() if hits}
+                if suggestions:
+                    extra["suggestions"] = suggestions
+            raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "invalid continuity references", kind, index, item,
+                                    field=field, expected=expected, got=unknown[:8], extra=extra,
+                                    recovery="use exact ids as task-get or task-status report them")
+
+    def similar_observations(ref):
+        # Adapters may store handoff-qualified ids (``<handoff>.<id>``).
+        return sorted(identifier for identifier in observations
+                      if identifier.endswith("." + ref) or ref.endswith("." + identifier))[:4]
+
+    for kind in _CONTINUITY_KINDS:
         values = data[kind]
+        fields = _CONTINUITY_SCHEMAS[kind]
+        optional = _CONTINUITY_OPTIONAL[kind]
         if not isinstance(values, list):
-            raise ValueError("invalid continuity collection")
-        for item in values:
-            optional = {"durable_paths"} if kind == "handoffs" else {"native_actor", "submitted_by", "native_status", "native_status_conflict", "observed_state"} if kind == "observations" else {"judgment_refs"} if kind == "judgments" else set()
+            raise ThalirisError(_errors.CONTINUITY_INVALID, "invalid continuity collection",
+                                details={"collection": kind, "expected": "a JSON list"})
+        for index, item in enumerate(values):
             if not isinstance(item, dict) or set(item) - optional != fields:
-                raise ValueError("invalid continuity object")
-            identifier = _bounded_label(item["id"], "continuity id")
-            if identifier in ids:
-                raise ValueError("task object id collision")
-            ids.add(identifier)
-            for field in fields - {"parent_handoff_id", "requirement_refs", "source_refs", "observation_refs", "text", "reasoning"}:
-                _bounded_label(item[field], field)
+                present = set(item) if isinstance(item, dict) else set()
+                missing = sorted(fields - present)
+                unexpected = sorted(present - fields - optional)
+                raise _continuity_error(
+                    _errors.CONTINUITY_INVALID, "invalid continuity object", kind, index, item,
+                    expected=f"an object with fields {sorted(fields)} and optional {sorted(optional)}",
+                    extra={"missing_fields": missing, "unexpected_fields": unexpected},
+                    got={"missing": missing, "unexpected": unexpected} if isinstance(item, dict) else item)
+            label(kind, index, item, "id", "continuity id")
+            identifier = item["id"]
+            if identifier in owners:
+                owner_kind, owner = owners[identifier]
+                extra = {"existing_collection": owner_kind}
+                recovery = "choose an id that is unused in this task; nothing was recorded"
+                if kind == "observations" and owner_kind == "observations":
+                    extra["existing_handoff_id"] = owner.get("handoff_id")
+                    extra["handoff_id"] = item.get("handoff_id")
+                    qualified = f"{item.get('handoff_id')}.{identifier}"
+                    if (isinstance(item.get("handoff_id"), str) and not identifier.startswith(f"{item['handoff_id']}.")
+                            and len(qualified) <= 64 and re.fullmatch(r"[A-Za-z0-9_.:-]+", qualified)):
+                        extra["suggested_id"] = qualified
+                        recovery = f"resubmit with the handoff-qualified id {qualified!r}; nothing was recorded"
+                raise _continuity_error(_errors.CONTINUITY_ID_COLLISION, "task object id collision", kind, index, item,
+                                        field="id", expected="unique among all task objects", extra=extra, recovery=recovery)
+            owners[identifier] = (kind, item)
+            if "revision" in item and (type(item["revision"]) is not int or item["revision"] < 1):
+                raise _continuity_error(_errors.CONTINUITY_INVALID, "invalid continuity revision stamp", kind, index, item,
+                                        field="revision", expected="a positive integer assigned by Core", got=item["revision"])
+            for field in sorted(fields - {"id", "parent_handoff_id", "requirement_refs", "source_refs", "observation_refs", "text", "reasoning"}):
+                label(kind, index, item, field, field)
             if kind == "requirements":
                 requirements[identifier] = item
             elif kind == "handoffs":
                 if "durable_paths" in item and (not isinstance(item["durable_paths"], list) or not all(isinstance(path, str) for path in item["durable_paths"])):
-                    raise ValueError("invalid handoff durable paths")
-                refs(item["requirement_refs"], requirements)
+                    raise _continuity_error(_errors.CONTINUITY_INVALID, "invalid handoff durable paths", kind, index, item,
+                                            field="durable_paths", expected="a list of strings", got=item["durable_paths"])
+                refs(kind, index, item, "requirement_refs", requirements, "requirement ids registered in this task")
                 if not item["requirement_refs"] and item["parent_handoff_id"] is None:
-                    raise ValueError("handoff requires requirement refs")
+                    raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "handoff requires requirement refs", kind, index, item,
+                                            field="requirement_refs", expected="non-empty for a root handoff (parent_handoff_id null)")
                 parent = item["parent_handoff_id"]
                 if parent is not None:
-                    if not isinstance(parent, str) or parent not in handoffs or not set(item["requirement_refs"]) <= set(handoffs[parent]["requirement_refs"]):
-                        raise ValueError("invalid parent handoff provenance")
+                    if not isinstance(parent, str) or parent not in handoffs:
+                        raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "invalid parent handoff provenance", kind, index, item,
+                                                field="parent_handoff_id", expected="null or the id of an earlier registered handoff", got=parent)
+                    widened = sorted(set(item["requirement_refs"]) - set(handoffs[parent]["requirement_refs"]))
+                    if widened:
+                        raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "invalid parent handoff provenance", kind, index, item,
+                                                field="requirement_refs", expected=f"a subset of parent handoff {parent}'s requirement_refs",
+                                                got=widened)
                 handoffs[identifier] = item
             elif kind == "observations":
-                for field, label in (("native_actor", "native actor"), ("submitted_by", "observation submitter"), ("native_status", "observed native status"), ("observed_state", "observed local state")):
+                for field, text in (("native_actor", "native actor"), ("submitted_by", "observation submitter"), ("native_status", "observed native status"), ("observed_state", "observed local state")):
                     if field in item:
-                        _bounded_label(item[field], label)
+                        label(kind, index, item, field, text)
                 if "native_status_conflict" in item and type(item["native_status_conflict"]) is not bool:
-                    raise ValueError("invalid observed native status conflict")
+                    raise _continuity_error(_errors.CONTINUITY_INVALID, "invalid observed native status conflict", kind, index, item,
+                                            field="native_status_conflict", expected="a boolean", got=item["native_status_conflict"])
                 handoff = handoffs.get(item["handoff_id"])
-                if handoff is None or item["producer"] != handoff["producer"] or item["candidate"] != handoff["candidate"]:
-                    raise ValueError("observation handoff provenance conflict")
-                refs(item["requirement_refs"], handoff["requirement_refs"])
+                if handoff is None:
+                    raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "observation handoff provenance conflict", kind, index, item,
+                                            field="handoff_id", expected="the id of a registered handoff", got=item["handoff_id"])
+                for field in ("producer", "candidate"):
+                    if item[field] != handoff[field]:
+                        raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "observation handoff provenance conflict", kind, index, item,
+                                                field=field, expected=f"{handoff[field]!r} as registered on handoff {handoff['id']}", got=item[field])
+                refs(kind, index, item, "requirement_refs", handoff["requirement_refs"],
+                     f"a subset of handoff {handoff['id']}'s requirement_refs {handoff['requirement_refs']}")
                 if not item["requirement_refs"] and handoff["requirement_refs"]:
-                    raise ValueError("observation requires requirement refs")
+                    raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "observation requires requirement refs", kind, index, item,
+                                            field="requirement_refs", expected=f"non-empty; handoff {handoff['id']} carries {handoff['requirement_refs']}")
                 source_refs = item["source_refs"]
-                if not isinstance(source_refs, list) or not source_refs or len(source_refs) > 64 or not all(isinstance(ref, str) and ref in sources for ref in source_refs) or len(source_refs) != len(set(source_refs)):
-                    raise ValueError("invalid observation source refs")
+                expected = "1-64 unique ids of sources registered in evidence_refs or embedded in this observation's `sources`"
+                if not isinstance(source_refs, list) or not source_refs or len(source_refs) > 64 or not all(isinstance(ref, str) for ref in source_refs) or len(source_refs) != len(set(source_refs)):
+                    raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "invalid observation source refs", kind, index, item,
+                                            field="source_refs", expected=expected, got=source_refs)
+                unknown = [ref for ref in source_refs if ref not in sources]
+                if unknown:
+                    raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "invalid observation source refs", kind, index, item,
+                                            field="source_refs", expected=expected, got=unknown[:8], extra={"unknown_refs": unknown[:8]})
                 observations[identifier] = item
             else:
                 if not item["observation_refs"]:
-                    raise ValueError("judgment requires exact observation refs")
-                if item["requirement_ref"] not in requirements or item["outcome"] not in {"satisfied", "unknown", "repair", "no-current-impact"}:
-                    raise ValueError("invalid requirement judgment")
-                refs(item["observation_refs"], observations)
-                prior = {j["id"]: j for j in data["judgments"][:data["judgments"].index(item)]}
-                refs(item.get("judgment_refs", []), prior)
-                if any(prior[ref]["requirement_ref"] != item["requirement_ref"] for ref in item.get("judgment_refs", [])):
-                    raise ValueError("judgment continuity requirement conflict")
+                    raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "judgment requires exact observation refs", kind, index, item,
+                                            field="observation_refs", expected="a non-empty list of registered observation ids")
+                if item["requirement_ref"] not in requirements:
+                    raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "invalid requirement judgment", kind, index, item,
+                                            field="requirement_ref", expected="the id of a registered requirement", got=item["requirement_ref"])
+                if item["outcome"] not in _JUDGMENT_OUTCOMES:
+                    raise _continuity_error(_errors.CONTINUITY_INVALID, "invalid requirement judgment", kind, index, item,
+                                            field="outcome", expected="one of " + ", ".join(_JUDGMENT_OUTCOMES), got=item["outcome"])
+                refs(kind, index, item, "observation_refs", observations,
+                     "exact ids of observations registered in this task (as stored, e.g. adapter handoff-qualified ids)",
+                     suggest=similar_observations)
+                prior = {j["id"]: j for j in data["judgments"][:index]}
+                refs(kind, index, item, "judgment_refs", prior,
+                     "ids of judgments that precede this one in list order (earlier items of the same batch count)")
+                foreign = [ref for ref in item.get("judgment_refs", []) if prior[ref]["requirement_ref"] != item["requirement_ref"]]
+                if foreign:
+                    raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "judgment continuity requirement conflict", kind, index, item,
+                                            field="judgment_refs", expected=f"judgments about the same requirement {item['requirement_ref']}",
+                                            got=foreign)
                 # Applicability to the selected candidate and requirement is a model
                 # judgment. Observations retain their original provenance unchanged.
             if kind in {"observations", "judgments"}:
                 if item["task_id"] != state["task_id"]:
-                    raise ValueError("continuity task identity conflict")
-                body = item["text" if kind == "observations" else "reasoning"]
+                    raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "continuity task identity conflict", kind, index, item,
+                                            field="task_id", expected=f"the current task id {state['task_id']}", got=item["task_id"])
+                body_field = "text" if kind == "observations" else "reasoning"
+                body = item[body_field]
                 if not isinstance(body, str) or not body.strip() or len(body) > 16_384:
-                    raise ValueError("invalid continuity reasoning or text")
+                    raise _continuity_error(_errors.CONTINUITY_INVALID, "invalid continuity reasoning or text", kind, index, item,
+                                            field=body_field, expected="non-empty text of at most 16384 characters")
 
 
-def _continuity_status(state: dict[str, object], offset: int = 0) -> dict[str, object]:
-    if type(offset) is not int or offset < 0:
-        raise ValueError("invalid evidence offset")
+def _continuity_open(state: dict[str, object]) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
+    """Return (unincorporated, unresolved judgments, latest judgments) in ledger order."""
     data = state.get("evidence_continuity", {})
     judgments = data.get("judgments", [])
     incorporated = {(j["requirement_ref"], ref) for j in judgments for ref in j["observation_refs"]}
@@ -1204,7 +1438,14 @@ def _continuity_status(state: dict[str, object], offset: int = 0) -> dict[str, o
                for later in judgments[index + 1:]):
             continue
         unresolved.append({key: j[key] for key in ("id", "candidate", "requirement_ref", "outcome")})
-    judgments = [{**{key: item[key] for key in ("id", "candidate", "requirement_ref", "outcome")}, "observation_ref_count": len(item["observation_refs"])} for item in latest.values()]
+    latest_items = [{**{key: item[key] for key in ("id", "candidate", "requirement_ref", "outcome")}, "observation_ref_count": len(item["observation_refs"])} for item in latest.values()]
+    return pending, unresolved, latest_items
+
+
+def _continuity_status(state: dict[str, object], offset: int = 0) -> dict[str, object]:
+    if type(offset) is not int or offset < 0:
+        raise ValueError("invalid evidence offset")
+    pending, unresolved, judgments = _continuity_open(state)
     entries = [("unincorporated", item) for item in pending] + [("unresolved_judgments", item) for item in unresolved] + [("latest_judgments", item) for item in judgments]
     response = {"unincorporated": [], "unresolved_judgments": [], "latest_judgments": [], "unincorporated_total": len(pending), "unresolved_judgments_total": len(unresolved), "latest_judgments_total": len(judgments), "offset": offset, "next_offset": None}
     for index in range(offset, len(entries)):
@@ -1218,6 +1459,158 @@ def _continuity_status(state: dict[str, object], offset: int = 0) -> dict[str, o
     return response
 
 
+def _compact_size(value: object) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def evidence_summary(state: dict[str, object], offset: int = 0, *, max_bytes: int = EVIDENCE_SUMMARY_MAX_BYTES) -> dict[str, object]:
+    """Compact open-evidence summary for write responses and compact status.
+
+    Totals are always present. Open items (unincorporated observation edges,
+    then unresolved repair/unknown judgments) are listed one compact entry
+    each, in ledger order, within ``max_bytes`` of compact JSON; ``next_offset``
+    pages the rest so open evidence is never dropped from re-presentation.
+    Latest judgments are counted, not listed (see the full status view).
+    """
+    if type(offset) is not int or offset < 0:
+        raise ValueError("invalid evidence offset")
+    if type(max_bytes) is not int or max_bytes < 256:
+        raise ValueError("invalid evidence summary budget")
+    pending, unresolved, latest = _continuity_open(state)
+    entries = [("unincorporated", {"observation_id": item["observation_id"], "requirement_ref": item["requirement_ref"],
+                                   "handoff_id": item["handoff_id"], "candidate": item["candidate"]}) for item in pending]
+    entries += [("unresolved_judgments", item) for item in unresolved]
+    response: dict[str, object] = {
+        "unincorporated_total": len(pending),
+        "unresolved_judgments_total": len(unresolved),
+        "latest_judgments_total": len(latest),
+        "unincorporated": [],
+        "unresolved_judgments": [],
+        "offset": offset,
+        "next_offset": None,
+    }
+    for index in range(offset, len(entries)):
+        kind, item = entries[index]
+        response[kind].append(item)
+        response["next_offset"] = index + 1 if index + 1 < len(entries) else None
+        # Always keep the first item of a page so paging makes progress.
+        if index > offset and _compact_size(response) > max_bytes:
+            response[kind].pop()
+            response["next_offset"] = index
+            break
+    return response
+
+
+def _append_stamp(kind: str, item: dict[str, object]) -> int | None:
+    if kind == "verification_results":
+        value = item.get("observed_at_revision")
+        return value + 1 if type(value) is int else None
+    value = item.get("revision")
+    return value if type(value) is int else None
+
+
+def _change_entry(kind: str, item: dict[str, object]) -> object:
+    if kind == "observations":
+        return {"id": item["id"], "handoff_id": item["handoff_id"], "requirement_refs": item["requirement_refs"]}
+    if kind == "judgments":
+        return {"id": item["id"], "requirement_ref": item["requirement_ref"], "outcome": item["outcome"]}
+    return item["id"]
+
+
+def changes_since(state: dict[str, object], base_revision: int, *, max_items: int = CHANGES_SINCE_MAX_ITEMS,
+                  max_bytes: int = CHANGES_SINCE_MAX_BYTES) -> dict[str, object]:
+    """Bounded summary of ledger objects appended after ``base_revision``.
+
+    Uses per-item append stamps: continuity ``revision`` (Core >= 0.5.1),
+    record and artifact ``revision`` and verification ``observed_at_revision``.
+    Collections are append-only, so a backwards scan stops at the first item
+    stamped at or before the base. Unstamped continuity items predate the
+    earliest stamped one: Core <= 0.5.0 refuses to load a ledger that carries
+    stamps, so it cannot append after them. An unstamped item is therefore
+    known to be at or before the base only when the base is at least the
+    earliest continuity stamp minus one; otherwise the summary is
+    ``incomplete`` and Core does not guess. Replaced fields (Active Work,
+    Pending Results, milestone, status) and sources are not tracked here.
+    """
+    if type(base_revision) is not int or base_revision < 0:
+        raise ThalirisError(_errors.REVISION_DELTA_INVALID, "invalid since revision",
+                            details={"expected": "a non-negative integer revision", "got": _preview(base_revision)})
+    current = state["revision"]
+    collections = (
+        ("requirements", state.get("evidence_continuity", {}).get("requirements", [])),
+        ("handoffs", state.get("evidence_continuity", {}).get("handoffs", [])),
+        ("observations", state.get("evidence_continuity", {}).get("observations", [])),
+        ("judgments", state.get("evidence_continuity", {}).get("judgments", [])),
+        ("records", state["records"]),
+        ("artifacts", state["artifact_refs"]),
+        ("verification_results", state["verification_results"]),
+    )
+    result: dict[str, object] = {"base_revision": base_revision, "current_revision": current,
+                                 "incomplete": False, "truncated": False, "counts": {}}
+    unstamped: list[str] = []
+    if base_revision > current:
+        result.update(incomplete=True, reason="base revision is newer than the current revision")
+        return result
+    stamps = [item["revision"] for _, values in collections[:4] for item in values if type(item.get("revision")) is int]
+    legacy_known_before = (min(stamps) - 1) if stamps else None
+    found: list[tuple[str, list[dict[str, object]]]] = []
+    for kind, values in collections:
+        appended: list[dict[str, object]] = []
+        if base_revision < current:
+            for item in reversed(values):
+                stamp = _append_stamp(kind, item)
+                if stamp is None:
+                    if legacy_known_before is None or base_revision < legacy_known_before:
+                        unstamped.append(kind)
+                    break
+                if stamp <= base_revision:
+                    break
+                appended.append(item)
+        appended.reverse()
+        found.append((kind, appended))
+    budget = max_items
+    for kind, appended in found:
+        if not appended:
+            continue
+        result["counts"][kind] = len(appended)
+        shown = appended[:max(budget, 0)]
+        budget -= len(shown)
+        result[kind] = [_change_entry(kind, item) for item in shown]
+        if len(shown) < len(appended):
+            result["truncated"] = True
+    if unstamped:
+        result["incomplete"] = True
+        result["unstamped"] = unstamped
+    while _compact_size(result) > max_bytes:
+        lists = [(len(result[kind]), kind) for kind, _ in found if isinstance(result.get(kind), list) and result[kind]]
+        if not lists:
+            break
+        _, largest = max(lists)
+        result[largest].pop()
+        result["truncated"] = True
+    return result
+
+
+def revision_conflict(state: dict[str, object], base_revision: object) -> ThalirisError:
+    """Build the structured strict-CAS refusal. Nothing is rebased or merged."""
+    current = state["revision"]
+    details: dict[str, object] = {"task_id": state["task_id"], "base_revision": base_revision if type(base_revision) is int else None,
+                                  "current_revision": current, "changes_since": None}
+    if type(base_revision) is int and base_revision >= 0:
+        details["changes_since"] = changes_since(state, base_revision)
+    return ThalirisError(
+        _errors.TASK_REVISION_CONFLICT, "task revision conflict",
+        recovery=f"review details.changes_since, then re-run with --base-revision {current} if the write still applies",
+        details=details,
+    )
+
+
+def check_revision(state: dict[str, object], base_revision: object) -> None:
+    """Strict compare-and-set: raise TASK_REVISION_CONFLICT unless exact."""
+    if type(base_revision) is not int or state["revision"] != base_revision:
+        raise revision_conflict(state, base_revision)
+
+
 def _append_continuity(
     root: Path,
     actor: str,
@@ -1226,6 +1619,7 @@ def _append_continuity(
     kind: str,
     *,
     parsed_payload: dict[str, object] | None = None,
+    compact_evidence: bool = False,
 ) -> dict[str, object]:
     root = _repo_root(root)
     _bounded_label(actor, "continuity actor")
@@ -1238,67 +1632,132 @@ def _append_continuity(
         payload = _read_input(input_file)
     with _lock(root):
         state = _load_state(root, active=True)
-        if base_revision is not None and state["revision"] != base_revision:
-            raise ValueError("task revision conflict")
-        _append_continuity_state(state, actor, payload, kind)
+        if base_revision is not None:
+            check_revision(state, base_revision)
+        appended = _append_continuity_state(state, actor, payload, kind)
         _write_state(root, state)
+    if compact_evidence:
+        return task_write_response(state, ["evidence_continuity"], appended=appended)
     return _task_ack(state, ["evidence_continuity"])
 
 
 def _append_continuity_state(state: dict[str, object], actor: str,
-                             payload: dict[str, object], kind: str) -> None:
+                             payload: dict[str, object], kind: str) -> list[str]:
     """Apply the shared append contract to an adapter-owned locked transaction.
 
     The caller loads and writes state under the normal task lock. This pure
-    mutation has no Host, authority, relevance or acceptance policy.
+    mutation has no Host, authority, relevance or acceptance policy. It is
+    all-or-nothing: on any validation error ``state`` is left unchanged.
+    ``observations``/``judgments`` accept one object or a batch
+    ``{"observations": [...]}`` / ``{"judgments": [...]}`` that commits in list
+    order with one revision bump. Returns the appended continuity ids.
     """
     _bounded_label(actor, "continuity actor")
     _check_json(payload)
-    payload = dict(payload)
-    data = _continuity(state)
+    if not isinstance(payload, dict):
+        raise ValueError("continuity payload must be a JSON object")
     if kind == "register":
         if not payload or set(payload) - {"requirements", "handoffs"}:
             raise ValueError("invalid evidence registration")
+        additions = []
         for field, values in payload.items():
             if not isinstance(values, list) or not values:
                 raise ValueError("registration requires append-only additions")
-            data[field].extend(values)
-    else:
-        if kind == "observations" and "sources" in payload:
-            additions = payload.pop("sources")
-            if not isinstance(additions, list):
-                raise ValueError("invalid observation sources")
-            known = {item["id"] for item in state["evidence_refs"]}
-            for source in additions:
-                _evidence_ref(source, known)
-                state["evidence_refs"].append(source)
-                known.add(source["id"])
-        if {"task_id", "producer"} & set(payload):
-            raise ValueError("continuity producer and task are assigned by Core")
-        data[kind].append({**payload, "task_id": state["task_id"], "producer": actor})
-    state["revision"] += 1
+            additions.extend((field, None, value) for value in values)
+        return _append_continuity_items(state, additions)
+    if kind not in {"observations", "judgments"}:
+        raise ValueError("invalid continuity kind")
+    if set(payload) == {kind}:
+        values = payload[kind]
+        if not isinstance(values, list) or not 1 <= len(values) <= CONTINUITY_BATCH_MAX:
+            raise ThalirisError(_errors.CONTINUITY_INVALID, f"invalid {kind} batch",
+                                details={"collection": kind, "expected": f"a list of 1 to {CONTINUITY_BATCH_MAX} objects"})
+        return _append_continuity_items(state, [(kind, actor, value) for value in values])
+    return _append_continuity_items(state, [(kind, actor, payload)])
 
 
-def task_evidence_register(root: Path, actor: str, base_revision: int, input_file: str | None) -> dict[str, object]:
-    return _append_continuity(root, actor, base_revision, input_file, "register")
+def append_observations(state: dict[str, object], entries: list[tuple[str, dict[str, object]]]) -> list[str]:
+    """Append several observations with per-item producers in one revision.
+
+    For adapter-owned locked transactions importing results from several
+    handoffs: ``entries`` is ``[(producer, observation_payload), ...]``. Same
+    per-item validation and all-or-nothing semantics as a single observe.
+    """
+    if not isinstance(entries, list) or not 1 <= len(entries) <= CONTINUITY_BATCH_MAX:
+        raise ThalirisError(_errors.CONTINUITY_INVALID, "invalid observations batch",
+                            details={"collection": "observations", "expected": f"a list of 1 to {CONTINUITY_BATCH_MAX} entries"})
+    for actor, payload in entries:
+        _bounded_label(actor, "continuity actor")
+        _check_json(payload)
+    return _append_continuity_items(state, [("observations", actor, payload) for actor, payload in entries])
+
+
+def _append_continuity_items(state: dict[str, object], additions: list[tuple[str, str | None, object]],
+                             *, bump: bool = True) -> list[str]:
+    """Stamp, validate and commit continuity additions atomically in memory."""
+    stamp = state["revision"] + 1
+    evidence_refs = copy.deepcopy(state["evidence_refs"])
+    data = copy.deepcopy(state["evidence_continuity"]) if "evidence_continuity" in state else {name: [] for name in _CONTINUITY_KINDS}
+    known_sources = {item["id"] for item in evidence_refs}
+    appended: list[str] = []
+    for batch_index, (kind, actor, value) in enumerate(additions):
+        index = len(data[kind])
+        if not isinstance(value, dict):
+            raise _continuity_error(_errors.CONTINUITY_INVALID, "invalid continuity object", kind, index, value,
+                                    expected="a JSON object", extra={"batch_index": batch_index})
+        item = dict(value)
+        if "revision" in item:
+            raise _continuity_error(_errors.CONTINUITY_INVALID, "continuity revision is assigned by Core", kind, index, item,
+                                    field="revision", expected="omitted", extra={"batch_index": batch_index})
+        if kind in {"observations", "judgments"}:
+            if kind == "observations" and "sources" in item:
+                sources = item.pop("sources")
+                if not isinstance(sources, list):
+                    raise ValueError("invalid observation sources")
+                for source in sources:
+                    _evidence_ref(source, known_sources)
+                    evidence_refs.append(source)
+                    known_sources.add(source["id"])
+            if {"task_id", "producer"} & set(item):
+                raise ValueError("continuity producer and task are assigned by Core")
+            item = {**item, "task_id": state["task_id"], "producer": actor}
+        item["revision"] = stamp
+        data[kind].append(item)
+        appended.append(item.get("id"))
+    _validate_continuity({**state, "evidence_refs": evidence_refs, "evidence_continuity": data})
+    state["evidence_refs"] = evidence_refs
+    state["evidence_continuity"] = data
+    if bump:
+        state["revision"] = stamp
+    return appended
+
+
+def task_evidence_register(root: Path, actor: str, base_revision: int, input_file: str | None,
+                           *, compact_evidence: bool = False) -> dict[str, object]:
+    return _append_continuity(root, actor, base_revision, input_file, "register", compact_evidence=compact_evidence)
 
 
 def _register_evidence_handoff(state: dict[str, object], record: dict[str, object]) -> None:
-    """Append to an already locked adapter transaction; caller writes the state."""
-    _continuity(state)["handoffs"].append(record)
-    _validate_continuity(state)
+    """Append to an already locked adapter transaction; caller writes the state.
+
+    The caller bumps the revision once after this call; the handoff is stamped
+    with that next revision.
+    """
+    _append_continuity_items(state, [("handoffs", None, record)], bump=False)
 
 
-def task_observe(root: Path, actor: str, input_file: str | dict[str, object] | None) -> dict[str, object]:
+def task_observe(root: Path, actor: str, input_file: str | dict[str, object] | None,
+                 *, compact_evidence: bool = False) -> dict[str, object]:
     if isinstance(input_file, dict):
-        return _append_continuity(root, actor, None, None, "observations", parsed_payload=input_file)
+        return _append_continuity(root, actor, None, None, "observations", parsed_payload=input_file, compact_evidence=compact_evidence)
     if input_file is not None and not isinstance(input_file, str):
         raise ValueError("invalid observation input")
-    return _append_continuity(root, actor, None, input_file, "observations")
+    return _append_continuity(root, actor, None, input_file, "observations", compact_evidence=compact_evidence)
 
 
-def task_judge(root: Path, actor: str, base_revision: int, input_file: str | None) -> dict[str, object]:
-    return _append_continuity(root, actor, base_revision, input_file, "judgments")
+def task_judge(root: Path, actor: str, base_revision: int, input_file: str | None,
+               *, compact_evidence: bool = False) -> dict[str, object]:
+    return _append_continuity(root, actor, base_revision, input_file, "judgments", compact_evidence=compact_evidence)
 
 
 def task_show(root: Path) -> dict[str, object]:
@@ -1320,7 +1779,8 @@ def task_get(root: Path, object_id: str) -> dict[str, object]:
     ) + tuple((kind, values) for kind, values in state.get("evidence_continuity", {}).items())
     matches = [(kind, item) for kind, values in collections for item in values if item.get("id") == identifier]
     if len(matches) != 1:
-        raise ValueError("task object not found")
+        raise ThalirisError(_errors.TASK_OBJECT_NOT_FOUND, "task object not found",
+                            details={"id": identifier, "matches": len(matches)})
     kind, item = matches[0]
     return {"ok": True, "task_id": state["task_id"], "revision": state["revision"], "object_type": kind, "object": item}
 
@@ -1350,39 +1810,89 @@ def artifact_get(root: Path, artifact_id: str) -> dict[str, object]:
     return {**found, "body": text, "current_sha256": _file_digest(target), "freshness": _artifact_freshness(root, artifact)}
 
 
-def _task_status_packet(state: dict[str, object], evidence_offset: int = 0) -> dict[str, object]:
-    """Return current routing mechanics without replaying the durable ledger."""
+STATUS_VIEWS = ("full", "compact")
+COMPACT_GOAL_PREVIEW_CHARS = 240
+
+
+def _task_status_packet(state: dict[str, object], evidence_offset: int = 0, *, view: str = "full",
+                        since_revision: int | None = None) -> dict[str, object]:
+    """Return current routing mechanics without replaying the durable ledger.
+
+    ``view="full"`` is the historical packet (Evidence Continuity page).
+    ``view="compact"`` keeps the routing header and replaces the page with the
+    compact evidence summary. ``since_revision`` adds a bounded
+    ``Changes Since`` delta to either view.
+    """
+    if view not in STATUS_VIEWS:
+        raise ValueError("invalid status view")
     goal = str(state["goal"])
     artifact_ids = [str(item["id"]) for item in state["artifact_refs"]]
-    return {
-        "ok": True,
-        "schema_version": state["schema_version"],
-        "Task": {
-            "id": state["task_id"],
-            "goal_preview": goal[:1024],
-            "goal_truncated": len(goal) > 1024,
-            "status": state["status"],
-            "revision": state["revision"],
-            "milestone": state["current_milestone"],
-        },
-        "Active Work": state["active_work"],
-        "Pending Results": state["pending_results"],
-        "Counts": {
-            "records": len(state["records"]),
-            "sources": len(state["evidence_refs"]),
-            "artifacts": len(state["artifact_refs"]),
-            "verification_observations": len(state["verification_results"]),
-        },
-        "Recent Artifact IDs": artifact_ids[-8:],
-        "Active Artifact Count": len(_artifact_activity(state["artifact_refs"])),
-        "Evidence Continuity": _continuity_status(state, evidence_offset),
-    }
+    if view == "compact":
+        continuity = state.get("evidence_continuity", {})
+        packet: dict[str, object] = {
+            "ok": True,
+            "schema_version": state["schema_version"],
+            "view": "compact",
+            "Task": {
+                "id": state["task_id"],
+                "goal_preview": goal[:COMPACT_GOAL_PREVIEW_CHARS],
+                "goal_truncated": len(goal) > COMPACT_GOAL_PREVIEW_CHARS,
+                "status": state["status"],
+                "revision": state["revision"],
+                "milestone": state["current_milestone"],
+            },
+            "Active Work": state["active_work"],
+            "Pending Results": state["pending_results"],
+            "Counts": {
+                "records": len(state["records"]),
+                "sources": len(state["evidence_refs"]),
+                "artifacts": len(state["artifact_refs"]),
+                "verification_observations": len(state["verification_results"]),
+                **{kind: len(continuity.get(kind, [])) for kind in _CONTINUITY_KINDS},
+            },
+            "Recent Artifact IDs": artifact_ids[-8:],
+            "Evidence": evidence_summary(state, evidence_offset),
+        }
+    else:
+        packet = {
+            "ok": True,
+            "schema_version": state["schema_version"],
+            "Task": {
+                "id": state["task_id"],
+                "goal_preview": goal[:1024],
+                "goal_truncated": len(goal) > 1024,
+                "status": state["status"],
+                "revision": state["revision"],
+                "milestone": state["current_milestone"],
+            },
+            "Active Work": state["active_work"],
+            "Pending Results": state["pending_results"],
+            "Counts": {
+                "records": len(state["records"]),
+                "sources": len(state["evidence_refs"]),
+                "artifacts": len(state["artifact_refs"]),
+                "verification_observations": len(state["verification_results"]),
+            },
+            "Recent Artifact IDs": artifact_ids[-8:],
+            "Active Artifact Count": len(_artifact_activity(state["artifact_refs"])),
+            "Evidence Continuity": _continuity_status(state, evidence_offset),
+        }
+    if since_revision is not None:
+        packet["Changes Since"] = changes_since(state, since_revision)
+    return packet
 
 
-def task_status(root: Path, evidence_offset: int = 0) -> dict[str, object]:
+def task_status_packet(state: dict[str, object], evidence_offset: int = 0, *, view: str = "full",
+                       since_revision: int | None = None) -> dict[str, object]:
+    """Public packet builder for adapters that already hold a loaded state."""
+    return _task_status_packet(state, evidence_offset, view=view, since_revision=since_revision)
+
+
+def task_status(root: Path, evidence_offset: int = 0, *, view: str = "full",
+                since_revision: int | None = None) -> dict[str, object]:
     root = _repo_root(root)
     state = _load_state(root)
-    return _task_status_packet(state, evidence_offset)
+    return _task_status_packet(state, evidence_offset, view=view, since_revision=since_revision)
 
 
 def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, summary: str, *, producer: str | None = None, registered_by: str = "unspecified", scope: str | None = None, evidence_refs: list[str] | None = None, supersedes: list[str] | None = None) -> dict[str, object]:
@@ -1393,8 +1903,7 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
     _artifact_ref(root, draft, require_target=True)
     with _lock(root):
         state = _load_state(root, active=True)
-        if state["revision"] != base_revision:
-            raise ValueError("task revision conflict")
+        check_revision(state, base_revision)
         if artifact_id in _task_object_ids(state):
             raise ValueError("task object id already exists")
         known_sources = {str(item["id"]) for item in state["evidence_refs"]}
@@ -1453,8 +1962,7 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
     root = _repo_root(root)
     with _lock(root):
         state = _load_state(root, active=True)
-        if state["revision"] != base_revision:
-            raise ValueError("task revision conflict")
+        check_revision(state, base_revision)
         if result_id in _task_object_ids(state):
             raise ValueError("task object id already exists")
         if source_refs is not None and source_paths is not None:
@@ -1495,8 +2003,10 @@ def task_close(root: Path, base_revision: int, *, expected_task_id: str | None =
     root = _repo_root(root)
     with _lock(root):
         state = _load_state(root, active=True)
-        if state["revision"] != base_revision or (expected_task_id is not None and state["task_id"] != expected_task_id):
-            raise ValueError("task revision conflict")
+        if expected_task_id is not None and state["task_id"] != expected_task_id:
+            raise ThalirisError(_errors.TASK_IDENTITY_CONFLICT, "task revision conflict",
+                                details={"expected_task_id": expected_task_id, "task_id": state["task_id"]})
+        check_revision(state, base_revision)
         state["status"] = "DONE"
         state["revision"] = base_revision + 1
         _write_state(root, state)
@@ -1513,8 +2023,7 @@ def task_promote(root: Path, actor: str, base_revision: int, input_file: str | N
         raise ValueError("task-promote requires a non-empty records list")
     with _lock(root):
         state = _load_state(root, active=True)
-        if state["revision"] != base_revision:
-            raise ValueError("task revision conflict")
+        check_revision(state, base_revision)
         sources = {str(item["id"]): item for item in state["evidence_refs"]}
         artifacts = {str(item["id"]): item for item in state["artifact_refs"]}
         known_refs = set(sources) | set(artifacts)
@@ -1673,8 +2182,7 @@ def document_maintain(root: Path, actor: str, base_revision: int, input_file: st
         raise ValueError("invalid durable maintenance transaction")
     with _lock(root):
         state = _load_state(root, active=True)
-        if state["revision"] != base_revision:
-            raise ValueError("task revision conflict")
+        check_revision(state, base_revision)
         writes, deletes, selected = {}, [], set()
         inputs = []
         for kind in ("writes", "deletes"):

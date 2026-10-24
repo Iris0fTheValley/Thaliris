@@ -161,7 +161,10 @@ cd your-repository
 thaliris-core --root . init
 TASK_ID=$(thaliris-core --root . task-start "example task" | python -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
 thaliris-core --root . --task-id "$TASK_ID" task-status
+thaliris-core --root . --task-id "$TASK_ID" task-status --view compact --since-revision 1
 ```
+
+失败时输出 `{"ok": false, "error": ...}`；结构化错误另带稳定的 `code`、`recovery` 提示和有界的 `details`（`TASK_REVISION_CONFLICT` 会列出 base revision 之后追加的内容）。
 
 每个任务有独立的 Task ID，后续操作显式传入 `--task-id`。只安装 Core 不会启用多代理；需要原生集成时，按 [Codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md)、[DSH](https://github.com/Iris0fTheValley/Thaliris-dsh) 或 [Claude Code](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.md) 指南安装。
 

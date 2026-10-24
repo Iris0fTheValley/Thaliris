@@ -110,9 +110,9 @@ def evidence_status(entry: Entry, root: Path) -> tuple[str, list[str]]:
                 invalid.append(spec)
                 continue
             relative = str(candidate.relative_to(root)).replace("\\", "/")
-            tracked = subprocess.run(["git", "ls-files", "--error-unmatch", "--", relative], cwd=root, capture_output=True, text=True, check=False)
-            indexed = subprocess.run(["git", "rev-parse", "--verify", f":{relative}"], cwd=root, capture_output=True, text=True, check=False)
-            probe = subprocess.run(["git", "hash-object", "--", relative], cwd=root, capture_output=True, text=True, check=False)
+            tracked = subprocess.run(["git", "ls-files", "--error-unmatch", "--", relative], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+            indexed = subprocess.run(["git", "rev-parse", "--verify", f":{relative}"], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+            probe = subprocess.run(["git", "hash-object", "--", relative], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
             actual = probe.stdout.strip() if tracked.returncode == indexed.returncode == probe.returncode == 0 and indexed.stdout.strip().lower() == match.group(2).lower() else ""
         else:
             actual = sha256(candidate)

@@ -104,6 +104,14 @@ Core stores model-authored observations and judgments with opaque requirement an
 references, provenance and append-only history. It does not classify importance, infer
 acceptance, route work or prescribe approval, roles, stages, model calls or polling.
 
+To keep Controller round trips small, Core accepts batched judgments
+(`{"judgments": [...]}`) and observations (`{"observations": [...]}`) as one
+all-or-nothing append, returns a compact evidence summary (open-item totals always,
+items paged by `next_offset`) on request, and offers a compact `task-status` view with
+an optional `--since-revision` delta. A stale write is still refused under strict CAS;
+the `TASK_REVISION_CONFLICT` details name what was appended after the base revision so
+the Controller can decide whether its write still applies without a full status re-read.
+
 ## Context frequency, waiting and observation
 
 Keep normal Controller routing, handoffs, evidence reuse, Workstream endpoints,

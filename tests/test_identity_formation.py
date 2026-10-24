@@ -5,6 +5,7 @@ real ~/.thaliris, and nothing new is written inside the repository.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -488,3 +489,25 @@ def test_add_refuses_when_scan_truncated_and_never_overwrites(tmp_path: Path, mo
     with pytest.raises(core.ThalirisError):
         identity_basis._write_json_new(basis_dir / "N-0001.json", {"a": 1})
     assert (basis_dir / "N-0001.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("failure", ["eperm", "missing"])
+def test_note_write_falls_back_without_hard_links(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+    root = repo(tmp_path / "p")
+    establish(root)
+    if failure == "eperm":
+        def no_link(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.EPERM, "hard links unsupported")
+        monkeypatch.setattr(os, "link", no_link)
+    else:
+        monkeypatch.delattr(os, "link")
+    note(root, "First.")
+    note(root, "Second.")
+    basis_dir = home() / "projects" / identity_basis.project_key(root) / "identity-basis"
+    assert (basis_dir / "N-0001.json").is_file() and (basis_dir / "N-0002.json").is_file()
+    before = (basis_dir / "N-0001.json").read_bytes()
+    with pytest.raises(core.ThalirisError) as caught:
+        identity_basis._write_json_new(basis_dir / "N-0001.json", {"a": 1})
+    assert caught.value.code == errors.IDENTITY_NOTE_LIMIT
+    assert (basis_dir / "N-0001.json").read_bytes() == before
+    assert not [p for p in basis_dir.iterdir() if p.name.endswith(".new")]

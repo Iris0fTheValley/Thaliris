@@ -192,16 +192,39 @@ def _write_json(path: Path, value: dict[str, object]) -> None:
 
 
 def _write_json_new(path: Path, value: dict[str, object]) -> None:
-    """Write atomically but refuse to replace an existing file, so an id is never reused."""
+    """Create ``path`` without ever replacing an existing file, so an id is never reused.
+
+    Prefers a hard link from a fully written temp file (atomic); falls back to exclusive
+    create where hard links are unsupported.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    data = identity._json_bytes(value)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.new")
+    exists = _invalid(_errors.IDENTITY_NOTE_LIMIT, f"{path.name} already exists; refusing to overwrite")
     try:
         with open(temporary, "xb") as stream:
-            stream.write(identity._json_bytes(value)); stream.flush(); os.fsync(stream.fileno())
+            stream.write(data); stream.flush(); os.fsync(stream.fileno())
         try:
             os.link(temporary, path)
+            return
         except FileExistsError as exc:
-            raise _invalid(_errors.IDENTITY_NOTE_LIMIT, f"{path.name} already exists; refusing to overwrite") from exc
+            raise exists from exc
+        except (AttributeError, NotImplementedError, OSError):
+            pass
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+        try:
+            descriptor = os.open(path, flags, 0o666)
+        except FileExistsError as exc:
+            raise exists from exc
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(data); stream.flush(); os.fsync(stream.fileno())
+        except BaseException:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
     finally:
         try:
             os.unlink(temporary)

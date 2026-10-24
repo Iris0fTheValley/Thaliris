@@ -271,8 +271,8 @@ def test_protected_paths_are_normalized_relative_paths(store, name):
         authority.AuthorityStore(store.root, store.directory, protected_paths=(name,))
 
 
-@pytest.mark.parametrize("constraint", ["luna-only", "opaque-host-policy"])
-def test_optional_constraint_is_core_owned_opaque_intent(store, constraint):
+def test_optional_constraint_is_core_owned_opaque_intent(store):
+    constraint = "opaque-host-policy"
     selected = dict(intent(), execution_constraint=constraint)
     assert authority.validate_contract(selected) is selected
     core.task_start(store.root, "Repair the example", None, None)

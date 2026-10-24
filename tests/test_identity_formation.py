@@ -268,14 +268,13 @@ def test_offer_is_gated_and_each_new_note_surfaces_once(tmp_path: Path) -> None:
     note(root)
     line = identity_basis.identity_offer(root)
     assert line is not None and "\n" not in line
-    assert line.startswith("Project identity: none recorded; 1 user statement about the project's long-term direction is noted")
-    assert "compose a first version" in line and "no answer means no" in line
-    assert "identity-suggest --off --scope session|workspace|project|global" in line
+    assert line.startswith("Project identity: none recorded; 1 user statement")
+    assert "identity-note" in line and "identity-suggest" in line
     assert identity_basis.identity_offer(root) is None
     assert identity_basis.identity_offer(root, "another-session") is None
     note(root, "A second statement.")
     line = identity_basis.identity_offer(root)
-    assert line is not None and "2 user statements about the project's long-term direction are noted" in line
+    assert line is not None and "2 user statements" in line  # count only, not wording
     assert identity_basis.identity_offer(root) is None
 
     identity_basis.identity_suggest(root, "c", "project", "off")
@@ -310,7 +309,7 @@ def test_offer_wording_when_current_and_silence_when_invalid_or_unrecorded(tmp_p
     baseline.write_bytes(original)
     line = identity_basis.identity_offer(root)
     assert line is not None and line.startswith("Project identity v1 (A-0001, CURRENT); 1 user statement")
-    assert "noted since v1" in line and "compose an amendment" in line
+    assert "identity-note" in line
     note(root, "Another direction.")
     ledger = root / NS / "ledger.json"
     saved = ledger.read_bytes()

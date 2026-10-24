@@ -218,6 +218,17 @@ evidence makes that record legitimate. Models may create, edit, move, split,
 merge, or delete durable documents through normal repository changes; INDEX
 validation reports broken references without choosing a replacement.
 
+The `task-promote` input creates only new Markdown documents and refuses to
+overwrite an existing target. It may also update an existing `INDEX.md` under
+`.agent-memory/` or `.milestones/`, including nested namespaces. Each INDEX
+update supplies the complete content and its `base_sha256`; Core checks the
+baseline, size, and link references, then writes it through the backup path in
+the same transaction as the new documents. Each document's `source_refs` may
+cite only evidence or artifacts already recorded in the selected Task ID.
+Promotion uses task-revision CAS and does not advance that revision. Core does
+not impose semantic categories, evidence freshness or `CONFIRMED` thresholds,
+promotion quotas, or milestone fields.
+
 ### Verification and task surface
 
 Verification records command/tool identity, outcome, candidate identity,

@@ -882,7 +882,10 @@ def test_preflight_uses_current_codex_lifecycle_api(monkeypatch, tmp_path: Path)
 
 
 def test_preflight_exercises_installed_codex_adapter(tmp_path: Path, monkeypatch) -> None:
-    package = importlib.import_module("thaliris_codex")
+    package = pytest.importorskip(
+        "thaliris_codex",
+        reason="installed Thaliris-Codex adapter is required (see docs/host-neutral-packaging.md)",
+    )
     codex_adapter = importlib.import_module("thaliris_codex.codex_adapter")
     doctor = importlib.import_module("thaliris_codex.doctor")
     lifecycle = importlib.import_module("thaliris_codex.lifecycle")

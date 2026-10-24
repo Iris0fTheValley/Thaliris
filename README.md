@@ -164,7 +164,7 @@ thaliris-core --root . --task-id "$TASK_ID" task-status
 thaliris-core --root . --task-id "$TASK_ID" task-status --view compact --since-revision 1
 ```
 
-失败时输出 `{"ok": false, "error": ...}`；结构化错误另带稳定的 `code`、`recovery` 提示和有界的 `details`（`TASK_REVISION_CONFLICT` 会列出 base revision 之后追加的内容）。
+失败时输出 `{"ok": false, "error": ...}`；结构化错误另带稳定的 `code`、`recovery` 提示和有界的 `details`（`TASK_REVISION_CONFLICT` 带有有界、非精确的 `changes_since` 复核提示：revision 差距、较新的 records、最近的 handoff/observation/judgment（可能早于你的 base）以及待复核的未决证据）。
 
 每个任务有独立的 Task ID，后续操作显式传入 `--task-id`。只安装 Core 不会启用多代理；需要原生集成时，按 [Codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md)、[DSH](https://github.com/Iris0fTheValley/Thaliris-dsh) 或 [Claude Code](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.md) 指南安装。
 

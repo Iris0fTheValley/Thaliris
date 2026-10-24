@@ -108,9 +108,13 @@ To keep Controller round trips small, Core accepts batched judgments
 (`{"judgments": [...]}`) and observations (`{"observations": [...]}`) as one
 all-or-nothing append, returns a compact evidence summary (open-item totals always,
 items paged by `next_offset`) on request, and offers a compact `task-status` view with
-an optional `--since-revision` delta. A stale write is still refused under strict CAS;
-the `TASK_REVISION_CONFLICT` details name what was appended after the base revision so
-the Controller can decide whether its write still applies without a full status re-read.
+an optional `--since-revision` hint. A stale write is still refused under strict CAS;
+the `TASK_REVISION_CONFLICT` details carry a bounded, non-exact `changes_since` hint
+(`exact: false`: revision gap, records newer than the base, the last k handoffs,
+observations and judgments, which may predate the base, and the open evidence summary)
+so the Controller knows what to review before retrying. It is a hint, not a delta:
+persisted state carries no per-item revision, keeping Core 0.5.1 states readable by
+Core 0.5.0 when Hosts share one repository context directory.
 
 ## Context frequency, waiting and observation
 

@@ -1191,19 +1191,18 @@ _CONTINUITY_SCHEMAS = {
     "observations": {"id", "task_id", "producer", "candidate", "handoff_id", "requirement_refs", "source_refs", "text"},
     "judgments": {"id", "task_id", "producer", "candidate", "requirement_ref", "observation_refs", "outcome", "reasoning"},
 }
-# ``revision`` is an optional Core-assigned append stamp: the task revision at
-# which the item became visible. Items written before Core 0.5.1 lack it.
+# Persisted continuity objects must stay valid for Core 0.5.0, which validates
+# them strictly: no per-item stamps or other new fields are written.
 _CONTINUITY_OPTIONAL = {
-    "requirements": {"revision"},
-    "handoffs": {"durable_paths", "revision"},
-    "observations": {"native_actor", "submitted_by", "native_status", "native_status_conflict", "observed_state", "revision"},
-    "judgments": {"judgment_refs", "revision"},
+    "requirements": set(),
+    "handoffs": {"durable_paths"},
+    "observations": {"native_actor", "submitted_by", "native_status", "native_status_conflict", "observed_state"},
+    "judgments": {"judgment_refs"},
 }
 _JUDGMENT_OUTCOMES = ("satisfied", "unknown", "repair", "no-current-impact")
 _LABEL_EXPECTATION = "1-64 characters matching [A-Za-z0-9_.:-]+"
 CONTINUITY_BATCH_MAX = 64
 EVIDENCE_SUMMARY_MAX_BYTES = 1536
-CHANGES_SINCE_MAX_ITEMS = 32
 CHANGES_SINCE_MAX_BYTES = 2048
 
 
@@ -1324,9 +1323,6 @@ def _validate_continuity(state: dict[str, object]) -> None:
                 raise _continuity_error(_errors.CONTINUITY_ID_COLLISION, "task object id collision", kind, index, item,
                                         field="id", expected="unique among all task objects", extra=extra, recovery=recovery)
             owners[identifier] = (kind, item)
-            if "revision" in item and (type(item["revision"]) is not int or item["revision"] < 1):
-                raise _continuity_error(_errors.CONTINUITY_INVALID, "invalid continuity revision stamp", kind, index, item,
-                                        field="revision", expected="a positive integer assigned by Core", got=item["revision"])
             for field in sorted(fields - {"id", "parent_handoff_id", "requirement_refs", "source_refs", "observation_refs", "text", "reasoning"}):
                 label(kind, index, item, field, field)
             if kind == "requirements":
@@ -1501,12 +1497,7 @@ def evidence_summary(state: dict[str, object], offset: int = 0, *, max_bytes: in
     return response
 
 
-def _append_stamp(kind: str, item: dict[str, object]) -> int | None:
-    if kind == "verification_results":
-        value = item.get("observed_at_revision")
-        return value + 1 if type(value) is int else None
-    value = item.get("revision")
-    return value if type(value) is int else None
+CHANGES_SINCE_RECENT_MAX = 16
 
 
 def _change_entry(kind: str, item: dict[str, object]) -> object:
@@ -1517,77 +1508,48 @@ def _change_entry(kind: str, item: dict[str, object]) -> object:
     return item["id"]
 
 
-def changes_since(state: dict[str, object], base_revision: int, *, max_items: int = CHANGES_SINCE_MAX_ITEMS,
-                  max_bytes: int = CHANGES_SINCE_MAX_BYTES) -> dict[str, object]:
-    """Bounded summary of ledger objects appended after ``base_revision``.
+def changes_since(state: dict[str, object], base_revision: int, *, max_bytes: int = CHANGES_SINCE_MAX_BYTES,
+                  recent_max: int = CHANGES_SINCE_RECENT_MAX) -> dict[str, object]:
+    """Bounded review hint for what may have changed after ``base_revision``.
 
-    Uses per-item append stamps: continuity ``revision`` (Core >= 0.5.1),
-    record and artifact ``revision`` and verification ``observed_at_revision``.
-    Collections are append-only, so a backwards scan stops at the first item
-    stamped at or before the base. Unstamped continuity items predate the
-    earliest stamped one: Core <= 0.5.0 refuses to load a ledger that carries
-    stamps, so it cannot append after them. An unstamped item is therefore
-    known to be at or before the base only when the base is at least the
-    earliest continuity stamp minus one; otherwise the summary is
-    ``incomplete`` and Core does not guess. Replaced fields (Active Work,
-    Pending Results, milestone, status) and sources are not tracked here.
+    This is deliberately NOT an exact delta. Continuity objects carry no
+    per-item revision (adding one would make the state unreadable to Core
+    0.5.0), so Core cannot say which of them were appended after the base.
+    The hint is: ``revision_gap``; ``records`` whose stored revision is above
+    the base; ``recent`` = the last k handoffs/observations/judgments with
+    k = min(revision_gap, 16), which may include items older than the base;
+    and ``evidence`` = the open-evidence summary (unincorporated observations
+    and unresolved judgments: totals plus bounded items, paged by next_offset),
+    which is what a caller must review before retrying. ``exact`` is always false.
+    Replaced fields (Active Work, Pending Results, milestone, status) and
+    sources are not tracked here.
     """
     if type(base_revision) is not int or base_revision < 0:
         raise ThalirisError(_errors.REVISION_DELTA_INVALID, "invalid since revision",
                             details={"expected": "a non-negative integer revision", "got": _preview(base_revision)})
     current = state["revision"]
-    collections = (
-        ("requirements", state.get("evidence_continuity", {}).get("requirements", [])),
-        ("handoffs", state.get("evidence_continuity", {}).get("handoffs", [])),
-        ("observations", state.get("evidence_continuity", {}).get("observations", [])),
-        ("judgments", state.get("evidence_continuity", {}).get("judgments", [])),
-        ("records", state["records"]),
-        ("artifacts", state["artifact_refs"]),
-        ("verification_results", state["verification_results"]),
-    )
-    result: dict[str, object] = {"base_revision": base_revision, "current_revision": current,
-                                 "incomplete": False, "truncated": False, "counts": {}}
-    unstamped: list[str] = []
+    gap = max(current - base_revision, 0)
+    k = min(gap, recent_max)
+    continuity = state.get("evidence_continuity", {})
+    recent = {kind: [_change_entry(kind, item) for item in continuity.get(kind, [])[-k:]] if k else []
+              for kind in ("handoffs", "observations", "judgments")}
+    result: dict[str, object] = {
+        "base_revision": base_revision, "current_revision": current, "revision_gap": gap, "exact": False,
+        "records": [item["id"] for item in state["records"] if type(item.get("revision")) is int and item["revision"] > base_revision],
+        "recent": recent,
+    }
     if base_revision > current:
-        result.update(incomplete=True, reason="base revision is newer than the current revision")
-        return result
-    stamps = [item["revision"] for _, values in collections[:4] for item in values if type(item.get("revision")) is int]
-    legacy_known_before = (min(stamps) - 1) if stamps else None
-    found: list[tuple[str, list[dict[str, object]]]] = []
-    for kind, values in collections:
-        appended: list[dict[str, object]] = []
-        if base_revision < current:
-            for item in reversed(values):
-                stamp = _append_stamp(kind, item)
-                if stamp is None:
-                    if legacy_known_before is None or base_revision < legacy_known_before:
-                        unstamped.append(kind)
-                    break
-                if stamp <= base_revision:
-                    break
-                appended.append(item)
-        appended.reverse()
-        found.append((kind, appended))
-    budget = max_items
-    for kind, appended in found:
-        if not appended:
-            continue
-        result["counts"][kind] = len(appended)
-        shown = appended[:max(budget, 0)]
-        budget -= len(shown)
-        result[kind] = [_change_entry(kind, item) for item in shown]
-        if len(shown) < len(appended):
-            result["truncated"] = True
-    if unstamped:
-        result["incomplete"] = True
-        result["unstamped"] = unstamped
+        result["reason"] = "base revision is newer than the current revision"
+    result["truncated"] = False
+    # Bound the hint itself; open evidence is bounded and paged separately so
+    # it is never silently dropped (evidence.next_offset pages the rest).
     while _compact_size(result) > max_bytes:
-        lists = [(len(result[kind]), kind) for kind, _ in found if isinstance(result.get(kind), list) and result[kind]]
+        lists = [values for values in (recent["observations"], recent["judgments"], recent["handoffs"], result["records"]) if values]
         if not lists:
             break
-        _, largest = max(lists)
-        result[largest].pop()
+        max(lists, key=len).pop(0)
         result["truncated"] = True
+    result["evidence"] = evidence_summary(state)
     return result
 
 
@@ -1694,7 +1656,7 @@ def append_observations(state: dict[str, object], entries: list[tuple[str, dict[
 
 def _append_continuity_items(state: dict[str, object], additions: list[tuple[str, str | None, object]],
                              *, bump: bool = True) -> list[str]:
-    """Stamp, validate and commit continuity additions atomically in memory."""
+    """Validate and commit continuity additions atomically in memory."""
     stamp = state["revision"] + 1
     evidence_refs = copy.deepcopy(state["evidence_refs"])
     data = copy.deepcopy(state["evidence_continuity"]) if "evidence_continuity" in state else {name: [] for name in _CONTINUITY_KINDS}
@@ -1707,7 +1669,7 @@ def _append_continuity_items(state: dict[str, object], additions: list[tuple[str
                                     expected="a JSON object", extra={"batch_index": batch_index})
         item = dict(value)
         if "revision" in item:
-            raise _continuity_error(_errors.CONTINUITY_INVALID, "continuity revision is assigned by Core", kind, index, item,
+            raise _continuity_error(_errors.CONTINUITY_INVALID, "continuity objects carry no revision field", kind, index, item,
                                     field="revision", expected="omitted", extra={"batch_index": batch_index})
         if kind in {"observations", "judgments"}:
             if kind == "observations" and "sources" in item:
@@ -1721,7 +1683,6 @@ def _append_continuity_items(state: dict[str, object], additions: list[tuple[str
             if {"task_id", "producer"} & set(item):
                 raise ValueError("continuity producer and task are assigned by Core")
             item = {**item, "task_id": state["task_id"], "producer": actor}
-        item["revision"] = stamp
         data[kind].append(item)
         appended.append(item.get("id"))
     _validate_continuity({**state, "evidence_refs": evidence_refs, "evidence_continuity": data})
@@ -1740,8 +1701,7 @@ def task_evidence_register(root: Path, actor: str, base_revision: int, input_fil
 def _register_evidence_handoff(state: dict[str, object], record: dict[str, object]) -> None:
     """Append to an already locked adapter transaction; caller writes the state.
 
-    The caller bumps the revision once after this call; the handoff is stamped
-    with that next revision.
+    The caller bumps the revision once after this call.
     """
     _append_continuity_items(state, [("handoffs", None, record)], bump=False)
 

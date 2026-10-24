@@ -130,18 +130,27 @@ making each refusal actionable and each response small:
   keeps the historical message text. The CLI adds `code`, `recovery` and
   `details` beside `error`.
 - `TASK_REVISION_CONFLICT` carries `base_revision`, `current_revision` and a
-  bounded `changes_since` summary of handoffs, observations, judgments,
-  records, artifacts and verification results appended after the base.
-  Nothing is rebased or merged. Continuity objects carry an optional
-  Core-assigned `revision` append stamp; unstamped legacy items make the
-  summary `incomplete` rather than guessed.
+  bounded `changes_since` review hint. It is deliberately not an exact delta:
+  persisted state gains no new fields, because states written by Core 0.5.1
+  must stay valid for Core 0.5.0 (several Hosts may share one `.context`
+  during rollout or after a downgrade), and 0.5.0 rejects unknown fields on
+  continuity objects. The hint is `{base_revision, current_revision,
+  revision_gap, exact: false, records, recent, evidence}`: `records` are the
+  ids of records whose stored revision is above the base; `recent` holds the
+  last k handoff ids, observation `{id, handoff_id, requirement_refs}` and
+  judgment `{id, requirement_ref, outcome}` entries with
+  k = min(revision_gap, 16), and may include items older than the base;
+  `evidence` is the open-evidence summary (unincorporated observations and
+  unresolved judgments: totals plus bounded items, paged by `next_offset`),
+  which is what the Controller must review before retrying. Nothing is
+  rebased or merged.
 - `task-judge` accepts one judgment or `{"judgments": [...]}`; observation
   writes accept one observation or `{"observations": [...]}`. A batch
   validates all-or-nothing, keeps list order and costs one revision.
 - `task-status --view compact` returns the routing header, counts, Active Work,
   Pending Results, recent artifact ids and a compact evidence summary (totals
-  always, open items paged within a byte budget); `--since-revision N` adds a
-  bounded delta. The default full view is unchanged. Continuity writes accept
+  always, open items paged within a byte budget); `--since-revision N` adds the
+  same bounded, non-exact `changes_since` hint under `Changes Since`. The default full view is unchanged. Continuity writes accept
   `--compact-evidence` to return the same summary instead of a status re-read.
 - Task ids for continuity objects remain opaque and unique per task; adapters
   namespace child-chosen ids (for example `<handoff>.<id>`). A collision is

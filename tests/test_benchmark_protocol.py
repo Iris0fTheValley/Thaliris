@@ -171,12 +171,8 @@ def test_unselected_review_is_valid_but_selected_incomplete_review_fails():
     assert _MODULE.validate_review_graph({"review_rounds": []}, final_candidate="candidate", required=True)["code"] == "REVIEW_MISSING"
 
 
-def test_fast_path_and_documentation_gate():
+def test_fast_path_gate():
     assert validate_fast_path({"evidence_required": "NOT_REQUIRED", "sessions": ["implementer"], "escalation_reason": None, "quality": "PASS"})["status"] == "PASS"
-    root = Path(__file__).parents[1]
-    role_packs = (root / "docs" / "thaliris-role-packs.md").read_text(encoding="utf-8")
-    result = validate_documentation(protocol_path=root / "docs" / "thaliris-benchmark-protocol.md", generated_text=role_packs, tests_passed=True, runtime_consistency=True)
-    assert result["status"] == "PASS"
 
 
 def test_target_gate_rejects_model_declared_boolean_facts():

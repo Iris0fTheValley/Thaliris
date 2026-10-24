@@ -27,18 +27,11 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -e '.[test]'
       - run: python -c "from pathlib import Path; Path('results').mkdir(exist_ok=True)"
-      - name: Core authority regression
+      # Whole suite. Benchmark protocol and D11 collector tests need the pinned
+      # Codex adapter and run in the benchmark-sources job instead.
+      - name: Test suite
         if: ${{ !cancelled() }}
-        run: python -m pytest tests/test_core_authority.py --junitxml=results/core-authority.xml
-      - name: Mechanical Core regression
-        if: ${{ !cancelled() }}
-        run: python -m pytest tests/test_mechanical_core.py --junitxml=results/mechanical-core.xml
-      - name: Core CLI regression
-        if: ${{ !cancelled() }}
-        run: python -m pytest tests/test_core_cli.py --junitxml=results/core-cli.xml
-      - name: Evidence continuity regression
-        if: ${{ !cancelled() }}
-        run: python -m pytest tests/test_evidence_continuity.py --junitxml=results/evidence-continuity.xml
+        run: python -m pytest --ignore=tests/test_benchmark_protocol.py --ignore=tests/test_d11_collector.py --junitxml=results/core-tests.xml
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:

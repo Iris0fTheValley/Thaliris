@@ -191,6 +191,24 @@ def _write_json(path: Path, value: dict[str, object]) -> None:
     core._atomic_write(path, identity._json_bytes(value))
 
 
+def _write_json_new(path: Path, value: dict[str, object]) -> None:
+    """Write atomically but refuse to replace an existing file, so an id is never reused."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.new")
+    try:
+        with open(temporary, "xb") as stream:
+            stream.write(identity._json_bytes(value)); stream.flush(); os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise _invalid(_errors.IDENTITY_NOTE_LIMIT, f"{path.name} already exists; refusing to overwrite") from exc
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
 def _now() -> str:
     return identity._now().isoformat()
 
@@ -229,10 +247,12 @@ class _Basis:
     retractions: dict[str, dict[str, object]] = field(default_factory=dict)
     damaged: list[str] = field(default_factory=list)
     highest: int = 0
+    truncated: bool = False
+    retraction_damaged: set[str] = field(default_factory=set)
 
     def pending(self, current_version: int) -> list[str]:
         return sorted(identifier for identifier, note in self.notes.items()
-                      if identifier not in self.retractions and note["identity_version"] >= current_version)  # type: ignore[operator]
+                      if identifier not in self.retractions and identifier not in self.retraction_damaged and note["identity_version"] >= current_version)  # type: ignore[operator]
 
     def counts(self, current_version: int) -> dict[str, int]:
         return {"pending": len(self.pending(current_version)), "total": len(self.notes),
@@ -272,6 +292,7 @@ def _load_basis(store: _Store) -> _Basis:
         with os.scandir(directory) as entries:
             for count, entry in enumerate(entries, start=1):
                 if count > 2 * MAX_NOTES + 64:
+                    basis.truncated = True
                     basis.damaged.append(f"identity-basis: exceeds {2 * MAX_NOTES + 64} entries; the rest is unread")
                     break
                 names.append(entry.name)
@@ -291,6 +312,8 @@ def _load_basis(store: _Store) -> _Basis:
             (_check_retraction if side else _check_note)(identifier, value)
         except _Damaged:
             basis.damaged.append(name)
+            if side:
+                basis.retraction_damaged.add(identifier)
             continue
         (basis.retractions if side else basis.notes)[identifier] = value
     for orphan in sorted(set(basis.retractions) - set(basis.notes)):
@@ -387,17 +410,19 @@ def identity_note(root: Path, actor: str, input_file: str | dict[str, object] | 
             record: dict[str, object] = {"format": RETRACTION_FORMAT, "note": identifier, "reason": reason,
                                          "recorded_at": _now(), "actor": actor, "task_id": task_id}
             _ensure_project_file(store)
-            _write_json(store.basis_dir / f"{identifier}.retraction.json", record)
+            _write_json_new(store.basis_dir / f"{identifier}.retraction.json", record)
             basis.retractions[identifier] = record
             return {"ok": True, "retracted": identifier, "retraction": record, "task_id": task_id,
                     "basis": basis.counts(current_version)}
+        if basis.truncated:
+            raise _invalid(_errors.IDENTITY_NOTE_LIMIT, "identity basis directory exceeds the scan limit; refusing to allocate a note id")
         if len(basis.notes) >= MAX_NOTES or basis.highest >= MAX_NOTE_NUMBER:
             raise _invalid(_errors.IDENTITY_NOTE_LIMIT, f"identity basis holds at most {MAX_NOTES} notes (ids up to N-{MAX_NOTE_NUMBER})")
         identifier = f"N-{basis.highest + 1:04d}"
         record = {"format": NOTE_FORMAT, "id": identifier, **fields, "recorded_at": _now(), "actor": actor,
                   "task_id": task_id, "identity_version": current_version}
         _ensure_project_file(store)
-        _write_json(store.basis_dir / f"{identifier}.json", record)
+        _write_json_new(store.basis_dir / f"{identifier}.json", record)
         basis.notes[identifier] = record
         basis.highest += 1
     return {"ok": True, "note": record, "pending": True, "task_id": task_id, "basis": basis.counts(current_version)}
@@ -415,6 +440,8 @@ def identity_note_list(root: Path, *, include_retracted: bool = False) -> dict[s
         if retraction is not None and not include_retracted:
             continue
         entry = {**basis.notes[identifier], "pending": identifier in pending, "retracted": retraction is not None}
+        if identifier in basis.retraction_damaged:
+            entry["retraction_damaged"] = True
         if retraction is not None:
             entry["retraction"] = {key: retraction[key] for key in ("reason", "recorded_at", "actor", "task_id")}
         notes.append(entry)
@@ -517,7 +544,7 @@ def identity_suggest(root: Path, actor: str, scope: str, setting: str, *, sessio
         session_key = _session_key(session_key)
     if scope == "session" and session_key is None:
         raise ThalirisError(_errors.IDENTITY_PREFERENCE_INVALID, "session scope requires the adapter's native session key",
-                            recovery="pass --session-key")
+                            recovery="supply the adapter's native session key for session scope")
     store = _store(root)
     path = _preference_path(store, scope, session_key)
     if setting == "clear":

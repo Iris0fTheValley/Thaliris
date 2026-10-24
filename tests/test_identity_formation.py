@@ -456,3 +456,35 @@ def test_cli_note_reads_stdin(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     assert cli.main(["--root", str(root), "identity-note", "--actor", "c", "--input", "-"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["note"]["quote"] == "From stdin." and out["note"]["kind"] == "direction"
+
+
+def test_damaged_retraction_note_is_never_pending_or_offered(tmp_path: Path) -> None:
+    root = repo(tmp_path / "p")
+    establish(root)
+    note(root, "Valid statement.")
+    basis_dir = home() / "projects" / identity_basis.project_key(root) / "identity-basis"
+    (basis_dir / "N-0001.retraction.json").write_text("{not json", encoding="utf-8")
+    status = identity.identity_status(root)
+    assert status["basis"] == {"pending": 0, "total": 1, "retracted": 0, "damaged": 1}
+    assert identity_basis.identity_offer(root) is None
+    entry = identity_basis.identity_note_list(root)["notes"][0]
+    assert entry["pending"] is False and entry["retracted"] is False and entry["retraction_damaged"] is True
+
+
+def test_add_refuses_when_scan_truncated_and_never_overwrites(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = repo(tmp_path / "p")
+    establish(root)
+    note(root, "First.")
+    basis_dir = home() / "projects" / identity_basis.project_key(root) / "identity-basis"
+    before = (basis_dir / "N-0001.json").read_bytes()
+    monkeypatch.setattr(identity_basis, "MAX_NOTES", 1)
+    for index in range(70):
+        (basis_dir / f"junk-{index}.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(core.ThalirisError) as caught:
+        note(root, "Second.")
+    assert caught.value.code == errors.IDENTITY_NOTE_LIMIT
+    assert (basis_dir / "N-0001.json").read_bytes() == before
+    # The write itself refuses to replace an existing file.
+    with pytest.raises(core.ThalirisError):
+        identity_basis._write_json_new(basis_dir / "N-0001.json", {"a": 1})
+    assert (basis_dir / "N-0001.json").read_bytes() == before

@@ -262,6 +262,17 @@ Task Authority, and are refused by `rollback`. Reading Core's own bounded
 metadata confers no identity authority. See
 [Project identity](docs/thaliris-project-identity.md).
 
+Identity can form naturally (Core 0.5.2). The Controller records the user's own
+explicit long-term statements verbatim as basis notes, and an offer to compose a
+version surfaces mechanically once per new pending note, after a successful task
+close, unless suggestion preferences (session > workspace > project > global >
+default on) turn it off. Notes, preferences and offer state live outside the
+repository under `THALIRIS_HOME` (default `~/.thaliris`), keyed by the Git common
+directory so worktrees share them; they are machine-local and never make the
+identity INVALID. Recording still happens only through `identity-amend`, whose
+`human_instruction` quotes the user's confirmation and the cited basis. Nothing
+is added to the identity namespace and its formats are unchanged.
+
 ## Retained guarantees
 
 - Git-native persistence

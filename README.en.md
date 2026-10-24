@@ -18,7 +18,7 @@ Thaliris builds on the native Agent capabilities of Hosts such as Codex, DeepSee
 
 > **Status: Beta.** Real refactoring work has shown an implementer dispatching an investigation, a Controller starting an independent review, and counterevidence driving repairs. The sample is too small to establish a general quality or cost advantage. See [empirical observations](#empirical-observations).
 >
-> **Versions:** this document describes the source versions on each repository's `main` branch: Core 0.5.1, Codex adapter 0.5.1, Claude Code plugin 0.4.1 and DSH plugin 0.3.1. Version numbers describe source, not an installation on a given machine; updated files in a repository or on disk do not prove that a running Host has loaded the new version.
+> **Versions:** this document describes the source versions on each repository's `main` branch: Core 0.5.2, Codex adapter 0.5.1, Claude Code plugin 0.4.1 and DSH plugin 0.3.1. Version numbers describe source, not an installation on a given machine; updated files in a repository or on disk do not prove that a running Host has loaded the new version.
 
 ## Why more than context management
 
@@ -93,7 +93,7 @@ From the top down, project identity constrains tasks, task authority constrains 
 
 There is one shared Core. Core does not run models, schedule Agents or authenticate callers; native execution belongs to each Adapter.
 
-**Project identity** (Core 0.5.0, optional): the Git-tracked `.project-identity/` namespace holds a versioned, project-level, cross-task baseline (identity, invariants, principles, directions, non-goals) that changes only through an explicit amendment recording the human owner's decision. Evidence against identity is recorded as a challenge, and purpose relations for significant decisions can be registered and traced. Core records, versions, validates references and observes divergence; it makes no semantic judgment and propagates nothing. Projects without an identity behave exactly as before. See [Project identity](https://github.com/Iris0fTheValley/Thaliris/blob/main/docs/thaliris-project-identity.md).
+**Project identity** (Core 0.5.0, optional): the Git-tracked `.project-identity/` namespace holds a versioned, project-level, cross-task baseline (identity, invariants, principles, directions, non-goals) that changes only through an explicit amendment recording the human owner's decision. Evidence against identity is recorded as a challenge, and purpose relations for significant decisions can be registered and traced. Core records, versions, validates references and observes divergence; it makes no semantic judgment and propagates nothing. Projects without an identity behave exactly as before. Since Core 0.5.2 identity can form naturally: the Controller records the user's own explicit long-term statements verbatim as basis notes (`identity-note`), a successful task close may surface a one-time offer to compose a version for the user's confirmation (`identity-offer`), and the user can turn offers off per session, workspace, project or globally (`identity-suggest`). These records stay on this machine under `THALIRIS_HOME` (default `~/.thaliris`) and do not travel with a clone; formal recording still goes only through an amendment. See [Project identity](https://github.com/Iris0fTheValley/Thaliris/blob/main/docs/thaliris-project-identity.md).
 
 ## Role capabilities and recommended models
 

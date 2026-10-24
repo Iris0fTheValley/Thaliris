@@ -162,7 +162,13 @@ def _repo_root(root: Path) -> Path:
 @contextmanager
 def _lock(root: Path):
     """Serialize context operations until the current holder releases the lock."""
-    path = _safe(root, ".context/context.lock")
+    with _file_lock(_safe(root, ".context/context.lock")):
+        yield
+
+
+@contextmanager
+def _file_lock(path: Path):
+    """Hold an exclusive OS lock on ``path`` (created if needed) until release."""
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = path.open("a+b")
     acquired = False

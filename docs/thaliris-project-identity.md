@@ -168,6 +168,10 @@ Every response is one JSON object; exit 0 when `ok`, 2 on refusal (`{"ok": false
   `open_challenges[{id, targets, summary}]`, `open_challenges_total`,
   `challenges_total`, `relations_total`, `relations_active`, `summary`, `truncated`
   and optional `detail[]`. Bounded to 16 KiB, at most 64 items and 16 open challenges.
+  Since Core 0.5.2 it also returns `basis{pending, total, retracted, damaged}` and
+  `suggestions{enabled, source}` from the machine-local formation store (see
+  [Natural formation](#natural-formation-basis-notes-offer-preferences)); they never change
+  `state`. `--session-key K` / `session_key=` lets session-scope preferences resolve.
 - `identity.identity_summary(root) -> str | None`: the same `summary` line, `None`
   when absent, for example
   `Project identity v3 (A-0003, CURRENT); 1 open challenge. Read on demand: identity-get.`
@@ -230,6 +234,131 @@ atomic-write path, and record `task_id`, `actor` and a UTC `recorded_at`. Each r
 Bounds: ≤ 512 challenges, ≤ 2048 relations including retracted, ≤ 64 adds and 64
 retractions per request, ≤ 1000 versions.
 
+## Natural formation: basis notes, offer, preferences
+
+Core 0.5.2 lets a project's identity form from what the user already says during normal
+work, with one-time confirmation instead of a setup questionnaire, and without nagging.
+The semantics stay with the owning Controller (whether a statement is an explicit
+long-term statement by the user, how a draft is composed); Core only stores, counts,
+gates and resolves preferences mechanically. Python API: `from thaliris import identity_basis`.
+
+Nothing here touches `.project-identity/` or the repository: no draft `IDENTITY.md` is
+written, no ref prefix is added, and the identity chain, amendment, challenge and relation
+formats are unchanged, so Core 0.5.0/0.5.1 read every identity state 0.5.2 produces
+exactly as before. Formal identity still changes only through `identity-amend`.
+
+### Storage (outside the repository, this machine only)
+
+The root is `THALIRIS_HOME`, else `~/.thaliris`; directories are created lazily on the
+first write that needs them (reads, status and an offer with no notes create nothing).
+
+```text
+$THALIRIS_HOME/
+  preferences.json                                   global suggestion preference
+  sessions/<sha256(session key)>.json                session preference
+  workspaces/<workspace key>/preferences.json        this checkout on this machine
+  projects/<project key>/project.json                diagnostics: root path and Git common dir
+  projects/<project key>/preferences.json            project preference (all worktrees)
+  projects/<project key>/offer-state.json            highest note id an offer was shown for
+  projects/<project key>/identity-basis/N-0001.json  immutable basis note
+  projects/<project key>/identity-basis/N-0001.retraction.json
+```
+
+- **project key**: sha256 of the resolved `git rev-parse --git-common-dir`, so every
+  worktree of one repository shares notes, the project preference and the offer state.
+  Outside Git, or when Git is unavailable, it is the sha256 of the resolved project root.
+- **workspace key**: sha256 of the resolved project root (one checkout on one machine).
+- Writes are atomic (temp file + replace) under a per-project lock; files are bounded
+  (64 KiB each, at most 4096 notes, ids `N-0001`..`N-9999`, monotonic, never reused).
+- A damaged file is reported, never raised into close or session flows, and never makes
+  the identity `INVALID`: `identity-status` counts it in `basis.damaged` or lists the
+  scope in `suggestions.damaged`, `identity-note --list` names it in `damaged_files`,
+  and the offer returns nothing.
+
+### Basis notes: `identity-note`
+
+`thaliris-core identity-note --actor A --input FILE|-` /
+`identity_basis.identity_note(root, actor, input)` (path, `-` or dict). No ACTIVE task is
+required; with `--task-id` naming an ACTIVE task its id is recorded, otherwise `task_id` is
+null. Controller-only in every adapter.
+
+- Add: `{quote, kind?, context?, refs?}`. `quote` is the user's verbatim words (non-empty,
+  ≤ 8 KiB UTF-8, no control characters except newline and tab; CRLF is stored as LF).
+  `kind` is one of `purpose|direction|constraint|non-goal|decision|rejection|material|other`
+  (default `other`). `context` (≤ 300 characters, one line) is the recorder's own framing,
+  stored and shown as such, never as the user's words. `refs` (≤ 16 unique one-line strings
+  of ≤ 1024 characters, for example `path:docs/vision.md`, `task:<id>`, `url:...`) are
+  free-form and never resolved. Unknown fields are refused. The stored record adds `format`,
+  `id`, `recorded_at` (UTC), `actor`, `task_id` and `identity_version` (the recorded
+  version at recording time; 0 when ABSENT or unreadable). Returns `{note, pending,
+  task_id, basis}`.
+- Retract: `{retract: "N-000k", reason}` writes a separate immutable retraction (for a
+  wrong recording or the user withdrawing the statement). Returns `{retracted, retraction,
+  task_id, basis}`.
+- List: `identity-note --list [--include-retracted]` /
+  `identity_basis.identity_note_list(root, include_retracted=False)` returns `{identity_state,
+  identity_version, notes[...record, pending, retracted, retraction?], omitted, truncated,
+  basis, notice, damaged_files?}`, oldest first, at most 64 KiB (oldest omitted first).
+- **pending** = not retracted AND `identity_version >= current recorded version`. After an
+  amendment, older notes stop being pending; while ABSENT every non-retracted note is.
+- Errors use stable codes: `IDENTITY_NOTE_INVALID`, `IDENTITY_NOTE_NOT_FOUND`,
+  `IDENTITY_NOTE_ALREADY_RETRACTED`, `IDENTITY_NOTE_LIMIT`.
+
+### Suggestion preferences: `identity-suggest`
+
+`thaliris-core identity-suggest --actor A (--on|--off|--clear) --scope
+session|workspace|project|global [--session-key K]` /
+`identity_basis.identity_suggest(root, actor, scope, setting, session_key=None)` with
+`setting` `on|off|clear`. Set only on the user's words. Session scope needs the adapter's
+native session key; session files untouched for 30 days are pruned opportunistically when a
+session preference is written. Resolution: session > workspace > project > global >
+default on; status reports `{enabled, source}` with `source` one of
+`session|workspace|project|global|default`. `--clear` removes that scope's setting (and
+also removes a damaged preference file). Invalid input: `IDENTITY_PREFERENCE_INVALID`.
+
+Off suppresses only the proactive offer. Notes are still recorded and listed, and facts
+(the identity summary line, `INVALID`, `UNRECORDED_CHANGE`) are never suppressed.
+
+### The offer: selective, at a natural pause, mechanically once
+
+`identity_basis.identity_offer(root, session_key=None) -> str | None` (CLI:
+`identity-offer [--session-key K]` returns `{ok, identity_offer: line|null}`). It returns
+one line only when suggestions resolve to enabled (and no consulted preference file is
+damaged); the identity state is `ABSENT` or `CURRENT` (never `INVALID` or
+`UNRECORDED_CHANGE`, which are facts reported elsewhere); at least one note is pending;
+and the highest pending note id is above the one last shown. It records that id in
+`offer-state.json` before returning the line, so each new piece of user basis surfaces at
+most once across all sessions, closes and worktrees. It never raises; any failure returns
+None. Adapters call it only after a successful task close and attach the line as an
+`identity_offer` field; there is no suggestion line at SessionStart, bootstrap or dynamic
+context, and existing identity summary lines are unchanged.
+
+Wording (one line, English, low priority), for example:
+
+- ABSENT: `Project identity: none recorded; 2 user statements about the project's long-term
+  direction are noted (identity-note --list). Optional: offer once, briefly, to compose a
+  first version from them for the user's confirmation; no answer means no. To stop these
+  offers: identity-suggest --off --scope session|workspace|project|global.`
+- CURRENT: `Project identity v3 (A-0003, CURRENT); 1 user statement about the project's
+  long-term direction noted since v3 (identity-note --list). Optional: offer once, briefly,
+  to compose an amendment from them for the user's confirmation; no answer means no. To
+  stop these offers: ...`
+
+### Formal recording and limits
+
+- Recording is unchanged: `identity-amend` (base_version 0 for v1) still needs an ACTIVE
+  task, CAS and an explicit user decision. The Controller shows the composed text with the
+  user's quotes and its own organization marked apart; on the user's yes it quotes the
+  confirmation and the cited basis quotes (with dates or `N-` ids) verbatim inside
+  `decision.human_instruction`, so the tracked amendment record carries the basis. If the
+  user's original statement already said to make it part of the project identity, that
+  statement is the decision.
+- Notes are local to this machine: they are not committed, do not travel with a clone and
+  are not shared with collaborators. The durable, shared basis is what an amendment quotes
+  in `human_instruction`.
+- Notes are not identity. They confer no authority, are never injected into children, and
+  a note's `identity_version` is a counter for pending, not a reference into the chain.
+
 ## Suggested IDENTITY.md skeleton (not enforced)
 
 ```markdown
@@ -280,9 +409,20 @@ Adapters deliver this in their own Controller guidance; the wording here is Host
 - **Relations.** Register relations only for significant decisions, designs and
   experiments. Trace covers registered relations only; absence of a relation is not
   evidence of independence.
-- **Boundaries.** Legacy memory labels confer nothing. Absent identity is normal: you
-  may suggest establishing one, only on the user's decision. Amendment is not memory
-  promotion. An amendment never rewrites a running task's frozen contract.
+- **Boundaries.** Legacy memory labels confer nothing. Absent identity is normal.
+  Amendment is not memory promotion. An amendment never rewrites a running task's frozen
+  contract.
+- **Natural formation.** Record a basis note only for an explicit statement by the user
+  (in this conversation) about the project's long-term purpose, direction, constraint or
+  non-goal, or an explicit decision or rejection of one; quote it verbatim. Not AI
+  inferences, tentative "maybe", temporary technical choices, summaries, or child reports
+  of what the user said. One runner call; never pause the current task for it. If the
+  user supplies material (a few sentences, a goal, a document) and asks to record it, that
+  is the decision: amend; otherwise note it (a document via `refs`). Offer to compose a
+  version only when an `identity_offer` line appears (or the user is plainly describing
+  what a new project is for), at most once, never blocking; no answer means no. On "don't
+  ask again", run `identity-suggest --off` at the scope the user named (unstated: session,
+  and mention the other scopes in one short line).
 - **Writes.** Identity mutations are Controller-only. Where an adapter cannot prevent a
   child from editing `.project-identity/`, detection is `UNRECORDED_CHANGE` or
   `INVALID` plus Git diff.

@@ -949,9 +949,17 @@ def _summary_line(ctx: _Context) -> str | None:
     return line + " Read on demand: identity-get."
 
 
-def identity_status(root: Path) -> dict[str, object]:
-    """Bounded observation of the project identity namespace; never writes."""
+def identity_status(root: Path, *, session_key: str | None = None) -> dict[str, object]:
+    """Bounded observation of the project identity namespace; never writes.
+
+    ``basis`` and ``suggestions`` report the machine-local formation store
+    (see ``identity_basis``); they never change ``state``.
+    """
+    from . import identity_basis  # identity_basis builds on this module
+
     root = core._repo_root(root)
+    if session_key is not None:
+        session_key = identity_basis._session_key(session_key)
     ctx = _load(root)
     last = None
     if ctx.ledger is not None:
@@ -987,6 +995,7 @@ def identity_status(root: Path) -> dict[str, object]:
         if ctx.invalid_scope:
             detail[0] = f"scope: {ctx.invalid_scope}; {detail[0]}"[:300]
         out["detail"] = detail
+    out["basis"], out["suggestions"] = identity_basis.status_fields(root, ctx.version, session_key)
     while _response_size(out) > STATUS_MAX_BYTES and (out["items"] or out["open_challenges"]):
         listed_items, listed_challenges = out["items"], out["open_challenges"]
         assert isinstance(listed_items, list) and isinstance(listed_challenges, list)
@@ -997,8 +1006,7 @@ def identity_status(root: Path) -> dict[str, object]:
 
 def identity_summary(root: Path) -> str | None:
     """One plain line for adapter navigation; None when no identity is recorded."""
-    summary = identity_status(root)["summary"]
-    return summary if isinstance(summary, str) else None
+    return _summary_line(_load(core._repo_root(root)))
 
 
 def _version_response(ctx: _Context, version: int, text: str, sha256: str) -> dict[str, object]:

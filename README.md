@@ -18,7 +18,7 @@ Thaliris 不另造 Agent Runtime，而是建在 Codex、DeepSeek Harness、Claud
 
 > **状态：Beta。** 在真实的复杂重构任务上，已经观察到实现者自主派发调查、Controller 发起独立审查、反证推动修复的完整链路。样本量还小，不足以证明普遍的质量或成本优势。见[实测观察](#实测观察)。
 >
-> **版本：** 本文描述各仓库 `main` 分支上的源码版本：Core 0.5.1、Codex adapter 0.5.1、Claude Code plugin 0.4.1、DSH plugin 0.3.1。版本号描述源码，不描述某台机器上的安装；仓库或磁盘上的文件更新，也不证明正在运行的 Host 已经加载新版本。
+> **版本：** 本文描述各仓库 `main` 分支上的源码版本：Core 0.5.2、Codex adapter 0.5.1、Claude Code plugin 0.4.1、DSH plugin 0.3.1。版本号描述源码，不描述某台机器上的安装；仓库或磁盘上的文件更新，也不证明正在运行的 Host 已经加载新版本。
 
 ## 为什么不止于上下文管理
 
@@ -93,7 +93,7 @@ Controller 明确处置：已满足 / 未知 / 需修复 / 已不再相关
 
 只有一套共享 Core。Core 不运行模型、不调度 Agent、不认证调用者；原生执行由各 Adapter 负责。
 
-**项目身份**（Core 0.5.0 起，可选）：受 Git 跟踪的 `.project-identity/` 保存项目级、跨任务的身份基线（身份、不变量、原则、方向、非目标），带版本，只能通过记录了人类所有者决定的显式 amendment 修改；证据对身份的质疑记为 challenge，重要决策的目的关系可以登记并追溯。Core 只记录、版本化、校验引用并观察偏离，不做语义判断，也不自动传播；没有身份的项目行为完全不变。见 [项目身份](docs/thaliris-project-identity.md)。
+**项目身份**（Core 0.5.0 起，可选）：受 Git 跟踪的 `.project-identity/` 保存项目级、跨任务的身份基线（身份、不变量、原则、方向、非目标），带版本，只能通过记录了人类所有者决定的显式 amendment 修改；证据对身份的质疑记为 challenge，重要决策的目的关系可以登记并追溯。Core 只记录、版本化、校验引用并观察偏离，不做语义判断，也不自动传播；没有身份的项目行为完全不变。Core 0.5.2 起身份可以自然形成：Controller 把用户自己明确说出的长期方向逐字记为 basis note（`identity-note`），任务成功关闭后最多一次地提示可整理成一版供用户确认（`identity-offer`），用户可按 session / workspace / project / global 关闭提示（`identity-suggest`）；这些记录只存于本机 `THALIRIS_HOME`（默认 `~/.thaliris`），不随克隆迁移，正式记录仍只走 amendment。见 [项目身份](docs/thaliris-project-identity.md)。
 
 ## 角色能力与推荐模型
 

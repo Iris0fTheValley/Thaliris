@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import __version__, core, identity
+from . import __version__, core, identity, identity_basis
 
 
 _IDENTITY_MUTATIONS = ("identity-amend", "identity-challenge", "identity-relate")
@@ -70,7 +70,8 @@ def _parser() -> argparse.ArgumentParser:
     command.add_argument("--expected-task-id")
     command = commands.add_parser("rollback")
     command.add_argument("backup")
-    commands.add_parser("identity-status")
+    command = commands.add_parser("identity-status")
+    command.add_argument("--session-key", help="adapter's native session key, for session-scope suggestion preference")
     command = commands.add_parser("identity-get")
     command.add_argument("--version", type=int)
     command.add_argument("--item", action="append")
@@ -85,6 +86,20 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--actor", required=True)
         command.add_argument("--base-revision", type=int, required=True)
         command.add_argument("--input", required=True)
+    command = commands.add_parser("identity-note")
+    command.add_argument("--actor")
+    command.add_argument("--input", help="FILE or - : {quote, kind?, context?, refs?} or {retract, reason}")
+    command.add_argument("--list", action="store_true")
+    command.add_argument("--include-retracted", action="store_true")
+    command = commands.add_parser("identity-suggest")
+    command.add_argument("--actor", required=True)
+    setting = command.add_mutually_exclusive_group(required=True)
+    for value in ("on", "off", "clear"):
+        setting.add_argument(f"--{value}", dest="setting", action="store_const", const=value)
+    command.add_argument("--scope", choices=identity_basis.SCOPES, required=True)
+    command.add_argument("--session-key")
+    command = commands.add_parser("identity-offer")
+    command.add_argument("--session-key")
     return parser
 
 
@@ -128,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
         elif name == "task-close":
             out = core.task_close(root, args.base_revision, expected_task_id=args.expected_task_id)
         elif name == "identity-status":
-            out = identity.identity_status(root)
+            out = identity.identity_status(root, session_key=args.session_key)
         elif name == "identity-get":
             out = identity.identity_get(root, version=args.version, items=args.item,
                                         amendment=args.amendment, challenge=args.challenge)
@@ -136,6 +151,19 @@ def main(argv: list[str] | None = None) -> int:
             out = identity.identity_trace(root, args.ref, args.direction, args.depth)
         elif name in _IDENTITY_MUTATIONS:
             out = getattr(identity, name.replace("-", "_"))(root, args.actor, args.base_revision, args.input)
+        elif name == "identity-note":
+            if args.list == (args.input is not None):
+                raise ValueError("identity-note takes exactly one of --input or --list")
+            if args.list:
+                out = identity_basis.identity_note_list(root, include_retracted=args.include_retracted)
+            else:
+                if args.actor is None or args.include_retracted:
+                    raise ValueError("identity-note --input requires --actor and takes no --include-retracted")
+                out = identity_basis.identity_note(root, args.actor, args.input)
+        elif name == "identity-suggest":
+            out = identity_basis.identity_suggest(root, args.actor, args.scope, args.setting, session_key=args.session_key)
+        elif name == "identity-offer":
+            out = {"ok": True, "identity_offer": identity_basis.identity_offer(root, args.session_key)}
         else:
             out = core.rollback(root, args.backup)
         print(json.dumps(out, sort_keys=True, indent=2 if args.pretty else None))

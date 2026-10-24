@@ -4,16 +4,21 @@
 
 **注意力才是最贵的资源。**
 
-Thaliris 是一个面向 AI 编程 Agent 的**认知编排层**。它不负责把上下文压短，它要解决的是长程任务里的两个问题：
+Thaliris 是一个面向 AI 编程 Agent 的**认知编排层**。它不负责把上下文压短，它要解决的是长程工作里的三个问题：
 
 - **强模型的注意力被噪声稀释。** 探索、调试和日志不应留在负责关键判断的那条推理轨迹里。
 - **原始需求和反证在交接中消失。** 一个局部“完成”的报告，不应悄悄覆盖掉此前已经发现的问题。
+- **项目身份在长期工作中漂移。** 项目为什么存在、什么不能变，不应被一次次局部任务、实验或实现限制悄悄改写。
+
+三者是一条因果链，起点是注意力稀释。为了保护关键推理，工作必须拆给上下文全新的 Agent，并跨越多个会话；拆分保住了注意力，也制造了交接边界。在一个任务之内，反证容易在边界上丢失；在任务之间，如果没有谁持有“项目是为了什么”，每次局部决定都可能把一个实现限制当成新原则，项目身份就这样一点点漂移。反过来，丢失的证据和漂移的身份又会把旧问题和噪声带回关键推理里。所以 Thaliris 不只隔离噪声，还明确规定隔离之后什么必须跨越边界、由谁持有。
 
 > **Protect the reasoning. Isolate the noise. Isolation without amnesia.**
 
-Thaliris 不另造 Agent Runtime，而是建在 Codex、DeepSeek Harness、Claude Code 这些 Host 的原生 Agent 能力之上，补上隔离、交接和证据连续性这一层。
+Thaliris 不另造 Agent Runtime，而是建在 Codex、DeepSeek Harness、Claude Code 这些 Host 的原生 Agent 能力之上，补上隔离、交接、证据连续性和项目身份这一层。
 
 > **状态：Beta。** 在真实的复杂重构任务上，已经观察到实现者自主派发调查、Controller 发起独立审查、反证推动修复的完整链路。样本量还小，不足以证明普遍的质量或成本优势。见[实测观察](#实测观察)。
+>
+> **版本：** 本文描述各仓库 `main` 分支上的源码版本：Core 0.5.1、Codex adapter 0.5.1、Claude Code plugin 0.4.1、DSH plugin 0.3.1。版本号描述源码，不描述某台机器上的安装；仓库或磁盘上的文件更新，也不证明正在运行的 Host 已经加载新版本。
 
 ## 为什么不止于上下文管理
 
@@ -62,16 +67,29 @@ Controller 明确处置：已满足 / 未知 / 需修复 / 已不再相关
 
 ### 3. 语义归模型，机械归 Thaliris
 
-机械层负责身份、来源、版本、连续性和有界检索；语义判断交给模型。结论都带来源（文件 hash、Git blob、测试观察）；freshness 只说明这些来源没变，不说明所有依赖都没变。证据不足时保持 `UNKNOWN`，不把推测升级为确认。
+机械层负责原生 Agent 身份、来源、版本、连续性和有界检索；语义判断交给模型。结论都带来源（文件 hash、Git blob、测试观察）；freshness 只说明这些来源没变，不说明所有依赖都没变。证据不足时保持 `UNKNOWN`，不把推测升级为确认。
+
+## 核心设计：四类状态，各负其责
+
+隔离之后，跨越 Agent 和会话边界的不是对话历史，而是四类显式状态。它们回答不同的问题，变更方式不同，也互不替代：
+
+| 状态 | 回答什么 | 谁能改变 | 怎样跨 Agent、跨会话传递 |
+| --- | --- | --- | --- |
+| **项目身份**（`.project-identity/`，可选） | 项目为什么存在；哪些身份、不变量、原则、方向与非目标不能被低层工作悄悄改写 | 只能是人类所有者明确决定、由 Controller 记录的 amendment；证据只能对它提出 challenge | 随仓库进入 Git，跨所有任务与 Host；Controller 只看到一行摘要并按需读取，子角色只有在 Controller 把选定条目写进 handoff 时才看到 |
+| **单次任务授权**（Task Authority） | 这一次任务里用户选定的意图：目标、范围、硬约束、验收标准与执行模式 | 任务开始时由 Controller 依据用户指令确立并冻结；改目标、范围、验收或模式都需要用户的新决定；子角色不能确立、扩大、改写或重新激活它 | 由 Adapter 锚定在仓库之外，中断与重连后仍然有效；它是 Controller 记录的用户意图，不是对 Host 所有者的认证，也不包含维护 live Host 的权限 |
+| **证据**（任务 ledger） | 这一次任务里发现了什么、依据什么来源、关联哪条需求、Controller 如何处置 | 子角色登记 observation，只有 Controller 判断；历史只追加 | 绑定 Task ID 与 handoff 链；未处置的关键证据在 Controller 下一次判断前重新呈现，压缩、恢复或换会话接续任务后依然存在 |
+| **长期知识**（`.agent-memory/`、`.milestones/`） | 已经学到、值得以后复用的项目知识与长期进度 | Controller 选择后写入，或交给 Curator 依据选定材料整理；带来源与 freshness | 随仓库保存，经 INDEX 按需检索；记录下来不等于自动塞给每个角色 |
+
+自上而下，项目身份约束一个个任务，任务授权约束这一次工作，证据检验当前候选，长期知识保存学到的东西。下层可以质疑上层，但不能悄悄改写它：证据推不翻任务授权，任务里的结论不会自动升级为项目身份，修改项目身份也不会改写正在运行的任务已经冻结的授权。没有项目身份的项目照常运行，不会被阻塞或催促。
 
 ## 组成
 
 | 部分 | 职责 |
 | --- | --- |
-| **Thaliris Core**（本仓库） | Task ID 与任务记录、observation / judgment 链接、证据与 freshness、项目记忆、里程碑、项目身份、CAS 写入与回滚 |
-| [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex) | Codex 原生集成：Fresh Child、角色 profiles、身份与生命周期、证据重新呈现 |
+| **Thaliris Core**（本仓库） | Task ID 与任务记录、任务授权、observation / judgment 链接、证据与 freshness、项目记忆、里程碑、项目身份、CAS 写入与回滚 |
+| [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex) | Codex 原生集成：Fresh Child、角色 profiles、原生 Agent 身份与生命周期、证据重新呈现 |
 | [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh/blob/main/README.md) | DeepSeek Harness 插件：Workspace/Session/Agent 集成、可选 Memory |
-| [Thaliris-claude](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.md) | Claude Code 插件：Controller skill、角色子代理、Hooks 身份绑定与证据重新呈现 |
+| [Thaliris-claude](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.md) | Claude Code 插件：Controller skill、角色子代理、Hooks 原生身份绑定与证据重新呈现 |
 
 只有一套共享 Core。Core 不运行模型、不调度 Agent、不认证调用者；原生执行由各 Adapter 负责。
 
@@ -96,16 +114,16 @@ Controller 必须同时具备以下能力，每一项都很重要：
 
 | 角色 | 需要的能力 | GPT（Codex） | Claude（Claude Code） |
 | --- | --- | --- | --- |
-| Controller | 上述六项；整合原始目标、验收标准与证据，判定产品验收 | gpt-6.1-sol（high 或以上）；用户授权时可用 gpt-6-astra | Opus |
+| Controller | 上述六项；整合原始目标、验收标准与证据，判定产品验收 | gpt-6.1-sol（high 或以上）；用户明确选用时可用 gpt-6-astra | Opus |
 | Investigator | 在选定范围内广泛、准确地收集事实与来源，说明已覆盖与未覆盖范围 | gpt-6-luna（max） | Sonnet |
 | Implementer | 在已确定的方向内实现、验证并修复普通缺陷，直到确定性收敛 | gpt-6-luna（max） | Sonnet |
-| Focused Implementer | 对耦合的不变量持续推理，吸收运行反馈直到语义收敛 | gpt-6.1-sol（high）；用户授权时可用 gpt-6-astra | Sonnet 或 Opus，由 Controller 按任务难度选择 |
+| Focused Implementer | 对耦合的不变量持续推理，吸收运行反馈直到语义收敛 | gpt-6.1-sol（high）；用户明确选用时可用 gpt-6-astra | Sonnet 或 Opus，由 Controller 按任务难度选择 |
 | Reviewer | 独立挑战已收敛的候选，跨边界寻找反证，不被作者的框架带偏 | gpt-6.1-sol（high） | Opus |
-| Reasoning Specialist | 质疑问题框架、因果模型和决策依据 | gpt-6.1-sol（high）；用户授权时可用 gpt-6-astra | Opus |
+| Reasoning Specialist | 质疑问题框架、因果模型和决策依据 | gpt-6.1-sol（high）；用户明确选用时可用 gpt-6-astra | Opus |
 | Curator | 依据选定材料精确整理长期知识与 INDEX | gpt-6-luna（max） | Sonnet |
 | Verifier（Codex 兼容角色） | 只读检查验收证据、修改边界与同步 | gpt-6-luna（max） | — |
 
-推荐值是起点，不是质量保证。角色身份与执行模型相互独立；实际运行的模型以 Host 的观测为准，而不是配置文件。
+推荐值是起点，不是质量保证。角色与执行模型相互独立；实际运行的模型以 Host 的观测为准，而不是配置文件。
 
 这些只是推荐。为每个角色选择模型是 Controller 的职责，在用户写入任务的约束之内可以自由选择；在 Adapter 支持时（如 Claude Code 的 `register-role`），Controller 也可以注册新角色。用户也可以让 Controller 独自完成全部工作：是否委派、委派多少，由用户决定。
 

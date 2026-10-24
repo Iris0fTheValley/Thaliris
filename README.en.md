@@ -4,16 +4,21 @@
 
 **Attention is the most expensive resource.**
 
-Thaliris is a **cognitive orchestration layer** for AI coding agents. It does not shorten context; it addresses two problems in long tasks:
+Thaliris is a **cognitive orchestration layer** for AI coding agents. It does not shorten context; it addresses three problems in long-running work:
 
 - A capable model's attention is diluted by noise. Exploration, debugging and logs should not stay in the reasoning path responsible for key judgments.
 - Original requirements and counterevidence can disappear during handoffs. A local “done” report must not silently overwrite an issue already found.
+- A project's identity drifts over long-running work. Why the project exists and what must not change should not be silently rewritten by one local task, experiment or implementation limit after another.
+
+The three form one causal chain, and attention dilution is where it starts. To protect key reasoning, work has to be split across Agents with fresh contexts and across many sessions; the split protects attention but creates handoff boundaries. Within one task, counterevidence is easily lost at those boundaries. Across tasks, if nobody holds what the project is for, each local decision can turn an implementation limit into a new principle, and the project's identity drifts a little at a time. In turn, lost evidence and drifted identity bring old problems and noise back into the key reasoning. So Thaliris does more than isolate noise: it states explicitly what must cross the boundaries after isolation, and who holds it.
 
 > **Protect the reasoning. Isolate the noise. Isolation without amnesia.**
 
-Thaliris builds on the native Agent capabilities of Hosts such as Codex, DeepSeek Harness and Claude Code, adding a layer for isolation, handoffs and evidence continuity rather than creating another Agent Runtime.
+Thaliris builds on the native Agent capabilities of Hosts such as Codex, DeepSeek Harness and Claude Code, adding a layer for isolation, handoffs, evidence continuity and project identity rather than creating another Agent Runtime.
 
 > **Status: Beta.** Real refactoring work has shown an implementer dispatching an investigation, a Controller starting an independent review, and counterevidence driving repairs. The sample is too small to establish a general quality or cost advantage. See [empirical observations](#empirical-observations).
+>
+> **Versions:** this document describes the source versions on each repository's `main` branch: Core 0.5.1, Codex adapter 0.5.1, Claude Code plugin 0.4.1 and DSH plugin 0.3.1. Version numbers describe source, not an installation on a given machine; updated files in a repository or on disk do not prove that a running Host has loaded the new version.
 
 ## Why more than context management
 
@@ -62,16 +67,29 @@ Controller disposition: satisfied / unknown / repair / no longer relevant
 
 ### 3. Semantics belong to the model; mechanics belong to Thaliris
 
-The mechanical layer handles identity, sources, versions, continuity and bounded retrieval; semantic judgments stay with the model. Conclusions carry sources such as file hashes, Git blobs or test observations. Freshness only says whether declared sources changed; it does not prove every dependency stayed unchanged. When evidence is insufficient, keep the state UNKNOWN rather than upgrading an inference to a confirmed fact.
+The mechanical layer handles native Agent identity, sources, versions, continuity and bounded retrieval; semantic judgments stay with the model. Conclusions carry sources such as file hashes, Git blobs or test observations. Freshness only says whether declared sources changed; it does not prove every dependency stayed unchanged. When evidence is insufficient, keep the state UNKNOWN rather than upgrading an inference to a confirmed fact.
+
+## Core design: four kinds of state, each with its own job
+
+After isolation, what crosses Agent and session boundaries is not conversation history but four kinds of explicit state. They answer different questions, change in different ways and do not substitute for each other:
+
+| State | Answers | Who can change it | How it crosses Agents and sessions |
+| --- | --- | --- | --- |
+| **Project identity** (`.project-identity/`, optional) | Why the project exists; which identity, invariants, principles, directions and non-goals lower-level work must not silently rewrite | Only an amendment the Controller records on the human owner's explicit decision; evidence can only raise a challenge against it | Tracked in Git, across all tasks and Hosts; the Controller sees a one-line summary and reads on demand, and a child sees it only when the Controller quotes selected items into its handoff |
+| **Per-task authority** (Task Authority) | The intent the user selected for this one task: goal, scope, hard constraints, acceptance criteria and execution mode | Established and frozen by the Controller from the user's instruction at task start; changing goal, scope, acceptance or mode needs a new user decision; children cannot establish, expand, rewrite or reactivate it | Anchored outside the repository by the Adapter and kept across interruptions and reconnects; it is user intent recorded by the Controller, not authentication of the Host owner, and it does not include authority to maintain a live Host |
+| **Evidence** (task ledger) | What this task found, from which sources, for which requirement, and how the Controller disposed of it | Children record observations; only the Controller judges; history is append-only | Bound to the Task ID and handoff chain; unresolved critical evidence is re-presented before the Controller's next judgment and survives compaction, resume and continuing the task in a new session |
+| **Durable knowledge** (`.agent-memory/`, `.milestones/`) | Project knowledge and long-lived progress worth reusing later | Written when the Controller selects it, or reconciled by a Curator from selected material; carries sources and freshness | Kept in the repository and retrieved on demand through INDEX files; recording something does not push it into every role |
+
+From the top down, project identity constrains tasks, task authority constrains this piece of work, evidence tests the current candidate, and durable knowledge keeps what was learned. A lower layer may challenge a higher one but cannot silently rewrite it: evidence does not overturn task authority, a task's conclusion does not become project identity on its own, and amending project identity does not rewrite the frozen authority of a running task. A project without an identity runs as usual and is never blocked or nagged.
 
 ## Components
 
 | Component | Responsibility |
 | --- | --- |
-| **Thaliris Core** (this repository) | Task IDs and task records, observation/judgment links, evidence and freshness, project memory, milestones, project identity, compare-and-swap writes and rollback |
-| [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) | Native Codex integration: Fresh Children, role profiles, identity and lifecycle, and evidence re-presentation |
+| **Thaliris Core** (this repository) | Task IDs and task records, task authority, observation/judgment links, evidence and freshness, project memory, milestones, project identity, compare-and-swap writes and rollback |
+| [Thaliris-codex](https://github.com/Iris0fTheValley/Thaliris-codex/blob/main/README.md) | Native Codex integration: Fresh Children, role profiles, native Agent identity and lifecycle, and evidence re-presentation |
 | [Thaliris-dsh](https://github.com/Iris0fTheValley/Thaliris-dsh/blob/main/README.md) | DeepSeek Harness plugin: Workspace/Session/Agent integration and optional Memory |
-| [Thaliris-claude](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.en.md) | Claude Code plugin: Controller skill, role subagents, hook-based identity binding and evidence re-presentation |
+| [Thaliris-claude](https://github.com/Iris0fTheValley/Thaliris-claude/blob/main/README.en.md) | Claude Code plugin: Controller skill, role subagents, hook-based native identity binding and evidence re-presentation |
 
 There is one shared Core. Core does not run models, schedule Agents or authenticate callers; native execution belongs to each Adapter.
 
@@ -96,16 +114,16 @@ Capabilities each role needs, and recommended models:
 
 | Role | Capabilities needed | GPT (Codex) | Claude (Claude Code) |
 | --- | --- | --- | --- |
-| Controller | All six above; integrates the original objective, acceptance criteria and evidence to decide product acceptance | gpt-6.1-sol (high or above); gpt-6-astra with user authorization | Opus |
+| Controller | All six above; integrates the original objective, acceptance criteria and evidence to decide product acceptance | gpt-6.1-sol (high or above); gpt-6-astra when the user explicitly selects it | Opus |
 | Investigator | Gathers facts and sources broadly and accurately within the selected scope, stating covered and uncovered scope | gpt-6-luna (max) | Sonnet |
 | Implementer | Implements, verifies and repairs ordinary defects within an accepted direction until deterministic convergence | gpt-6-luna (max) | Sonnet |
-| Focused Implementer | Sustained reasoning over coupled invariants, absorbing runtime feedback until semantic convergence | gpt-6.1-sol (high); gpt-6-astra with user authorization | Sonnet or Opus, chosen by the Controller per task difficulty |
+| Focused Implementer | Sustained reasoning over coupled invariants, absorbing runtime feedback until semantic convergence | gpt-6.1-sol (high); gpt-6-astra when the user explicitly selects it | Sonnet or Opus, chosen by the Controller per task difficulty |
 | Reviewer | Independently challenges a converged candidate and seeks cross-boundary counterevidence without adopting the author's framing | gpt-6.1-sol (high) | Opus |
-| Reasoning Specialist | Challenges the problem framing, causal model and decision basis | gpt-6.1-sol (high); gpt-6-astra with user authorization | Opus |
+| Reasoning Specialist | Challenges the problem framing, causal model and decision basis | gpt-6.1-sol (high); gpt-6-astra when the user explicitly selects it | Opus |
 | Curator | Maintains selected durable knowledge and INDEX entries precisely from supplied material | gpt-6-luna (max) | Sonnet |
 | Verifier (Codex compatibility role) | Read-only check of acceptance evidence, modification boundaries and synchronization | gpt-6-luna (max) | — |
 
-Recommendations are a starting point, not a quality guarantee. Role identity and execution model are independent; the model that actually ran is what the Host observed, not what a configuration file says.
+Recommendations are a starting point, not a quality guarantee. A role and its execution model are independent; the model that actually ran is what the Host observed, not what a configuration file says.
 
 These are recommendations only. Choosing each role's model is the Controller's job, made freely within any constraint the user wrote into the task; where the adapter supports it (such as `register-role` in Claude Code), the Controller can also register new roles. A user may also have the Controller do all the work itself: whether and how much to delegate is the user's decision.
 

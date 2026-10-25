@@ -46,6 +46,10 @@ errors = _errors
 from .markdown import Entry, durable_descriptors, evidence_status, freshness_detail_budget_placeholder, parse, parse_text
 from .models import ContextConfig
 
+# Every Git call Core makes (some under the repository lock) is bounded, so one stuck Git
+# cannot block that repository's tasks indefinitely. Same bound as identity_basis.
+GIT_TIMEOUT_SECONDS = 60
+
 IGNORE_START = "# thaliris:begin"
 IGNORE_END = "# thaliris:end"
 IGNORE_RULES = (
@@ -128,7 +132,8 @@ def _git_root(root: Path) -> Path | None:
         # explicitly (not via the locale) so non-ASCII roots survive on Windows;
         # surrogateescape keeps undecodable POSIX bytes round-trippable.
         proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True,
-                              text=True, encoding="utf-8", errors="surrogateescape", check=False)
+                              text=True, encoding="utf-8", errors="surrogateescape", check=False,
+                              timeout=GIT_TIMEOUT_SECONDS)
     except FileNotFoundError as exc:
         missing_program = exc.filename is None or Path(exc.filename).name.casefold() in {"git", "git.exe"}
         if missing_program and root.is_dir() and not metadata and not discovery_environment:
@@ -421,6 +426,7 @@ def stale(root: Path) -> dict[str, object]:
 _STATE_NAME = ".context/state.json"
 _STATE_SCHEMA_VERSION = 7
 ROUTING_STATE_MAX_BYTES = 8 * 1024
+STATE_MAX_BYTES = 512 * 1024
 EXPLICIT_DOCUMENT_MAX_BYTES = 64 * 1024
 DURABLE_INDEX_RECOMMENDED_BYTES = 3 * 1024
 DURABLE_INDEX_HARD_MAX_BYTES = 16 * 1024
@@ -434,6 +440,36 @@ _STATE_FIELDS = {
     "verification_results", "task_surface_baseline", "task_base_head",
 }
 _RECORD_FIELDS = {"id", "kind", "text", "producer", "revision", "source_refs", "status", "supersedes"}
+
+
+def _promote_state_6_to_7(raw: dict[str, object]) -> dict[str, object]:
+    """6 -> 7 only widened ``task_surface_baseline`` (it may be the string "UNAVAILABLE"); no field changed."""
+    return {**raw, "schema_version": 7}
+
+
+# Earlier on-disk schema versions this Core reads, mapped to the step that lifts a state by one
+# version. A listed version is read as the current schema in memory only and becomes the current
+# version on its next write. Add an entry only when the old shape is valid under the current
+# rules (or the step makes it so); versions below the first key, newer versions and states that do
+# not validate once lifted stay refused with the schema-mismatch diagnostic. The disk is never
+# touched by reading, so external byte digests (authority anchors) are unaffected.
+_COMPATIBLE_PRIOR_SCHEMAS = {6: _promote_state_6_to_7}
+
+
+def _promoted_prior_state(root: Path, raw: object) -> dict[str, object] | None:
+    """The validated current-schema form of a compatible older state, else None (refuse as before)."""
+    if not isinstance(raw, dict) or type(raw.get("schema_version")) is not int:
+        return None
+    version = raw["schema_version"]
+    if version >= _STATE_SCHEMA_VERSION or any(step not in _COMPATIBLE_PRIOR_SCHEMAS for step in range(version, _STATE_SCHEMA_VERSION)):
+        return None
+    lifted: dict[str, object] = raw
+    for step in range(version, _STATE_SCHEMA_VERSION):
+        lifted = _COMPATIBLE_PRIOR_SCHEMAS[step](lifted)
+    try:
+        return _validate_state(root, lifted)
+    except ValueError:
+        return None
 
 
 class TaskStateSchemaIncompatible(ValueError):
@@ -525,7 +561,7 @@ def _task_state_schema_diagnostic(raw: object, raw_bytes: bytes) -> dict[str, ob
     digest = hashlib.sha256(raw_bytes).hexdigest()
     action = "NONE"
     if recoverable:
-        action = f"thaliris task-recover-state --expected-sha256 {digest}"
+        action = f"use the adapter's task-state recovery procedure with expected sha256 {digest}"
     return {
         "ok": False,
         "status": "STATE_SCHEMA_INCOMPATIBLE",
@@ -555,29 +591,49 @@ def task_state_schema_diagnostic(root: Path) -> dict[str, object] | None:
         raw = json.loads(raw_bytes.decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
+    if _promoted_prior_state(root, raw) is not None:
+        return None
     return _task_state_schema_diagnostic(raw, raw_bytes)
 
 
 def _state_ignored(root: Path) -> bool:
-    return subprocess.run(["git", "check-ignore", "-q", "--", _STATE_NAME], cwd=root, check=False).returncode == 0
+    try:
+        return subprocess.run(["git", "check-ignore", "-q", "--", _STATE_NAME], cwd=root, check=False,
+                              timeout=GIT_TIMEOUT_SECONDS).returncode == 0
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("whether the task state is ignored is UNKNOWN: git check-ignore timed out") from exc
 
 
-def _check_json(value: object) -> None:
+def _capacity_error(field: str, limit: int, count: int, *, unit: str = "entries", message: str | None = None,
+                    recovery: str | None = None) -> ThalirisError:
+    """The stable, field-naming refusal for a full bounded ledger list or file."""
+    return ThalirisError(
+        _errors.TASK_STATE_CAPACITY_EXCEEDED,
+        message or f"state list exceeds limit: {field} holds at most {limit} {unit}, this write needs {count}",
+        recovery=recovery or (
+            f"the task state is unchanged; other lists stay writable and task-close still works; to keep recording "
+            f"{field}, close this task and start a new one that cites this Task ID"),
+        details={"field": field, "limit": limit, "count": count, "unit": unit},
+    )
+
+
+def _check_json(value: object, field: str = "state") -> None:
+    """Shape and size check; ``field`` is the nearest enclosing object key, named in capacity errors."""
     if isinstance(value, str):
         if len(value) > 16_384 or any(ord(char) < 32 and char not in "\n\t" for char in value):
             raise ValueError("state contains control characters or oversized text")
     elif isinstance(value, list):
         if len(value) > 512:
-            raise ValueError("state list exceeds limit")
+            raise _capacity_error(field, 512, len(value))
         for item in value:
-            _check_json(item)
+            _check_json(item, field)
     elif isinstance(value, dict):
         if len(value) > 64:
             raise ValueError("state object exceeds limit")
         for key, item in value.items():
             if not isinstance(key, str):
                 raise ValueError("state keys must be strings")
-            _check_json(item)
+            _check_json(item, key)
     elif value is not None and type(value) not in {int, bool, float}:
         raise ValueError("state contains unsupported JSON value")
 
@@ -626,8 +682,9 @@ def _surface_identity(root: Path, path: str, status: str) -> dict[str, object]:
 
 def _surface_snapshot(root: Path) -> list[dict[str, object]] | str:
     try:
-        proc = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=root, capture_output=True, check=False)
-    except (OSError, subprocess.SubprocessError):
+        proc = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=root, capture_output=True, check=False,
+                              timeout=GIT_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):  # includes TimeoutExpired: the surface stays UNAVAILABLE
         return "UNAVAILABLE"
     if proc.returncode or not isinstance(proc.stdout, bytes) or len(proc.stdout) > SURFACE_MAX_BYTES:
         return "UNAVAILABLE"
@@ -671,8 +728,9 @@ def _surface_delta(root: Path, baseline: list[dict[str, object]] | str) -> dict[
 def _git_head(root: Path) -> str | None:
     try:
         proc = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=root, capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", check=False)
-    except (OSError, subprocess.SubprocessError):
+                              text=True, encoding="utf-8", errors="replace", check=False,
+                              timeout=GIT_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError):  # includes TimeoutExpired: HEAD stays unknown
         return None
     value = proc.stdout.strip().lower()
     return value if proc.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", value) else None
@@ -832,7 +890,11 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         raise ValueError("invalid milestone label")
     for field in ("active_work", "pending_results"):
         values = state.get(field)
-        if not isinstance(values, list) or len(values) > 64 or not all(isinstance(item, str) and item.strip() and len(item) <= 4096 for item in values):
+        if isinstance(values, list) and len(values) > 64:
+            raise _capacity_error(field, 64, len(values), recovery=(
+                f"the task state is unchanged; replace {field} with fewer entries in task-update, "
+                "or move long content into a Record or Artifact"))
+        if not isinstance(values, list) or not all(isinstance(item, str) and item.strip() and len(item) <= 4096 for item in values):
             raise ValueError(f"invalid {field}")
     routing_bytes = len(json.dumps(
         {"active_work": state["active_work"], "pending_results": state["pending_results"]},
@@ -840,13 +902,16 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         separators=(",", ":"),
     ).encode("utf-8"))
     if routing_bytes > ROUTING_STATE_MAX_BYTES:
-        raise ValueError(
-            f"Active Work + Pending Results exceed {ROUTING_STATE_MAX_BYTES} UTF-8 bytes; "
-            "store long content as a Record or Artifact"
+        raise _capacity_error(
+            "active_work+pending_results", ROUTING_STATE_MAX_BYTES, routing_bytes, unit="UTF-8 bytes",
+            message=(f"Active Work + Pending Results exceed {ROUTING_STATE_MAX_BYTES} UTF-8 bytes; "
+                     "store long content as a Record or Artifact"),
+            recovery=("the task state is unchanged; shorten Active Work and Pending Results in task-update, "
+                      "or move long content into a Record or Artifact"),
         )
 
     sources = state.get("evidence_refs")
-    if not isinstance(sources, list) or len(sources) > 512:
+    if not isinstance(sources, list):
         raise ValueError("invalid source references")
     source_ids: set[str] = set()
     for source in sources:
@@ -856,7 +921,7 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         raise ValueError("source reference points to an unknown source")
 
     records = state.get("records")
-    if not isinstance(records, list) or len(records) > 512:
+    if not isinstance(records, list):
         raise ValueError("invalid task records")
     record_ids: set[str] = set()
     for item in records:
@@ -864,7 +929,9 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         record_ids.add(str(item["id"]))
 
     artifacts = state.get("artifact_refs")
-    if not isinstance(artifacts, list) or len(artifacts) > 256:
+    if isinstance(artifacts, list) and len(artifacts) > 256:
+        raise _capacity_error("artifact_refs", 256, len(artifacts))
+    if not isinstance(artifacts, list):
         raise ValueError("invalid artifact references")
     artifact_ids: set[str] = set()
     for artifact in artifacts:
@@ -878,7 +945,9 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
     _artifact_activity(artifacts)
 
     results = state.get("verification_results")
-    if not isinstance(results, list) or len(results) > 256:
+    if isinstance(results, list) and len(results) > 256:
+        raise _capacity_error("verification_results", 256, len(results))
+    if not isinstance(results, list):
         raise ValueError("invalid verification observations")
     result_ids: set[str] = set()
     for result in results:
@@ -912,8 +981,10 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
 def _state_payload(root: Path, state: dict[str, object]) -> bytes:
     state = _validate_state(root, state)
     payload = (json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
-    if len(payload) > 512 * 1024:
-        raise ValueError("task state exceeds 512 KiB")
+    if len(payload) > STATE_MAX_BYTES:
+        raise _capacity_error("state_file", STATE_MAX_BYTES, len(payload), unit="bytes", message="task state exceeds 512 KiB",
+                              recovery=("the task state is unchanged; task-close still works; to keep recording, "
+                                        "close this task and start a new one that cites this Task ID"))
     return payload
 
 
@@ -930,23 +1001,25 @@ def _load_state(root: Path, *, active: bool = False) -> dict[str, object]:
         raise ThalirisError(_errors.TASK_STATE_MISSING, "no current task state",
                             recovery="select an existing task with --task-id or start one with task-start",
                             details={"task_id": selected_task(root)})
-    if path.stat().st_size > 512 * 1024:
-        raise ValueError("task state exceeds 512 KiB")
+    if path.stat().st_size > STATE_MAX_BYTES:
+        raise ThalirisError(_errors.TASK_STATE_INVALID, "task state exceeds 512 KiB")
     try:
         with path.open("rb") as stream:
-            raw_bytes = stream.read(512 * 1024 + 1)
-        if len(raw_bytes) > 512 * 1024:
-            raise ValueError("task state exceeds 512 KiB")
+            raw_bytes = stream.read(STATE_MAX_BYTES + 1)
+        if len(raw_bytes) > STATE_MAX_BYTES:
+            raise ThalirisError(_errors.TASK_STATE_INVALID, "task state exceeds 512 KiB")
         raw = json.loads(raw_bytes.decode("utf-8"))
     except json.JSONDecodeError as exc:
         raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid task state JSON") from exc
     except UnicodeDecodeError as exc:
         raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid task state encoding") from exc
-    incompatible = _task_state_schema_diagnostic(raw, raw_bytes)
-    if incompatible is not None:
-        task_id = raw.get("task_id") if isinstance(raw, dict) and isinstance(raw.get("task_id"), str) else None
-        raise TaskStateSchemaIncompatible(incompatible, task_id)
-    state = _validate_state(root, raw)
+    state = _promoted_prior_state(root, raw)
+    if state is None:
+        incompatible = _task_state_schema_diagnostic(raw, raw_bytes)
+        if incompatible is not None:
+            task_id = raw.get("task_id") if isinstance(raw, dict) and isinstance(raw.get("task_id"), str) else None
+            raise TaskStateSchemaIncompatible(incompatible, task_id)
+        state = _validate_state(root, raw)
     if selected_task(root) is not None and state["task_id"] != selected_task(root):
         raise ThalirisError(_errors.TASK_IDENTITY_CONFLICT, "task identity conflict",
                             details={"selected_task_id": selected_task(root), "task_id": state["task_id"]})

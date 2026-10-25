@@ -123,7 +123,14 @@ class AuthorityStore:
         target = self.path()
         if digest(target) == "ABSENT":
             return None
-        record = json.loads(target.read_text(encoding="utf-8"))
+        try:
+            record = json.loads(target.read_text(encoding="utf-8"))
+        except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError
+            raise core.ThalirisError(
+                core.errors.TASK_AUTHORITY_INVALID, "TASK_AUTHORITY_INVALID",
+                recovery=("the external authority anchor is not readable JSON; Core does not repair or replace it; "
+                          "restore its exact bytes from a copy or use the adapter's recovery procedure"),
+                details={"reason": "anchor is not valid UTF-8 JSON", "anchor": target.name}) from exc
         if (not isinstance(record, dict) or record.get("version") != 1 or not isinstance(record.get("project"), str)
                 or Path(record["project"]).resolve() != self.root.resolve()):
             raise ValueError("TASK_AUTHORITY_INVALID")
@@ -265,7 +272,13 @@ class AuthorityStore:
             restored = {}
             for name, encoded in record["snapshots"].items():
                 _relative(self.root, name)
-                restored[name] = None if encoded is None else base64.b64decode(encoded, validate=True)
+                try:
+                    restored[name] = None if encoded is None else base64.b64decode(encoded, validate=True)
+                except (TypeError, ValueError) as exc:
+                    raise core.ThalirisError(
+                        core.errors.TASK_AUTHORITY_INVALID, "TASK_AUTHORITY_INVALID",
+                        recovery="a recorded snapshot is not valid base64; nothing was restored",
+                        details={"reason": "snapshot is not valid base64", "path": name}) from exc
             for name in paths:
                 _relative(self.directory, name)
                 if name in {"authority.json", *restored}:

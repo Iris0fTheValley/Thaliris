@@ -898,17 +898,6 @@ def test_production_package_has_no_benchmark_authority_module() -> None:
         assert benchmark_only not in production
 
 
-def test_only_current_task_state_schema_is_accepted(tmp_path: Path) -> None:
-    root = repo(tmp_path)
-    core.task_start(root, "current schema", None, None)
-    path = core._state_path(root)
-    state = json.loads(path.read_text(encoding="utf-8"))
-    state["schema_version"] -= 1
-    path.write_text(json.dumps(state), encoding="utf-8")
-    with pytest.raises(ValueError, match="invalid task state schema"):
-        core.task_show(root)
-
-
 def test_revision_cas_rejects_stale_writer_without_mutating_state(tmp_path: Path) -> None:
     root = repo(tmp_path)
     started = core.task_start(root, "cas", None, None)

@@ -18,7 +18,7 @@ Thaliris builds on the native Agent capabilities of Hosts such as Codex, DeepSee
 
 > **Status: Beta.** Real refactoring work has shown an implementer dispatching an investigation, a Controller starting an independent review, and counterevidence driving repairs. The sample is too small to establish a general quality or cost advantage. See [empirical observations](#empirical-observations).
 >
-> **Versions:** this document describes the source versions on each repository's `main` branch: Core 0.5.2, Codex adapter 0.5.2, Claude Code plugin 0.4.2 and DSH plugin 0.3.2. Version numbers describe source, not an installation on a given machine; updated files in a repository or on disk do not prove that a running Host has loaded the new version.
+> **Versions:** this document describes the source versions on each repository's `main` branch: Core 0.5.3, Codex adapter 0.5.2, Claude Code plugin 0.4.2 and DSH plugin 0.3.2. Version numbers describe source, not an installation on a given machine; updated files in a repository or on disk do not prove that a running Host has loaded the new version.
 
 ## Why more than context management
 

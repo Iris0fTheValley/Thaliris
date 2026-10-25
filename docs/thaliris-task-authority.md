@@ -95,3 +95,39 @@ Core transports this explicit intent without interpreting model names or policy
 values; each adapter validates its supported constraints. The optional field is
 part of the Core-owned immutable contract, history and recovery truth, not an
 adapter override. Contracts omitting it retain their existing representation.
+
+## Ledger continuity (Core 0.5.3)
+
+Task state schema stays 7, and every state this Core writes is still readable by
+Core 0.5.0. Core reads an earlier schema version when `_COMPATIBLE_PRIOR_SCHEMAS`
+lists it (today only 6, which differs from 7 only in the extra value
+`"UNAVAILABLE"` for `task_surface_baseline`). A listed version that validates under
+the current rules is lifted to the current schema in memory only: reading never
+rewrites the ledger, so an external anchor's recorded byte digest still matches and
+does not report `TASK_AUTHORITY_STATE_CHANGED`. The next ledger write stores schema
+7; the adapter then checkpoints it as for any checked write. Task ID, goal, records,
+evidence and revision are unchanged by the lift. Versions below the table, newer
+versions and malformed states of any version are refused as before with the
+`STATE_SCHEMA_INCOMPATIBLE` diagnostic, whose `recovery_action` now names the
+adapter's recovery procedure and the expected sha256 instead of one adapter's command.
+
+A full bounded list is refused with the stable code `TASK_STATE_CAPACITY_EXCEEDED`
+(still a `ValueError`). `details` carries `field`, `limit`, `count` and `unit`; the
+fields are the ledger lists (`records`, `evidence_refs`, `artifact_refs`,
+`verification_results`, the four evidence-continuity collections,
+`active_work`, `pending_results`), the routing page (`active_work+pending_results`,
+8 KiB) and the whole file (`state_file`, 512 KiB). The write is refused and the state
+is unchanged; every other list stays writable and `task-close` still works. To
+record more of the full kind, close the task and start a new one that cites the old
+Task ID. Strict per-object validation (for example an unknown field in one
+continuity object) is intentionally unchanged.
+
+An unreadable anchor (not valid UTF-8 JSON, or a recorded snapshot that is not
+valid base64) raises `TASK_AUTHORITY_INVALID` as a `ThalirisError` whose message is
+that same code; recovery semantics are unchanged. Core never repairs or replaces the
+anchor. `recover` writes the anchor only after every restoration step succeeds, so a
+recovery that fails midway can be retried with the same expected digest; each attempt
+archives the bytes it found before touching them. Every Git call Core makes is
+bounded by a 60 second timeout (`GIT_TIMEOUT_SECONDS`): a timeout leaves the surface
+baseline `UNAVAILABLE` or the base head unknown, and a timed-out root discovery or
+ignore check is refused as UNKNOWN rather than treated as an answer.

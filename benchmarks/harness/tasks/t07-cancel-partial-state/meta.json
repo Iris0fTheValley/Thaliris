@@ -1,0 +1,12 @@
+{
+  "id": "t07-cancel-partial-state",
+  "title": "Cancelled or failed imports must not leave partial state",
+  "category": "cancellation-timeout-leaves-partial-state",
+  "requirements": [
+    {"id": "R1", "text": "Cancellation midway rolls back everything the call added and returns False", "kind": "compiled"},
+    {"id": "R2", "text": "An invalid record midway raises ValueError and leaves the store exactly as before", "kind": "compiled"},
+    {"id": "R3", "text": "If should_cancel itself raises, the store is rolled back and the exception propagates", "kind": "compiled"},
+    {"id": "R4", "text": "Pre-existing records are untouched and the same list is modified in place", "kind": "partial"}
+  ],
+  "trap": true
+}

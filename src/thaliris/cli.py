@@ -33,6 +33,9 @@ def _parser() -> argparse.ArgumentParser:
     command.add_argument("--evidence-offset", type=int, default=0)
     command.add_argument("--view", choices=core.STATUS_VIEWS, default="full")
     command.add_argument("--since-revision", type=int)
+    command.add_argument("--contract", help="FILE or - : the authority contract; lane advisories are computed for execution_mode adaptive")
+    command.add_argument("--record-tamper", action="store_true",
+                         help="append pending check-tamper observations first (a locked ledger write)")
     command = commands.add_parser("catalog")
     command.add_argument("path", nargs="?")
     command = commands.add_parser("document-get")
@@ -49,6 +52,8 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--input", required=True)
         if name in _CONTINUITY_WRITES:
             command.add_argument("--compact-evidence", action="store_true")
+        if name == "task-judge":
+            command.add_argument("--override-reason", help="recorded reason for judging satisfied while a declared check is not green")
     command = commands.add_parser("task-observe")
     command.add_argument("--actor", required=True)
     command.add_argument("--input", required=True)
@@ -76,6 +81,33 @@ def _parser() -> argparse.ArgumentParser:
     command = commands.add_parser("task-close")
     command.add_argument("--base-revision", type=int, required=True)
     command.add_argument("--expected-task-id")
+    command.add_argument("--override-reason", help="recorded reason for closing while a declared check is not green")
+    command.add_argument("--actor")
+    command = commands.add_parser("task-check", help="declare or supersede checks (Controller; the adapter decides who that is)")
+    command.add_argument("--actor", required=True)
+    command.add_argument("--base-revision", type=int, required=True)
+    command.add_argument("--input", required=True, help="FILE or - : one check {id, requirement_refs, command, cwd?, timeout_s?, files?} or {checks: [...]}")
+    command.add_argument("--supersede", action="store_true", help="re-declare an existing check id, accepting its current file content")
+    command = commands.add_parser("task-verify", help="run one declared check and record its result")
+    command.add_argument("--actor", required=True)
+    command.add_argument("--check", required=True)
+    command.add_argument("--base-revision", type=int)
+    command.add_argument("--compact-evidence", action="store_true")
+    command = commands.add_parser("task-ingest-claims", help="adapter-called: ingest the typed claim block of a handoff's final message")
+    command.add_argument("--handoff", required=True)
+    source = command.add_mutually_exclusive_group(required=True)
+    source.add_argument("--text", help="the message text")
+    source.add_argument("--file", help="FILE or - : the raw message text")
+    command.add_argument("--base-revision", type=int)
+    command.add_argument("--compact-evidence", action="store_true")
+    command = commands.add_parser("task-handoff-usage", help="adapter-called: record dispatch usage on a handoff")
+    command.add_argument("--handoff", required=True)
+    command.add_argument("--input", required=True, help="FILE or - : any of " + ", ".join(core.USAGE_FIELDS))
+    command.add_argument("--base-revision", type=int)
+    command = commands.add_parser("task-lane-counter", help="adapter-called: update the Controller tool-output token counter")
+    amount = command.add_mutually_exclusive_group(required=True)
+    amount.add_argument("--add", type=int)
+    amount.add_argument("--set", dest="set_to", type=int)
     command = commands.add_parser("rollback")
     command.add_argument("backup")
     command = commands.add_parser("identity-status")
@@ -127,7 +159,11 @@ def main(argv: list[str] | None = None) -> int:
         if name == "version":
             out = {"ok": True, "version": __version__}
         elif name == "task-status":
-            out = core.task_status(root, args.evidence_offset, view=args.view, since_revision=args.since_revision)
+            if args.record_tamper and args.task_id is None:
+                raise ValueError("explicit --task-id required for task mutation")
+            out = core.task_status(root, args.evidence_offset, view=args.view, since_revision=args.since_revision,
+                                   contract=core._read_input(args.contract) if args.contract else None,
+                                   record_tamper=args.record_tamper)
         elif name in {"init", "uninstall", "stale", "milestone-check", "task-show"}:
             out = getattr(core, name.replace("-", "_"))(root)
         elif name == "catalog":
@@ -136,9 +172,24 @@ def main(argv: list[str] | None = None) -> int:
             out = core.document_get(root, args.paths)
         elif name == "task-start":
             out = core.task_start(root, args.goal, args.milestone, args.input, actor=args.actor)
+        elif name == "task-judge":
+            out = core.task_judge(root, args.actor, args.base_revision, args.input, compact_evidence=args.compact_evidence,
+                                  override_reason=args.override_reason)
         elif name in _CONTINUITY_WRITES:
             out = getattr(core, name.replace("-", "_"))(root, args.actor, args.base_revision, args.input,
                                                         compact_evidence=args.compact_evidence)
+        elif name == "task-check":
+            out = core.task_check(root, args.actor, args.base_revision, args.input, supersede=args.supersede)
+        elif name == "task-verify":
+            out = core.task_verify(root, args.actor, args.check, base_revision=args.base_revision,
+                                   compact_evidence=args.compact_evidence)
+        elif name == "task-ingest-claims":
+            out = core.task_ingest_claims(root, args.handoff, args.text, input_file=args.file,
+                                          base_revision=args.base_revision, compact_evidence=args.compact_evidence)
+        elif name == "task-handoff-usage":
+            out = core.task_handoff_usage(root, args.handoff, args.input, base_revision=args.base_revision)
+        elif name == "task-lane-counter":
+            out = core.task_lane_counter(root, add=args.add, set_to=args.set_to)
         elif name in {"task-update", "task-promote", "document-maintain"}:
             out = getattr(core, name.replace("-", "_"))(root, args.actor, args.base_revision, args.input)
         elif name == "task-observe":
@@ -149,7 +200,8 @@ def main(argv: list[str] | None = None) -> int:
             out = core.task_artifact(root, args.base_revision, args.id, args.path, args.summary,
                 producer=args.producer, registered_by=args.actor, evidence_refs=args.source_ref, supersedes=args.supersedes)
         elif name == "task-close":
-            out = core.task_close(root, args.base_revision, expected_task_id=args.expected_task_id)
+            out = core.task_close(root, args.base_revision, expected_task_id=args.expected_task_id,
+                                  override_reason=args.override_reason, actor=args.actor)
         elif name == "identity-status":
             out = identity.identity_status(root, session_key=args.session_key)
         elif name == "identity-get":

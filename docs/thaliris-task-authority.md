@@ -21,6 +21,15 @@ task ledger; it is not a second task ledger. Core does not interpret the
 contract, authenticate an actor, enforce semantic routing, or decide whether
 verification is sufficient to finish.
 
+Execution modes are `delegated` (the default), `controller-direct`,
+`single-agent` and `adaptive`. In `adaptive` mode the Controller may execute
+directly and may also dispatch children. An adaptive contract may omit
+`boundary` and `invariants`; `validate_contract` stores each omitted one as the
+explicit marker `unspecified`. `human_instruction` and `acceptance` stay
+required, and the goal comes from the task ledger. The optional `write_surface`
+is a list of 1 to 64 repo-relative POSIX globs; Core compares the task surface
+against it only to surface a lane advisory.
+
 `thaliris_codex.task_authority` remains the Codex compatibility facade. Its function
 signatures, external directory, record fields and conflict error names remain
 available. Codex supplies its protected config paths, origin session hash,
@@ -98,8 +107,12 @@ adapter override. Contracts omitting it retain their existing representation.
 
 ## Ledger continuity (Core 0.5.3)
 
-Task state schema stays 7, and every state this Core writes is still readable by
-Core 0.5.0. Core reads an earlier schema version when `_COMPATIBLE_PRIOR_SCHEMAS`
+Task state schema stays 7 for a task that uses neither Controller-local evidence
+(schema 8) nor the verification-first ledger (schema 9: declared checks and their
+results, requirement kinds, typed claims, handoff usage, gate overrides). A state
+moves up only in the transaction that first writes such a record; an older Core
+refuses the newer schema and is not expected to read it. Core reads an earlier
+schema version when `_COMPATIBLE_PRIOR_SCHEMAS`
 lists it (today only 6, which differs from 7 only in the extra value
 `"UNAVAILABLE"` for `task_surface_baseline`). A listed version that validates under
 the current rules is lifted to the current schema in memory only: reading never

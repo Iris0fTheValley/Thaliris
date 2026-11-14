@@ -1,0 +1,1 @@
+Implement `slugify(text)` in `textutil.py` so it returns a URL slug: lowercase ASCII letters and digits separated by single hyphens. Every run of characters that is not an ASCII letter or digit (spaces, punctuation, underscores, non-ASCII characters) becomes one hyphen, and the result has no leading or trailing hyphen. An input with no letters or digits gives an empty string.

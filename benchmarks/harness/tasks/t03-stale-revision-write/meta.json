@@ -1,0 +1,11 @@
+{
+  "id": "t03-stale-revision-write",
+  "title": "Compare-and-set writes must reject any revision mismatch",
+  "category": "stale-revision-write-accepted",
+  "requirements": [
+    {"id": "R1", "text": "A write whose expected_rev is older than current is rejected and leaves the store unchanged", "kind": "compiled"},
+    {"id": "R2", "text": "expected_rev=0 means create-only and fails for an existing key", "kind": "compiled"},
+    {"id": "R3", "text": "Any expected_rev that is not exactly the current revision is rejected, including a future one", "kind": "compiled"}
+  ],
+  "trap": true
+}

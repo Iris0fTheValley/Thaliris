@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "_notes": [
+    "Data only: run.py consumes this file. Placeholders in args: {plugin_dir}, {max_budget_usd}. Placeholders in prompt_template: {task_md}, {test_command}.",
+    "The prompt is sent on stdin (claude -p with no positional prompt) so the variadic --allowedTools flag cannot swallow it.",
+    "Flags confirmed present in `claude --help` (v2.1.312): -p, --output-format json, --plugin-dir, --setting-sources, --permission-mode, --permission-prompts, --allowedTools, --max-budget-usd, --no-session-persistence, --disable-slash-commands, --model.",
+    "ASSUMED, not exercised (no live runs were made): that `--setting-sources project` keeps the user-level enabledPlugins out of the plugin-disabled recipe, and the exact keys of the JSON result (total_cost_usd, usage, duration_ms, num_turns, is_error, result, session_id)."
+  ],
+  "claude_bin": "claude",
+  "plugin_dir_default": "claude/Thaliris-claude",
+  "plugin_dir_env": "THALIRIS_PLUGIN_DIR",
+  "test_command": "python -m unittest discover -s visible_tests",
+  "default_max_budget_usd": 1.5,
+  "default_timeout_s": 1200,
+  "pricing_assumption_usd_per_mtok": {"input": 3.0, "output": 15.0, "effective_input_fraction_after_caching": 0.25},
+  "configs": {
+    "single-agent": {
+      "description": "Plain Claude Code session, Thaliris plugin not loaded, no delegation.",
+      "plugin": {"enabled": false},
+      "args": [
+        "-p",
+        "--output-format", "json",
+        "--permission-mode", "acceptEdits",
+        "--permission-prompts", "none",
+        "--allowedTools", "Read,Edit,Write,Glob,Grep,Bash",
+        "--setting-sources", "project",
+        "--disable-slash-commands",
+        "--no-session-persistence",
+        "--max-budget-usd", "{max_budget_usd}"
+      ],
+      "prompt_template": "{task_md}\n\n---\nExecution mode: single-agent. Do the work yourself in this session. Do not use subagents and do not use any Thaliris workflow.\nThe project is the current directory. Run the visible tests with: {test_command}\nWhen you finish, end your final message with exactly one line: `STATUS: DONE` if every requirement in the request above is satisfied, or `STATUS: INCOMPLETE - <what is missing>` otherwise.\n",
+      "cost_model": {"est_turns": 10, "base_context_tokens": 12000, "plugin_context_tokens": 0, "est_output_tokens_per_turn": 600}
+    },
+    "adaptive": {
+      "description": "Thaliris plugin loaded; the agent decides for itself whether and how to delegate.",
+      "plugin": {"enabled": true, "dir": "{plugin_dir}"},
+      "args": [
+        "-p",
+        "--output-format", "json",
+        "--permission-mode", "acceptEdits",
+        "--permission-prompts", "none",
+        "--allowedTools", "Read,Edit,Write,Glob,Grep,Bash,Agent,Skill",
+        "--setting-sources", "project",
+        "--plugin-dir", "{plugin_dir}",
+        "--no-session-persistence",
+        "--max-budget-usd", "{max_budget_usd}"
+      ],
+      "prompt_template": "{task_md}\n\n---\nExecution mode: adaptive. The Thaliris plugin is enabled. Follow its Controller guidance and choose for yourself whether and how to delegate to Thaliris roles for this task.\nThe project is the current directory. Run the visible tests with: {test_command}\nWhen you finish, end your final message with exactly one line: `STATUS: DONE` if every requirement in the request above is satisfied, or `STATUS: INCOMPLETE - <what is missing>` otherwise.\n",
+      "cost_model": {"est_turns": 18, "base_context_tokens": 12000, "plugin_context_tokens": 8000, "est_output_tokens_per_turn": 700}
+    },
+    "delegated": {
+      "description": "Thaliris plugin loaded; the main session acts as Controller and delegates all implementation to a thaliris:implementer subagent.",
+      "plugin": {"enabled": true, "dir": "{plugin_dir}"},
+      "args": [
+        "-p",
+        "--output-format", "json",
+        "--permission-mode", "acceptEdits",
+        "--permission-prompts", "none",
+        "--allowedTools", "Read,Edit,Write,Glob,Grep,Bash,Agent,Skill",
+        "--setting-sources", "project",
+        "--plugin-dir", "{plugin_dir}",
+        "--no-session-persistence",
+        "--max-budget-usd", "{max_budget_usd}"
+      ],
+      "prompt_template": "{task_md}\n\n---\nExecution mode: delegated. The Thaliris plugin is enabled. Act as the Thaliris Controller: do not edit project files yourself; delegate the implementation to a thaliris:implementer subagent, then check the result before you accept it.\nThe project is the current directory. Run the visible tests with: {test_command}\nWhen you finish, end your final message with exactly one line: `STATUS: DONE` if every requirement in the request above is satisfied, or `STATUS: INCOMPLETE - <what is missing>` otherwise.\n",
+      "cost_model": {"est_turns": 30, "base_context_tokens": 12000, "plugin_context_tokens": 8000, "est_output_tokens_per_turn": 800}
+    }
+  }
+}

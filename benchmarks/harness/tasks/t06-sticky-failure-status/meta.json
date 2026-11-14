@@ -1,0 +1,11 @@
+{
+  "id": "t06-sticky-failure-status",
+  "title": "A later success must not overwrite a recorded failure",
+  "category": "success-overwrites-recorded-failure",
+  "requirements": [
+    {"id": "R1", "text": "Once any step reports failed the job stays failed, including when the same step later reports ok", "kind": "compiled"},
+    {"id": "R2", "text": "retry(job_id) resets only that job to pending", "kind": "compiled"},
+    {"id": "R3", "text": "Invalid status values are still rejected", "kind": "partial"}
+  ],
+  "trap": true
+}

@@ -2,23 +2,30 @@
 
 ## Principle
 
-**Models own semantics. The mechanical layer executes model decisions.**
+**Models own semantics. Mechanism may withhold; only a model may grant.**
 
 Core is not a semantic decision engine. It does not decide relevance,
-importance, correctness, role applicability, task completion, or whether changed
-evidence invalidates a conclusion.
+importance, correctness, role applicability or task completion. It never marks
+a requirement satisfied, dismisses evidence, picks relevance, rewrites a
+recorded conclusion or closes a task.
+
+Core may block, pause, cap and surface. Every gate is a pure function of ledger
+facts plus data a model or human declared (a check, a requirement kind, a
+contract), and the Controller can override it with a recorded reason. A green
+check grants nothing: it only stops the gate withholding.
 
 Core provides durable records, identities, revisions and compare-and-swap,
 atomic writes and rollback, provenance, objective freshness observations,
-Artifact addressing, task-surface observations, and explicit retrieval.
+Artifact addressing, task-surface observations, declared-check execution, and
+explicit retrieval.
 
 The Codex adapter also preserves explicitly selected human task intent in an
 external governance anchor. Root identity and human prompt authorship remain
 UNKNOWN; explicit task selection is a semantic Controller decision, not a
 UserPromptSubmit inference. Continuation survives session/daemon interruption.
 Known children, readonly and fenced actors cannot alter authority. Explicit
-Controller-direct and single-agent modes override the default role split;
-absent an explicit override, existing routing remains. See
+Controller-direct, single-agent and adaptive modes override the default role
+split; absent an explicit override, existing routing remains. See
 [Persistent task authority](docs/thaliris-task-authority.md) for the contract,
 recovery, security baseline and shared-OS limitations.
 
@@ -131,10 +138,7 @@ making each refusal actionable and each response small:
   `details` beside `error`.
 - `TASK_REVISION_CONFLICT` carries `base_revision`, `current_revision` and a
   bounded `changes_since` review hint. It is deliberately not an exact delta:
-  persisted state gains no new fields, because states written by Core 0.5.1
-  must stay valid for Core 0.5.0 (several Hosts may share one `.context`
-  during rollout or after a downgrade), and 0.5.0 rejects unknown fields on
-  continuity objects. The hint is `{base_revision, current_revision,
+  continuity objects carry no per-item revision. The hint is `{base_revision, current_revision,
   revision_gap, exact: false, records, recent, evidence}`: `records` are the
   ids of records whose stored revision is above the base; `recent` holds the
   last k handoff ids, observation `{id, handoff_id, requirement_refs}` and
@@ -229,12 +233,75 @@ Promotion uses task-revision CAS and does not advance that revision. Core does
 not impose semantic categories, evidence freshness or `CONFIRMED` thresholds,
 promotion quotas, or milestone fields.
 
-### Verification and task surface
+### Verification-first ledger
 
-Verification records command/tool identity, outcome, candidate identity,
-observed files, timestamp, and result hash. These are observations. Core does
-not decide whether testing is sufficient and does not use verification as a
-semantic task-close gate.
+Core 0.6.0. A task that uses none of these keeps schema 7/8 and its exact
+behaviour. The first write of one moves the state to schema 9, which older
+Cores refuse as newer; they are not expected to read it.
+
+**Requirement kind.** A requirement may be registered with `kind`:
+`compiled` (declared checks decide it), `partial` (checks cover part of it) or
+`judgment-only` (the default, and every earlier requirement), and with
+`surface: "contract"`.
+
+**Declared check.** `task-check` records `{id, requirement_refs, command,
+cwd, timeout_s, files}` and the content hash of each file. `command` is an argv
+list and is never passed to a shell. Only the Controller declares; the adapter
+decides who that is. Declaring an existing id needs `--supersede`, which keeps
+the id and is how the Controller accepts changed check content.
+
+**Verification result.** `task-verify --check ID` may be called by any task
+actor. Core runs the declared command itself, outside the task lock, with the
+declared cwd and timeout, and appends `{check_id, run, outcome
+PASS|FAIL|ERROR|TIMEOUT, exit_code, output_tail and its hash, duration_ms,
+tree_identity, observed_files, observed_by, observed_at}`. Core keeps the last
+four results per check and the output tail of the latest.
+
+**Tree identity and freshness.** `tree_identity` is `git:<tree id>` over
+tracked plus untracked non-ignored files, excluding `.context/`, computed in a
+scratch index and scratch object directory so the repository is not written. A
+non-Git directory, or any failure, is `UNKNOWN`, which never counts as fresh. A
+result is fresh only when its tree identity equals the current one, it ran the
+declared command, and the check files match the declared hashes. A check is
+`green` (fresh PASS), `red` (fresh non-PASS), `stale` or `unrun`.
+
+**Check tamper.** When a declared file no longer matches its declared hash,
+Core appends one adverse observation per (check, new content), producer
+`mechanism`, linked to the check's requirements. It stays open until a judgment
+cites it. Detection runs at verify, judge and close; `task-status` surfaces it
+and records it only with `--record-tamper`, because a status read must not
+write the ledger behind an authority anchor.
+
+**Withholding gate.** A `satisfied` judgment on a requirement with a declared
+check, and `task-close` on a task with declared checks, are refused as
+`VERIFICATION_WITHHELD` while a relevant check is red, unrun or stale. An
+override reason lifts the refusal and is stored with the checks it overrode. A
+refusal writes nothing. The close response always lists every `judgment-only`
+and `partial` requirement with its latest judgment. A task with declared checks
+reaches DONE only through this gate.
+
+**Typed claims.** A child's final message ends with a fenced
+`thaliris-claims` block. `task-ingest-claims` turns `contradicts` and `unknown`
+claims into ordinary observations, counts `supports` per requirement on the
+handoff, makes a claim about a requirement outside the handoff's refs an
+unassigned observation, and merges repeats of a still-open claim. A missing or
+malformed block leaves one marker that is not an obligation. Claims carry no
+confidence value. Voluntary `task-observe` is unchanged.
+
+**Dispatch usage.** `task-handoff-usage` stores adapter-reported `{model,
+effort, input_tokens, output_tokens, total_tokens, cost_usd, duration_ms,
+tool_uses, outcome}` on a handoff. Every field is optional and an unreported
+one stays null. Status aggregates it by role and model.
+
+**Lane advisories.** For an `adaptive` contract, status lists advisories that
+never block: a check failing twice on distinct trees, task-surface delta outside
+`write_surface` or beyond 3 files / 150 changed lines, a `judgment-only`
+requirement, a `surface: contract` requirement, and an adapter-reported
+Controller tool-output counter above 30k tokens. Thresholds come from
+`advisories` in `.context/config.json`. The counter is a task-local sidecar, so
+updating it changes neither the revision nor the ledger bytes.
+
+### Task surface
 
 Task start records Git HEAD and dirty-surface identities. Later reads expose
 before, after, and delta. Core does not attribute ownership or block close based
@@ -287,7 +354,8 @@ is added to the identity namespace and its formats are unchanged.
 - explicit native blocking wait, only with a pending dependency
 - explicit `catalog` and exact-path `document-get` retrieval and Artifact addressing
 - Reviewer developer instruction and obvious-write guard
-- mechanical candidate and task-surface identity
+- mechanical candidate, tree and task-surface identity
+- declared checks and fresh-result gating with recorded overrides
 - adapter/hook/lifecycle diagnostics
 
 ## Benchmark boundary

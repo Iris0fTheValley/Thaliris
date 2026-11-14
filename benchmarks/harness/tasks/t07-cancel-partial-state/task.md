@@ -1,0 +1,3 @@
+`import_records(store, records, should_cancel)` in `importer.py` appends records to `store` one by one. If the import is cancelled or fails halfway, the store keeps the half-imported records. Make the import all-or-nothing.
+
+`should_cancel()` is checked before each record. If it returns true, roll back everything this call added and return `False`. If a record is invalid (not a dict with an `"id"` key), raise `ValueError`; again, the store must end up exactly as it was before the call. The same applies if `should_cancel()` itself raises (for example a timeout): roll back and let the exception propagate. Records that were already in the store before the call must not be touched, and the same list object must be modified in place. On success return `True`.

@@ -1,0 +1,10 @@
+{
+  "id": "t10-config-merge",
+  "title": "Recursive, non-mutating configuration merge",
+  "category": "plain-feature",
+  "requirements": [
+    {"id": "R1", "text": "Nested dicts are merged recursively; lists, None and scalars in override replace the base value", "kind": "compiled"},
+    {"id": "R2", "text": "Neither input is modified and the result shares no nested dicts with them", "kind": "compiled"}
+  ],
+  "trap": false
+}

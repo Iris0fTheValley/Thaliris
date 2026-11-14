@@ -1,0 +1,11 @@
+{
+  "id": "t08-pagination-off-by-one",
+  "title": "Page count and 1-based page slicing without off-by-one errors",
+  "category": "pagination-off-by-one",
+  "requirements": [
+    {"id": "R1", "text": "page_count is the ceiling of total/per_page, with no extra page for exact multiples and 0 for no items", "kind": "compiled"},
+    {"id": "R2", "text": "get_page is 1-based, returns [] past the last page, and pages cover every item exactly once", "kind": "compiled"},
+    {"id": "R3", "text": "page < 1 or per_page < 1 raises ValueError", "kind": "partial"}
+  ],
+  "trap": true
+}

@@ -62,6 +62,15 @@ When an already discovered fact changes a child's local conclusion, local accept
 critical UNKNOWN, the child records it with source refs and selected handoff/requirement provenance.
 This creates no additional search duty or global-importance judgment, model call or acceptance gate.
 
+A child ends its final message with one fenced `thaliris-claims` block: the literal `none`,
+or at most five claims `{requirement, polarity: supports|contradicts|unknown, text, evidence,
+basis: check|read|inference}`, where `evidence` is a declared check id or `path:line`. The
+adapter ingests it. `contradicts` and `unknown` become ordinary observations with the handoff's
+provenance. `supports` are counted per requirement on the handoff and create no obligation. A
+claim about a requirement outside the handoff's refs becomes an unassigned observation. A
+missing or malformed block is recorded as a marker and listed as a handoff without typed
+claims. Claims carry no confidence value.
+
 Attribute evidence to its source: facts established by Controller, imported historical child
 results and independent review remain distinct. This provenance distinction does not change
 execution mode, tool permissions or child authority.
@@ -108,6 +117,18 @@ Core stores model-authored observations and judgments with opaque requirement an
 references, provenance and append-only history. It does not classify importance, infer
 acceptance, route work or prescribe approval, roles, stages, model calls or polling.
 
+Mechanism may withhold; only a model may grant. The Controller may give a requirement a kind
+(`compiled`, `partial`, default `judgment-only`) and declare checks for it: an argv command,
+cwd, timeout and check files whose content hashes Core records. Any task actor runs a declared
+check with `task-verify`; Core executes it and records the outcome against the current tree
+identity. A result is fresh only for the tree it ran on and the declared check content, and an
+UNKNOWN tree is never fresh. While a requirement's declared check is red, unrun or stale, a
+`satisfied` judgment for it is refused as `VERIFICATION_WITHHELD`. The Controller either makes
+the check green or judges with an override reason, which is stored with the checks it overrode
+and shown in status. A fresh PASS marks nothing satisfied. A changed check file becomes one
+open observation from producer `mechanism` per new content; re-declaring the check with
+`--supersede` is how the Controller accepts the change.
+
 To keep Controller round trips small, Core accepts batched judgments
 (`{"judgments": [...]}`) and observations (`{"observations": [...]}`) as one
 all-or-nothing append, returns a compact evidence summary (open-item totals always,
@@ -117,8 +138,7 @@ the `TASK_REVISION_CONFLICT` details carry a bounded, non-exact `changes_since` 
 (`exact: false`: revision gap, records newer than the base, the last k handoffs,
 observations and judgments, which may predate the base, and the open evidence summary)
 so the Controller knows what to review before retrying. It is a hint, not a delta:
-persisted state carries no per-item revision, keeping Core 0.5.1 states readable by
-Core 0.5.0 when Hosts share one repository context directory.
+persisted state carries no per-item revision.
 
 ## Context frequency, waiting and observation
 
@@ -198,8 +218,10 @@ Verifier remains read-only compatibility, not a recommended stage.
 Native role/model bindings, readonly enforcement, execution modes and delegation
 capabilities are adapter-owned. Profiles do not alter semantic responsibilities.
 
-Respect the human's delegated, controller-direct or single-agent selection; omitted
-selection defaults to delegated. Controller strategy may change through authorized
+Respect the human's delegated, controller-direct, single-agent or adaptive selection; omitted
+selection defaults to delegated. In adaptive mode the Controller may execute directly and may
+also dispatch children, and the contract may leave `boundary` and `invariants` unspecified.
+Controller strategy may change through authorized
 task/revision CAS without expanding the original goal, scope or hard constraints.
 Existing child role and readonly boundaries remain fixed. Ordinary Controller reads,
 Git and diagnostics are legal within the task boundary. Legal capability is separate
@@ -213,8 +235,12 @@ they are not independent global decision work. Finish genuinely independent glob
 decision work first; when none remains and a necessary child is unfinished, wait normally.
 Do not invent busywork to delay waiting. Integrate the distilled result with retained
 global facts and acceptance; reopen a precise original for a pending immediate decision.
-Controller-direct and single-agent permit direct execution. No file, line, token, query
-or tool-count quota or privilege denial enforces cognitive ownership. Prefer
+Controller-direct, single-agent and adaptive permit direct execution. No file, line, token, query
+or tool-count quota or privilege denial enforces cognitive ownership. In adaptive mode Core
+surfaces lane advisories in status: a check failing twice on distinct trees, a task surface
+beyond the declared `write_surface` or the size thresholds, a `judgment-only` or contract-surface
+requirement, and heavy Controller tool output. They are facts for the Controller's lane choice
+and never block. Prefer
 bounded catalog/document/task/artifact retrieval and exact instruction sections
 when useful. Hooks cannot prove cumulative semantic scope or all third-party MCP behavior.
 An active child may receive selected supplemental evidence and factual corrections
@@ -311,6 +337,11 @@ Keep execution, review, product acceptance and mechanical closure distinct: test
 reports the checks run; native child Completed reports execution termination; Reviewer
 READY reports supported critical closure for its selected review; Core task-close DONE
 records mechanical closure. None alone decides semantic product acceptance.
+
+`task-close` is withheld while any declared check is red, unrun or stale for the current tree,
+unless the Controller closes with an override reason, which is recorded. The close response
+lists every `judgment-only` and `partial` requirement with its latest judgment, so what no
+check decided stays in front of the Controller at closure.
 Choose fresh sessions by remaining independence and total context reconstruction cost,
 never by a mechanical duration/call threshold or a local PASS alone.
 

@@ -17,9 +17,15 @@ import uuid
 
 from . import core
 
-MODES = ("delegated", "controller-direct", "single-agent")
+# ``adaptive``: the Controller may execute directly and may also dispatch children.
+MODES = ("delegated", "controller-direct", "single-agent", "adaptive")
 _CONTRACT_FIELDS = {"human_instruction", "boundary", "invariants", "acceptance", "execution_mode"}
-_OPTIONAL_CONTRACT_FIELDS = {"execution_constraint", "parallel_dispatch"}
+_OPTIONAL_CONTRACT_FIELDS = {"execution_constraint", "parallel_dispatch", "write_surface"}
+# Quick admission: an adaptive contract may omit these; each omitted one is stored as the
+# explicit marker below, never inferred. Goal, human_instruction and acceptance stay required.
+ADAPTIVE_OPTIONAL_FIELDS = ("boundary", "invariants")
+UNSPECIFIED = "unspecified"
+WRITE_SURFACE_MAX_GLOBS = 64
 _TRUTH_FIELDS = {"version", "project", "task_id", "goal", "contract", "status", "provenance",
                  "state_sha256", "security", "snapshots", "history"}
 _CORE_OWNED_FIELDS = _TRUTH_FIELDS - {"provenance"}
@@ -35,13 +41,18 @@ def validate_contract(value: object) -> dict:
     """Validate selected intent mechanically, without inferring its author."""
     if isinstance(value, dict) and "execution_mode" not in value:
         value = {**value, "execution_mode": "delegated"}
+    if isinstance(value, dict) and value["execution_mode"] == "adaptive" and set(ADAPTIVE_OPTIONAL_FIELDS) - value.keys():
+        value = {**value, **{name: UNSPECIFIED for name in ADAPTIVE_OPTIONAL_FIELDS if name not in value}}
     fields = set(value) if isinstance(value, dict) else set()
     missing = sorted(_CONTRACT_FIELDS - fields)
     unknown = sorted(str(key)[:64] for key in fields - _CONTRACT_FIELDS - _OPTIONAL_CONTRACT_FIELDS)
     invalid = []
     if isinstance(value, dict):
         invalid = sorted(key for key in ((_CONTRACT_FIELDS - {"execution_mode"}) | _OPTIONAL_CONTRACT_FIELDS) & fields
-                         if key != "parallel_dispatch" and (not isinstance(value[key], str) or not value[key].strip() or len(value[key]) > 16384))
+                         if key not in {"parallel_dispatch", "write_surface"}
+                         and (not isinstance(value[key], str) or not value[key].strip() or len(value[key]) > 16384))
+        if "write_surface" in value and not _valid_write_surface(value["write_surface"]):
+            invalid.append("write_surface")
         if "execution_mode" in value and value["execution_mode"] not in MODES:
             invalid.append("execution_mode")
         if "parallel_dispatch" in value:
@@ -57,8 +68,22 @@ def validate_contract(value: object) -> dict:
                      "optional_fields": sorted(_OPTIONAL_CONTRACT_FIELDS), "missing_fields": missing,
                      "unknown_fields": unknown[:16], "unknown_field_count": len(unknown),
                      "invalid_fields": sorted(invalid), "execution_modes": list(MODES),
+                     "adaptive_optional_fields": list(ADAPTIVE_OPTIONAL_FIELDS),
+                     "write_surface": f"1 to {WRITE_SURFACE_MAX_GLOBS} repo-relative POSIX globs",
                      "text_fields": "nonempty strings of at most 16384 characters"})
     return value
+
+
+def _valid_write_surface(value: object) -> bool:
+    """Shape of the optional write-surface globs; Core only compares the task surface against them."""
+    if not isinstance(value, list) or not 1 <= len(value) <= WRITE_SURFACE_MAX_GLOBS or len(set(map(str, value))) != len(value):
+        return False
+    for glob in value:
+        if not isinstance(glob, str) or not glob.strip() or len(glob) > 256 or "\\" in glob or glob.startswith("/"):
+            return False
+        if any(part in {"", ".", ".."} for part in glob.rstrip("/").split("/")) or any(ord(char) < 32 for char in glob):
+            return False
+    return True
 
 
 def _validate_parallel_dispatch(value: object) -> None:

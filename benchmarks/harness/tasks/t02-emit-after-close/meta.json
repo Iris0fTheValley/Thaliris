@@ -1,0 +1,11 @@
+{
+  "id": "t02-emit-after-close",
+  "title": "Shutdown must drain pending messages before the channel closes",
+  "category": "event-emitted-after-channel-closed",
+  "requirements": [
+    {"id": "R1", "text": "The closed event is the last event any listener receives", "kind": "compiled"},
+    {"id": "R2", "text": "Follow-up messages submitted by listeners during shutdown are delivered before close", "kind": "compiled"},
+    {"id": "R3", "text": "submit after shutdown raises RuntimeError and a second shutdown is a no-op", "kind": "compiled"}
+  ],
+  "trap": true
+}

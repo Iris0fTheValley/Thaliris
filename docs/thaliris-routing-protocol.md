@@ -62,6 +62,10 @@ When an already discovered fact changes a child's local conclusion, local accept
 critical UNKNOWN, the child records it with source refs and selected handoff/requirement provenance.
 This creates no additional search duty or global-importance judgment, model call or acceptance gate.
 
+Attribute evidence to its source: facts established by Controller, imported historical child
+results and independent review remain distinct. This provenance distinction does not change
+execution mode, tool permissions or child authority.
+
 Keep critical observations globally visible across later handoffs until Controller explicitly
 reassesses each related USER REQUIREMENT for the current candidate: satisfied, unknown,
 repair, or a reason it no longer affects that candidate. Reading, retrieving, acknowledging,
@@ -134,6 +138,32 @@ changes or terminal evidence; Controller waits for the necessary child result wi
 rechecking the same job. Do not create status-only reasoning rounds for unchanged
 state or poll completed work. A timeout alone supplies no new decision or evidence.
 
+At decision boundaries, reuse the task's existing Active Work, Pending Results and selected
+evidence refs to recover decisions, hard constraints, current evidence, UNKNOWNs and the
+precise next event. Refresh Git HEAD or environment facts only when a relevant change or
+decision-changing uncertainty could affect the choice. This is task continuity, not a
+parallel persistent-memory workflow; no fixed time or call quota applies.
+
+After user/model steering or turn interruption, an earlier dependency view may be stale.
+Take one exact current status snapshot when needed before another wait, and wait only if the
+necessary dependency remains unfinished. Do not wait on an interrupted, ended or no-longer-
+needed child or repeat confirmation. A missed wake remains UNKNOWN without Host evidence;
+prompt guidance alone cannot establish or fix native wake behavior.
+
+`ASSOCIATION_UNKNOWN` for the wait helper does not block authorized source work or tests.
+Observe your own process with native exec/write_stdin; this does not bypass managed guards.
+
+For expensive native fixtures, first verify the exact source and lockfile, package identity,
+and normal dependency path. A `--no-deps` fixture may isolate packaging behavior but is not
+ordinary release/install proof; use this ordering where relevant, not as a universal gate.
+After `EADDRINUSE` or `EBUSY`, inspect resource ownership and health before an equivalent
+retry; never kill an unknown owner or delete an unknown lock. Truncated CI output, or a
+`ready` result paired with exit 1, needs one targeted structured terminal/health
+reconciliation; do not poll or treat readiness as completion.
+
+After interruption, verify the known artifact path, provenance and current bytes, then finish
+the remaining requested delivery instead of restarting all work.
+
 Native capacity never expands adapter-managed authorization. A simultaneous
 active/pending delegation slot is not a lifetime quota; after proved terminal
 completion it may serve another necessary uncovered gap within the accepted boundary,
@@ -196,6 +226,14 @@ Coupled invariants or nonlocal constraints needing sustained reasoning use Focus
 Implementer. Controller routes Workstreams by semantic dependencies, decision coupling
 and independent closure. Executors close local loops inside them; a semantic checkpoint
 is not necessarily a scheduling checkpoint. Count-based thresholds do not route work.
+
+Substantive frontend work has a strong-model quality bar: new UI or layout, component
+architecture, responsive behavior, interaction, animation, creative SVG work or
+nontrivial visual design needs a strong executor even when the diff or code is small.
+A light model fits only genuinely trivial, fully specified text/color changes or
+equivalent mechanical edits, all of which require no design or behavior decisions.
+This is a semantic Controller routing decision, not a Core keyword or diff-size classifier;
+native model and profile policy belongs to the Host-specific Controller instructions.
 
 Remaining work is independently deterministic only when the accepted contract
 uniquely determines the behavior to preserve. Compatibility authority ambiguity

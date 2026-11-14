@@ -19,7 +19,7 @@ from . import core
 
 MODES = ("delegated", "controller-direct", "single-agent")
 _CONTRACT_FIELDS = {"human_instruction", "boundary", "invariants", "acceptance", "execution_mode"}
-_OPTIONAL_CONTRACT_FIELDS = {"execution_constraint"}
+_OPTIONAL_CONTRACT_FIELDS = {"execution_constraint", "parallel_dispatch"}
 _TRUTH_FIELDS = {"version", "project", "task_id", "goal", "contract", "status", "provenance",
                  "state_sha256", "security", "snapshots", "history"}
 _CORE_OWNED_FIELDS = _TRUTH_FIELDS - {"provenance"}
@@ -35,14 +35,89 @@ def validate_contract(value: object) -> dict:
     """Validate selected intent mechanically, without inferring its author."""
     if isinstance(value, dict) and "execution_mode" not in value:
         value = {**value, "execution_mode": "delegated"}
-    if (not isinstance(value, dict) or not _CONTRACT_FIELDS <= set(value)
-            or set(value) - _CONTRACT_FIELDS - _OPTIONAL_CONTRACT_FIELDS
-            or value.get("execution_mode") not in MODES):
-        raise ValueError("TASK_AUTHORITY_CONTRACT_REQUIRED")
-    if any(not isinstance(value[key], str) or not value[key].strip() or len(value[key]) > 16384
-           for key in (_CONTRACT_FIELDS - {"execution_mode"}) | (_OPTIONAL_CONTRACT_FIELDS & value.keys())):
-        raise ValueError("TASK_AUTHORITY_CONTRACT_REQUIRED")
+    fields = set(value) if isinstance(value, dict) else set()
+    missing = sorted(_CONTRACT_FIELDS - fields)
+    unknown = sorted(str(key)[:64] for key in fields - _CONTRACT_FIELDS - _OPTIONAL_CONTRACT_FIELDS)
+    invalid = []
+    if isinstance(value, dict):
+        invalid = sorted(key for key in ((_CONTRACT_FIELDS - {"execution_mode"}) | _OPTIONAL_CONTRACT_FIELDS) & fields
+                         if key != "parallel_dispatch" and (not isinstance(value[key], str) or not value[key].strip() or len(value[key]) > 16384))
+        if "execution_mode" in value and value["execution_mode"] not in MODES:
+            invalid.append("execution_mode")
+        if "parallel_dispatch" in value:
+            try:
+                _validate_parallel_dispatch(value["parallel_dispatch"])
+            except ValueError:
+                invalid.append("parallel_dispatch")
+    if not isinstance(value, dict) or missing or unknown or invalid:
+        raise core.ThalirisError(
+            "TASK_AUTHORITY_CONTRACT_REQUIRED", "TASK_AUTHORITY_CONTRACT_REQUIRED",
+            recovery="supply one contract object with the required field names; correct only the listed fields and retry; authority was not established",
+            details={"expected_type": "object", "required_fields": sorted(_CONTRACT_FIELDS),
+                     "optional_fields": sorted(_OPTIONAL_CONTRACT_FIELDS), "missing_fields": missing,
+                     "unknown_fields": unknown[:16], "unknown_field_count": len(unknown),
+                     "invalid_fields": sorted(invalid), "execution_modes": list(MODES),
+                     "text_fields": "nonempty strings of at most 16384 characters"})
     return value
+
+
+def _validate_parallel_dispatch(value: object) -> None:
+    """Validate the optional Controller-selected parallel dispatch contract.
+
+    This is intentionally a shape/partition check.  Native identity, fences,
+    CAS and ownership remain adapter/runtime concerns.  Unknown fields are
+    rejected here so a malformed contract cannot silently widen dispatch.
+    """
+    if not isinstance(value, dict) or set(value) != {"enabled", "budget", "workstreams"}:
+        raise ValueError("invalid parallel_dispatch contract")
+    if value.get("enabled") is not True or type(value.get("budget")) is not int or not 1 <= value["budget"] <= 256:
+        raise ValueError("invalid parallel_dispatch budget")
+    streams = value.get("workstreams")
+    if not isinstance(streams, list) or not streams or len(streams) > value["budget"]:
+        raise ValueError("invalid parallel_dispatch workstreams")
+    ids: set[str] = set()
+    partitions: list[tuple[str, str, str]] = []
+    write_trees: set[str] = set()
+    for stream in streams:
+        if not isinstance(stream, dict) or set(stream) != {"id", "domain", "scope", "worktree", "mode"}:
+            raise ValueError("invalid parallel_dispatch workstream")
+        ident, domain, scope, worktree, mode = (stream.get(k) for k in ("id", "domain", "scope", "worktree", "mode"))
+        if any(not isinstance(item, str) or not item.strip() or len(item) > 256 for item in (ident, domain)):
+            raise ValueError("invalid parallel_dispatch workstream identity")
+        if ident in ids:
+            raise ValueError("duplicate parallel_dispatch workstream id")
+        ids.add(ident)
+        if mode not in {"read", "write"}:
+            raise ValueError("invalid parallel_dispatch workstream mode")
+        if isinstance(scope, str):
+            scopes = [scope]
+        elif isinstance(scope, list) and scope and all(isinstance(item, str) for item in scope):
+            scopes = scope
+        else:
+            raise ValueError("invalid parallel_dispatch scope")
+        normalized = []
+        for item in scopes:
+            item = item.strip().replace("\\", "/").strip("/")
+            if not item or any(part in {"", ".", ".."} for part in item.split("/")):
+                raise ValueError("invalid parallel_dispatch scope path")
+            normalized.append(item)
+        if mode == "write":
+            if not isinstance(worktree, str) or not worktree.strip() or len(worktree) > 256:
+                raise ValueError("write workstream requires a unique worktree")
+            wt = worktree.strip().replace("\\", "/").rstrip("/")
+            if not wt or wt in write_trees:
+                raise ValueError("write workstream worktree must be unique")
+            write_trees.add(wt)
+        elif worktree is not None and (not isinstance(worktree, str) or len(worktree) > 256):
+            raise ValueError("invalid read workstream worktree")
+        for prior_domain, prior_scope, prior_mode in partitions:
+            if prior_domain != domain:
+                continue
+            for left in normalized:
+                for right in prior_scope.split("\n"):
+                    if left == right or left.startswith(right + "/") or right.startswith(left + "/"):
+                        raise ValueError("overlapping parallel_dispatch scopes")
+        partitions.append((domain, "\n".join(normalized), mode))
 
 
 def digest(target: Path) -> str:
@@ -123,7 +198,14 @@ class AuthorityStore:
         target = self.path()
         if digest(target) == "ABSENT":
             return None
-        record = json.loads(target.read_text(encoding="utf-8"))
+        try:
+            record = json.loads(target.read_text(encoding="utf-8"))
+        except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError
+            raise core.ThalirisError(
+                core.errors.TASK_AUTHORITY_INVALID, "TASK_AUTHORITY_INVALID",
+                recovery=("the external authority anchor is not readable JSON; Core does not repair or replace it; "
+                          "restore its exact bytes from a copy or use the adapter's recovery procedure"),
+                details={"reason": "anchor is not valid UTF-8 JSON", "anchor": target.name}) from exc
         if (not isinstance(record, dict) or record.get("version") != 1 or not isinstance(record.get("project"), str)
                 or Path(record["project"]).resolve() != self.root.resolve()):
             raise ValueError("TASK_AUTHORITY_INVALID")
@@ -265,7 +347,13 @@ class AuthorityStore:
             restored = {}
             for name, encoded in record["snapshots"].items():
                 _relative(self.root, name)
-                restored[name] = None if encoded is None else base64.b64decode(encoded, validate=True)
+                try:
+                    restored[name] = None if encoded is None else base64.b64decode(encoded, validate=True)
+                except (TypeError, ValueError) as exc:
+                    raise core.ThalirisError(
+                        core.errors.TASK_AUTHORITY_INVALID, "TASK_AUTHORITY_INVALID",
+                        recovery="a recorded snapshot is not valid base64; nothing was restored",
+                        details={"reason": "snapshot is not valid base64", "path": name}) from exc
             for name in paths:
                 _relative(self.directory, name)
                 if name in {"authority.json", *restored}:

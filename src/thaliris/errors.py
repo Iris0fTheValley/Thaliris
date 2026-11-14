@@ -25,6 +25,10 @@ CONTINUITY_REFERENCE_INVALID = "CONTINUITY_REFERENCE_INVALID"
 CONTINUITY_PROVENANCE_CONFLICT = "CONTINUITY_PROVENANCE_CONFLICT"
 CONTINUITY_ID_COLLISION = "CONTINUITY_ID_COLLISION"
 REVISION_DELTA_INVALID = "REVISION_DELTA_INVALID"
+# A bounded ledger list, the routing page or the whole state file is full; the write is refused unchanged.
+TASK_STATE_CAPACITY_EXCEEDED = "TASK_STATE_CAPACITY_EXCEEDED"
+# The external authority anchor exists but cannot be read as a Core authority record.
+TASK_AUTHORITY_INVALID = "TASK_AUTHORITY_INVALID"
 # Identity formation (basis notes and suggestion preferences; stored outside the repository).
 IDENTITY_NOTE_INVALID = "IDENTITY_NOTE_INVALID"
 IDENTITY_NOTE_NOT_FOUND = "IDENTITY_NOTE_NOT_FOUND"

@@ -53,9 +53,17 @@ def _parser() -> argparse.ArgumentParser:
     command.add_argument("--actor", required=True)
     command.add_argument("--input", required=True)
     command.add_argument("--compact-evidence", action="store_true")
-    for name in ("task-get", "artifact-get"):
-        command = commands.add_parser(name)
-        command.add_argument("id")
+    command = commands.add_parser(
+        "task-get",
+        help="retrieve one selected-task object by exact object ID",
+        description=(
+            "Retrieve exactly one object from the selected task. Supply its exact object ID, "
+            "not the Task ID; use task-status for the selected task or task-show for diagnostics."
+        ),
+    )
+    command.add_argument("id", help="exact object ID; the selected Task ID is not an object ID")
+    command = commands.add_parser("artifact-get")
+    command.add_argument("id")
     command = commands.add_parser("task-artifact")
     command.add_argument("--base-revision", type=int, required=True)
     command.add_argument("--id", required=True)

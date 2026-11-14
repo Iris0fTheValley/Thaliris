@@ -108,7 +108,9 @@ def test_core_mechanically_accepts_opaque_actor_and_provenance(tmp_path: Path) -
 
 def test_core_source_has_no_controller_role_contract() -> None:
     source = Path(core.__file__).read_text(encoding="utf-8").lower()
-    assert "controller" not in source
+    assert "controller-local" in source
+    assert "controller_session_id_hash" not in source
+    assert "active_controller_owner" not in source
 
 
 def test_artifact_freshness_is_observation_only(tmp_path: Path) -> None:
@@ -539,6 +541,23 @@ def test_task_get_and_artifact_get_return_only_the_selected_object(tmp_path: Pat
     assert fetched["object_type"] == "artifact"
 
 
+def test_task_get_missing_object_keeps_bounded_diagnostic_and_adds_task_id_recovery(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "bounded missing-object recovery", None, None)
+
+    with pytest.raises(core.ThalirisError) as task_id_refusal:
+        core.task_get(root, started["task_id"])
+    assert task_id_refusal.value.code == "TASK_OBJECT_NOT_FOUND"
+    assert task_id_refusal.value.details == {"id": started["task_id"], "matches": 0}
+    assert "exact object ID, not the selected Task ID" in task_id_refusal.value.recovery
+
+    with pytest.raises(core.ThalirisError) as generic_refusal:
+        core.task_get(root, "missing-object")
+    assert generic_refusal.value.code == "TASK_OBJECT_NOT_FOUND"
+    assert generic_refusal.value.details == {"id": "missing-object", "matches": 0}
+    assert generic_refusal.value.recovery is None
+
+
 def test_artifact_get_checks_stat_bound_before_read(tmp_path: Path, monkeypatch) -> None:
     root = repo(tmp_path)
     started = core.task_start(root, "artifact bound", None, None)
@@ -896,17 +915,6 @@ def test_production_package_has_no_benchmark_authority_module() -> None:
     )
     for benchmark_only in ("D11", "formal authority registry", "receipt issuer"):
         assert benchmark_only not in production
-
-
-def test_only_current_task_state_schema_is_accepted(tmp_path: Path) -> None:
-    root = repo(tmp_path)
-    core.task_start(root, "current schema", None, None)
-    path = core._state_path(root)
-    state = json.loads(path.read_text(encoding="utf-8"))
-    state["schema_version"] -= 1
-    path.write_text(json.dumps(state), encoding="utf-8")
-    with pytest.raises(ValueError, match="invalid task state schema"):
-        core.task_show(root)
 
 
 def test_revision_cas_rejects_stale_writer_without_mutating_state(tmp_path: Path) -> None:

@@ -3,6 +3,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from thaliris import cli, core
 
 
@@ -30,7 +32,7 @@ from thaliris import authority, core, cli, markdown, models
 raise SystemExit(cli.main(['version']))
 '''
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
-    assert json.loads(result.stdout)["version"] == "0.5.2"
+    assert json.loads(result.stdout)["version"] == "0.5.5"
 
 
 def test_cli_explicit_task_selector_interleaves_without_legacy_adoption(tmp_path, capsys):
@@ -50,3 +52,30 @@ def test_cli_explicit_task_selector_interleaves_without_legacy_adoption(tmp_path
     capsys.readouterr()
     core.select_task(tmp_path, first)
     assert core._load_state(tmp_path)["status"] == "ACTIVE"
+
+
+def test_task_get_task_id_refusal_explains_exact_object_recovery(tmp_path, capsys):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    assert cli.main(["--root", str(tmp_path), "init"]) == 0
+    capsys.readouterr()
+    assert cli.main(["--root", str(tmp_path), "task-start", "bounded lookup"]) == 0
+    task_id = json.loads(capsys.readouterr().out)["task_id"]
+
+    assert cli.main(["--root", str(tmp_path), "--task-id", task_id, "task-get", task_id]) == 2
+    refusal = json.loads(capsys.readouterr().out)
+    assert refusal["error"] == "task object not found"
+    assert refusal["code"] == "TASK_OBJECT_NOT_FOUND"
+    assert refusal["details"] == {"id": task_id, "matches": 0}
+    assert "exact object ID, not the selected Task ID" in refusal["recovery"]
+    assert "task-status" in refusal["recovery"]
+    assert "task-show" in refusal["recovery"]
+
+
+def test_task_get_cli_help_explains_object_id_requirement(capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["task-get", "--help"])
+
+    assert exit_info.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "exact object ID" in help_text
+    assert "not the Task ID" in help_text

@@ -86,23 +86,34 @@ def _valid_write_surface(value: object) -> bool:
     return True
 
 
-def _validate_parallel_dispatch(value: object) -> None:
-    """Validate the optional Controller-selected parallel dispatch contract.
+# State-size guard only: total characters across all declared workstream strings.
+PARALLEL_DISPATCH_MAX_TEXT = 1 << 20
 
-    This is intentionally a shape/partition check.  Native identity, fences,
-    CAS and ownership remain adapter/runtime concerns.  Unknown fields are
-    rejected here so a malformed contract cannot silently widen dispatch.
+
+def _validate_parallel_dispatch(value: object) -> None:
+    """Validate the optional user-directed parallel dispatch contract.
+
+    Parallelism is the user's choice: there is no program-side count cap.  ``budget``
+    is optional and, when present, is the user's explicit positive number.
+    ``workstreams`` is optional (absent or empty means read-only fan-out).  The only
+    mechanical refusal is overlapping *write* scopes, across all domains, by equality
+    or path prefix.  Native identity, fences, CAS and ownership remain adapter/runtime
+    concerns; unknown fields are rejected so a malformed contract cannot silently widen
+    dispatch.
     """
-    if not isinstance(value, dict) or set(value) != {"enabled", "budget", "workstreams"}:
+    if not isinstance(value, dict) or not {"enabled"} <= set(value) <= {"enabled", "budget", "workstreams"}:
         raise ValueError("invalid parallel_dispatch contract")
-    if value.get("enabled") is not True or type(value.get("budget")) is not int or not 1 <= value["budget"] <= 256:
+    if value.get("enabled") is not True:
+        raise ValueError("invalid parallel_dispatch enabled")
+    if "budget" in value and (type(value["budget"]) is not int or value["budget"] < 1):
         raise ValueError("invalid parallel_dispatch budget")
-    streams = value.get("workstreams")
-    if not isinstance(streams, list) or not streams or len(streams) > value["budget"]:
+    streams = value.get("workstreams", [])
+    if not isinstance(streams, list):
         raise ValueError("invalid parallel_dispatch workstreams")
     ids: set[str] = set()
-    partitions: list[tuple[str, str, str]] = []
-    write_trees: set[str] = set()
+    write_scopes: set[str] = set()
+    write_ancestors: set[str] = set()  # every proper path prefix of a claimed write scope
+    text = 0
     for stream in streams:
         if not isinstance(stream, dict) or set(stream) != {"id", "domain", "scope", "worktree", "mode"}:
             raise ValueError("invalid parallel_dispatch workstream")
@@ -120,29 +131,28 @@ def _validate_parallel_dispatch(value: object) -> None:
             scopes = scope
         else:
             raise ValueError("invalid parallel_dispatch scope")
+        if worktree is not None and (not isinstance(worktree, str) or not worktree.strip() or len(worktree) > 256):
+            raise ValueError("invalid parallel_dispatch worktree")
+        text += len(ident) + len(domain) + len(worktree or "") + sum(len(item) for item in scopes)
+        if text > PARALLEL_DISPATCH_MAX_TEXT:
+            raise ValueError("parallel_dispatch contract too large")
         normalized = []
         for item in scopes:
             item = item.strip().replace("\\", "/").strip("/")
             if not item or any(part in {"", ".", ".."} for part in item.split("/")):
                 raise ValueError("invalid parallel_dispatch scope path")
             normalized.append(item)
-        if mode == "write":
-            if not isinstance(worktree, str) or not worktree.strip() or len(worktree) > 256:
-                raise ValueError("write workstream requires a unique worktree")
-            wt = worktree.strip().replace("\\", "/").rstrip("/")
-            if not wt or wt in write_trees:
-                raise ValueError("write workstream worktree must be unique")
-            write_trees.add(wt)
-        elif worktree is not None and (not isinstance(worktree, str) or len(worktree) > 256):
-            raise ValueError("invalid read workstream worktree")
-        for prior_domain, prior_scope, prior_mode in partitions:
-            if prior_domain != domain:
-                continue
-            for left in normalized:
-                for right in prior_scope.split("\n"):
-                    if left == right or left.startswith(right + "/") or right.startswith(left + "/"):
-                        raise ValueError("overlapping parallel_dispatch scopes")
-        partitions.append((domain, "\n".join(normalized), mode))
+        if mode != "write":
+            continue
+        for item in normalized:
+            parts = item.split("/")
+            prefixes = ["/".join(parts[:i]) for i in range(1, len(parts) + 1)]
+            if item in write_ancestors or any(prefix in write_scopes for prefix in prefixes):
+                raise ValueError("overlapping parallel_dispatch write scopes")
+        for item in normalized:
+            parts = item.split("/")
+            write_scopes.add(item)
+            write_ancestors.update("/".join(parts[:i]) for i in range(1, len(parts)))
 
 
 def digest(target: Path) -> str:

@@ -424,3 +424,44 @@ def test_task_authority_key_directory_cannot_redirect_to_workspace(store):
             key_directory.rmdir()
         else:
             key_directory.unlink()
+
+
+def _ws(ident, scope, mode="write", domain="d", worktree=None):
+    return {"id": ident, "domain": domain, "scope": scope, "worktree": worktree, "mode": mode}
+
+
+def _pd(**kw):
+    return {**intent(), "parallel_dispatch": {"enabled": True, **kw}}
+
+
+@pytest.mark.parametrize("extra", [
+    {},
+    {"budget": 10000},
+    {"budget": 1},
+    {"workstreams": []},
+    {"budget": 3, "workstreams": [_ws(f"s{i}", f"m{i}") for i in range(500)]},
+    {"workstreams": [_ws("a", "docs", "read"), _ws("b", "docs/x", "read", domain="e")]},
+    {"workstreams": [_ws("a", "docs", "read"), _ws("b", "docs/x", "write")]},
+    {"workstreams": [_ws("a", "docs/x", "write"), _ws("b", "docs", "read")]},
+    {"workstreams": [_ws("a", "x"), _ws("b", "y")]},
+    {"workstreams": [_ws("a", "x", worktree="wt"), _ws("b", "y", worktree="wt")]},
+])
+def test_parallel_dispatch_is_user_directed_and_uncapped(extra):
+    authority.validate_contract(_pd(**extra))
+
+
+@pytest.mark.parametrize("extra", [
+    {"budget": 0},
+    {"budget": True},
+    {"workstreams": [_ws("a", "src", domain="one"), _ws("b", "src/x", domain="two")]},
+    {"workstreams": [_ws("a", "src"), _ws("b", "src")]},
+    {"workstreams": [_ws("a", "src/x/y"), _ws("b", "src/x")]},
+    {"workstreams": [_ws("a", "..")]},
+    {"workstreams": [_ws("a", "x"), _ws("a", "y")]},
+    {"unknown": 1},
+])
+def test_parallel_dispatch_refuses_only_write_overlap_and_malformed(extra):
+    with pytest.raises(core.ThalirisError):
+        authority.validate_contract(_pd(**extra))
+    with pytest.raises(core.ThalirisError):
+        authority.validate_contract({**intent(), "parallel_dispatch": {"enabled": False}})

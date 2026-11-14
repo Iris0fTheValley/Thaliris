@@ -105,6 +105,16 @@ values; each adapter validates its supported constraints. The optional field is
 part of the Core-owned immutable contract, history and recovery truth, not an
 adapter override. Contracts omitting it retain their existing representation.
 
+A contract may also select `parallel_dispatch`, which is user-directed: `enabled`
+must be true, `budget` is optional (absent means no cap; present, it is the user's
+explicit integer of at least 1, with no program ceiling), and `workstreams` is
+optional (absent or empty means read-only fan-out). Declared workstreams carry
+`{id, domain, scope, worktree, mode}` with unique ids; `worktree` is optional and
+need not be unique. The only mechanical refusal is overlapping write scopes (equal
+or path-prefix, across all domains); read workstreams never conflict. A total-text
+guard of 1 MiB across declared workstream strings bounds state size. Maximum
+managed depth two with one active Scanner is unaffected.
+
 ## Ledger continuity (Core 0.5.3)
 
 Task state schema stays 7 for a task that uses neither Controller-local evidence

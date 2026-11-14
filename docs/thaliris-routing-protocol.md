@@ -192,6 +192,13 @@ bypassing admission or disabling all future supported delegation. Core does not 
 Host concurrency limits.
 
 Independent investigation and workstreams with isolated writes may run in parallel.
+Parallel dispatch is user-directed: the program imposes no count of its own beyond a
+number the user states, and when the user asks for large-scale parallelism the
+Controller carries it out. The only mechanical boundary is that live write
+workstreams may not overlap (equal or prefix-nested write scopes are refused,
+whatever their domain label); read workstreams are never refused for overlap. The
+Controller partitions work into non-overlapping domains, such as different research
+areas, partitioned material or independent modules, not limited to these.
 Coordinate known shared-file overlap or use separate worktrees before dispatch;
 file CAS detects lost updates, not semantic overlap. An adapter may retain one
 task-local unbound dispatch while precise native identity is unavailable, without

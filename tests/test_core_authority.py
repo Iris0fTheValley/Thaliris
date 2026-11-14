@@ -465,3 +465,43 @@ def test_parallel_dispatch_refuses_only_write_overlap_and_malformed(extra):
         authority.validate_contract(_pd(**extra))
     with pytest.raises(core.ThalirisError):
         authority.validate_contract({**intent(), "parallel_dispatch": {"enabled": False}})
+
+
+_BYPASS_PAIRS = [
+    ("src/A", "src/a"),
+    ("src", "I:/AI PROJECT/repo/src"),
+    ("src/*", "src/x"),
+    ("**", "src"),
+    ("src", "src."),
+    ("caf\u00e9", "cafe\u0301"),
+    ("PROGRA~1", "Program Files"),
+    ("./src", "src/"),
+    ("src\\x", "src/x"),
+    ("src", "src/x"),
+]
+
+
+@pytest.mark.parametrize("a,b", _BYPASS_PAIRS)
+def test_parallel_dispatch_write_pairs_cannot_bypass_via_spelling(a, b):
+    with pytest.raises(core.ThalirisError):
+        authority.validate_contract(_pd(workstreams=[_ws("a", a), _ws("b", b)]))
+
+
+def test_parallel_dispatch_read_streams_overlap_but_must_canonicalise():
+    authority.validate_contract(_pd(workstreams=[_ws("a", "src/A", "read"), _ws("b", "src/a", "read")]))
+    with pytest.raises(core.ThalirisError):
+        authority.validate_contract(_pd(workstreams=[_ws("a", "src/*", "read")]))
+
+
+def test_canonical_scope_and_overlap_public_api():
+    assert authority.canonical_scope(" .\\Src//X/ ") == "src/x"
+    assert authority.canonical_scope("/src") == "src"
+    assert authority.canonical_scope("cafe\u0301") == "caf\u00e9"
+    assert authority.scopes_overlap("./src", "src/")
+    assert authority.scopes_overlap("src\\x", "src/x")
+    assert authority.scopes_overlap("src", "SRC/x/y")
+    assert not authority.scopes_overlap("src", "srcx")
+    for bad in ["", ".", "a/../b", "/", "//srv/x", "C:/x", "C:x", "~/x", "a/b*", "a?", "a[1]", "a{b}",
+                "a./b", "a /b", "a/b.", "PROGRA~1/x", "a\x00b", "~root"]:
+        with pytest.raises(ValueError):
+            authority.canonical_scope(bad)

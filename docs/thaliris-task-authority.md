@@ -110,8 +110,14 @@ must be true, `budget` is optional (absent means no cap; present, it is the user
 explicit integer of at least 1, with no program ceiling), and `workstreams` is
 optional (absent or empty means read-only fan-out). Declared workstreams carry
 `{id, domain, scope, worktree, mode}` with unique ids; `worktree` is optional and
-need not be unique. The only mechanical refusal is overlapping write scopes (equal
-or path-prefix, across all domains); read workstreams never conflict. A total-text
+need not be unique. Scopes are canonical repo-relative paths
+(`thaliris.authority.canonical_scope`): Unicode NFC and casefolded on every
+platform, `\` read as `/`, no globs, no absolute, drive-letter, UNC or `~` forms,
+no `.`/`..` segments, no segment ending in a dot or space, no 8.3 short names
+(`PROGRA~1`) and no control characters; such scopes are invalid for read and write
+streams alike. The only mechanical refusal is overlapping write scopes
+(`scopes_overlap`: equal or path-segment prefix, across all domains); read
+workstreams never conflict. A total-text
 guard of 1 MiB across declared workstream strings bounds state size. Maximum
 managed depth two with one active Scanner is unaffected.
 

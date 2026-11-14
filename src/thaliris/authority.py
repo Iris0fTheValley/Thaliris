@@ -11,7 +11,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
+import unicodedata
 from typing import Callable, Mapping
 import uuid
 
@@ -86,6 +88,50 @@ def _valid_write_surface(value: object) -> bool:
     return True
 
 
+_SCOPE_META = set("*?[]{}")
+_SHORT_NAME = re.compile(r"~\d+")
+
+
+def canonical_scope(value: str) -> str:
+    """Return the canonical repo-relative spelling of a dispatch scope.
+
+    NFC, casefolded on every platform (a false overlap refusal is the conservative
+    direction), backslash becomes ``/``, repeated ``/`` collapse and a leading ``./``
+    or leading/trailing ``/`` is stripped.  Raises ``ValueError`` for empty scopes,
+    ``.``/``..`` segments, drive-letter, UNC or ``~`` home forms, glob metacharacters,
+    segments ending in a dot or space, 8.3 short names (``~N``), ``:`` and control
+    characters.  Scopes are therefore plain, case- and Unicode-insensitive paths.
+    """
+    if not isinstance(value, str):
+        raise ValueError("invalid scope")
+    text = unicodedata.normalize("NFC", value.strip()).replace("\\", "/")
+    if text.startswith("//"):
+        raise ValueError("invalid scope: UNC path")
+    if any(ord(c) < 32 or ord(c) == 127 for c in text):
+        raise ValueError("invalid scope: control character")
+    if _SCOPE_META & set(text):
+        raise ValueError("invalid scope: glob metacharacter")
+    if ":" in text:
+        raise ValueError("invalid scope: drive or stream form")
+    text = re.sub(r"/+", "/", text)
+    while text.startswith("./"):
+        text = text[2:]
+    text = text.strip("/")
+    if not text or text.startswith("~"):
+        raise ValueError("invalid scope")
+    segments = text.split("/")
+    for part in segments:
+        if part in {".", ".."} or part.endswith((".", " ")) or part != part.strip() or _SHORT_NAME.search(part):
+            raise ValueError("invalid scope segment")
+    return unicodedata.normalize("NFC", "/".join(segments).casefold())
+
+
+def scopes_overlap(a: str, b: str) -> bool:
+    """True when the canonical scopes are equal or one is a path-segment prefix of the other."""
+    ca, cb = canonical_scope(a), canonical_scope(b)
+    return ca == cb or ca.startswith(cb + "/") or cb.startswith(ca + "/")
+
+
 # State-size guard only: total characters across all declared workstream strings.
 PARALLEL_DISPATCH_MAX_TEXT = 1 << 20
 
@@ -136,12 +182,7 @@ def _validate_parallel_dispatch(value: object) -> None:
         text += len(ident) + len(domain) + len(worktree or "") + sum(len(item) for item in scopes)
         if text > PARALLEL_DISPATCH_MAX_TEXT:
             raise ValueError("parallel_dispatch contract too large")
-        normalized = []
-        for item in scopes:
-            item = item.strip().replace("\\", "/").strip("/")
-            if not item or any(part in {"", ".", ".."} for part in item.split("/")):
-                raise ValueError("invalid parallel_dispatch scope path")
-            normalized.append(item)
+        normalized = [canonical_scope(item) for item in scopes]
         if mode != "write":
             continue
         for item in normalized:

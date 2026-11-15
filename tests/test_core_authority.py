@@ -521,3 +521,57 @@ def test_short_name_segments_alias_siblings_conservatively():
     assert not authority.scopes_overlap("app/[slug]", "app/[id]")
     with pytest.raises(core.ThalirisError):
         authority.validate_contract(_pd(workstreams=[_ws("a", "a/PROGRA~1/x"), _ws("b", "a/program files/y")]))
+
+
+def _dispatch_verdict(scopes):
+    streams = [_ws(f"s{i}", s) for i, s in enumerate(scopes)]
+    try:
+        authority._validate_parallel_dispatch({"enabled": True, "workstreams": streams})
+    except ValueError as exc:
+        assert "overlapping" in str(exc)
+        return True
+    return False
+
+
+def test_fast_write_overlap_matches_pairwise_reference_on_random_scope_sets():
+    import itertools
+    import random
+
+    rng = random.Random(20260511)
+    names = ["a", "b", "A", "src", "SRC", "lib", "PROGRA~1", "progra~2", "x~1", "Program Files",
+             "caf\u00e9", "cafe\u0301", "[id]", "t~1.txt", "ab~12.c", "~", "docs", "\u00dfx", "SS", "~~1"]
+    cases = 0
+    overlapping = 0
+    for _ in range(4000):
+        n = rng.randint(1, 7)
+        scopes = []
+        for _ in range(n):
+            if scopes and rng.random() < 0.35:  # nested / near-duplicate of an earlier scope
+                base = rng.choice(scopes).replace("\\", "/").strip("/").split("/")
+                base = base[: rng.randint(1, len(base))]
+                if rng.random() < 0.5:
+                    base = base + [rng.choice(names)]
+                parts = base
+            else:
+                parts = [rng.choice(names) for _ in range(rng.randint(1, 4))]
+            scopes.append(rng.choice(["/", "\\"]).join(parts))
+        try:
+            canon = [authority.canonical_scope(s) for s in scopes]
+        except ValueError:
+            continue
+        expected = any(authority.scopes_overlap(a, b) for a, b in itertools.combinations(scopes, 2))
+        assert _dispatch_verdict(scopes) is expected, scopes
+        assert len(canon) == len(scopes)
+        cases += 1
+        overlapping += expected
+    assert cases >= 2000
+    assert 0 < overlapping < cases
+
+
+def test_parallel_dispatch_write_overlap_scales_near_linearly():
+    import time
+
+    streams = [_ws(f"s{i}", f"pkg{i % 200}/mod{i}/file.py") for i in range(20000)]
+    start = time.perf_counter()
+    authority._validate_parallel_dispatch({"enabled": True, "workstreams": streams})
+    assert time.perf_counter() - start < 2.0  # ~0.1 s expected; generous bound for slow CI

@@ -156,6 +156,51 @@ def _canonical_overlap(ca: str, cb: str) -> bool:
     return False
 
 
+def _first_short_index(segs: list[str]) -> int | None:
+    for i, part in enumerate(segs):
+        if _SHORT_NAME.match(part):
+            return i
+    return None
+
+
+class _WriteScopeIndex:
+    """Near-linear equivalent of pairwise ``_canonical_overlap`` over claimed scopes.
+
+    ``claimed`` holds whole scopes, ``prefixes`` every prefix (including the empty one
+    and the scope itself) of every claimed scope, and ``short_parents`` the canonical
+    parent prefix of the first 8.3-looking segment of each claimed scope.  Only the first
+    8.3 segment matters: agreement below a later one implies agreement below the first.
+    """
+
+    def __init__(self) -> None:
+        self.claimed: set[tuple[str, ...]] = set()
+        self.prefixes: set[tuple[str, ...]] = set()
+        self.short_parents: set[tuple[str, ...]] = set()
+
+    def overlaps(self, canonical: str) -> bool:
+        segs = tuple(canonical.split("/"))
+        # equal to, or a descendant of, a claimed scope
+        if any(segs[:k] in self.claimed for k in range(1, len(segs) + 1)):
+            return True
+        # an ancestor of (or equal to) a claimed scope
+        if segs in self.prefixes:
+            return True
+        # a claimed 8.3 segment may alias one of our segments
+        if any(segs[:j] in self.short_parents for j in range(len(segs) + 1)):
+            return True
+        # our 8.3 segment may alias a sibling of any claimed scope that extends the parent
+        i = _first_short_index(list(segs))
+        return i is not None and segs[:i] in self.prefixes
+
+    def add(self, canonical: str) -> None:
+        segs = tuple(canonical.split("/"))
+        self.claimed.add(segs)
+        self.prefixes.update(segs[:k] for k in range(len(segs) + 1))
+        i = _first_short_index(list(segs))
+        if i is not None:
+            self.short_parents.add(segs[:i])
+
+
 # State-size guard only: total characters across all declared workstream strings.
 PARALLEL_DISPATCH_MAX_TEXT = 1 << 20
 
@@ -181,7 +226,7 @@ def _validate_parallel_dispatch(value: object) -> None:
     if not isinstance(streams, list):
         raise ValueError("invalid parallel_dispatch workstreams")
     ids: set[str] = set()
-    write_scopes: set[str] = set()
+    write_scopes = _WriteScopeIndex()
     text = 0
     for stream in streams:
         if not isinstance(stream, dict) or set(stream) != {"id", "domain", "scope", "worktree", "mode"}:
@@ -209,9 +254,10 @@ def _validate_parallel_dispatch(value: object) -> None:
         if mode != "write":
             continue
         for item in normalized:
-            if any(_canonical_overlap(item, other) for other in write_scopes):
+            if write_scopes.overlaps(item):
                 raise ValueError("overlapping parallel_dispatch write scopes")
-        write_scopes.update(normalized)
+        for item in normalized:
+            write_scopes.add(item)
 
 
 def digest(target: Path) -> str:

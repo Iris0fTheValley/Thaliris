@@ -501,7 +501,23 @@ def test_canonical_scope_and_overlap_public_api():
     assert authority.scopes_overlap("src\\x", "src/x")
     assert authority.scopes_overlap("src", "SRC/x/y")
     assert not authority.scopes_overlap("src", "srcx")
-    for bad in ["", ".", "a/../b", "/", "//srv/x", "C:/x", "C:x", "~/x", "a/b*", "a?", "a[1]", "a{b}",
-                "a./b", "a /b", "a/b.", "PROGRA~1/x", "a\x00b", "~root"]:
+    for bad in ["", ".", "a/../b", "/", "//srv/x", "C:/x", "C:x", "~/x", "a/b*", "a?", "src/*", "src/?",
+                "a./b", "a /b", "a/b.", "a\x00b", "~root"]:
         with pytest.raises(ValueError):
             authority.canonical_scope(bad)
+
+
+@pytest.mark.parametrize("scope", ["app/[slug]", "app/(group)/[...id]", "{templates}/x", "lib~2", "a/PROGRA~1/x"])
+def test_literal_bracket_brace_paren_and_short_name_scopes_are_admitted(scope):
+    assert authority.canonical_scope(scope) == scope.casefold()
+    authority.validate_contract(_pd(workstreams=[_ws("a", scope)]))
+
+
+def test_short_name_segments_alias_siblings_conservatively():
+    assert authority.scopes_overlap("PROGRA~1", "Program Files")
+    assert authority.scopes_overlap("a/PROGRA~1/x", "a/program files/y")
+    assert authority.scopes_overlap("app/[slug]", "app/[slug]/page")
+    assert not authority.scopes_overlap("b/lib~2", "c/lib")
+    assert not authority.scopes_overlap("app/[slug]", "app/[id]")
+    with pytest.raises(core.ThalirisError):
+        authority.validate_contract(_pd(workstreams=[_ws("a", "a/PROGRA~1/x"), _ws("b", "a/program files/y")]))

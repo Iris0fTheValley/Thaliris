@@ -110,13 +110,20 @@ must be true, `budget` is optional (absent means no cap; present, it is the user
 explicit integer of at least 1, with no program ceiling), and `workstreams` is
 optional (absent or empty means read-only fan-out). Declared workstreams carry
 `{id, domain, scope, worktree, mode}` with unique ids; `worktree` is optional and
-need not be unique. Scopes are canonical repo-relative paths
+need not be unique. Scopes are literal canonical repo-relative paths, not patterns
 (`thaliris.authority.canonical_scope`): Unicode NFC and casefolded on every
-platform, `\` read as `/`, no globs, no absolute, drive-letter, UNC or `~` forms,
-no `.`/`..` segments, no segment ending in a dot or space, no 8.3 short names
-(`PROGRA~1`) and no control characters; such scopes are invalid for read and write
-streams alike. The only mechanical refusal is overlapping write scopes
-(`scopes_overlap`: equal or path-segment prefix, across all domains); read
+platform, `\` read as `/`. `[ ] { } ( )` are ordinary characters (for example
+`app/[slug]` or `{templates}`); `*` and `?` are rejected as glob-only characters.
+Also rejected, each with a message naming the failed rule: absolute, drive-letter,
+`:`, UNC or leading-`~` forms, `.`/`..` segments, segments ending in a dot or space,
+empty scopes and control characters; declare a parent directory instead of a
+rejected path. Windows 8.3-looking segments (`PROGRA~1`, `lib~2`) are admitted but
+compared conservatively: such a segment at index i overlaps any scope that agrees on
+every segment below i, so it may alias any sibling under the same parent
+(`a/PROGRA~1/x` overlaps `a/Program Files/y`; `b/lib~2` does not overlap `c/lib`).
+This can over-refuse siblings but never under-detects. Invalid scopes are invalid for
+read and write streams alike. The only mechanical refusal is overlapping write scopes
+(`scopes_overlap`: equal, path-segment prefix or 8.3 alias, across all domains); read
 workstreams never conflict. A total-text
 guard of 1 MiB across declared workstream strings bounds state size. Maximum
 managed depth two with one active Scanner is unaffected.

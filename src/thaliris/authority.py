@@ -11,15 +11,23 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
+import unicodedata
 from typing import Callable, Mapping
 import uuid
 
 from . import core
 
-MODES = ("delegated", "controller-direct", "single-agent")
+# ``adaptive``: the Controller may execute directly and may also dispatch children.
+MODES = ("delegated", "controller-direct", "single-agent", "adaptive")
 _CONTRACT_FIELDS = {"human_instruction", "boundary", "invariants", "acceptance", "execution_mode"}
-_OPTIONAL_CONTRACT_FIELDS = {"execution_constraint"}
+_OPTIONAL_CONTRACT_FIELDS = {"execution_constraint", "parallel_dispatch", "write_surface"}
+# Quick admission: an adaptive contract may omit these; each omitted one is stored as the
+# explicit marker below, never inferred. Goal, human_instruction and acceptance stay required.
+ADAPTIVE_OPTIONAL_FIELDS = ("boundary", "invariants")
+UNSPECIFIED = "unspecified"
+WRITE_SURFACE_MAX_GLOBS = 64
 _TRUTH_FIELDS = {"version", "project", "task_id", "goal", "contract", "status", "provenance",
                  "state_sha256", "security", "snapshots", "history"}
 _CORE_OWNED_FIELDS = _TRUTH_FIELDS - {"provenance"}
@@ -35,14 +43,221 @@ def validate_contract(value: object) -> dict:
     """Validate selected intent mechanically, without inferring its author."""
     if isinstance(value, dict) and "execution_mode" not in value:
         value = {**value, "execution_mode": "delegated"}
-    if (not isinstance(value, dict) or not _CONTRACT_FIELDS <= set(value)
-            or set(value) - _CONTRACT_FIELDS - _OPTIONAL_CONTRACT_FIELDS
-            or value.get("execution_mode") not in MODES):
-        raise ValueError("TASK_AUTHORITY_CONTRACT_REQUIRED")
-    if any(not isinstance(value[key], str) or not value[key].strip() or len(value[key]) > 16384
-           for key in (_CONTRACT_FIELDS - {"execution_mode"}) | (_OPTIONAL_CONTRACT_FIELDS & value.keys())):
-        raise ValueError("TASK_AUTHORITY_CONTRACT_REQUIRED")
+    if isinstance(value, dict) and value["execution_mode"] == "adaptive" and set(ADAPTIVE_OPTIONAL_FIELDS) - value.keys():
+        value = {**value, **{name: UNSPECIFIED for name in ADAPTIVE_OPTIONAL_FIELDS if name not in value}}
+    fields = set(value) if isinstance(value, dict) else set()
+    missing = sorted(_CONTRACT_FIELDS - fields)
+    unknown = sorted(str(key)[:64] for key in fields - _CONTRACT_FIELDS - _OPTIONAL_CONTRACT_FIELDS)
+    invalid = []
+    if isinstance(value, dict):
+        invalid = sorted(key for key in ((_CONTRACT_FIELDS - {"execution_mode"}) | _OPTIONAL_CONTRACT_FIELDS) & fields
+                         if key not in {"parallel_dispatch", "write_surface"}
+                         and (not isinstance(value[key], str) or not value[key].strip() or len(value[key]) > 16384))
+        if "write_surface" in value and not _valid_write_surface(value["write_surface"]):
+            invalid.append("write_surface")
+        if "execution_mode" in value and value["execution_mode"] not in MODES:
+            invalid.append("execution_mode")
+        if "parallel_dispatch" in value:
+            try:
+                _validate_parallel_dispatch(value["parallel_dispatch"])
+            except ValueError:
+                invalid.append("parallel_dispatch")
+    if not isinstance(value, dict) or missing or unknown or invalid:
+        raise core.ThalirisError(
+            "TASK_AUTHORITY_CONTRACT_REQUIRED", "TASK_AUTHORITY_CONTRACT_REQUIRED",
+            recovery="supply one contract object with the required field names; correct only the listed fields and retry; authority was not established",
+            details={"expected_type": "object", "required_fields": sorted(_CONTRACT_FIELDS),
+                     "optional_fields": sorted(_OPTIONAL_CONTRACT_FIELDS), "missing_fields": missing,
+                     "unknown_fields": unknown[:16], "unknown_field_count": len(unknown),
+                     "invalid_fields": sorted(invalid), "execution_modes": list(MODES),
+                     "adaptive_optional_fields": list(ADAPTIVE_OPTIONAL_FIELDS),
+                     "write_surface": f"1 to {WRITE_SURFACE_MAX_GLOBS} repo-relative POSIX globs",
+                     "text_fields": "nonempty strings of at most 16384 characters"})
     return value
+
+
+def _valid_write_surface(value: object) -> bool:
+    """Shape of the optional write-surface globs; Core only compares the task surface against them."""
+    if not isinstance(value, list) or not 1 <= len(value) <= WRITE_SURFACE_MAX_GLOBS or len(set(map(str, value))) != len(value):
+        return False
+    for glob in value:
+        if not isinstance(glob, str) or not glob.strip() or len(glob) > 256 or "\\" in glob or glob.startswith("/"):
+            return False
+        if any(part in {"", ".", ".."} for part in glob.rstrip("/").split("/")) or any(ord(char) < 32 for char in glob):
+            return False
+    return True
+
+
+_SCOPE_META = set("*?")
+_SHORT_NAME = re.compile(r"^[^.~]{1,6}~\d{1,6}(\.[^.]{0,3})?$", re.IGNORECASE)
+_PARENT_HINT = "; declare a parent directory instead"
+
+
+def canonical_scope(value: str) -> str:
+    """Return the canonical repo-relative spelling of a dispatch scope.
+
+    Scopes are literal paths, never patterns: ``[ ] { } ( )`` are ordinary characters.
+    NFC, casefolded on every platform (a false overlap refusal is the conservative
+    direction), backslash becomes ``/``, repeated ``/`` collapse and a leading ``./``
+    or leading/trailing ``/`` is stripped.  Raises ``ValueError`` (naming the failed
+    rule) for empty scopes, ``.``/``..`` segments, drive-letter, UNC or ``~`` home
+    forms, ``*``/``?``, segments ending in a dot or space, ``:`` and control
+    characters.  Windows 8.3-looking segments (``PROGRA~1``) are admitted; see
+    ``scopes_overlap`` for how they are compared.
+    """
+    if not isinstance(value, str):
+        raise ValueError("invalid scope: must be a string")
+    text = unicodedata.normalize("NFC", value.strip()).replace("\\", "/")
+    if text.startswith("//"):
+        raise ValueError("invalid scope: UNC paths are not repo-relative" + _PARENT_HINT)
+    if any(ord(c) < 32 or ord(c) == 127 for c in text):
+        raise ValueError("invalid scope: control characters are not allowed")
+    if _SCOPE_META & set(text):
+        raise ValueError("invalid scope: '*' and '?' are glob-only characters and invalid in Windows file names" + _PARENT_HINT)
+    if ":" in text:
+        raise ValueError("invalid scope: ':' (drive letter or stream form) is not allowed; use a repo-relative path")
+    text = re.sub(r"/+", "/", text)
+    while text.startswith("./"):
+        text = text[2:]
+    text = text.strip("/")
+    if not text:
+        raise ValueError("invalid scope: empty scope")
+    if text.startswith("~"):
+        raise ValueError("invalid scope: a leading '~' means a home directory; use a repo-relative path")
+    segments = text.split("/")
+    for part in segments:
+        if part in {".", ".."}:
+            raise ValueError("invalid scope: '.' and '..' segments are not allowed")
+        if part.endswith((".", " ")) or part != part.strip():
+            raise ValueError("invalid scope: a segment may not start or end with a space or end with a dot" + _PARENT_HINT)
+    return unicodedata.normalize("NFC", "/".join(segments).casefold())
+
+
+def scopes_overlap(a: str, b: str) -> bool:
+    """True when the canonical scopes may name the same write domain.
+
+    Equal or path-segment prefix overlaps.  A segment that looks like a Windows 8.3
+    short name (``PROGRA~1``) may alias any sibling under the same parent, so if either
+    scope has one at index i the scopes also overlap when both have at least i segments
+    and agree on every segment below i.  This can over-refuse siblings; it never
+    under-detects.
+    """
+    return _canonical_overlap(canonical_scope(a), canonical_scope(b))
+
+
+def _canonical_overlap(ca: str, cb: str) -> bool:
+    if ca == cb or ca.startswith(cb + "/") or cb.startswith(ca + "/"):
+        return True
+    sa, sb = ca.split("/"), cb.split("/")
+    for segs in (sa, sb):
+        for i, part in enumerate(segs):
+            if _SHORT_NAME.match(part) and len(sa) >= i and len(sb) >= i and sa[:i] == sb[:i]:
+                return True
+    return False
+
+
+def _first_short_index(segs: list[str]) -> int | None:
+    for i, part in enumerate(segs):
+        if _SHORT_NAME.match(part):
+            return i
+    return None
+
+
+class _WriteScopeIndex:
+    """Near-linear equivalent of pairwise ``_canonical_overlap`` over claimed scopes.
+
+    ``claimed`` holds whole scopes, ``prefixes`` every prefix (including the empty one
+    and the scope itself) of every claimed scope, and ``short_parents`` the canonical
+    parent prefix of the first 8.3-looking segment of each claimed scope.  Only the first
+    8.3 segment matters: agreement below a later one implies agreement below the first.
+    """
+
+    def __init__(self) -> None:
+        self.claimed: set[tuple[str, ...]] = set()
+        self.prefixes: set[tuple[str, ...]] = set()
+        self.short_parents: set[tuple[str, ...]] = set()
+
+    def overlaps(self, canonical: str) -> bool:
+        segs = tuple(canonical.split("/"))
+        # equal to, or a descendant of, a claimed scope
+        if any(segs[:k] in self.claimed for k in range(1, len(segs) + 1)):
+            return True
+        # an ancestor of (or equal to) a claimed scope
+        if segs in self.prefixes:
+            return True
+        # a claimed 8.3 segment may alias one of our segments
+        if any(segs[:j] in self.short_parents for j in range(len(segs) + 1)):
+            return True
+        # our 8.3 segment may alias a sibling of any claimed scope that extends the parent
+        i = _first_short_index(list(segs))
+        return i is not None and segs[:i] in self.prefixes
+
+    def add(self, canonical: str) -> None:
+        segs = tuple(canonical.split("/"))
+        self.claimed.add(segs)
+        self.prefixes.update(segs[:k] for k in range(len(segs) + 1))
+        i = _first_short_index(list(segs))
+        if i is not None:
+            self.short_parents.add(segs[:i])
+
+
+# State-size guard only: total characters across all declared workstream strings.
+PARALLEL_DISPATCH_MAX_TEXT = 1 << 20
+
+
+def _validate_parallel_dispatch(value: object) -> None:
+    """Validate the optional user-directed parallel dispatch contract.
+
+    Parallelism is the user's choice: there is no program-side count cap.  ``budget``
+    is optional and, when present, is the user's explicit positive number.
+    ``workstreams`` is optional (absent or empty means read-only fan-out).  The only
+    mechanical refusal is overlapping *write* scopes, across all domains, by equality
+    or path prefix.  Native identity, fences, CAS and ownership remain adapter/runtime
+    concerns; unknown fields are rejected so a malformed contract cannot silently widen
+    dispatch.
+    """
+    if not isinstance(value, dict) or not {"enabled"} <= set(value) <= {"enabled", "budget", "workstreams"}:
+        raise ValueError("invalid parallel_dispatch contract")
+    if value.get("enabled") is not True:
+        raise ValueError("invalid parallel_dispatch enabled")
+    if "budget" in value and (type(value["budget"]) is not int or value["budget"] < 1):
+        raise ValueError("invalid parallel_dispatch budget")
+    streams = value.get("workstreams", [])
+    if not isinstance(streams, list):
+        raise ValueError("invalid parallel_dispatch workstreams")
+    ids: set[str] = set()
+    write_scopes = _WriteScopeIndex()
+    text = 0
+    for stream in streams:
+        if not isinstance(stream, dict) or set(stream) != {"id", "domain", "scope", "worktree", "mode"}:
+            raise ValueError("invalid parallel_dispatch workstream")
+        ident, domain, scope, worktree, mode = (stream.get(k) for k in ("id", "domain", "scope", "worktree", "mode"))
+        if any(not isinstance(item, str) or not item.strip() or len(item) > 256 for item in (ident, domain)):
+            raise ValueError("invalid parallel_dispatch workstream identity")
+        if ident in ids:
+            raise ValueError("duplicate parallel_dispatch workstream id")
+        ids.add(ident)
+        if mode not in {"read", "write"}:
+            raise ValueError("invalid parallel_dispatch workstream mode")
+        if isinstance(scope, str):
+            scopes = [scope]
+        elif isinstance(scope, list) and scope and all(isinstance(item, str) for item in scope):
+            scopes = scope
+        else:
+            raise ValueError("invalid parallel_dispatch scope")
+        if worktree is not None and (not isinstance(worktree, str) or not worktree.strip() or len(worktree) > 256):
+            raise ValueError("invalid parallel_dispatch worktree")
+        text += len(ident) + len(domain) + len(worktree or "") + sum(len(item) for item in scopes)
+        if text > PARALLEL_DISPATCH_MAX_TEXT:
+            raise ValueError("parallel_dispatch contract too large")
+        normalized = [canonical_scope(item) for item in scopes]
+        if mode != "write":
+            continue
+        for item in normalized:
+            if write_scopes.overlaps(item):
+                raise ValueError("overlapping parallel_dispatch write scopes")
+        for item in normalized:
+            write_scopes.add(item)
 
 
 def digest(target: Path) -> str:

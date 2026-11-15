@@ -108,7 +108,9 @@ def test_core_mechanically_accepts_opaque_actor_and_provenance(tmp_path: Path) -
 
 def test_core_source_has_no_controller_role_contract() -> None:
     source = Path(core.__file__).read_text(encoding="utf-8").lower()
-    assert "controller" not in source
+    assert "controller-local" in source
+    assert "controller_session_id_hash" not in source
+    assert "active_controller_owner" not in source
 
 
 def test_artifact_freshness_is_observation_only(tmp_path: Path) -> None:
@@ -537,6 +539,23 @@ def test_task_get_and_artifact_get_return_only_the_selected_object(tmp_path: Pat
     fetched = core.artifact_get(root, "A1")
     assert fetched["body"] == "artifact body"
     assert fetched["object_type"] == "artifact"
+
+
+def test_task_get_missing_object_keeps_bounded_diagnostic_and_adds_task_id_recovery(tmp_path: Path) -> None:
+    root = repo(tmp_path)
+    started = core.task_start(root, "bounded missing-object recovery", None, None)
+
+    with pytest.raises(core.ThalirisError) as task_id_refusal:
+        core.task_get(root, started["task_id"])
+    assert task_id_refusal.value.code == "TASK_OBJECT_NOT_FOUND"
+    assert task_id_refusal.value.details == {"id": started["task_id"], "matches": 0}
+    assert "exact object ID, not the selected Task ID" in task_id_refusal.value.recovery
+
+    with pytest.raises(core.ThalirisError) as generic_refusal:
+        core.task_get(root, "missing-object")
+    assert generic_refusal.value.code == "TASK_OBJECT_NOT_FOUND"
+    assert generic_refusal.value.details == {"id": "missing-object", "matches": 0}
+    assert generic_refusal.value.recovery is None
 
 
 def test_artifact_get_checks_stat_bound_before_read(tmp_path: Path, monkeypatch) -> None:

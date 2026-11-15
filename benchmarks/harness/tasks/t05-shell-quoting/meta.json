@@ -1,0 +1,11 @@
+{
+  "id": "t05-shell-quoting",
+  "title": "Command lines must survive POSIX shell splitting unchanged",
+  "category": "shell-argument-quoting-escaping",
+  "requirements": [
+    {"id": "R1", "text": "Arguments with quotes, dollar signs, backticks and backslashes round-trip through shlex.split", "kind": "compiled"},
+    {"id": "R2", "text": "Empty-string, newline, tab and non-ASCII arguments round-trip", "kind": "compiled"},
+    {"id": "R3", "text": "A program path containing spaces is also preserved", "kind": "partial"}
+  ],
+  "trap": true
+}

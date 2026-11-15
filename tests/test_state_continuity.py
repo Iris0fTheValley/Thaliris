@@ -69,7 +69,7 @@ def test_v6_done_state_is_readable(tmp_path):
     assert core.task_show(root)["state"]["status"] == "DONE"
 
 
-@pytest.mark.parametrize("version", [5, 0, 8, 99])
+@pytest.mark.parametrize("version", [5, 0, 10, 99])
 def test_other_schema_versions_are_still_refused_with_the_diagnostic(tmp_path, version):
     root = repo(tmp_path)
     core.task_start(root, "refuse", None, None)

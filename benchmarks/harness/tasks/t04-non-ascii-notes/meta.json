@@ -1,0 +1,12 @@
+{
+  "id": "t04-non-ascii-notes",
+  "title": "Notes in mixed UTF-8, UTF-8 BOM and GBK must decode correctly",
+  "category": "non-ascii-text-mis-decoded",
+  "requirements": [
+    {"id": "R1", "text": "UTF-8 files with a BOM come back without the BOM character", "kind": "compiled"},
+    {"id": "R2", "text": "GBK-encoded files are decoded correctly instead of producing replacement characters", "kind": "compiled"},
+    {"id": "R3", "text": "Chinese file names are preserved and dotfiles/non-txt files are skipped", "kind": "partial"},
+    {"id": "R4", "text": "Result does not depend on the machine locale", "kind": "judgment-only"}
+  ],
+  "trap": true
+}

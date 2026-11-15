@@ -62,6 +62,19 @@ When an already discovered fact changes a child's local conclusion, local accept
 critical UNKNOWN, the child records it with source refs and selected handoff/requirement provenance.
 This creates no additional search duty or global-importance judgment, model call or acceptance gate.
 
+A child ends its final message with one fenced `thaliris-claims` block: the literal `none`,
+or at most five claims `{requirement, polarity: supports|contradicts|unknown, text, evidence,
+basis: check|read|inference}`, where `evidence` is a declared check id or `path:line`. The
+adapter ingests it. `contradicts` and `unknown` become ordinary observations with the handoff's
+provenance. `supports` are counted per requirement on the handoff and create no obligation. A
+claim about a requirement outside the handoff's refs becomes an unassigned observation. A
+missing or malformed block is recorded as a marker and listed as a handoff without typed
+claims. Claims carry no confidence value.
+
+Attribute evidence to its source: facts established by Controller, imported historical child
+results and independent review remain distinct. This provenance distinction does not change
+execution mode, tool permissions or child authority.
+
 Keep critical observations globally visible across later handoffs until Controller explicitly
 reassesses each related USER REQUIREMENT for the current candidate: satisfied, unknown,
 repair, or a reason it no longer affects that candidate. Reading, retrieving, acknowledging,
@@ -104,6 +117,18 @@ Core stores model-authored observations and judgments with opaque requirement an
 references, provenance and append-only history. It does not classify importance, infer
 acceptance, route work or prescribe approval, roles, stages, model calls or polling.
 
+Mechanism may withhold; only a model may grant. The Controller may give a requirement a kind
+(`compiled`, `partial`, default `judgment-only`) and declare checks for it: an argv command,
+cwd, timeout and check files whose content hashes Core records. Any task actor runs a declared
+check with `task-verify`; Core executes it and records the outcome against the current tree
+identity. A result is fresh only for the tree it ran on and the declared check content, and an
+UNKNOWN tree is never fresh. While a requirement's declared check is red, unrun or stale, a
+`satisfied` judgment for it is refused as `VERIFICATION_WITHHELD`. The Controller either makes
+the check green or judges with an override reason, which is stored with the checks it overrode
+and shown in status. A fresh PASS marks nothing satisfied. A changed check file becomes one
+open observation from producer `mechanism` per new content; re-declaring the check with
+`--supersede` is how the Controller accepts the change.
+
 To keep Controller round trips small, Core accepts batched judgments
 (`{"judgments": [...]}`) and observations (`{"observations": [...]}`) as one
 all-or-nothing append, returns a compact evidence summary (open-item totals always,
@@ -113,8 +138,7 @@ the `TASK_REVISION_CONFLICT` details carry a bounded, non-exact `changes_since` 
 (`exact: false`: revision gap, records newer than the base, the last k handoffs,
 observations and judgments, which may predate the base, and the open evidence summary)
 so the Controller knows what to review before retrying. It is a hint, not a delta:
-persisted state carries no per-item revision, keeping Core 0.5.1 states readable by
-Core 0.5.0 when Hosts share one repository context directory.
+persisted state carries no per-item revision.
 
 ## Context frequency, waiting and observation
 
@@ -134,6 +158,32 @@ changes or terminal evidence; Controller waits for the necessary child result wi
 rechecking the same job. Do not create status-only reasoning rounds for unchanged
 state or poll completed work. A timeout alone supplies no new decision or evidence.
 
+At decision boundaries, reuse the task's existing Active Work, Pending Results and selected
+evidence refs to recover decisions, hard constraints, current evidence, UNKNOWNs and the
+precise next event. Refresh Git HEAD or environment facts only when a relevant change or
+decision-changing uncertainty could affect the choice. This is task continuity, not a
+parallel persistent-memory workflow; no fixed time or call quota applies.
+
+After user/model steering or turn interruption, an earlier dependency view may be stale.
+Take one exact current status snapshot when needed before another wait, and wait only if the
+necessary dependency remains unfinished. Do not wait on an interrupted, ended or no-longer-
+needed child or repeat confirmation. A missed wake remains UNKNOWN without Host evidence;
+prompt guidance alone cannot establish or fix native wake behavior.
+
+`ASSOCIATION_UNKNOWN` for the wait helper does not block authorized source work or tests.
+Observe your own process with native exec/write_stdin; this does not bypass managed guards.
+
+For expensive native fixtures, first verify the exact source and lockfile, package identity,
+and normal dependency path. A `--no-deps` fixture may isolate packaging behavior but is not
+ordinary release/install proof; use this ordering where relevant, not as a universal gate.
+After `EADDRINUSE` or `EBUSY`, inspect resource ownership and health before an equivalent
+retry; never kill an unknown owner or delete an unknown lock. Truncated CI output, or a
+`ready` result paired with exit 1, needs one targeted structured terminal/health
+reconciliation; do not poll or treat readiness as completion.
+
+After interruption, verify the known artifact path, provenance and current bytes, then finish
+the remaining requested delivery instead of restarting all work.
+
 Native capacity never expands adapter-managed authorization. A simultaneous
 active/pending delegation slot is not a lifetime quota; after proved terminal
 completion it may serve another necessary uncovered gap within the accepted boundary,
@@ -142,6 +192,13 @@ bypassing admission or disabling all future supported delegation. Core does not 
 Host concurrency limits.
 
 Independent investigation and workstreams with isolated writes may run in parallel.
+Parallel dispatch is user-directed: the program imposes no count of its own beyond a
+number the user states, and when the user asks for large-scale parallelism the
+Controller carries it out. The only mechanical boundary is that live write
+workstreams may not overlap (equal or prefix-nested write scopes are refused,
+whatever their domain label); read workstreams are never refused for overlap. The
+Controller partitions work into non-overlapping domains, such as different research
+areas, partitioned material or independent modules, not limited to these.
 Coordinate known shared-file overlap or use separate worktrees before dispatch;
 file CAS detects lost updates, not semantic overlap. An adapter may retain one
 task-local unbound dispatch while precise native identity is unavailable, without
@@ -168,8 +225,10 @@ Verifier remains read-only compatibility, not a recommended stage.
 Native role/model bindings, readonly enforcement, execution modes and delegation
 capabilities are adapter-owned. Profiles do not alter semantic responsibilities.
 
-Respect the human's delegated, controller-direct or single-agent selection; omitted
-selection defaults to delegated. Controller strategy may change through authorized
+Respect the human's delegated, controller-direct, single-agent or adaptive selection; omitted
+selection defaults to delegated. In adaptive mode the Controller may execute directly and may
+also dispatch children, and the contract may leave `boundary` and `invariants` unspecified.
+Controller strategy may change through authorized
 task/revision CAS without expanding the original goal, scope or hard constraints.
 Existing child role and readonly boundaries remain fixed. Ordinary Controller reads,
 Git and diagnostics are legal within the task boundary. Legal capability is separate
@@ -183,8 +242,12 @@ they are not independent global decision work. Finish genuinely independent glob
 decision work first; when none remains and a necessary child is unfinished, wait normally.
 Do not invent busywork to delay waiting. Integrate the distilled result with retained
 global facts and acceptance; reopen a precise original for a pending immediate decision.
-Controller-direct and single-agent permit direct execution. No file, line, token, query
-or tool-count quota or privilege denial enforces cognitive ownership. Prefer
+Controller-direct, single-agent and adaptive permit direct execution. No file, line, token, query
+or tool-count quota or privilege denial enforces cognitive ownership. In adaptive mode Core
+surfaces lane advisories in status: a check failing twice on distinct trees, a task surface
+beyond the declared `write_surface` or the size thresholds, a `judgment-only` or contract-surface
+requirement, and heavy Controller tool output. They are facts for the Controller's lane choice
+and never block. Prefer
 bounded catalog/document/task/artifact retrieval and exact instruction sections
 when useful. Hooks cannot prove cumulative semantic scope or all third-party MCP behavior.
 An active child may receive selected supplemental evidence and factual corrections
@@ -196,6 +259,14 @@ Coupled invariants or nonlocal constraints needing sustained reasoning use Focus
 Implementer. Controller routes Workstreams by semantic dependencies, decision coupling
 and independent closure. Executors close local loops inside them; a semantic checkpoint
 is not necessarily a scheduling checkpoint. Count-based thresholds do not route work.
+
+Substantive frontend work has a strong-model quality bar: new UI or layout, component
+architecture, responsive behavior, interaction, animation, creative SVG work or
+nontrivial visual design needs a strong executor even when the diff or code is small.
+A light model fits only genuinely trivial, fully specified text/color changes or
+equivalent mechanical edits, all of which require no design or behavior decisions.
+This is a semantic Controller routing decision, not a Core keyword or diff-size classifier;
+native model and profile policy belongs to the Host-specific Controller instructions.
 
 Remaining work is independently deterministic only when the accepted contract
 uniquely determines the behavior to preserve. Compatibility authority ambiguity
@@ -273,6 +344,11 @@ Keep execution, review, product acceptance and mechanical closure distinct: test
 reports the checks run; native child Completed reports execution termination; Reviewer
 READY reports supported critical closure for its selected review; Core task-close DONE
 records mechanical closure. None alone decides semantic product acceptance.
+
+`task-close` is withheld while any declared check is red, unrun or stale for the current tree,
+unless the Controller closes with an override reason, which is recorded. The close response
+lists every `judgment-only` and `partial` requirement with its latest judgment, so what no
+check decided stays in front of the Controller at closure.
 Choose fresh sessions by remaining independence and total context reconstruction cost,
 never by a mechanical duration/call threshold or a local PASS alone.
 

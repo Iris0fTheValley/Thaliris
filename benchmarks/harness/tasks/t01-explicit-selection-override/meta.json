@@ -1,0 +1,11 @@
+{
+  "id": "t01-explicit-selection-override",
+  "title": "Explicit backend selection must beat automatic routing rules",
+  "category": "explicit-selection-overridden-by-default-rule",
+  "requirements": [
+    {"id": "R1", "text": "An explicit backend selection is returned even when a size or priority rule also matches", "kind": "compiled"},
+    {"id": "R2", "text": "An unknown explicit backend raises ValueError regardless of other rules", "kind": "compiled"},
+    {"id": "R3", "text": "Requests without a backend key keep the existing routing behaviour", "kind": "partial"}
+  ],
+  "trap": true
+}

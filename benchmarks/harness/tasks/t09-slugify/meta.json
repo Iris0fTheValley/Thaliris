@@ -1,0 +1,10 @@
+{
+  "id": "t09-slugify",
+  "title": "Implement slugify",
+  "category": "plain-feature",
+  "requirements": [
+    {"id": "R1", "text": "Runs of non-alphanumeric characters become a single hyphen with no leading or trailing hyphen", "kind": "compiled"},
+    {"id": "R2", "text": "Non-ASCII characters act as separators and an input with no alphanumerics gives an empty string", "kind": "compiled"}
+  ],
+  "trap": false
+}

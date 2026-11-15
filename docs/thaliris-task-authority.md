@@ -21,6 +21,15 @@ task ledger; it is not a second task ledger. Core does not interpret the
 contract, authenticate an actor, enforce semantic routing, or decide whether
 verification is sufficient to finish.
 
+Execution modes are `delegated` (the default), `controller-direct`,
+`single-agent` and `adaptive`. In `adaptive` mode the Controller may execute
+directly and may also dispatch children. An adaptive contract may omit
+`boundary` and `invariants`; `validate_contract` stores each omitted one as the
+explicit marker `unspecified`. `human_instruction` and `acceptance` stay
+required, and the goal comes from the task ledger. The optional `write_surface`
+is a list of 1 to 64 repo-relative POSIX globs; Core compares the task surface
+against it only to surface a lane advisory.
+
 `thaliris_codex.task_authority` remains the Codex compatibility facade. Its function
 signatures, external directory, record fields and conflict error names remain
 available. Codex supplies its protected config paths, origin session hash,
@@ -96,10 +105,37 @@ values; each adapter validates its supported constraints. The optional field is
 part of the Core-owned immutable contract, history and recovery truth, not an
 adapter override. Contracts omitting it retain their existing representation.
 
+A contract may also select `parallel_dispatch`, which is user-directed: `enabled`
+must be true, `budget` is optional (absent means no cap; present, it is the user's
+explicit integer of at least 1, with no program ceiling), and `workstreams` is
+optional (absent or empty means read-only fan-out). Declared workstreams carry
+`{id, domain, scope, worktree, mode}` with unique ids; `worktree` is optional and
+need not be unique. Scopes are literal canonical repo-relative paths, not patterns
+(`thaliris.authority.canonical_scope`): Unicode NFC and casefolded on every
+platform, `\` read as `/`. `[ ] { } ( )` are ordinary characters (for example
+`app/[slug]` or `{templates}`); `*` and `?` are rejected as glob-only characters.
+Also rejected, each with a message naming the failed rule: absolute, drive-letter,
+`:`, UNC or leading-`~` forms, `.`/`..` segments, segments ending in a dot or space,
+empty scopes and control characters; declare a parent directory instead of a
+rejected path. Windows 8.3-looking segments (`PROGRA~1`, `lib~2`) are admitted but
+compared conservatively: such a segment at index i overlaps any scope that agrees on
+every segment below i, so it may alias any sibling under the same parent
+(`a/PROGRA~1/x` overlaps `a/Program Files/y`; `b/lib~2` does not overlap `c/lib`).
+This can over-refuse siblings but never under-detects. Invalid scopes are invalid for
+read and write streams alike. The only mechanical refusal is overlapping write scopes
+(`scopes_overlap`: equal, path-segment prefix or 8.3 alias, across all domains); read
+workstreams never conflict. A total-text
+guard of 1 MiB across declared workstream strings bounds state size. Maximum
+managed depth two with one active Scanner is unaffected.
+
 ## Ledger continuity (Core 0.5.3)
 
-Task state schema stays 7, and every state this Core writes is still readable by
-Core 0.5.0. Core reads an earlier schema version when `_COMPATIBLE_PRIOR_SCHEMAS`
+Task state schema stays 7 for a task that uses neither Controller-local evidence
+(schema 8) nor the verification-first ledger (schema 9: declared checks and their
+results, requirement kinds, typed claims, handoff usage, gate overrides). A state
+moves up only in the transaction that first writes such a record; an older Core
+refuses the newer schema and is not expected to read it. Core reads an earlier
+schema version when `_COMPATIBLE_PRIOR_SCHEMAS`
 lists it (today only 6, which differs from 7 only in the extra value
 `"UNAVAILABLE"` for `task_surface_baseline`). A listed version that validates under
 the current rules is lifted to the current schema in memory only: reading never
@@ -131,3 +167,16 @@ archives the bytes it found before touching them. Every Git call Core makes is
 bounded by a 60 second timeout (`GIT_TIMEOUT_SECONDS`): a timeout leaves the surface
 baseline `UNAVAILABLE` or the base head unknown, and a timed-out root discovery or
 ignore check is refused as UNKNOWN rather than treated as an answer.
+
+Controller-local observations opt the selected ledger into schema 8 on the first
+authorized write, under the adapter's ordinary revision CAS and authority checkpoint.
+Legacy-only tasks retain schema 7. Core reads both formats without writing on read;
+schema 8 permits `provenance:controller-local`, a Controller producer, null handoff,
+explicit candidate, registered requirement refs and source refs. It forbids native
+actor/status and historical-import fields on such facts. Core validates structure;
+the adapter still authorizes the actor. A local fact grants no execution rights or
+independent-review status. Historical child and cross-Host observations keep their
+exact fields. Older schema-7 readers refuse schema 8 as newer with
+`STATE_SCHEMA_INCOMPATIBLE`; backward reading is unsupported, and stripping provenance
+or downgrading a ledger is not a recovery procedure. No source change migrates a live
+task or rewrites its external security anchor.

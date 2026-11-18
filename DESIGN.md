@@ -240,16 +240,20 @@ promotion is a forward chain (7, 8, 9, 10): an older ledger is read as the curre
 schema in memory and written as the current schema on its next write; only a newer
 schema than the running Core is refused, with a recovery that names the upgrade.
 
-**Hot/cold ledger archive (schema 10).** The hot ledger stays within 512 KiB
+**Hot/cold ledger archive (schema 11).** The hot ledger stays within 512 KiB
 (`core.task_state_capacity()`). It is written as compact JSON, and a write whose hot
-state passes the 70% high-water mark (or a crowded hot list) moves the long bodies of
-settled objects into an immutable, content-addressed segment
-`.context/tasks/<task id>/archive/<sha256>.json`, leaving stubs that keep every field a
-gate, status view or validator reads plus `archived: <sha256>`. Open evidence, current
-records, the last two runs of each check, requirements, checks and authority stay hot,
-so gates answer identically. The state's `archive` index carries every segment digest,
-so the authority anchor covers them; `task-get` verifies and returns the full object or
-`TASK_ARCHIVE_UNAVAILABLE`. Details: `docs/thaliris-task-authority.md`.
+state passes the 70% high-water mark (or a crowded hot list) evicts every settled object
+whole into an immutable, content-addressed segment
+`.context/tasks/<task id>/archive/<sha256>.json`. The state's `archive` index keeps the
+evicted ids (compact runs with their ledger positions, reserved for references and
+uniqueness) and exact pre-aggregated totals, and `settled.latest` the latest evicted
+judgment per requirement and candidate, so gates, status, usage and claims answer
+identically. Open evidence, current records, the last two runs of each check,
+requirements, checks and authority stay hot. An evicted object that new evidence needs
+again is re-hydrated to its exact position. The anchor covers the index; `task-get`
+verifies and returns the full object or `TASK_ARCHIVE_UNAVAILABLE`. Schema-10 stub
+ledgers load and are evicted further on the next pressured write. Details:
+`docs/thaliris-task-authority.md`.
 
 **Requirement kind.** A requirement may be registered with `kind`:
 `compiled` (declared checks decide it), `partial` (checks cover part of it) or

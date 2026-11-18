@@ -1,4 +1,8 @@
-"""Hot/cold ledger archive (schema 10): writes keep succeeding near the cap, gates are unchanged."""
+"""Hot/cold ledger archive: writes keep succeeding near the cap, gates are unchanged.
+
+Schema 10 left stubs in the hot lists; schema 11 evicts settled objects entirely (see also
+test_ledger_evict.py). These tests cover the behaviour both share.
+"""
 from __future__ import annotations
 
 import copy
@@ -82,7 +86,8 @@ def write_json(root: Path, name: str, value: object) -> str:
 
 
 def stub_count(state: dict) -> int:
-    return sum(1 for _ in core._archived_items(state))
+    """Archived objects: schema-10 stubs still hot plus evicted ids."""
+    return sum(1 for _ in core._archived_items(state)) + len(core._indexed_ids(state))
 
 
 # --- growth past the old cap --------------------------------------------------------------------
@@ -117,9 +122,9 @@ def test_real_shaped_ledger_grows_past_512_kib_with_every_write_succeeding(tmp_p
     unarchived = sum(len(json.dumps(item, separators=(",", ":"))) for kind in core._CONTINUITY_KINDS
                      for item in state["evidence_continuity"][kind])
     assert state.get("archive") and stub_count(state) > 0 and max(sizes) <= core.STATE_MAX_BYTES
-    assert sum(entry["items"] for entry in state["archive"]) >= stub_count(state)
     assert unarchived + sum(len(item["summary"]) for item in state["evidence_refs"]) < 1_000_000
-    assert len(segments(root, task_id)) == len(state["archive"])
+    # Merged (compacted) segments leave their predecessors on disk; every indexed segment exists.
+    assert {path.stem for path in segments(root, task_id)} >= {entry["sha256"] for entry in state["archive"]}
     # Every archived body is retrievable.
     full = core.task_get(root, "O5")["object"]
     assert full["text"] == filler(1000, 5) and "archived" not in full
@@ -279,8 +284,8 @@ def test_gates_and_aggregates_are_identical_before_and_after_archiving(tmp_path,
     state = core._load_state(root)
     core.task_update(root, "controller", state["revision"], write_json(root, "u", {"pending_results": ["archive now"]}))
     archived = core._load_state(root)
-    assert archived["archive"] and stub_count(archived) > 100
-    stubbed = {item["id"] for _, item in core._archived_items(archived)}
+    assert archived["archive"] and stub_count(archived) >= 100
+    stubbed = core._indexed_ids(archived)
     assert {"open", "basis", "repair", "open.s"}.isdisjoint(stubbed), "open evidence is never archived"
     assert {"O3", "J3", "O3.s"} <= stubbed
     after = views(root, monkeypatch)
@@ -318,23 +323,23 @@ def archived_ledger(tmp_path: Path, monkeypatch) -> tuple[Path, dict, dict]:
 def test_task_get_returns_the_full_archived_object(tmp_path, monkeypatch):
     root, original, state = archived_ledger(tmp_path, monkeypatch)
     observations = {item["id"]: item for item in original["evidence_continuity"]["observations"]}
-    stub = next(item for item in state["evidence_continuity"]["observations"] if item["id"] == "O4")
-    assert stub["archived"] and stub["text"].endswith(core.ARCHIVE_PREVIEW_SUFFIX) and len(stub["text"]) < 100
-    got = core.task_get(root, "O4")
-    assert got["object"] == observations["O4"] and got["archived"] == {"segment": stub["archived"]}
-    assert core.task_get(root, "J4")["object"] == original["evidence_continuity"]["judgments"][4]
-    assert core.task_get(root, "O4.s")["object"] == next(item for item in original["evidence_refs"] if item["id"] == "O4.s")
+    assert "O1" in core._indexed_ids(state)
+    assert "O1" not in {item["id"] for item in state["evidence_continuity"]["observations"]}, "evicted objects leave the hot list"
+    got = core.task_get(root, "O1")
+    assert got["object"] == observations["O1"] and got["archived"]["segment"] == state["archive"][0]["sha256"]
+    assert core.task_get(root, "J1")["object"] == original["evidence_continuity"]["judgments"][1]
+    assert core.task_get(root, "O1.s")["object"] == next(item for item in original["evidence_refs"] if item["id"] == "O1.s")
     assert core.task_get(root, "old")["object"] == original["records"][0]
-    assert "archived" not in next(item for item in state["records"] if item["id"] == "new"), "a current record stays hot"
-    # A handoff stub that changes after archiving keeps its new fields.
-    core.task_handoff_usage(root, "H3", {"model": "m-9"})
-    assert core.task_get(root, "H3")["object"]["usage"]["model"] == "m-9"
-    # The segment is content-addressed and holds only the moved bodies.
-    segment = segments(root, state["task_id"])[0]
-    assert hashlib.sha256(segment.read_bytes()).hexdigest() == segment.stem == state["archive"][0]["sha256"]
+    assert {"old", "new"} <= {item["id"] for item in state["records"]}, "current and recently written records stay hot"
+    # A handoff that changes after eviction is re-hydrated and keeps its new fields.
+    core.task_handoff_usage(root, "H1", {"model": "m-9"})
+    assert core.task_get(root, "H1")["object"]["usage"]["model"] == "m-9"
+    # The segment is content-addressed and holds whole objects.
+    segment = next(path for path in segments(root, state["task_id"]) if path.stem == state["archive"][0]["sha256"])
+    assert hashlib.sha256(segment.read_bytes()).hexdigest() == segment.stem
     body = json.loads(segment.read_bytes())
-    assert body["format"] == core.ARCHIVE_SEGMENT_FORMAT and body["task_id"] == state["task_id"]
-    assert {entry["collection"] for entry in body["items"]} >= {"observations", "judgments", "evidence_refs", "records"}
+    assert body["format"] == core.ARCHIVE_SEGMENT_FORMAT and body["task_id"] == state["task_id"] and body["version"] == 2
+    assert {entry["collection"] for entry in body["items"]} >= {"observations", "judgments", "evidence_refs", "handoffs"}
 
 
 @pytest.mark.parametrize("damage", ["tamper", "delete", "foreign"])
@@ -342,7 +347,7 @@ def test_damaged_or_missing_segment_is_reported_and_gates_keep_working(tmp_path,
     root, original, state = archived_ledger(tmp_path, monkeypatch)
     segment = segments(root, state["task_id"])[0]
     if damage == "tamper":
-        segment.write_bytes(segment.read_bytes().replace(b"group 4", b"group X"))
+        segment.write_bytes(segment.read_bytes().replace(b"group 1 ", b"group X "))
     elif damage == "delete":
         segment.unlink()
     else:
@@ -350,14 +355,15 @@ def test_damaged_or_missing_segment_is_reported_and_gates_keep_working(tmp_path,
         raw["task_id"] = "00000000-0000-4000-8000-000000000000"
         segment.write_bytes(json.dumps(raw).encode())
     with pytest.raises(core.ThalirisError) as caught:
-        core.task_get(root, "O4")
+        core.task_get(root, "O1")
     assert caught.value.code == "TASK_ARCHIVE_UNAVAILABLE" and caught.value.details["object_type"] == "observations"
     assert caught.value.details["segment"] == segment.stem and "restore" in caught.value.recovery
     assert core.task_get(root, "R4")["object"] == {"id": "R4", "workchain_ref": "w4"}
     packet = core.task_status(root, view="compact")
     assert packet["Evidence"]["unincorporated_total"] == 0 and packet["Archive"]["segments"] == 1
-    core.task_observe(root, "implementer", {"id": "later", "candidate": "C1", "handoff_id": "H0", "requirement_refs": ["R0"],
-                                            "source_refs": ["O0.s"], "text": "still writable"})
+    # A write that needs no object from the damaged segment still works (H19 is hot).
+    core.task_observe(root, "implementer", {"id": "later", "candidate": "C1", "handoff_id": "H19", "requirement_refs": ["R19"],
+                                            "source_refs": ["O19.s"], "text": "still writable"})
     assert core.task_close(root, core._load_state(root)["revision"])["status"] == "DONE"
 
 
@@ -501,7 +507,8 @@ def test_hot_list_cap_counts_only_hot_items(tmp_path):
     # 600 uncited sources: the write stubs settled ones so the hot list fits its cap.
     core._write_state(root, state)
     written = disk(root)
-    assert len(written["evidence_refs"]) == 600 and core._hot_count(written["evidence_refs"]) <= core.STATE_LIST_MAX
+    assert len(written["evidence_refs"]) <= core.STATE_LIST_MAX
+    assert len(written["evidence_refs"]) + len(core._index_map(core._load_state(root))["evidence_refs"]) == 600
     assert core.task_get(root, "s1")["object"] == {"id": "s1", "kind": "test", "locator": "tests/x", "summary": "s"}
 
 

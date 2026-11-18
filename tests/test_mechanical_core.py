@@ -1090,7 +1090,10 @@ def test_large_task_status_is_bounded_while_task_show_retains_full_ledger(tmp_pa
     shown = core.task_show(root)
     assert len(shown["state"]["records"]) == 500
     assert len(shown["state"]["artifact_refs"]) == 200
-    assert len(shown["state"]["verification_results"]) == 200
+    # Settled results beyond the last two of their kind are evicted from the hot ledger, not lost.
+    state = shown["state"]
+    assert len(state["verification_results"]) + len(core._index_map(state)["verification_results"]) == 200
+    assert core.task_get(root, "verification-0")["object"]["summary"] == "VERIFICATION_BODY_0"
     assert "HISTORICAL_RECORD_BODY" in json.dumps(shown)
 
 

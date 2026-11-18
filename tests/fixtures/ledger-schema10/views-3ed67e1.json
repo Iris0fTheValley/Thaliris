@@ -1,0 +1,1894 @@
+{
+ "changes_since": {
+  "base_revision": 99,
+  "current_revision": 102,
+  "evidence": {
+   "latest_judgments_total": 40,
+   "next_offset": null,
+   "offset": 0,
+   "unincorporated": [
+    {
+     "candidate": "C1",
+     "handoff_id": "H31",
+     "observation_id": "open",
+     "requirement_ref": "R31"
+    }
+   ],
+   "unincorporated_total": 1,
+   "unresolved_judgments": [
+    {
+     "candidate": "C1",
+     "id": "repair",
+     "outcome": "unknown",
+     "requirement_ref": "R31"
+    }
+   ],
+   "unresolved_judgments_total": 1
+  },
+  "exact": false,
+  "recent": {
+   "handoffs": [
+    "H37",
+    "H38",
+    "H39"
+   ],
+   "judgments": [
+    {
+     "id": "J30b",
+     "outcome": "satisfied",
+     "requirement_ref": "R30"
+    },
+    {
+     "id": "J36b",
+     "outcome": "satisfied",
+     "requirement_ref": "R36"
+    },
+    {
+     "id": "repair",
+     "outcome": "unknown",
+     "requirement_ref": "R31"
+    }
+   ],
+   "observations": [
+    {
+     "handoff_id": "H36",
+     "id": "O36",
+     "requirement_refs": [
+      "R36"
+     ]
+    },
+    {
+     "handoff_id": "H39",
+     "id": "O39",
+     "requirement_refs": [
+      "R39"
+     ]
+    },
+    {
+     "handoff_id": "H31",
+     "id": "open",
+     "requirement_refs": [
+      "R31"
+     ]
+    }
+   ]
+  },
+  "records": [],
+  "revision_gap": 3,
+  "truncated": false
+ },
+ "claims": {
+  "handoffs_ingested": 40,
+  "handoffs_without_typed_claims": {
+   "ids": [
+    "H0",
+    "H5",
+    "H10",
+    "H15",
+    "H20",
+    "H25",
+    "H30",
+    "H35"
+   ],
+   "malformed": 0,
+   "missing": 8,
+   "total": 8
+  },
+  "supports": {
+   "R1": 1,
+   "R11": 1,
+   "R12": 1,
+   "R13": 1,
+   "R14": 1,
+   "R16": 1,
+   "R17": 1,
+   "R18": 1,
+   "R19": 1,
+   "R2": 1,
+   "R21": 1,
+   "R22": 1,
+   "R23": 1,
+   "R24": 1,
+   "R26": 1,
+   "R27": 1,
+   "R28": 1,
+   "R29": 1,
+   "R3": 1,
+   "R31": 1,
+   "R32": 1,
+   "R33": 1,
+   "R34": 1,
+   "R36": 1,
+   "R37": 1,
+   "R38": 1,
+   "R39": 1,
+   "R4": 1,
+   "R6": 1,
+   "R7": 1,
+   "R8": 1,
+   "R9": 1
+  }
+ },
+ "continuity_status": [
+  {
+   "latest_judgments": [
+    {
+     "candidate": "C0",
+     "id": "J0b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R0"
+    },
+    {
+     "candidate": "C0",
+     "id": "J1",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R1"
+    },
+    {
+     "candidate": "C0",
+     "id": "J2",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R2"
+    },
+    {
+     "candidate": "C0",
+     "id": "J3",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R3"
+    },
+    {
+     "candidate": "C0",
+     "id": "J4",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R4"
+    },
+    {
+     "candidate": "C0",
+     "id": "J5",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R5"
+    },
+    {
+     "candidate": "C0",
+     "id": "J6b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R6"
+    },
+    {
+     "candidate": "C0",
+     "id": "J7",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R7"
+    },
+    {
+     "candidate": "C0",
+     "id": "J8",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R8"
+    },
+    {
+     "candidate": "C0",
+     "id": "J9",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R9"
+    },
+    {
+     "candidate": "C0",
+     "id": "J10",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R10"
+    },
+    {
+     "candidate": "C0",
+     "id": "J11",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R11"
+    },
+    {
+     "candidate": "C0",
+     "id": "J12b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R12"
+    },
+    {
+     "candidate": "C0",
+     "id": "J13",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R13"
+    },
+    {
+     "candidate": "C0",
+     "id": "J14",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R14"
+    },
+    {
+     "candidate": "C0",
+     "id": "J15",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R15"
+    },
+    {
+     "candidate": "C0",
+     "id": "J16",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R16"
+    },
+    {
+     "candidate": "C0",
+     "id": "J17",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R17"
+    },
+    {
+     "candidate": "C0",
+     "id": "J18b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R18"
+    },
+    {
+     "candidate": "C0",
+     "id": "J19",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R19"
+    },
+    {
+     "candidate": "C1",
+     "id": "J20",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R20"
+    },
+    {
+     "candidate": "C1",
+     "id": "J21",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R21"
+    },
+    {
+     "candidate": "C1",
+     "id": "J22",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R22"
+    },
+    {
+     "candidate": "C1",
+     "id": "J23",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R23"
+    },
+    {
+     "candidate": "C1",
+     "id": "J24b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R24"
+    },
+    {
+     "candidate": "C1",
+     "id": "J25",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R25"
+    },
+    {
+     "candidate": "C1",
+     "id": "J26",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R26"
+    },
+    {
+     "candidate": "C1",
+     "id": "J27",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R27"
+    },
+    {
+     "candidate": "C1",
+     "id": "J28",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R28"
+    },
+    {
+     "candidate": "C1",
+     "id": "J29",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R29"
+    },
+    {
+     "candidate": "C1",
+     "id": "J30b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R30"
+    },
+    {
+     "candidate": "C1",
+     "id": "repair",
+     "observation_ref_count": 1,
+     "outcome": "unknown",
+     "requirement_ref": "R31"
+    },
+    {
+     "candidate": "C1",
+     "id": "J32",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R32"
+    }
+   ],
+   "latest_judgments_total": 40,
+   "next_offset": 35,
+   "offset": 0,
+   "unincorporated": [
+    {
+     "candidate": "C1",
+     "handoff_id": "H31",
+     "observation_id": "open",
+     "requirement_ref": "R31"
+    }
+   ],
+   "unincorporated_total": 1,
+   "unresolved_judgments": [
+    {
+     "candidate": "C1",
+     "id": "repair",
+     "outcome": "unknown",
+     "requirement_ref": "R31"
+    }
+   ],
+   "unresolved_judgments_total": 1
+  },
+  {
+   "latest_judgments": [
+    {
+     "candidate": "C0",
+     "id": "J5",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R5"
+    },
+    {
+     "candidate": "C0",
+     "id": "J6b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R6"
+    },
+    {
+     "candidate": "C0",
+     "id": "J7",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R7"
+    },
+    {
+     "candidate": "C0",
+     "id": "J8",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R8"
+    },
+    {
+     "candidate": "C0",
+     "id": "J9",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R9"
+    },
+    {
+     "candidate": "C0",
+     "id": "J10",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R10"
+    },
+    {
+     "candidate": "C0",
+     "id": "J11",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R11"
+    },
+    {
+     "candidate": "C0",
+     "id": "J12b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R12"
+    },
+    {
+     "candidate": "C0",
+     "id": "J13",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R13"
+    },
+    {
+     "candidate": "C0",
+     "id": "J14",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R14"
+    },
+    {
+     "candidate": "C0",
+     "id": "J15",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R15"
+    },
+    {
+     "candidate": "C0",
+     "id": "J16",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R16"
+    },
+    {
+     "candidate": "C0",
+     "id": "J17",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R17"
+    },
+    {
+     "candidate": "C0",
+     "id": "J18b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R18"
+    },
+    {
+     "candidate": "C0",
+     "id": "J19",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R19"
+    },
+    {
+     "candidate": "C1",
+     "id": "J20",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R20"
+    },
+    {
+     "candidate": "C1",
+     "id": "J21",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R21"
+    },
+    {
+     "candidate": "C1",
+     "id": "J22",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R22"
+    },
+    {
+     "candidate": "C1",
+     "id": "J23",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R23"
+    },
+    {
+     "candidate": "C1",
+     "id": "J24b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R24"
+    },
+    {
+     "candidate": "C1",
+     "id": "J25",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R25"
+    },
+    {
+     "candidate": "C1",
+     "id": "J26",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R26"
+    },
+    {
+     "candidate": "C1",
+     "id": "J27",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R27"
+    },
+    {
+     "candidate": "C1",
+     "id": "J28",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R28"
+    },
+    {
+     "candidate": "C1",
+     "id": "J29",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R29"
+    },
+    {
+     "candidate": "C1",
+     "id": "J30b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R30"
+    },
+    {
+     "candidate": "C1",
+     "id": "repair",
+     "observation_ref_count": 1,
+     "outcome": "unknown",
+     "requirement_ref": "R31"
+    },
+    {
+     "candidate": "C1",
+     "id": "J32",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R32"
+    },
+    {
+     "candidate": "C1",
+     "id": "J33",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R33"
+    },
+    {
+     "candidate": "C1",
+     "id": "J34",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R34"
+    },
+    {
+     "candidate": "C1",
+     "id": "J35",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R35"
+    },
+    {
+     "candidate": "C1",
+     "id": "J36b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R36"
+    },
+    {
+     "candidate": "C1",
+     "id": "J37",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R37"
+    },
+    {
+     "candidate": "C1",
+     "id": "J38",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R38"
+    }
+   ],
+   "latest_judgments_total": 40,
+   "next_offset": 41,
+   "offset": 7,
+   "unincorporated": [],
+   "unincorporated_total": 1,
+   "unresolved_judgments": [],
+   "unresolved_judgments_total": 1
+  },
+  {
+   "latest_judgments": [
+    {
+     "candidate": "C0",
+     "id": "J12b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R12"
+    },
+    {
+     "candidate": "C0",
+     "id": "J13",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R13"
+    },
+    {
+     "candidate": "C0",
+     "id": "J14",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R14"
+    },
+    {
+     "candidate": "C0",
+     "id": "J15",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R15"
+    },
+    {
+     "candidate": "C0",
+     "id": "J16",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R16"
+    },
+    {
+     "candidate": "C0",
+     "id": "J17",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R17"
+    },
+    {
+     "candidate": "C0",
+     "id": "J18b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R18"
+    },
+    {
+     "candidate": "C0",
+     "id": "J19",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R19"
+    },
+    {
+     "candidate": "C1",
+     "id": "J20",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R20"
+    },
+    {
+     "candidate": "C1",
+     "id": "J21",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R21"
+    },
+    {
+     "candidate": "C1",
+     "id": "J22",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R22"
+    },
+    {
+     "candidate": "C1",
+     "id": "J23",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R23"
+    },
+    {
+     "candidate": "C1",
+     "id": "J24b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R24"
+    },
+    {
+     "candidate": "C1",
+     "id": "J25",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R25"
+    },
+    {
+     "candidate": "C1",
+     "id": "J26",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R26"
+    },
+    {
+     "candidate": "C1",
+     "id": "J27",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R27"
+    },
+    {
+     "candidate": "C1",
+     "id": "J28",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R28"
+    },
+    {
+     "candidate": "C1",
+     "id": "J29",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R29"
+    },
+    {
+     "candidate": "C1",
+     "id": "J30b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R30"
+    },
+    {
+     "candidate": "C1",
+     "id": "repair",
+     "observation_ref_count": 1,
+     "outcome": "unknown",
+     "requirement_ref": "R31"
+    },
+    {
+     "candidate": "C1",
+     "id": "J32",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R32"
+    },
+    {
+     "candidate": "C1",
+     "id": "J33",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R33"
+    },
+    {
+     "candidate": "C1",
+     "id": "J34",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R34"
+    },
+    {
+     "candidate": "C1",
+     "id": "J35",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R35"
+    },
+    {
+     "candidate": "C1",
+     "id": "J36b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R36"
+    },
+    {
+     "candidate": "C1",
+     "id": "J37",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R37"
+    },
+    {
+     "candidate": "C1",
+     "id": "J38",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R38"
+    },
+    {
+     "candidate": "C1",
+     "id": "J39",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R39"
+    }
+   ],
+   "latest_judgments_total": 40,
+   "next_offset": null,
+   "offset": 14,
+   "unincorporated": [],
+   "unincorporated_total": 1,
+   "unresolved_judgments": [],
+   "unresolved_judgments_total": 1
+  },
+  {
+   "latest_judgments": [
+    {
+     "candidate": "C0",
+     "id": "J19",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R19"
+    },
+    {
+     "candidate": "C1",
+     "id": "J20",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R20"
+    },
+    {
+     "candidate": "C1",
+     "id": "J21",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R21"
+    },
+    {
+     "candidate": "C1",
+     "id": "J22",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R22"
+    },
+    {
+     "candidate": "C1",
+     "id": "J23",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R23"
+    },
+    {
+     "candidate": "C1",
+     "id": "J24b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R24"
+    },
+    {
+     "candidate": "C1",
+     "id": "J25",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R25"
+    },
+    {
+     "candidate": "C1",
+     "id": "J26",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R26"
+    },
+    {
+     "candidate": "C1",
+     "id": "J27",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R27"
+    },
+    {
+     "candidate": "C1",
+     "id": "J28",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R28"
+    },
+    {
+     "candidate": "C1",
+     "id": "J29",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R29"
+    },
+    {
+     "candidate": "C1",
+     "id": "J30b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R30"
+    },
+    {
+     "candidate": "C1",
+     "id": "repair",
+     "observation_ref_count": 1,
+     "outcome": "unknown",
+     "requirement_ref": "R31"
+    },
+    {
+     "candidate": "C1",
+     "id": "J32",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R32"
+    },
+    {
+     "candidate": "C1",
+     "id": "J33",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R33"
+    },
+    {
+     "candidate": "C1",
+     "id": "J34",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R34"
+    },
+    {
+     "candidate": "C1",
+     "id": "J35",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R35"
+    },
+    {
+     "candidate": "C1",
+     "id": "J36b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R36"
+    },
+    {
+     "candidate": "C1",
+     "id": "J37",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R37"
+    },
+    {
+     "candidate": "C1",
+     "id": "J38",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R38"
+    },
+    {
+     "candidate": "C1",
+     "id": "J39",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R39"
+    }
+   ],
+   "latest_judgments_total": 40,
+   "next_offset": null,
+   "offset": 21,
+   "unincorporated": [],
+   "unincorporated_total": 1,
+   "unresolved_judgments": [],
+   "unresolved_judgments_total": 1
+  },
+  {
+   "latest_judgments": [
+    {
+     "candidate": "C1",
+     "id": "J26",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R26"
+    },
+    {
+     "candidate": "C1",
+     "id": "J27",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R27"
+    },
+    {
+     "candidate": "C1",
+     "id": "J28",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R28"
+    },
+    {
+     "candidate": "C1",
+     "id": "J29",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R29"
+    },
+    {
+     "candidate": "C1",
+     "id": "J30b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R30"
+    },
+    {
+     "candidate": "C1",
+     "id": "repair",
+     "observation_ref_count": 1,
+     "outcome": "unknown",
+     "requirement_ref": "R31"
+    },
+    {
+     "candidate": "C1",
+     "id": "J32",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R32"
+    },
+    {
+     "candidate": "C1",
+     "id": "J33",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R33"
+    },
+    {
+     "candidate": "C1",
+     "id": "J34",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R34"
+    },
+    {
+     "candidate": "C1",
+     "id": "J35",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R35"
+    },
+    {
+     "candidate": "C1",
+     "id": "J36b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R36"
+    },
+    {
+     "candidate": "C1",
+     "id": "J37",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R37"
+    },
+    {
+     "candidate": "C1",
+     "id": "J38",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R38"
+    },
+    {
+     "candidate": "C1",
+     "id": "J39",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R39"
+    }
+   ],
+   "latest_judgments_total": 40,
+   "next_offset": null,
+   "offset": 28,
+   "unincorporated": [],
+   "unincorporated_total": 1,
+   "unresolved_judgments": [],
+   "unresolved_judgments_total": 1
+  },
+  {
+   "latest_judgments": [
+    {
+     "candidate": "C1",
+     "id": "J33",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R33"
+    },
+    {
+     "candidate": "C1",
+     "id": "J34",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R34"
+    },
+    {
+     "candidate": "C1",
+     "id": "J35",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R35"
+    },
+    {
+     "candidate": "C1",
+     "id": "J36b",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R36"
+    },
+    {
+     "candidate": "C1",
+     "id": "J37",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R37"
+    },
+    {
+     "candidate": "C1",
+     "id": "J38",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R38"
+    },
+    {
+     "candidate": "C1",
+     "id": "J39",
+     "observation_ref_count": 1,
+     "outcome": "satisfied",
+     "requirement_ref": "R39"
+    }
+   ],
+   "latest_judgments_total": 40,
+   "next_offset": null,
+   "offset": 35,
+   "unincorporated": [],
+   "unincorporated_total": 1,
+   "unresolved_judgments": [],
+   "unresolved_judgments_total": 1
+  },
+  {
+   "latest_judgments": [],
+   "latest_judgments_total": 40,
+   "next_offset": null,
+   "offset": 42,
+   "unincorporated": [],
+   "unincorporated_total": 1,
+   "unresolved_judgments": [],
+   "unresolved_judgments_total": 1
+  },
+  {
+   "latest_judgments": [],
+   "latest_judgments_total": 40,
+   "next_offset": null,
+   "offset": 49,
+   "unincorporated": [],
+   "unincorporated_total": 1,
+   "unresolved_judgments": [],
+   "unresolved_judgments_total": 1
+  },
+  {
+   "latest_judgments": [],
+   "latest_judgments_total": 40,
+   "next_offset": null,
+   "offset": 56,
+   "unincorporated": [],
+   "unincorporated_total": 1,
+   "unresolved_judgments": [],
+   "unresolved_judgments_total": 1
+  }
+ ],
+ "evidence_summary": {
+  "latest_judgments_total": 40,
+  "next_offset": null,
+  "offset": 0,
+  "unincorporated": [
+   {
+    "candidate": "C1",
+    "handoff_id": "H31",
+    "observation_id": "open",
+    "requirement_ref": "R31"
+   }
+  ],
+  "unincorporated_total": 1,
+  "unresolved_judgments": [
+   {
+    "candidate": "C1",
+    "id": "repair",
+    "outcome": "unknown",
+    "requirement_ref": "R31"
+   }
+  ],
+  "unresolved_judgments_total": 1
+ },
+ "ids": [
+  "H0",
+  "H1",
+  "H10",
+  "H11",
+  "H12",
+  "H13",
+  "H14",
+  "H15",
+  "H16",
+  "H17",
+  "H18",
+  "H19",
+  "H2",
+  "H20",
+  "H21",
+  "H22",
+  "H23",
+  "H24",
+  "H25",
+  "H26",
+  "H27",
+  "H28",
+  "H29",
+  "H3",
+  "H30",
+  "H31",
+  "H32",
+  "H33",
+  "H34",
+  "H35",
+  "H36",
+  "H37",
+  "H38",
+  "H39",
+  "H4",
+  "H5",
+  "H6",
+  "H7",
+  "H8",
+  "H9",
+  "J0",
+  "J0b",
+  "J1",
+  "J10",
+  "J11",
+  "J12",
+  "J12b",
+  "J13",
+  "J14",
+  "J15",
+  "J16",
+  "J17",
+  "J18",
+  "J18b",
+  "J19",
+  "J2",
+  "J20",
+  "J21",
+  "J22",
+  "J23",
+  "J24",
+  "J24b",
+  "J25",
+  "J26",
+  "J27",
+  "J28",
+  "J29",
+  "J3",
+  "J30",
+  "J30b",
+  "J31",
+  "J32",
+  "J33",
+  "J34",
+  "J35",
+  "J36",
+  "J36b",
+  "J37",
+  "J38",
+  "J39",
+  "J4",
+  "J5",
+  "J6",
+  "J6b",
+  "J7",
+  "J8",
+  "J9",
+  "O0",
+  "O0.s",
+  "O1",
+  "O1.s",
+  "O10",
+  "O10.s",
+  "O11",
+  "O11.s",
+  "O12",
+  "O12.s",
+  "O13",
+  "O13.s",
+  "O14",
+  "O14.s",
+  "O15",
+  "O15.s",
+  "O16",
+  "O16.s",
+  "O17",
+  "O17.s",
+  "O18",
+  "O18.s",
+  "O19",
+  "O19.s",
+  "O2",
+  "O2.s",
+  "O20",
+  "O20.s",
+  "O21",
+  "O21.s",
+  "O22",
+  "O22.s",
+  "O23",
+  "O23.s",
+  "O24",
+  "O24.s",
+  "O25",
+  "O25.s",
+  "O26",
+  "O26.s",
+  "O27",
+  "O27.s",
+  "O28",
+  "O28.s",
+  "O29",
+  "O29.s",
+  "O3",
+  "O3.s",
+  "O30",
+  "O30.s",
+  "O31",
+  "O31.s",
+  "O32",
+  "O32.s",
+  "O33",
+  "O33.s",
+  "O34",
+  "O34.s",
+  "O35",
+  "O35.s",
+  "O36",
+  "O36.s",
+  "O37",
+  "O37.s",
+  "O38",
+  "O38.s",
+  "O39",
+  "O39.s",
+  "O4",
+  "O4.s",
+  "O5",
+  "O5.s",
+  "O6",
+  "O6.s",
+  "O7",
+  "O7.s",
+  "O8",
+  "O8.s",
+  "O9",
+  "O9.s",
+  "R0",
+  "R1",
+  "R10",
+  "R11",
+  "R12",
+  "R13",
+  "R14",
+  "R15",
+  "R16",
+  "R17",
+  "R18",
+  "R19",
+  "R2",
+  "R20",
+  "R21",
+  "R22",
+  "R23",
+  "R24",
+  "R25",
+  "R26",
+  "R27",
+  "R28",
+  "R29",
+  "R3",
+  "R30",
+  "R31",
+  "R32",
+  "R33",
+  "R34",
+  "R35",
+  "R36",
+  "R37",
+  "R38",
+  "R39",
+  "R4",
+  "R5",
+  "R6",
+  "R7",
+  "R8",
+  "R9",
+  "new",
+  "old",
+  "open",
+  "repair"
+ ],
+ "surfaced": {
+  "surfaced": [
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J0b",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R0"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J1",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R1"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J2",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R2"
+   },
+   {
+    "kind": "partial",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J3",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "reason": "no-declared-check",
+    "requirement": "R3"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J4",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R4"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J5",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R5"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J6b",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R6"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J7",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R7"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J8",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R8"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J9",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R9"
+   },
+   {
+    "kind": "partial",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J10",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "reason": "no-declared-check",
+    "requirement": "R10"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J11",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R11"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J12b",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R12"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J13",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R13"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J14",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R14"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J15",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R15"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J16",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R16"
+   },
+   {
+    "kind": "partial",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J17",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "reason": "no-declared-check",
+    "requirement": "R17"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J18b",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R18"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C0",
+     "id": "J19",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R19"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J20",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R20"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J21",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R21"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J22",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R22"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J23",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R23"
+   },
+   {
+    "kind": "partial",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J24b",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "reason": "no-declared-check",
+    "requirement": "R24"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J25",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R25"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J26",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R26"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J27",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R27"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J28",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R28"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J29",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R29"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J30b",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R30"
+   },
+   {
+    "kind": "partial",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "repair",
+     "outcome": "unknown",
+     "overridden": false
+    },
+    "reason": "no-declared-check",
+    "requirement": "R31"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J32",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R32"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J33",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R33"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J34",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R34"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J35",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R35"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J36b",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R36"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J37",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R37"
+   },
+   {
+    "kind": "partial",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J38",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "reason": "no-declared-check",
+    "requirement": "R38"
+   },
+   {
+    "kind": "judgment-only",
+    "latest_judgment": {
+     "candidate": "C1",
+     "id": "J39",
+     "outcome": "satisfied",
+     "overridden": false
+    },
+    "requirement": "R39"
+   }
+  ],
+  "surfaced_total": 40,
+  "surfaced_truncated": false
+ },
+ "usage": {
+  "by_model": {
+   "m-0": {
+    "cost_usd": 2.1,
+    "handoffs": 14,
+    "total_tokens": 21000
+   },
+   "m-1": {
+    "cost_usd": 1.9,
+    "handoffs": 13,
+    "total_tokens": 19500
+   },
+   "m-2": {
+    "cost_usd": 2.0,
+    "handoffs": 13,
+    "total_tokens": 19500
+   }
+  },
+  "by_role": {
+   "implementer": {
+    "cost_usd": 3.9,
+    "handoffs": 26,
+    "total_tokens": 39000
+   },
+   "investigator": {
+    "cost_usd": 2.1,
+    "handoffs": 14,
+    "total_tokens": 21000
+   }
+  },
+  "outcomes": {
+   "completed": 40
+  },
+  "totals": {
+   "cost_usd": 6.0,
+   "duration_ms": 160000,
+   "handoffs": 40,
+   "input_tokens": 48000,
+   "output_tokens": 12000,
+   "tool_uses": 280,
+   "total_tokens": 60000
+  }
+ }
+}

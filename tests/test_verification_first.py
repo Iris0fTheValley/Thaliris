@@ -102,7 +102,7 @@ def sha(path: Path) -> str:
 def test_requirement_kind_defaults_to_judgment_only_and_keeps_legacy_shape(tmp_path):
     root = project(tmp_path, kinds=False)
     state = state_of(root)
-    assert state["schema_version"] == 7
+    assert state["schema_version"] == core._STATE_SCHEMA_VERSION
     assert all(set(item) == {"id", "workchain_ref"} for item in state["evidence_continuity"]["requirements"])
     surfaced = core.surfaced_requirements(state)
     assert [(item["requirement"], item["kind"]) for item in surfaced["surfaced"]] == [
@@ -110,10 +110,10 @@ def test_requirement_kind_defaults_to_judgment_only_and_keeps_legacy_shape(tmp_p
     assert "Verification" not in core.task_status(root, view="compact")
 
 
-def test_explicit_kind_and_surface_are_stored_and_move_the_state_to_schema_9(tmp_path):
+def test_explicit_kind_and_surface_are_stored_in_the_current_schema(tmp_path):
     root = project(tmp_path)
     state = state_of(root)
-    assert state["schema_version"] == 9
+    assert state["schema_version"] == core._STATE_SCHEMA_VERSION
     stored = {item["id"]: item for item in state["evidence_continuity"]["requirements"]}
     assert stored["R1"]["kind"] == "compiled" and stored["R2"] == {"id": "R2", "workchain_ref": "w2", "kind": "partial", "surface": "contract"}
     assert "kind" not in stored["R3"]
@@ -575,7 +575,7 @@ def test_legacy_close_always_carries_the_surfaced_list(tmp_path):
     assert closed["status"] == "DONE" and "closure" not in closed and closed["changed"] == ["status"]
     assert [(item["requirement"], item["latest_judgment"] and item["latest_judgment"]["outcome"]) for item in closed["surfaced"]] == [
         ("R1", None), ("R2", "repair"), ("R3", None)]
-    assert state_of(root)["schema_version"] == 7
+    assert state_of(root)["schema_version"] == core._STATE_SCHEMA_VERSION and "closure" not in state_of(root)
 
 
 # --- typed claims ---------------------------------------------------------------------------------
@@ -719,7 +719,7 @@ def test_voluntary_observe_is_unchanged(tmp_path):
     observe(root, "plain")
     stored = core.task_get(root, "plain")["object"]
     assert set(stored) == {"id", "task_id", "producer", "candidate", "handoff_id", "requirement_refs", "source_refs", "text"}
-    assert state_of(root)["schema_version"] == 7
+    assert state_of(root)["schema_version"] == core._STATE_SCHEMA_VERSION
     with pytest.raises(ValueError, match="requires requirement refs"):
         core.task_observe(root, "implementer", {"id": "empty", "candidate": "C1", "handoff_id": "H1", "requirement_refs": [],
                                                 "source_refs": ["plain-s"], "text": "no refs"})
@@ -904,12 +904,13 @@ def test_advisories_never_block(tmp_path):
 
 # --- schema continuity ----------------------------------------------------------------------------
 
-def test_tasks_that_use_no_new_feature_keep_their_schema_and_bytes_shape(tmp_path):
+def test_tasks_that_use_no_new_feature_keep_their_field_shape(tmp_path):
+    # Every write produces the current schema (a forward chain); an unused feature adds no field.
     root = project(tmp_path, kinds=False)
     observe(root, "o1")
     judge(root, "J1", "R1", observation_refs=["o1"])
     state = state_of(root)
-    assert state["schema_version"] == 7 and set(state) == LEGACY_STATE_FIELDS
+    assert state["schema_version"] == core._STATE_SCHEMA_VERSION and set(state) == LEGACY_STATE_FIELDS
     assert set(core.task_get(root, "J1")["object"]) == {"id", "task_id", "producer", "candidate", "requirement_ref", "observation_refs",
                                                        "outcome", "reasoning"}
     assert set(core.task_status(root)) == {"ok", "schema_version", "Task", "Active Work", "Pending Results", "Counts",
@@ -918,14 +919,14 @@ def test_tasks_that_use_no_new_feature_keep_their_schema_and_bytes_shape(tmp_pat
                                                            "Counts", "Recent Artifact IDs", "Evidence"}
     core.task_observe(root, "controller", {"id": "local", "candidate": "C1", "handoff_id": None, "provenance": "controller-local",
                                            "requirement_refs": ["R1"], "source_refs": ["o1-s"], "text": "Controller's own reading"})
-    assert state_of(root)["schema_version"] == 8
+    assert state_of(root)["schema_version"] == core._STATE_SCHEMA_VERSION
     judge(root, "J2", "R2", observation_refs=["local"])
     assert core.task_close(root, rev(root))["status"] == "DONE"
-    assert state_of(root)["schema_version"] == 8 and set(state_of(root)) == LEGACY_STATE_FIELDS
+    assert state_of(root)["schema_version"] == core._STATE_SCHEMA_VERSION and set(state_of(root)) == LEGACY_STATE_FIELDS
 
 
-@pytest.mark.parametrize("version", [6, 7, 8])
-def test_older_states_load_and_upgrade_only_when_a_new_feature_is_written(tmp_path, version):
+@pytest.mark.parametrize("version", [6, 7, 8, 9])
+def test_older_states_load_as_current_and_are_promoted_on_the_next_write(tmp_path, version):
     root = project(tmp_path, kinds=False)
     if version == 8:
         observe(root, "o1")
@@ -936,13 +937,15 @@ def test_older_states_load_and_upgrade_only_when_a_new_feature_is_written(tmp_pa
     raw["schema_version"] = version
     path.write_bytes((json.dumps(raw, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8"))
     loaded = state_of(root)
-    assert loaded["schema_version"] == max(version, 7) and loaded["revision"] == raw["revision"]
+    assert loaded["schema_version"] == core._STATE_SCHEMA_VERSION and loaded["revision"] == raw["revision"]
     assert core.task_status(root, view="compact")["Task"]["revision"] == raw["revision"]
+    assert json.loads(path.read_bytes())["schema_version"] == version, "reading never rewrites the ledger"
     observe(root, "o-after")
-    assert state_of(root)["schema_version"] == max(version, 7)
+    assert json.loads(path.read_bytes())["schema_version"] == core._STATE_SCHEMA_VERSION, "the next write promotes it"
     declare(root)
     after = state_of(root)
-    assert after["schema_version"] == 9 and after["evidence_continuity"]["requirements"] == raw["evidence_continuity"]["requirements"]
+    assert after["schema_version"] == core._STATE_SCHEMA_VERSION
+    assert after["evidence_continuity"]["requirements"] == raw["evidence_continuity"]["requirements"]
     if version == 8:
         assert core.task_get(root, "local")["object"]["provenance"] == "controller-local"
     core.task_verify(root, "implementer", "C1")
@@ -957,7 +960,8 @@ def test_older_core_refuses_a_schema_9_state_and_schema_9_fields_cannot_be_smugg
     assert core.task_state_schema_diagnostic(root) is None
     predecessor = runpy.run_path(str(Path(__file__).parent / "fixtures/controller-local-predecessor/schema_reader.py"))
     refusal = predecessor["_task_state_schema_diagnostic"](json.loads(raw), raw)
-    assert refusal["status"] == "STATE_SCHEMA_INCOMPATIBLE" and refusal["from_version"] == 9 and refusal["recoverable"] is False
+    assert refusal["status"] == "STATE_SCHEMA_INCOMPATIBLE" and refusal["from_version"] == core._STATE_SCHEMA_VERSION
+    assert refusal["recoverable"] is False
     for version in (7, 8):
         state = copy.deepcopy(state_of(root))
         state["schema_version"] = version

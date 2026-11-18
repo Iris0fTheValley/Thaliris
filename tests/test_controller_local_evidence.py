@@ -22,18 +22,18 @@ def test_legacy_records_survive_opt_in_and_old_reader_refuses(tmp_path):
     core.task_observe(tmp_path, "child", legacy)
     before = core._state_path(tmp_path).read_bytes()
     saved = core.task_get(tmp_path, "legacy")["object"]
-    assert core.task_show(tmp_path)["state"]["schema_version"] == 7
+    assert core.task_show(tmp_path)["state"]["schema_version"] == core._STATE_SCHEMA_VERSION
     assert core._state_path(tmp_path).read_bytes() == before
     core.task_observe(tmp_path, "controller", local())
     after = core._state_path(tmp_path).read_bytes()
-    assert core.task_show(tmp_path)["state"]["schema_version"] == 8
+    assert core.task_show(tmp_path)["state"]["schema_version"] == core._STATE_SCHEMA_VERSION
     assert core.task_get(tmp_path, "legacy")["object"] == saved
     assert core.task_state_schema_diagnostic(tmp_path) is None
     assert core._state_path(tmp_path).read_bytes() == after
     predecessor = runpy.run_path(str(Path(__file__).parent / "fixtures/controller-local-predecessor/schema_reader.py"))
     refusal = predecessor["_task_state_schema_diagnostic"](json.loads(after), after)
     assert refusal["status"] == "STATE_SCHEMA_INCOMPATIBLE"
-    assert refusal["from_version"] == 8 and refusal["to_version"] == 7
+    assert refusal["from_version"] == core._STATE_SCHEMA_VERSION and refusal["to_version"] == 7
     assert refusal["recoverable"] is False and refusal["recovery_action"] == "NONE"
 
 

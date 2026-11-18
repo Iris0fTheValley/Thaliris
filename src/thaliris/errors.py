@@ -27,6 +27,9 @@ CONTINUITY_ID_COLLISION = "CONTINUITY_ID_COLLISION"
 REVISION_DELTA_INVALID = "REVISION_DELTA_INVALID"
 # A bounded ledger list, the routing page or the whole state file is full; the write is refused unchanged.
 TASK_STATE_CAPACITY_EXCEEDED = "TASK_STATE_CAPACITY_EXCEEDED"
+# An archived ledger item's body lives in a segment file that is missing, unreadable or does not match its
+# sha256. Only explicit retrieval (task-get, promotion of an archived source) needs it; gates and status do not.
+TASK_ARCHIVE_UNAVAILABLE = "TASK_ARCHIVE_UNAVAILABLE"
 # The external authority anchor exists but cannot be read as a Core authority record.
 TASK_AUTHORITY_INVALID = "TASK_AUTHORITY_INVALID"
 # Identity formation (basis notes and suggestion preferences; stored outside the repository).

@@ -38,7 +38,7 @@ def rewrite_version(root: Path, version: object, **changes: object) -> bytes:
 
 # --- compatible older schema versions -------------------------------------------------------------
 
-def test_valid_v6_state_is_read_as_current_and_becomes_v7_on_the_next_write(tmp_path):
+def test_valid_v6_state_is_read_as_current_and_becomes_current_on_the_next_write(tmp_path):
     root = repo(tmp_path)
     started = core.task_start(root, "keep me", None, None)
     core.task_update(root, "controller", 1, payload(root, "u", {
@@ -47,7 +47,7 @@ def test_valid_v6_state_is_read_as_current_and_becomes_v7_on_the_next_write(tmp_
     state_before = json.loads(v6_bytes)
 
     shown = core.task_show(root)["state"]
-    assert shown["schema_version"] == core._STATE_SCHEMA_VERSION == 7
+    assert shown["schema_version"] == core._STATE_SCHEMA_VERSION == 10
     assert (shown["task_id"], shown["goal"], shown["revision"], shown["records"]) == (
         started["task_id"], "keep me", state_before["revision"], state_before["records"])
     assert core.task_status(root)["Task"]["revision"] == state_before["revision"]
@@ -56,7 +56,7 @@ def test_valid_v6_state_is_read_as_current_and_becomes_v7_on_the_next_write(tmp_
 
     core.task_update(root, "controller", state_before["revision"], payload(root, "u2", {"active_work": ["next"]}))
     written = json.loads(core._state_path(root).read_text(encoding="utf-8"))
-    assert written["schema_version"] == 7 and written["revision"] == state_before["revision"] + 1
+    assert written["schema_version"] == core._STATE_SCHEMA_VERSION and written["revision"] == state_before["revision"] + 1
     assert written["records"] == state_before["records"] and written["task_id"] == started["task_id"]
     assert written["active_work"] == ["next"]
 
@@ -69,7 +69,7 @@ def test_v6_done_state_is_readable(tmp_path):
     assert core.task_show(root)["state"]["status"] == "DONE"
 
 
-@pytest.mark.parametrize("version", [5, 0, 10, 99])
+@pytest.mark.parametrize("version", [5, 0, 11, 99])
 def test_other_schema_versions_are_still_refused_with_the_diagnostic(tmp_path, version):
     root = repo(tmp_path)
     core.task_start(root, "refuse", None, None)
@@ -78,14 +78,17 @@ def test_other_schema_versions_are_still_refused_with_the_diagnostic(tmp_path, v
         core.task_show(root)
     diagnostic = caught.value.diagnostic
     assert diagnostic["status"] == "STATE_SCHEMA_INCOMPATIBLE"
-    assert diagnostic["from_version"] == version and diagnostic["to_version"] == 7
+    assert diagnostic["from_version"] == version and diagnostic["to_version"] == core._STATE_SCHEMA_VERSION
     assert diagnostic["state_sha256"] == hashlib.sha256(raw).hexdigest()
     assert diagnostic["recoverable"] is (0 < version < 7)
     if diagnostic["recoverable"]:
         action = diagnostic["recovery_action"]
         assert diagnostic["state_sha256"] in action and "task-recover-state" not in action and "adapter" in action
+    elif version > core._STATE_SCHEMA_VERSION:
+        # Only a newer schema than this code knows is refused for good: the recovery is an upgrade.
+        assert diagnostic["upgrade_required"] is True and "upgrade Thaliris Core" in diagnostic["recovery_action"]
     else:
-        assert diagnostic["recovery_action"] == "NONE"
+        assert diagnostic["recovery_action"] == "NONE" and diagnostic["upgrade_required"] is False
     assert core.task_state_schema_diagnostic(root)["from_version"] == version
     assert core._state_path(root).read_bytes() == raw
 
@@ -125,7 +128,7 @@ def test_prior_versions_come_from_one_extensible_table(tmp_path, monkeypatch):
     with pytest.raises(core.TaskStateSchemaIncompatible):
         core.task_show(root)
     monkeypatch.setitem(core._COMPATIBLE_PRIOR_SCHEMAS, 5, lambda raw: {**raw, "schema_version": 6})
-    assert core.task_show(root)["state"]["schema_version"] == 7
+    assert core.task_show(root)["state"]["schema_version"] == core._STATE_SCHEMA_VERSION
     # A gap in the chain keeps older versions refused.
     rewrite_version(root, 4)
     with pytest.raises(core.TaskStateSchemaIncompatible):
@@ -148,12 +151,12 @@ def test_reading_a_v6_ledger_does_not_trip_a_v6_authority_anchor(tmp_path):
     assert store.check() is not None
     assert core._state_path(root).read_bytes() == v6_bytes
 
-    # The write rewrites the ledger as v7: the adapter's checkpoint is what re-anchors it.
+    # The write rewrites the ledger as the current schema: the adapter's checkpoint is what re-anchors it.
     core.task_update(root, "controller", 1, payload(root, "u", {"active_work": ["x"]}))
     with pytest.raises(ValueError, match="TASK_AUTHORITY_STATE_CHANGED"):
         store.check()
     store.checkpoint()
-    assert store.check() is not None and json.loads(core._state_path(root).read_text())["schema_version"] == 7
+    assert store.check() is not None and json.loads(core._state_path(root).read_text())["schema_version"] == core._STATE_SCHEMA_VERSION
 
     # Tampering with the promoted ledger is still caught.
     tampered = json.loads(core._state_path(root).read_text())
@@ -207,10 +210,13 @@ def test_full_evidence_refs_list_names_the_field(tmp_path):
     root = repo(tmp_path)
     core.task_start(root, "capacity", None, None)
     sources = [{"id": f"s{i}", "kind": "test", "locator": "tests/x", "summary": "s"} for i in range(512)]
-    before = bulk_state(root, evidence_refs=sources)
+    # Current records cite every source, so none is settled and archiving cannot relieve the list.
+    citing = [{**record(i), "source_refs": [f"s{j}" for j in range(i * 64, i * 64 + 64)]} for i in range(8)]
+    before = bulk_state(root, evidence_refs=sources, records=citing)
     with pytest.raises(core.ThalirisError) as caught:
         core.task_update(root, "controller", json.loads(before)["revision"], payload(root, "more", {
-            "evidence_refs": [{"id": "extra", "kind": "test", "locator": "tests/x", "summary": "s"}]}))
+            "evidence_refs": [{"id": "extra", "kind": "test", "locator": "tests/x", "summary": "s"}],
+            "records": [{"id": "cites-extra", "kind": "note", "text": "x", "source_refs": ["extra"]}]}))
     assert_capacity(caught.value, "evidence_refs", 512, 513)
     assert core._state_path(root).read_bytes() == before
 

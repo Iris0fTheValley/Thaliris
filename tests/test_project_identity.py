@@ -69,7 +69,7 @@ def test_absent_identity_is_normal_and_existing_ops_are_unaffected(tmp_path: Pat
     assert identity.identity_summary(root) is None
     assert not (root / NS).exists()
     packet = core.task_status(root)
-    assert packet["schema_version"] == 7
+    assert packet["schema_version"] == core._STATE_SCHEMA_VERSION
     assert set(packet) == {"ok", "schema_version", "Task", "Active Work", "Pending Results", "Counts",
                            "Recent Artifact IDs", "Active Artifact Count", "Evidence Continuity"}
     with pytest.raises(ValueError, match="ABSENT"):

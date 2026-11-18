@@ -130,37 +130,95 @@ managed depth two with one active Scanner is unaffected.
 
 ## Ledger continuity (Core 0.5.3)
 
-Task state schema stays 7 for a task that uses neither Controller-local evidence
-(schema 8) nor the verification-first ledger (schema 9: declared checks and their
-results, requirement kinds, typed claims, handoff usage, gate overrides). A state
-moves up only in the transaction that first writes such a record; an older Core
-refuses the newer schema and is not expected to read it. Core reads an earlier
-schema version when `_COMPATIBLE_PRIOR_SCHEMAS`
-lists it (today only 6, which differs from 7 only in the extra value
-`"UNAVAILABLE"` for `task_surface_baseline`). A listed version that validates under
-the current rules is lifted to the current schema in memory only: reading never
-rewrites the ledger, so an external anchor's recorded byte digest still matches and
-does not report `TASK_AUTHORITY_STATE_CHANGED`. The next ledger write stores schema
-7; the adapter then checkpoints it as for any checked write. Task ID, goal, records,
-evidence and revision are unchanged by the lift. Versions below the table, newer
-versions and malformed states of any version are refused as before with the
-`STATE_SCHEMA_INCOMPATIBLE` diagnostic, whose `recovery_action` now names the
-adapter's recovery procedure and the expected sha256 instead of one adapter's command.
+Task state schemas form a forward chain: 7 (the base ledger), 8 (Controller-local
+evidence), 9 (the verification-first ledger: declared checks and their results,
+requirement kinds, typed claims, handoff usage, gate overrides) and 10 (compact
+serialization and hot/cold archive segments). Each schema is a valid subset of the next,
+so `_COMPATIBLE_PRIOR_SCHEMAS` lifts every supported prior version (6 through 9) step by
+step to the current one. A state is validated once under the rules of its own on-disk
+version, then lifted in memory only: reading never rewrites the ledger, so an external
+anchor's recorded byte digest still matches and does not report
+`TASK_AUTHORITY_STATE_CHANGED`. Every write stores the current schema; the adapter then
+checkpoints it as for any checked write. Task ID, goal, records, evidence and revision
+are unchanged by the lift. Only a schema newer than the running Core (and versions below
+the table, or malformed states) is refused with the `STATE_SCHEMA_INCOMPATIBLE`
+diagnostic; for a newer schema it carries `upgrade_required: true` and a
+`recovery_action` that names the upgrade, otherwise it names the adapter's recovery
+procedure and the expected sha256. An older Core refuses a ledger a newer Core wrote;
+backward reading is not supported.
 
-A full bounded list is refused with the stable code `TASK_STATE_CAPACITY_EXCEEDED`
-(still a `ValueError`). `details` carries `field`, `limit`, `count` and `unit`; the
-fields are the ledger lists (`records`, `evidence_refs`, `artifact_refs`,
-`verification_results`, the four evidence-continuity collections,
-`active_work`, `pending_results`), the routing page (`active_work+pending_results`,
-8 KiB) and the whole file (`state_file`, 512 KiB). The write is refused and the state
-is unchanged; every other list stays writable and `task-close` still works. To
-record more of the full kind, close the task and start a new one that cites the old
-Task ID. Strict per-object validation (for example an unknown field in one
-continuity object) is intentionally unchanged.
+### Capacity and the hot/cold archive (schema 10)
+
+`core.task_state_capacity()` returns the bounds adapters use instead of hard-coding them
+(`max_bytes` 512 KiB for the hot ledger file, `archive_high_water_bytes`, `list_max`
+512, `archived_list_max` 8192, the current and supported schemas);
+`core.read_state_bytes(path)` reads a ledger's exact bytes within that bound. The state
+file is written as compact, key-sorted JSON (`separators=(",", ":")`); loading accepts
+the older indented form too, and digests are always over the exact bytes written.
+
+When a write's serialized hot state would exceed the high-water mark (70% of the cap,
+358.4 KiB), or a hot list passes 7/8 of its item cap, Core archives inside that same
+write. It moves the long bodies of *settled* objects into an immutable,
+content-addressed segment `.context/tasks/<task id>/archive/<sha256>.json` and replaces
+each object by a stub: the same object with every structural field, a 64-character
+preview (suffix ` …[archived]`) of each moved text field, and
+`archived: <segment sha256>`. Moved fields: observation `text`, judgment `reasoning`,
+source `locator`/`summary`, record `text`, verification-result `summary` and
+`observed_files` (stub `[]`), handoff `durable_paths`. A text of at most 128 characters
+stays in the stub unchanged. Below the cap a pass is committed only when it frees at
+least 16 KiB (or relieves a crowded list), so a ledger that is mostly stubs does not
+write a tiny segment on every write.
+
+Settled means none of: an unincorporated observation, an unresolved judgment, an
+observation an unresolved judgment cites, a handoff with open observations or no
+returned result (no observation, claims marker or usage outcome), a current
+(unsuperseded) record, one of the last two runs of a declared check (or of a
+non-check verification kind), or a source that any hot object, artifact or current
+record cites (with its source chain). Requirements, checks, artifacts, closure and
+authority are never archived. Settledness is monotone because continuity is
+append-only, so an archived object never becomes open evidence again. A latest
+judgment may be archived: its stub keeps id, requirement_ref, candidate, outcome,
+observation_refs, judgment_refs and any override, so the close gate, the withholding
+gate, `evidence_summary`, `changes_since`, the tamper and claim dedupes and the
+usage/claims aggregates read exactly what they read before.
+
+Integrity and ordering: the segment is written first (temporary file, then rename;
+an existing segment with the right digest is kept), then the state that references
+it. The state lists its segments in `archive` (`{sha256, revision, items,
+collections}` each), so the authority anchor's state digest covers every segment
+digest. The validator treats stubs as present for every reference check, requires
+every `archived` value to name an indexed segment and never reads segments; a model
+or adapter payload cannot carry `archived`. `task-get <id>` of an archived object
+reads its segment, verifies the sha256 and returns the full object (plus
+`archived.segment`); a missing, damaged or foreign segment gives
+`TASK_ARCHIVE_UNAVAILABLE` while gates, status and writes keep working. Promotion of
+an archived source reads the full source the same way. A CAS conflict leaves the
+state untouched; a crash between the segment and the state write leaves an
+unreferenced orphan segment, which is harmless. The compact status packet gains an
+`Archive` section once a task has archived.
+
+List caps apply to hot objects: an archived stub does not count toward the 512-item
+cap of its list (256 for `verification_results`), and a list holds at most 8192 items
+including stubs. A full list or file is refused with `TASK_STATE_CAPACITY_EXCEEDED`
+(still a `ValueError`) only after archiving everything archivable. `details` carries
+`field`, `limit`, `count` and `unit`, and for the file (`state_file`) the open
+observation edges, unresolved judgments and archived item counts; the recovery explains
+that what stays hot is open evidence, current records and sources, checks and the task
+surface. The write is refused and the state is unchanged; every other list stays
+writable and `task-close` still works. Strict per-object validation (for example an
+unknown field in one continuity object) is intentionally unchanged.
 
 An unreadable anchor (not valid UTF-8 JSON, or a recorded snapshot that is not
 valid base64) raises `TASK_AUTHORITY_INVALID` as a `ThalirisError` whose message is
-that same code; recovery semantics are unchanged. Core never repairs or replaces the
+that same code; recovery semantics are unchanged. Anchor records are promoted forward
+like task state: an older record (no `version` reads as 0) is lifted to the current
+`ANCHOR_VERSION` in memory and written in the current shape on the next anchor write;
+fields an older writer did not record read with defaults (`security` and `snapshots`
+empty, `history` empty, a contract without `execution_mode` as `delegated`), and an
+adapter evidence digest the anchor never recorded is not compared. `state_sha256`,
+`project`, `task_id`, `goal`, `contract` and `status` stay required, every digest the
+anchor holds is compared exactly, and a newer anchor version is refused with
+`upgrade_required` in `details`. Core never repairs or replaces the
 anchor. `recover` writes the anchor only after every restoration step succeeds, so a
 recovery that fails midway can be retried with the same expected digest; each attempt
 archives the bytes it found before touching them. Every Git call Core makes is
@@ -168,9 +226,8 @@ bounded by a 60 second timeout (`GIT_TIMEOUT_SECONDS`): a timeout leaves the sur
 baseline `UNAVAILABLE` or the base head unknown, and a timed-out root discovery or
 ignore check is refused as UNKNOWN rather than treated as an answer.
 
-Controller-local observations opt the selected ledger into schema 8 on the first
-authorized write, under the adapter's ordinary revision CAS and authority checkpoint.
-Legacy-only tasks retain schema 7. Core reads both formats without writing on read;
+Controller-local observations are written under the adapter's ordinary revision CAS
+and authority checkpoint. Core reads every supported schema without writing on read;
 schema 8 permits `provenance:controller-local`, a Controller producer, null handoff,
 explicit candidate, registered requirement refs and source refs. It forbids native
 actor/status and historical-import fields on such facts. Core validates structure;

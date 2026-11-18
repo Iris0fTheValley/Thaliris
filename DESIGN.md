@@ -235,9 +235,21 @@ promotion quotas, or milestone fields.
 
 ### Verification-first ledger
 
-Core 0.6.0. A task that uses none of these keeps schema 7/8 and its exact
-behaviour. The first write of one moves the state to schema 9, which older
-Cores refuse as newer; they are not expected to read it.
+Core 0.6.0. A task that uses none of these keeps its exact behaviour. Schema
+promotion is a forward chain (7, 8, 9, 10): an older ledger is read as the current
+schema in memory and written as the current schema on its next write; only a newer
+schema than the running Core is refused, with a recovery that names the upgrade.
+
+**Hot/cold ledger archive (schema 10).** The hot ledger stays within 512 KiB
+(`core.task_state_capacity()`). It is written as compact JSON, and a write whose hot
+state passes the 70% high-water mark (or a crowded hot list) moves the long bodies of
+settled objects into an immutable, content-addressed segment
+`.context/tasks/<task id>/archive/<sha256>.json`, leaving stubs that keep every field a
+gate, status view or validator reads plus `archived: <sha256>`. Open evidence, current
+records, the last two runs of each check, requirements, checks and authority stay hot,
+so gates answer identically. The state's `archive` index carries every segment digest,
+so the authority anchor covers them; `task-get` verifies and returns the full object or
+`TASK_ARCHIVE_UNAVAILABLE`. Details: `docs/thaliris-task-authority.md`.
 
 **Requirement kind.** A requirement may be registered with `kind`:
 `compiled` (declared checks decide it), `partial` (checks cover part of it) or

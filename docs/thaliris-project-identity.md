@@ -199,7 +199,7 @@ Every response is one JSON object; exit 0 when `ok`, 2 on refusal (`{"ok": false
 ACTIVE task. The Python functions `identity_amend|identity_challenge|identity_relate(root,
 actor, base_revision, input)` accept a path, `-` or a dict and require
 `core.select_task(root, task_id)` first. They check the task revision (CAS) but do not
-bump it, keep task state schema 7, write under the Core lock through the backup and
+bump it or rewrite the task state, write under the Core lock through the backup and
 atomic-write path, and record `task_id`, `actor` and a UTC `recorded_at`. Each returns
 `task_id`, `state_revision` and `backup`.
 

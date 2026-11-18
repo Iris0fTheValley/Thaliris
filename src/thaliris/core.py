@@ -429,19 +429,22 @@ def stale(root: Path) -> dict[str, object]:
 # Task state is a mechanical ledger. Models author record labels and interpret
 # them; Core validates only shape, identity, references, bounds, and CAS.
 _STATE_NAME = ".context/state.json"
-_STATE_SCHEMA_VERSION = 7
-# Opt-in format for Controller-local provenance. Keep legacy-only tasks on 7;
-# the first local observation upgrades the ledger in its normal transaction.
-# Old readers refuse 8 as newer, rather than treating local facts as handoffs.
+# Schema history. 7 is the oldest on-disk shape this Core reads as-is; 8 added Controller-local
+# provenance, 9 the verification-first ledger (declared checks and their run results, requirement
+# kinds, typed claims, handoff usage and gate overrides), and 10 compact serialization with hot/cold
+# archive segments (``archive`` index and ``archived`` stubs). Every earlier supported schema is a
+# valid subset of the next one, so promotion is a forward chain (``_COMPATIBLE_PRIOR_SCHEMAS``): a
+# state is read as the current schema in memory and is written as the current schema on its next
+# write. Only a schema newer than this code is refused (``STATE_SCHEMA_INCOMPATIBLE``: upgrade Core).
+_BASE_SCHEMA_VERSION = 7
 _CONTROLLER_LOCAL_SCHEMA_VERSION = 8
-# Opt-in format for the verification-first ledger: declared checks and their run
-# results, requirement kinds, typed claims, handoff usage and gate overrides. A
-# state moves to 9 in the transaction that first writes one of them; tasks that
-# use none stay on 7/8 and remain readable by older Cores. Older Cores refuse 9
-# as newer and are not expected to read it.
 _VERIFICATION_SCHEMA_VERSION = 9
-_SUPPORTED_SCHEMAS = (_STATE_SCHEMA_VERSION, _CONTROLLER_LOCAL_SCHEMA_VERSION, _VERIFICATION_SCHEMA_VERSION)
+_ARCHIVE_SCHEMA_VERSION = 10
+_STATE_SCHEMA_VERSION = _ARCHIVE_SCHEMA_VERSION  # the current schema; every write produces it
+_SUPPORTED_SCHEMAS = (_BASE_SCHEMA_VERSION, _CONTROLLER_LOCAL_SCHEMA_VERSION, _VERIFICATION_SCHEMA_VERSION,
+                      _ARCHIVE_SCHEMA_VERSION)
 _SCHEMA9_STATE_FIELDS = {"checks", "closure"}
+_SCHEMA10_STATE_FIELDS = {"archive"}
 _SCHEMA9_CONTINUITY_FIELDS = {
     "requirements": {"kind", "surface"},
     "handoffs": {"claims", "usage"},
@@ -449,7 +452,19 @@ _SCHEMA9_CONTINUITY_FIELDS = {
     "judgments": {"override_reason", "overridden_checks"},
 }
 ROUTING_STATE_MAX_BYTES = 8 * 1024
+# The hot ledger file (``state.json``) never exceeds this many bytes. Adapters read the bound from
+# ``task_state_capacity()`` / ``read_state_bytes()`` instead of hard-coding it.
 STATE_MAX_BYTES = 512 * 1024
+# Archiving (see "Hot/cold archive segments" below) runs inside a write whose serialized hot state
+# would exceed this high-water mark (70% of the cap), or whose hot list would exceed its item cap.
+STATE_ARCHIVE_HIGH_WATER_BYTES = (STATE_MAX_BYTES * 7) // 10
+# Below the cap, an archive pass is committed only when it frees at least this much, so a ledger whose
+# hot part is mostly stubs does not write a tiny segment on every write. At or over the cap any saving counts.
+STATE_ARCHIVE_MIN_SAVINGS_BYTES = 16 * 1024
+# Item caps of ledger lists. Hot (unarchived) items count against ``STATE_LIST_MAX``; an archived stub
+# does not, but a list holds at most ``STATE_ARCHIVED_LIST_MAX`` items in total (the byte cap binds first).
+STATE_LIST_MAX = 512
+STATE_ARCHIVED_LIST_MAX = 8192
 EXPLICIT_DOCUMENT_MAX_BYTES = 64 * 1024
 DURABLE_INDEX_RECOMMENDED_BYTES = 3 * 1024
 DURABLE_INDEX_HARD_MAX_BYTES = 16 * 1024
@@ -470,29 +485,53 @@ def _promote_state_6_to_7(raw: dict[str, object]) -> dict[str, object]:
     return {**raw, "schema_version": 7}
 
 
+def _promote_by_version(target: int):
+    """A step whose new schema only adds optional content: the old shape is valid as it is."""
+    def step(raw: dict[str, object]) -> dict[str, object]:
+        return {**raw, "schema_version": target}
+    step.__name__ = f"_promote_state_to_{target}"
+    return step
+
+
 # Earlier on-disk schema versions this Core reads, mapped to the step that lifts a state by one
-# version. A listed version is read as the current schema in memory only and becomes the current
-# version on its next write. Add an entry only when the old shape is valid under the current
-# rules (or the step makes it so); versions below the first key, newer versions and states that do
-# not validate once lifted stay refused with the schema-mismatch diagnostic. The disk is never
-# touched by reading, so external byte digests (authority anchors) are unaffected.
-_COMPATIBLE_PRIOR_SCHEMAS = {6: _promote_state_6_to_7}
+# version. The chain runs up to the current schema, so every listed version is read as the current
+# schema in memory only and becomes the current version on its next write. Add an entry only when the
+# old shape is valid under the next version's rules (or the step makes it so); versions below the
+# first key and states that do not validate stay refused with the schema-mismatch diagnostic. The
+# disk is never touched by reading, so external byte digests (authority anchors) are unaffected.
+_COMPATIBLE_PRIOR_SCHEMAS = {
+    6: _promote_state_6_to_7,
+    _BASE_SCHEMA_VERSION: _promote_by_version(_CONTROLLER_LOCAL_SCHEMA_VERSION),
+    _CONTROLLER_LOCAL_SCHEMA_VERSION: _promote_by_version(_VERIFICATION_SCHEMA_VERSION),
+    _VERIFICATION_SCHEMA_VERSION: _promote_by_version(_ARCHIVE_SCHEMA_VERSION),
+}
 
 
 def _promoted_prior_state(root: Path, raw: object) -> dict[str, object] | None:
-    """The validated current-schema form of a compatible older state, else None (refuse as before)."""
+    """The validated current-schema form of a compatible older state, else None (refuse as before).
+
+    The state is validated once, at the first supported version the chain reaches (its own version
+    for 7-9, so version-specific rules still hold for the bytes on disk), then lifted to the current
+    schema. Lifting only changes ``schema_version``.
+    """
     if not isinstance(raw, dict) or type(raw.get("schema_version")) is not int:
         return None
     version = raw["schema_version"]
     if version >= _STATE_SCHEMA_VERSION or any(step not in _COMPATIBLE_PRIOR_SCHEMAS for step in range(version, _STATE_SCHEMA_VERSION)):
         return None
     lifted: dict[str, object] = raw
-    for step in range(version, _STATE_SCHEMA_VERSION):
-        lifted = _COMPATIBLE_PRIOR_SCHEMAS[step](lifted)
+    validated = False
     try:
-        return _validate_state(root, lifted)
+        for step in range(version, _STATE_SCHEMA_VERSION):
+            if not validated and step in _SUPPORTED_SCHEMAS:
+                _validate_state(root, lifted)
+                validated = True
+            lifted = _COMPATIBLE_PRIOR_SCHEMAS[step](lifted)
+        if not validated:
+            _validate_state(root, lifted)
     except ValueError:
         return None
+    return lifted
 
 
 class TaskStateSchemaIncompatible(ValueError):
@@ -579,12 +618,16 @@ def _task_state_schema_diagnostic(raw: object, raw_bytes: bytes) -> dict[str, ob
     except (ValueError, AttributeError, TypeError):
         valid_task_id = False
     status = raw.get("status")
-    older_supported_for_archive = 0 < version < _STATE_SCHEMA_VERSION
+    older_supported_for_archive = 0 < version < _BASE_SCHEMA_VERSION
     recoverable = older_supported_for_archive and valid_task_id and (status == "ACTIVE" or status == "DONE")
+    newer = version > _STATE_SCHEMA_VERSION
     digest = hashlib.sha256(raw_bytes).hexdigest()
     action = "NONE"
     if recoverable:
         action = f"use the adapter's task-state recovery procedure with expected sha256 {digest}"
+    elif newer:
+        action = (f"upgrade Thaliris Core (and the adapter that bundles it) to a release that reads task state schema "
+                  f"{version}; this Core reads schemas up to {_STATE_SCHEMA_VERSION}; the state is unchanged")
     return {
         "ok": False,
         "status": "STATE_SCHEMA_INCOMPATIBLE",
@@ -594,6 +637,7 @@ def _task_state_schema_diagnostic(raw: object, raw_bytes: bytes) -> dict[str, ob
         "state_sha256": digest,
         "recoverable": recoverable,
         "abandon_active_confirmation_required": status == "ACTIVE" and recoverable,
+        "upgrade_required": newer,
         "recovery_action": action,
     }
 
@@ -604,12 +648,12 @@ def task_state_schema_diagnostic(root: Path) -> dict[str, object] | None:
     if (root / _STATE_NAME).is_symlink():
         return None
     path = _state_path(root)
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 512 * 1024:
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > STATE_MAX_BYTES:
         return None
     try:
         with path.open("rb") as stream:
-            raw_bytes = stream.read(512 * 1024 + 1)
-        if len(raw_bytes) > 512 * 1024:
+            raw_bytes = stream.read(STATE_MAX_BYTES + 1)
+        if len(raw_bytes) > STATE_MAX_BYTES:
             return None
         raw = json.loads(raw_bytes.decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
@@ -646,8 +690,14 @@ def _check_json(value: object, field: str = "state") -> None:
         if len(value) > 16_384 or any(ord(char) < 32 and char not in "\n\t" for char in value):
             raise ValueError("state contains control characters or oversized text")
     elif isinstance(value, list):
-        if len(value) > 512:
-            raise _capacity_error(field, 512, len(value))
+        # An archived stub (a Core-written object carrying ``archived``) does not count toward the
+        # hot item cap; the whole list stays bounded by STATE_ARCHIVED_LIST_MAX.
+        if len(value) > STATE_LIST_MAX:
+            hot = sum(not (isinstance(item, dict) and "archived" in item) for item in value)
+            if hot > STATE_LIST_MAX:
+                raise _capacity_error(field, STATE_LIST_MAX, hot)
+            if len(value) > STATE_ARCHIVED_LIST_MAX:
+                raise _capacity_error(field, STATE_ARCHIVED_LIST_MAX, len(value), unit="entries including archived stubs")
         for item in value:
             _check_json(item, field)
     elif isinstance(value, dict):
@@ -759,8 +809,8 @@ def _git_head(root: Path) -> str | None:
     return value if proc.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", value) else None
 
 
-def _record(value: object, source_ids: set[str], record_ids: set[str]) -> dict[str, object]:
-    if not isinstance(value, dict) or set(value) != _RECORD_FIELDS:
+def _record(value: object, source_ids: set[str], record_ids: set[str], *, stored: bool = False) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) - ({"archived"} if stored else set()) != _RECORD_FIELDS:
         raise ValueError("invalid task record")
     identifier = _bounded_label(value.get("id"), "record id")
     if identifier in record_ids:
@@ -782,10 +832,10 @@ def _record(value: object, source_ids: set[str], record_ids: set[str]) -> dict[s
     return value
 
 
-def _evidence_ref(value: object, ids: set[str]) -> dict[str, object]:
+def _evidence_ref(value: object, ids: set[str], *, stored: bool = False) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("invalid source reference")
-    allowed = {"id", "kind", "locator", "summary", "confidence", "source_refs"}
+    allowed = {"id", "kind", "locator", "summary", "confidence", "source_refs"} | ({"archived"} if stored else set())
     if set(value) - allowed or not {"id", "kind", "locator", "summary"} <= set(value):
         raise ValueError("invalid source reference")
     identifier = _bounded_label(value.get("id"), "source id")
@@ -863,11 +913,12 @@ def _artifact_activity(artifacts: list[dict[str, object]]) -> set[str]:
     return ids - inactive
 
 
-def _verification_result(value: object, source_ids: set[str] | None = None) -> dict[str, object]:
+def _verification_result(value: object, source_ids: set[str] | None = None, *, stored: bool = False) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("invalid verification observation")
     required = {"id", "kind", "outcome", "summary", "source_refs", "observed_by", "observed_at", "observed_at_revision", "candidate_identity", "observed_files", "result_hash"}
-    if set(value) != required and set(value) != required | _CHECK_RESULT_FIELDS:
+    present = set(value) - ({"archived"} if stored else set())
+    if present != required and present != required | _CHECK_RESULT_FIELDS:
         raise ValueError("invalid verification observation")
     if "check_id" in value:
         _check_run_fields(value)
@@ -900,7 +951,8 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
     _check_json(state)
     if not isinstance(state, dict):
         raise ValueError("invalid task state schema")
-    if set(state) - {"evidence_continuity"} - _SCHEMA9_STATE_FIELDS != _STATE_FIELDS or state.get("schema_version") not in _SUPPORTED_SCHEMAS:
+    if (set(state) - {"evidence_continuity"} - _SCHEMA9_STATE_FIELDS - _SCHEMA10_STATE_FIELDS != _STATE_FIELDS
+            or state.get("schema_version") not in _SUPPORTED_SCHEMAS):
         raise ValueError("invalid task state schema")
     if type(state.get("revision")) is not int or state["revision"] < 1:
         raise ValueError("invalid task state revision")
@@ -940,7 +992,7 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         raise ValueError("invalid source references")
     source_ids: set[str] = set()
     for source in sources:
-        _evidence_ref(source, source_ids)
+        _evidence_ref(source, source_ids, stored=True)
         source_ids.add(str(source["id"]))
     if any(any(ref not in source_ids for ref in source.get("source_refs", [])) for source in sources):
         raise ValueError("source reference points to an unknown source")
@@ -950,7 +1002,7 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         raise ValueError("invalid task records")
     record_ids: set[str] = set()
     for item in records:
-        _record(item, source_ids, record_ids)
+        _record(item, source_ids, record_ids, stored=True)
         record_ids.add(str(item["id"]))
 
     artifacts = state.get("artifact_refs")
@@ -970,13 +1022,13 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
     _artifact_activity(artifacts)
 
     results = state.get("verification_results")
-    if isinstance(results, list) and len(results) > 256:
-        raise _capacity_error("verification_results", 256, len(results))
+    if isinstance(results, list) and _hot_count(results) > 256:
+        raise _capacity_error("verification_results", 256, _hot_count(results))
     if not isinstance(results, list):
         raise ValueError("invalid verification observations")
     result_ids: set[str] = set()
     for result in results:
-        _verification_result(result, source_ids)
+        _verification_result(result, source_ids, stored=True)
         if result["id"] in result_ids:
             raise ValueError("duplicate verification observation id")
         result_ids.add(str(result["id"]))
@@ -1002,21 +1054,448 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         raise ValueError("invalid task base head")
     _validate_continuity(state)
     _validate_verification_state(state)
+    _validate_archive_index(state)
     return state
 
 
+def _serialize_state(state: dict[str, object]) -> bytes:
+    """The exact bytes Core writes for a state: compact, key-sorted UTF-8 JSON plus a newline.
+
+    Schema 10 dropped the indented form (about a fifth of the file). Loading accepts both forms;
+    digests (authority anchors) are always over the exact bytes written.
+    """
+    return (json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _state_capacity_error(size: int, state: dict[str, object] | None = None, *, archived: bool = False) -> ThalirisError:
+    details_extra: dict[str, object] = {}
+    reason = ""
+    if state is not None:
+        try:
+            pending, unresolved, _ = _continuity_open(state)
+        except (KeyError, TypeError, AttributeError):
+            pending, unresolved = [], []
+        details_extra = {"open_observation_edges": len(pending), "unresolved_judgments": len(unresolved),
+                         "archived_items": sum(1 for _ in _archived_items(state))}
+        reason = (f"Core already moved every settled item body into archive segments{' in this write' if archived else ''}; "
+                  f"what stays hot is open evidence ({len(pending)} unincorporated observation edges, {len(unresolved)} "
+                  "unresolved judgments), current records and sources, check declarations and the task surface; ")
+    error = _capacity_error(
+        "state_file", STATE_MAX_BYTES, size, unit="bytes", message="task state exceeds 512 KiB",
+        recovery=("the task state is unchanged; " + reason + "judge the open observations or resolve the unresolved "
+                  "judgments so they can be archived, shorten current records, or close this task (task-close still "
+                  "works) and start a new one that cites this Task ID"))
+    if error.details is not None:
+        error.details.update(details_extra)
+    return error
+
+
 def _state_payload(root: Path, state: dict[str, object]) -> bytes:
+    """Validate and serialize a state as the current schema; no archiving (see ``_write_state``)."""
+    state["schema_version"] = _STATE_SCHEMA_VERSION
     state = _validate_state(root, state)
-    payload = (json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    payload = _serialize_state(state)
     if len(payload) > STATE_MAX_BYTES:
-        raise _capacity_error("state_file", STATE_MAX_BYTES, len(payload), unit="bytes", message="task state exceeds 512 KiB",
-                              recovery=("the task state is unchanged; task-close still works; to keep recording, "
-                                        "close this task and start a new one that cites this Task ID"))
+        raise _state_capacity_error(len(payload), state)
     return payload
 
 
 def _write_state(root: Path, state: dict[str, object]) -> None:
-    _atomic_write(_state_path(root), _state_payload(root, state))
+    """Write a state as the current schema, archiving settled bodies when the hot ledger is under pressure.
+
+    Pressure is a serialized size above ``STATE_ARCHIVE_HIGH_WATER_BYTES`` or a hot list above its
+    item cap (or close to it). The archive pass works on a copy: the segment file is written first,
+    then the state that references it. Any refusal leaves the disk state and ``state`` unchanged; a
+    segment written before a failed state write is an unreferenced orphan, which is harmless.
+    """
+    path = _state_path(root)
+    state["schema_version"] = _STATE_SCHEMA_VERSION
+    pressure: ThalirisError | None = None
+    try:
+        _validate_state(root, state)
+    except ThalirisError as exc:
+        if exc.code != _errors.TASK_STATE_CAPACITY_EXCEEDED or (exc.details or {}).get("field") not in _ARCHIVE_COLLECTIONS:
+            raise
+        pressure = exc
+    payload = _serialize_state(state)
+    crowded = _crowded_collections(state)
+    if pressure is None and len(payload) <= STATE_ARCHIVE_HIGH_WATER_BYTES and not crowded:
+        _atomic_write(path, payload)
+        return
+    required = pressure is not None or len(payload) > STATE_MAX_BYTES
+    try:
+        archived = _archive_settled(state, crowded)
+    except (KeyError, TypeError, AttributeError):
+        if pressure is not None:
+            raise pressure from None
+        archived = None
+    if archived is not None:
+        candidate, segment = archived
+        _validate_state(root, candidate)
+        candidate_payload = _serialize_state(candidate)
+        worthwhile = (required or bool(crowded)
+                      or len(payload) - len(candidate_payload) >= STATE_ARCHIVE_MIN_SAVINGS_BYTES)
+        if worthwhile and len(candidate_payload) <= STATE_MAX_BYTES:
+            _write_archive_segment(root, str(candidate["task_id"]), segment)
+            _atomic_write(path, candidate_payload)
+            state.clear()
+            state.update(candidate)
+            return
+        if required and len(candidate_payload) > STATE_MAX_BYTES:
+            raise _state_capacity_error(len(candidate_payload), candidate, archived=True)
+    if pressure is not None:
+        raise pressure
+    if len(payload) > STATE_MAX_BYTES:
+        raise _state_capacity_error(len(payload), state)
+    _atomic_write(path, payload)
+
+
+# --- Hot/cold archive segments (schema 10) ------------------------------------------------------
+#
+# The hot ledger (``state.json``) keeps every object that any gate, status view or validator reads.
+# When it is under pressure, a write moves the long bodies of *settled* objects into an immutable,
+# content-addressed segment ``.context/tasks/<task id>/archive/<sha256>.json`` and leaves a stub in
+# place: the same object with its id, every structural field, a short preview of each moved text
+# field, and ``archived: <segment sha256>``. Settledness is monotone (append-only continuity), so an
+# archived object never becomes open evidence again. Only explicit retrieval (task-get, promotion of
+# an archived source) reads segments; gates, status and the validator never do.
+
+ARCHIVE_SEGMENT_FORMAT = "thaliris-task-archive"
+ARCHIVE_SEGMENT_VERSION = 1
+ARCHIVE_SEGMENT_MAX_BYTES = 16 * 1024 * 1024
+ARCHIVE_PREVIEW_CHARS = 64
+ARCHIVE_PREVIEW_SUFFIX = " …[archived]"
+# A text field at most this long stays in the stub unchanged.
+ARCHIVE_INLINE_MAX_CHARS = 128
+# Bytes the ``archived`` marker adds to a stub; an object is archived for size only when it saves more.
+_ARCHIVE_MARKER_BYTES = len(',"archived":""') + 64
+_ARCHIVE_INDEX_FIELDS = {"sha256", "revision", "items", "collections"}
+# The archivable collections and the body fields that move. Text fields keep a preview; list fields
+# move whole (``durable_paths`` is dropped from the stub, ``observed_files`` becomes ``[]``).
+_ARCHIVE_BODY_FIELDS: dict[str, tuple[str, ...]] = {
+    "evidence_refs": ("locator", "summary"),
+    "records": ("text",),
+    "verification_results": ("summary", "observed_files"),
+    "handoffs": ("durable_paths",),
+    "observations": ("text",),
+    "judgments": ("reasoning",),
+}
+_ARCHIVE_COLLECTIONS = tuple(_ARCHIVE_BODY_FIELDS)
+_ARCHIVE_TOP_LEVEL = ("evidence_refs", "records", "verification_results")
+_ARCHIVE_LIST_CAPS = {"verification_results": 256}
+# A hot list above 7/8 of its cap is crowded: the next archive pass also stubs settled objects
+# that have no long body, so they stop counting toward the cap.
+_ARCHIVE_CROWDED_FRACTION = (7, 8)
+# Non-check verification results kept hot per kind; check runs keep their last two.
+_ARCHIVE_KEEP_RUNS = 2
+
+
+def _hot_count(values: list[object]) -> int:
+    return sum(not (isinstance(item, dict) and "archived" in item) for item in values)
+
+
+def _archive_collection(state: dict[str, object], name: str) -> list[dict[str, object]]:
+    if name in _ARCHIVE_TOP_LEVEL:
+        values = state.get(name)
+    else:
+        values = (state.get("evidence_continuity") or {}).get(name)
+    return values if isinstance(values, list) else []
+
+
+def _archived_items(state: dict[str, object]):
+    for name in _ARCHIVE_COLLECTIONS:
+        for item in _archive_collection(state, name):
+            if isinstance(item, dict) and "archived" in item:
+                yield name, item
+
+
+def _crowded_collections(state: dict[str, object]) -> set[str]:
+    crowded: set[str] = set()
+    numerator, denominator = _ARCHIVE_CROWDED_FRACTION
+    for name in _ARCHIVE_COLLECTIONS:
+        values = _archive_collection(state, name)
+        cap = _ARCHIVE_LIST_CAPS.get(name, STATE_LIST_MAX)
+        if len(values) * denominator > cap * numerator and _hot_count(values) * denominator > cap * numerator:
+            crowded.add(name)
+    return crowded
+
+
+def _settled_ids(state: dict[str, object]) -> dict[str, set[str]]:
+    """Ids of objects whose bodies may move to a segment; see docs/thaliris-task-authority.md.
+
+    Hot (never archived): unincorporated observations, unresolved judgments, observations an
+    unresolved judgment cites, handoffs with open observations or no returned result yet, current
+    (unsuperseded) records, the last two runs of every declared check, and every source that a hot
+    object, an artifact or a current record cites (with its source chain). Requirements, checks,
+    artifacts, authority and closure are never archived. A latest judgment may be archived: its stub
+    keeps id, requirement_ref, candidate, outcome, observation_refs, judgment_refs and any override.
+    """
+    data = state.get("evidence_continuity") or {}
+    observations = data.get("observations", [])
+    judgments = data.get("judgments", [])
+    handoffs = data.get("handoffs", [])
+    pending, unresolved, _ = _continuity_open(state)
+    open_observations = {item["observation_id"] for item in pending}
+    open_judgments = {item["id"] for item in unresolved}
+    by_id = {judgment["id"]: judgment for judgment in judgments}
+    open_observations |= {ref for identifier in open_judgments for ref in by_id[identifier]["observation_refs"]}
+    open_handoffs = {item["handoff_id"] for item in observations if item["id"] in open_observations and item.get("handoff_id")}
+    returned = {item["handoff_id"] for item in observations if item.get("handoff_id")}
+    settled: dict[str, set[str]] = {name: set() for name in _ARCHIVE_COLLECTIONS}
+    settled["observations"] = {item["id"] for item in observations if item["id"] not in open_observations}
+    settled["judgments"] = {item["id"] for item in judgments if item["id"] not in open_judgments}
+    settled["handoffs"] = {item["id"] for item in handoffs if item["id"] not in open_handoffs and (
+        item["id"] in returned or "claims" in item or (isinstance(item.get("usage"), dict) and item["usage"].get("outcome")))}
+    records = state.get("records", [])
+    superseded = {ref for item in records for ref in item.get("supersedes", [])}
+    settled["records"] = {item["id"] for item in records if item["id"] in superseded}
+    runs: dict[tuple[str, str], list[str]] = {}
+    for item in state.get("verification_results", []):
+        key = ("check", str(item["check_id"])) if "check_id" in item else ("kind", str(item.get("kind")))
+        runs.setdefault(key, []).append(item["id"])
+    settled["verification_results"] = {identifier for ids in runs.values() for identifier in ids[:-_ARCHIVE_KEEP_RUNS]}
+    # Sources stay hot while anything hot cites them.
+    hot_refs: set[str] = set()
+    for item in observations:
+        if item["id"] not in settled["observations"]:
+            hot_refs.update(item.get("source_refs", []))
+    for item in records:
+        if item["id"] not in settled["records"]:
+            hot_refs.update(item.get("source_refs", []))
+    for item in state.get("artifact_refs", []):
+        hot_refs.update(item.get("source_refs", []))
+    for item in state.get("verification_results", []):
+        if item["id"] not in settled["verification_results"]:
+            hot_refs.update(item.get("source_refs", []))
+    sources = {item["id"]: item for item in state.get("evidence_refs", [])}
+    frontier = [ref for ref in hot_refs if ref in sources]
+    while frontier:
+        for parent in sources[frontier.pop()].get("source_refs", []):
+            if parent not in hot_refs and parent in sources:
+                hot_refs.add(parent)
+                frontier.append(parent)
+    settled["evidence_refs"] = set(sources) - hot_refs
+    return settled
+
+
+def _archive_preview(value: str) -> str:
+    return value[:ARCHIVE_PREVIEW_CHARS].rstrip() + ARCHIVE_PREVIEW_SUFFIX
+
+
+def _archive_stub(name: str, item: dict[str, object]) -> tuple[dict[str, object], dict[str, object], int]:
+    """(stub without its marker, moved fields, bytes saved before the marker) for one object."""
+    stub = dict(item)
+    moved: dict[str, object] = {}
+    saved = 0
+    for field in _ARCHIVE_BODY_FIELDS[name]:
+        value = item.get(field)
+        if isinstance(value, str) and len(value) > ARCHIVE_INLINE_MAX_CHARS:
+            preview = _archive_preview(value)
+            moved[field] = value
+            stub[field] = preview
+            saved += _compact_size(value) - _compact_size(preview)
+        elif isinstance(value, list) and value and _compact_size(value) > ARCHIVE_INLINE_MAX_CHARS:
+            moved[field] = value
+            if field == "durable_paths":
+                del stub[field]
+                saved += _compact_size(value) + len(f',"{field}":')
+            else:
+                stub[field] = []
+                saved += _compact_size(value) - 2
+    return stub, moved, saved
+
+
+def _archive_settled(state: dict[str, object], crowded: set[str]) -> tuple[dict[str, object], bytes] | None:
+    """Build (archived copy of ``state``, segment bytes), or None when nothing would move.
+
+    Pure: nothing is written. An object is archived when it is settled and either its moved bodies
+    save more than its marker costs, or its collection is crowded (then it is stubbed even with
+    nothing to move, so it stops counting toward the hot item cap).
+    """
+    settled = _settled_ids(state)
+    candidate = copy.deepcopy(state)
+    entries: list[dict[str, object]] = []
+    stubs: list[dict[str, object]] = []
+    collections: dict[str, int] = {}
+    for name in _ARCHIVE_COLLECTIONS:
+        values = _archive_collection(candidate, name)
+        for position, item in enumerate(values):
+            if "archived" in item or item["id"] not in settled[name]:
+                continue
+            stub, moved, saved = _archive_stub(name, item)
+            if saved <= _ARCHIVE_MARKER_BYTES and name not in crowded:
+                continue
+            values[position] = stub
+            stubs.append(stub)
+            entries.append({"collection": name, "id": item["id"], "fields": moved})
+            collections[name] = collections.get(name, 0) + 1
+    if not entries:
+        return None
+    segment = {"format": ARCHIVE_SEGMENT_FORMAT, "version": ARCHIVE_SEGMENT_VERSION, "task_id": candidate["task_id"],
+               "revision": candidate["revision"], "items": entries}
+    raw = (json.dumps(segment, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    sha = hashlib.sha256(raw).hexdigest()
+    for stub in stubs:
+        stub["archived"] = sha
+    index = candidate.setdefault("archive", [])
+    index.append({"sha256": sha, "revision": candidate["revision"], "items": len(entries), "collections": collections})
+    return candidate, raw
+
+
+def _archive_segment_path(root: Path, task_id: str, sha256: str) -> Path:
+    if str(uuid.UUID(task_id)) != task_id or not _is_hex64(sha256):
+        raise ValueError("invalid archive segment identity")
+    return _safe_without_final_symlink(root, f".context/tasks/{task_id}/archive/{sha256}.json")
+
+
+def _write_archive_segment(root: Path, task_id: str, raw: bytes) -> None:
+    """Write a segment atomically. An existing segment with the same name and digest is kept as is."""
+    sha = hashlib.sha256(raw).hexdigest()
+    target = _archive_segment_path(root, task_id, sha)
+    if target.is_file():
+        try:
+            if _file_digest(target) == sha:
+                return
+        except OSError:
+            pass
+    # A file under this name with other bytes is not this segment (damage); the content-addressed
+    # bytes replace it, which restores what every referencing state expects.
+    _atomic_write(target, raw)
+
+
+def _archive_unavailable(identifier: str, sha: object, reason: str, object_type: str | None = None) -> ThalirisError:
+    return ThalirisError(
+        _errors.TASK_ARCHIVE_UNAVAILABLE, "archived task object body is unavailable",
+        recovery=("restore the segment file with its exact bytes (its sha256 is its name) from a copy; the stub "
+                  "fields stay in the hot ledger, and gates, task-status and every other write keep working"),
+        details={"id": identifier, "segment": sha if isinstance(sha, str) else None, "reason": reason,
+                 **({"object_type": object_type} if object_type else {})})
+
+
+def _read_archive_segment(root: Path, task_id: str, sha: str, identifier: str = "") -> dict[str, object]:
+    """Read and verify one segment; TASK_ARCHIVE_UNAVAILABLE when missing, damaged or foreign."""
+    try:
+        target = _archive_segment_path(root, task_id, sha)
+    except ValueError as exc:
+        raise _archive_unavailable(identifier, sha, "invalid segment location") from exc
+    if not target.is_file():
+        raise _archive_unavailable(identifier, sha, "missing")
+    try:
+        if target.stat().st_size > ARCHIVE_SEGMENT_MAX_BYTES:
+            raise _archive_unavailable(identifier, sha, "oversized")
+        raw = target.read_bytes()
+    except OSError as exc:
+        raise _archive_unavailable(identifier, sha, "unreadable") from exc
+    if hashlib.sha256(raw).hexdigest() != sha:
+        raise _archive_unavailable(identifier, sha, "sha256 mismatch")
+    try:
+        segment = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise _archive_unavailable(identifier, sha, "invalid JSON") from exc
+    if (not isinstance(segment, dict) or segment.get("format") != ARCHIVE_SEGMENT_FORMAT
+            or segment.get("version") != ARCHIVE_SEGMENT_VERSION or segment.get("task_id") != task_id
+            or not isinstance(segment.get("items"), list)):
+        raise _archive_unavailable(identifier, sha, "not a segment of this task")
+    return segment
+
+
+def hydrate_archived(root: Path, state: dict[str, object], collection: str, item: dict[str, object]) -> dict[str, object]:
+    """The full object for a stub (the stub itself when it is not archived).
+
+    Reads the referenced segment and verifies its sha256; raises TASK_ARCHIVE_UNAVAILABLE when it is
+    missing, damaged or does not hold this object. Stub fields win over segment fields (a handoff
+    stub may gain usage or claims after archiving); the segment supplies only the moved bodies.
+    """
+    sha = item.get("archived")
+    if sha is None:
+        return item
+    identifier = str(item.get("id"))
+    segment = _read_archive_segment(root, str(state["task_id"]), str(sha), identifier)
+    for entry in segment["items"]:
+        if isinstance(entry, dict) and entry.get("collection") == collection and entry.get("id") == item.get("id"):
+            fields = entry.get("fields")
+            if not isinstance(fields, dict):
+                break
+            full = {key: value for key, value in item.items() if key != "archived"}
+            full.update(fields)
+            return full
+    raise _archive_unavailable(identifier, sha, "segment does not hold this object")
+
+
+def _validate_archive_index(state: dict[str, object]) -> None:
+    """Cross-check the ``archive`` index against every stub; segment contents are never read here."""
+    index = state.get("archive")
+    stubs = list(_archived_items(state))
+    if index is None:
+        if stubs:
+            raise ThalirisError(_errors.TASK_STATE_INVALID, "archived stub without an archive index",
+                                details={"id": str(stubs[0][1].get("id"))})
+        return
+    if state.get("schema_version") < _ARCHIVE_SCHEMA_VERSION:
+        raise ThalirisError(_errors.TASK_STATE_INVALID, "archive segments require task schema 10",
+                            recovery="preserve the state and use a compatible reader")
+    if not isinstance(index, list) or not 1 <= len(index) <= STATE_LIST_MAX:
+        raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid archive index",
+                            details={"expected": f"a list of 1 to {STATE_LIST_MAX} segment entries"})
+    entries: dict[str, dict[str, object]] = {}
+    for entry in index:
+        if (not isinstance(entry, dict) or set(entry) != _ARCHIVE_INDEX_FIELDS or not _is_hex64(entry["sha256"])
+                or entry["sha256"] in entries
+                or type(entry["revision"]) is not int or not 1 <= entry["revision"] <= state["revision"]
+                or type(entry["items"]) is not int or entry["items"] < 1
+                or not isinstance(entry["collections"], dict) or not entry["collections"]
+                or set(entry["collections"]) - set(_ARCHIVE_COLLECTIONS)
+                or not all(type(count) is int and count >= 1 for count in entry["collections"].values())
+                or sum(entry["collections"].values()) != entry["items"]):
+            raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid archive index",
+                                details={"expected": "unique {sha256, revision, items, collections} entries"})
+        entries[entry["sha256"]] = entry
+    seen: dict[tuple[str, str], int] = {}
+    for name, item in stubs:
+        sha = item["archived"]
+        if not isinstance(sha, str) or sha not in entries:
+            raise ThalirisError(_errors.TASK_STATE_INVALID, "archived stub names an unknown segment",
+                                details={"id": str(item.get("id")), "collection": name})
+        key = (sha, name)
+        seen[key] = seen.get(key, 0) + 1
+        if seen[key] > entries[sha]["collections"].get(name, 0):
+            raise ThalirisError(_errors.TASK_STATE_INVALID, "archived stubs exceed their segment entry",
+                                details={"segment": sha, "collection": name})
+
+
+def archive_summary(state: dict[str, object]) -> dict[str, object] | None:
+    """Counts of archived stubs and segments, or None for a task that never archived."""
+    index = state.get("archive")
+    if not index:
+        return None
+    by_collection: dict[str, int] = {}
+    for name, _ in _archived_items(state):
+        by_collection[name] = by_collection.get(name, 0) + 1
+    return {"segments": len(index), "archived_items": sum(by_collection.values()), "by_collection": by_collection,
+            "last_revision": index[-1]["revision"],
+            "retrieval": "task-get <id> returns the full object from its segment"}
+
+
+def task_state_capacity() -> dict[str, int]:
+    """The task-state bounds adapters must use instead of hard-coding them.
+
+    ``max_bytes`` bounds the hot ledger file on disk (every read and write); archive segments are
+    separate files. ``list_max`` bounds the hot objects of a ledger list, ``archived_list_max`` a list
+    including archived stubs.
+    """
+    return {"max_bytes": STATE_MAX_BYTES, "archive_high_water_bytes": STATE_ARCHIVE_HIGH_WATER_BYTES,
+            "list_max": STATE_LIST_MAX, "archived_list_max": STATE_ARCHIVED_LIST_MAX,
+            "schema_version": _STATE_SCHEMA_VERSION, "supported_schemas": list(_SUPPORTED_SCHEMAS)}
+
+
+def read_state_bytes(path: Path) -> bytes:
+    """Read a ledger file's exact bytes within the Core bound; TASK_STATE_INVALID when it is larger."""
+    with Path(path).open("rb") as stream:
+        raw = stream.read(STATE_MAX_BYTES + 1)
+    if len(raw) > STATE_MAX_BYTES:
+        raise ThalirisError(_errors.TASK_STATE_INVALID, "task state exceeds 512 KiB",
+                            details={"limit": STATE_MAX_BYTES})
+    return raw
 
 
 def _load_state(root: Path, *, active: bool = False) -> dict[str, object]:
@@ -1302,19 +1781,19 @@ _CONTINUITY_SCHEMAS = {
 # facts have explicit provenance and no invented native handoff or actor.
 _CONTINUITY_OPTIONAL = {
     "requirements": {"kind", "surface"},
-    "handoffs": {"durable_paths", "claims", "usage"},
+    "handoffs": {"durable_paths", "claims", "usage", "archived"},
     "observations": {"native_actor", "submitted_by", "native_status", "native_status_conflict", "observed_state", "provenance",
-                     "claim", "mechanism"},
-    "judgments": {"judgment_refs", "override_reason", "overridden_checks"},
+                     "claim", "mechanism", "archived"},
+    "judgments": {"judgment_refs", "override_reason", "overridden_checks", "archived"},
 }
 # Fields Core alone assigns: a model-authored register/observe payload may not carry them.
 # ``override_reason`` is model-authored but enters through the judgment gate, which records
 # what it overrode.
 _CORE_ASSIGNED_CONTINUITY_FIELDS = {
     "requirements": set(),
-    "handoffs": {"claims", "usage"},
-    "observations": {"claim", "mechanism"},
-    "judgments": {"override_reason", "overridden_checks"},
+    "handoffs": {"claims", "usage", "archived"},
+    "observations": {"claim", "mechanism", "archived"},
+    "judgments": {"override_reason", "overridden_checks", "archived"},
 }
 # A requirement's kind says how far declared checks can decide it. Unspecified (and every
 # requirement written before Core 0.6.0) is judgment-only, which changes no behaviour.
@@ -1449,7 +1928,7 @@ def _validate_continuity(state: dict[str, object]) -> None:
                                         field="id", expected="unique among all task objects", extra=extra, recovery=recovery)
             owners[identifier] = (kind, item)
             if ((_SCHEMA9_CONTINUITY_FIELDS[kind] & item.keys() or (kind == "observations" and item.get("provenance") == MECHANISM_PRODUCER))
-                    and state.get("schema_version") != _VERIFICATION_SCHEMA_VERSION):
+                    and state.get("schema_version") < _VERIFICATION_SCHEMA_VERSION):
                 raise _continuity_error(_errors.CONTINUITY_INVALID, "verification-first continuity fields require task schema 9", kind, index, item,
                                         expected="schema 9; preserve the state and use a compatible reader",
                                         got=sorted(_SCHEMA9_CONTINUITY_FIELDS[kind] & item.keys()))
@@ -1498,7 +1977,7 @@ def _validate_continuity(state: dict[str, object]) -> None:
                                             field="native_status_conflict", expected="a boolean", got=item["native_status_conflict"])
                 local = item.get("provenance") == "controller-local"
                 mechanical = item.get("provenance") == MECHANISM_PRODUCER
-                if local and state.get("schema_version") not in (_CONTROLLER_LOCAL_SCHEMA_VERSION, _VERIFICATION_SCHEMA_VERSION):
+                if local and state.get("schema_version") < _CONTROLLER_LOCAL_SCHEMA_VERSION:
                     raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "Controller local provenance requires task schema 8", kind, index, item,
                                             expected="schema 8; preserve the state and use a compatible reader")
                 if "provenance" in item and not (local or mechanical):
@@ -1956,7 +2435,21 @@ def task_get(root: Path, object_id: str) -> dict[str, object]:
                             recovery=recovery,
                             details={"id": identifier, "matches": len(matches)})
     kind, item = matches[0]
-    return {"ok": True, "task_id": state["task_id"], "revision": state["revision"], "object_type": kind, "object": item}
+    response = {"ok": True, "task_id": state["task_id"], "revision": state["revision"], "object_type": kind, "object": item}
+    if isinstance(item, dict) and "archived" in item:
+        # The hot ledger holds a stub; the full object comes from its verified segment.
+        collection = _TASK_GET_COLLECTIONS.get(kind, kind)
+        try:
+            response["object"] = hydrate_archived(root, state, collection, item)
+        except ThalirisError as exc:
+            if exc.details is not None:
+                exc.details["object_type"] = kind
+            raise
+        response["archived"] = {"segment": item["archived"]}
+    return response
+
+
+_TASK_GET_COLLECTIONS = {"source": "evidence_refs", "record": "records", "verification": "verification_results"}
 
 
 def artifact_get(root: Path, artifact_id: str) -> dict[str, object]:
@@ -2316,7 +2809,7 @@ def _feature_schema(state: dict[str, object]) -> int:
                 if fields & item.keys() or (kind == "observations" and item.get("provenance") == MECHANISM_PRODUCER):
                     return _VERIFICATION_SCHEMA_VERSION
                 local = local or (kind == "observations" and item.get("provenance") == "controller-local")
-    return _CONTROLLER_LOCAL_SCHEMA_VERSION if local else _STATE_SCHEMA_VERSION
+    return _CONTROLLER_LOCAL_SCHEMA_VERSION if local else _BASE_SCHEMA_VERSION
 
 
 def _refuse_reserved_actor(actor: str) -> None:
@@ -2506,7 +2999,7 @@ def _validate_verification_state(state: dict[str, object]) -> None:
     """Cross-object rules for schema-9 content; runs after continuity validation."""
     results = state["verification_results"]
     uses = bool(_SCHEMA9_STATE_FIELDS & state.keys()) or any("check_id" in item for item in results)
-    if uses and state["schema_version"] != _VERIFICATION_SCHEMA_VERSION:
+    if uses and state["schema_version"] < _VERIFICATION_SCHEMA_VERSION:
         raise ThalirisError(_errors.TASK_STATE_INVALID, "verification-first records require task schema 9",
                             recovery="preserve the state and use a compatible reader")
     checks = state.get("checks", [])
@@ -2925,7 +3418,7 @@ def declare_checks(root: Path, state: dict[str, object], actor: str, payload: di
         raise _capacity_error("checks", CHECKS_MAX, len(checks))
     if written:
         state["checks"] = checks
-        state["schema_version"] = _VERIFICATION_SCHEMA_VERSION
+        state["schema_version"] = max(state["schema_version"], _VERIFICATION_SCHEMA_VERSION)
         state["revision"] = revision
     return written
 
@@ -3062,7 +3555,7 @@ def record_check_run(root: Path, state: dict[str, object], actor: str, run: dict
     snapshot = copy.deepcopy(state)
     try:
         state["verification_results"] = kept + [result]
-        state["schema_version"] = _VERIFICATION_SCHEMA_VERSION
+        state["schema_version"] = max(state["schema_version"], _VERIFICATION_SCHEMA_VERSION)
         view = verification_view(root, state, tree=str(run["tree_identity"]))
         mechanical = record_check_tamper(root, state, view=view, bump=False)
         state["revision"] += 1
@@ -3188,7 +3681,7 @@ def close_state(root: Path | None, state: dict[str, object], *, override_reason:
             if actor is not None:
                 closure["by"] = actor
             state["closure"] = closure
-            state["schema_version"] = _VERIFICATION_SCHEMA_VERSION
+            state["schema_version"] = max(state["schema_version"], _VERIFICATION_SCHEMA_VERSION)
             extras["closure"] = closure
             extras["changed"] = ["closure"] + (["evidence_continuity"] if mechanical else [])
             if mechanical:
@@ -3316,7 +3809,7 @@ def ingest_claims(state: dict[str, object], handoff_id: str, text: object) -> di
                       "duplicates": duplicates, "supports": supports, "observations": ids}
             response.update(observations=ids, supports=_support_counts(supports), duplicates=duplicates)
         handoff["claims"] = marker
-        state["schema_version"] = _VERIFICATION_SCHEMA_VERSION
+        state["schema_version"] = max(state["schema_version"], _VERIFICATION_SCHEMA_VERSION)
         if additions:
             _append_continuity_items(state, additions, bump=False, trusted=True)
         else:
@@ -3382,7 +3875,7 @@ def set_handoff_usage(state: dict[str, object], handoff_id: str, usage: object) 
         raise ThalirisError(_errors.HANDOFF_USAGE_INVALID, "invalid handoff usage",
                             recovery="correct the named field; nothing was recorded", details={"expected": problem})
     handoff["usage"] = merged
-    state["schema_version"] = _VERIFICATION_SCHEMA_VERSION
+    state["schema_version"] = max(state["schema_version"], _VERIFICATION_SCHEMA_VERSION)
     state["revision"] += 1
     return merged
 
@@ -3724,6 +4217,9 @@ def _feature_sections(root: Path | None, state: dict[str, object], contract: dic
     usage = usage_summary(state)
     if usage is not None:
         sections["Usage"] = usage
+    archive = archive_summary(state)
+    if archive is not None:
+        sections["Archive"] = archive
     if contract is not None and contract.get("execution_mode") == "adaptive":
         sections["Advisories"] = lane_advisories(root, state, contract, view=view)
     return sections
@@ -3781,6 +4277,8 @@ def task_promote(root: Path, actor: str, base_revision: int, input_file: str | N
                 source = sources.get(source_id)
                 if source is None:
                     raise ValueError("artifact provenance source reference is unknown")
+                # Durable provenance needs the full locator and summary, never an archive preview.
+                source = hydrate_archived(root, state, "evidence_refs", source)
                 described.add(key)
                 descriptor = {
                     "type": "source",

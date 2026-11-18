@@ -132,9 +132,10 @@ managed depth two with one active Scanner is unaffected.
 
 Task state schemas form a forward chain: 7 (the base ledger), 8 (Controller-local
 evidence), 9 (the verification-first ledger: declared checks and their results,
-requirement kinds, typed claims, handoff usage, gate overrides) and 10 (compact
-serialization and hot/cold archive segments). Each schema is a valid subset of the next,
-so `_COMPATIBLE_PRIOR_SCHEMAS` lifts every supported prior version (6 through 9) step by
+requirement kinds, typed claims, handoff usage, gate overrides), 10 (compact
+serialization and hot/cold archive segments with stubs) and 11 (full eviction of settled
+objects). Each schema is a valid subset of the next, so `_COMPATIBLE_PRIOR_SCHEMAS` lifts
+every supported prior version (6 through 10) step by
 step to the current one. A state is validated once under the rules of its own on-disk
 version, then lifted in memory only: reading never rewrites the ledger, so an external
 anchor's recorded byte digest still matches and does not report
@@ -147,64 +148,94 @@ diagnostic; for a newer schema it carries `upgrade_required: true` and a
 procedure and the expected sha256. An older Core refuses a ledger a newer Core wrote;
 backward reading is not supported.
 
-### Capacity and the hot/cold archive (schema 10)
+### Capacity and the hot/cold archive (schema 11)
 
 `core.task_state_capacity()` returns the bounds adapters use instead of hard-coding them
 (`max_bytes` 512 KiB for the hot ledger file, `archive_high_water_bytes`, `list_max`
-512, `archived_list_max` 8192, the current and supported schemas);
-`core.read_state_bytes(path)` reads a ledger's exact bytes within that bound. The state
-file is written as compact, key-sorted JSON (`separators=(",", ":")`); loading accepts
-the older indented form too, and digests are always over the exact bytes written.
+512, `archived_list_max` and `requirements_max` 8192, `archive_index_max`, the current
+and supported schemas); `core.read_state_bytes(path)` reads a ledger's exact bytes within
+that bound. The state file is written as compact, key-sorted JSON; loading accepts the
+older indented form too, and digests are always over the exact bytes written.
 
-When a write's serialized hot state would exceed the high-water mark (70% of the cap,
-358.4 KiB), or a hot list passes 7/8 of its item cap, Core archives inside that same
-write. It moves the long bodies of *settled* objects into an immutable,
-content-addressed segment `.context/tasks/<task id>/archive/<sha256>.json` and replaces
-each object by a stub: the same object with every structural field, a 64-character
-preview (suffix ` …[archived]`) of each moved text field, and
-`archived: <segment sha256>`. Moved fields: observation `text`, judgment `reasoning`,
-source `locator`/`summary`, record `text`, verification-result `summary` and
-`observed_files` (stub `[]`), handoff `durable_paths`. A text of at most 128 characters
-stays in the stub unchanged. Below the cap a pass is committed only when it frees at
-least 16 KiB (or relieves a crowded list), so a ledger that is mostly stubs does not
-write a tiny segment on every write.
+**Eviction.** When a write's serialized hot state would exceed the high-water mark (70%
+of the cap, 358.4 KiB), or a hot list passes 7/8 of its item cap, Core evicts inside that
+same write: every *settled* object leaves its hot list and moves, whole, into an
+immutable, content-addressed segment `.context/tasks/<task id>/archive/<sha256>.json`
+(segment version 2: `{collection, id, position?, object}` items). Below the cap a pass
+runs only when it would free at least 16 KiB (or relieves a crowded list).
 
-Settled means none of: an unincorporated observation, an unresolved judgment, an
-observation an unresolved judgment cites, a handoff with open observations or no
-returned result (no observation, claims marker or usage outcome), a current
-(unsuperseded) record, one of the last two runs of a declared check (or of a
-non-check verification kind), or a source that any hot object, artifact or current
-record cites (with its source chain). Requirements, checks, artifacts, closure and
-authority are never archived. Settledness is monotone because continuity is
-append-only, so an archived object never becomes open evidence again. A latest
-judgment may be archived: its stub keeps id, requirement_ref, candidate, outcome,
-observation_refs, judgment_refs and any override, so the close gate, the withholding
-gate, `evidence_summary`, `changes_since`, the tamper and claim dedupes and the
-usage/claims aggregates read exactly what they read before.
+Hot (never evicted) are: unincorporated observations, unresolved judgments and the
+observations they cite, handoffs with open observations or no returned result (no
+observation, claims marker or usage outcome), the handoff of every hot observation,
+every judgment that cites a hot observation and every judgment that resolves a hot
+repair/unknown judgment (so incorporation and resolution of hot objects are computed
+from hot judgments), the last 16 handoffs, observations and judgments (`changes_since`),
+the last 8 overridden judgments, handoffs without typed claims and handoffs with
+truncated claims (the status listings), current records and records written in the last
+16 revisions, the last two runs of every declared check (and of every other verification
+kind), and every source a hot object, artifact or hot source cites. Requirements,
+checks, artifacts, closure and authority are never evicted; requirements are already
+minimal (`id`, `workchain_ref`, `kind`, `surface`), stay in the hot list and are capped
+at `requirements_max`.
 
-Integrity and ordering: the segment is written first (temporary file, then rename;
-an existing segment with the right digest is kept), then the state that references
-it. The state lists its segments in `archive` (`{sha256, revision, items,
-collections}` each), so the authority anchor's state digest covers every segment
-digest. The validator treats stubs as present for every reference check, requires
-every `archived` value to name an indexed segment and never reads segments; a model
-or adapter payload cannot carry `archived`. `task-get <id>` of an archived object
+**Index.** Each `archive` entry `{sha256, revision, ids, totals}` lists the ids its
+segment holds per collection (`evidence_refs`, `records`, `verification_results`,
+`check_runs`, `handoffs`, `observations`, `judgments`) in a compact encoding: id
+strings, runs `[prefix, start, count, suffix?, step?]` for numbered ids, and integers that
+set the list position of the next id (continuity objects keep their exact ledger
+position). Evicted ids are present for every reference check and reserved for
+uniqueness (`_task_object_ids`); they count toward no list cap. `totals` carries exact
+pre-aggregated facts about what the entry evicted: counts per collection, dispatch usage
+(totals, by role, by model, outcomes; cost as an exact fraction), claims tallies and
+support counts per requirement, override counts, tamper dedupe keys
+`[check id, files digest, observation id]` and support dedupe keys (6-byte digests of
+candidate, requirement and evidence, per candidate). `settled.latest` keeps, per
+(requirement, candidate), the outcome code (outcome plus an override flag), the
+positions of the latest and the first evicted judgment and the observation count. Hot
+readers combine hot objects with these aggregates, so the close and withholding gates,
+`evidence_summary` (with paging), continuity status, `usage_summary`, the claims section,
+the verification section, surfaced requirements, `changes_since` for the last 16
+revisions, status counts and the tamper and claim dedupes answer exactly as before
+eviction. Usage cost is summed exactly and rounded once, so its total does not depend on
+which segment a value sits in. When more than 12 eviction entries exist, small segments
+are merged into one (their entries become one entry with merged ids and summed totals);
+merged-away segment files stay on disk.
+
+**Re-hydration.** An evicted object that new evidence needs again returns, whole, to its
+exact hot position and leaves its index entry (whose totals drop by exactly its
+contribution): the handoff of a new observation, the parent of a new handoff, the
+judgments a new judgment addresses, a handoff that receives late usage or claims, and
+(best effort, in `_write_state`) a source that a hot object cites. A write that needs an
+object from an unreadable segment fails with `TASK_ARCHIVE_UNAVAILABLE` and changes
+nothing; other writes keep working (an unreadable re-cited source simply stays evicted).
+
+**Integrity.** The segment is written first (temporary file, then rename; an existing
+segment with the right digest is kept), then the state that references it, so the
+authority anchor's state digest covers every segment digest, id and aggregate. The
+validator never reads segments; it refuses forged indexes where that is checkable:
+non-canonical or duplicate ids, ids colliding with hot ids, positions outside the list,
+counts that do not match the ids, usage, claims or override totals beyond the evicted
+objects, tamper keys that name no evicted observation, supports for unknown requirements
+and latest rows that name no judgment position. `task-get <id>` of an evicted object
 reads its segment, verifies the sha256 and returns the full object (plus
-`archived.segment`); a missing, damaged or foreign segment gives
-`TASK_ARCHIVE_UNAVAILABLE` while gates, status and writes keep working. Promotion of
-an archived source reads the full source the same way. A CAS conflict leaves the
-state untouched; a crash between the segment and the state write leaves an
-unreferenced orphan segment, which is harmless. The compact status packet gains an
-`Archive` section once a task has archived.
+`archived: {segment, evicted: true}`); a missing, damaged or foreign segment gives
+`TASK_ARCHIVE_UNAVAILABLE` while gates, status and writes keep working. Promotion of an
+evicted source reads it the same way. A CAS conflict leaves the state untouched; a crash
+between the segment and the state write leaves an unreferenced orphan segment.
 
-List caps apply to hot objects: an archived stub does not count toward the 512-item
-cap of its list (256 for `verification_results`), and a list holds at most 8192 items
-including stubs. A full list or file is refused with `TASK_STATE_CAPACITY_EXCEEDED`
-(still a `ValueError`) only after archiving everything archivable. `details` carries
-`field`, `limit`, `count` and `unit`, and for the file (`state_file`) the open
-observation edges, unresolved judgments and archived item counts; the recovery explains
-that what stays hot is open evidence, current records and sources, checks and the task
-surface. The write is refused and the state is unchanged; every other list stays
+**Schema-10 ledgers** (Core 3ed67e1) kept full-field stubs carrying `archived: <sha256>`
+in the hot lists, with `{sha256, revision, items, collections}` entries and version-1
+segments. They load unchanged; on the next pressured write their stubs are evicted as
+stubs, and `task-get` follows the chain from the eviction segment to the version-1
+segment that holds the moved bodies.
+
+**Capacity.** A full list or file is refused with `TASK_STATE_CAPACITY_EXCEEDED` (still a
+`ValueError`) only after everything settled is evicted, so it remains only for a hot
+ledger full of open evidence (or of what never leaves: requirements, checks, current
+records, the last check runs and the index). `details` carries `field`, `limit`, `count`
+and `unit`, and for the file (`state_file`) the open observation edges, unresolved
+judgments and archived object counts; the recovery explains what stays hot and how to
+relieve it. The write is refused and the state is unchanged; every other list stays
 writable and `task-close` still works. Strict per-object validation (for example an
 unknown field in one continuity object) is intentionally unchanged.
 

@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 import base64
 import copy
+from fractions import Fraction
 import hashlib
 import json
 import os
@@ -431,8 +432,9 @@ def stale(root: Path) -> dict[str, object]:
 _STATE_NAME = ".context/state.json"
 # Schema history. 7 is the oldest on-disk shape this Core reads as-is; 8 added Controller-local
 # provenance, 9 the verification-first ledger (declared checks and their run results, requirement
-# kinds, typed claims, handoff usage and gate overrides), and 10 compact serialization with hot/cold
-# archive segments (``archive`` index and ``archived`` stubs). Every earlier supported schema is a
+# kinds, typed claims, handoff usage and gate overrides), 10 compact serialization with hot/cold
+# archive segments (``archive`` index and ``archived`` stubs), and 11 full eviction of settled objects
+# (eviction entries in ``archive`` and the ``settled`` table). Every earlier supported schema is a
 # valid subset of the next one, so promotion is a forward chain (``_COMPATIBLE_PRIOR_SCHEMAS``): a
 # state is read as the current schema in memory and is written as the current schema on its next
 # write. Only a schema newer than this code is refused (``STATE_SCHEMA_INCOMPATIBLE``: upgrade Core).
@@ -440,11 +442,13 @@ _BASE_SCHEMA_VERSION = 7
 _CONTROLLER_LOCAL_SCHEMA_VERSION = 8
 _VERIFICATION_SCHEMA_VERSION = 9
 _ARCHIVE_SCHEMA_VERSION = 10
-_STATE_SCHEMA_VERSION = _ARCHIVE_SCHEMA_VERSION  # the current schema; every write produces it
+_EVICTION_SCHEMA_VERSION = 11
+_STATE_SCHEMA_VERSION = _EVICTION_SCHEMA_VERSION  # the current schema; every write produces it
 _SUPPORTED_SCHEMAS = (_BASE_SCHEMA_VERSION, _CONTROLLER_LOCAL_SCHEMA_VERSION, _VERIFICATION_SCHEMA_VERSION,
-                      _ARCHIVE_SCHEMA_VERSION)
+                      _ARCHIVE_SCHEMA_VERSION, _EVICTION_SCHEMA_VERSION)
 _SCHEMA9_STATE_FIELDS = {"checks", "closure"}
 _SCHEMA10_STATE_FIELDS = {"archive"}
+_SCHEMA11_STATE_FIELDS = {"settled"}
 _SCHEMA9_CONTINUITY_FIELDS = {
     "requirements": {"kind", "surface"},
     "handoffs": {"claims", "usage"},
@@ -455,14 +459,17 @@ ROUTING_STATE_MAX_BYTES = 8 * 1024
 # The hot ledger file (``state.json``) never exceeds this many bytes. Adapters read the bound from
 # ``task_state_capacity()`` / ``read_state_bytes()`` instead of hard-coding it.
 STATE_MAX_BYTES = 512 * 1024
-# Archiving (see "Hot/cold archive segments" below) runs inside a write whose serialized hot state
-# would exceed this high-water mark (70% of the cap), or whose hot list would exceed its item cap.
+# Eviction (see "Hot/cold archive" below) runs inside a write whose serialized hot state would exceed
+# this high-water mark (70% of the cap), or whose hot list would exceed or approach its item cap.
 STATE_ARCHIVE_HIGH_WATER_BYTES = (STATE_MAX_BYTES * 7) // 10
-# Below the cap, an archive pass is committed only when it frees at least this much, so a ledger whose
-# hot part is mostly stubs does not write a tiny segment on every write. At or over the cap any saving counts.
+# Below the cap, an eviction pass is committed only when it frees at least this much, so a ledger whose
+# hot part is mostly open evidence does not write a tiny segment on every write. At or over the cap any
+# saving counts.
 STATE_ARCHIVE_MIN_SAVINGS_BYTES = 16 * 1024
-# Item caps of ledger lists. Hot (unarchived) items count against ``STATE_LIST_MAX``; an archived stub
-# does not, but a list holds at most ``STATE_ARCHIVED_LIST_MAX`` items in total (the byte cap binds first).
+# Item caps of ledger lists. Hot items count against ``STATE_LIST_MAX``; a schema-10 archived stub does
+# not, but a list holds at most ``STATE_ARCHIVED_LIST_MAX`` items in total (the byte cap binds first).
+# Requirements are never evicted, so their list is capped at ``STATE_ARCHIVED_LIST_MAX``. Evicted
+# objects (ids in the archive index) count toward no list cap.
 STATE_LIST_MAX = 512
 STATE_ARCHIVED_LIST_MAX = 8192
 EXPLICIT_DOCUMENT_MAX_BYTES = 64 * 1024
@@ -504,6 +511,7 @@ _COMPATIBLE_PRIOR_SCHEMAS = {
     _BASE_SCHEMA_VERSION: _promote_by_version(_CONTROLLER_LOCAL_SCHEMA_VERSION),
     _CONTROLLER_LOCAL_SCHEMA_VERSION: _promote_by_version(_VERIFICATION_SCHEMA_VERSION),
     _VERIFICATION_SCHEMA_VERSION: _promote_by_version(_ARCHIVE_SCHEMA_VERSION),
+    _ARCHIVE_SCHEMA_VERSION: _promote_by_version(_EVICTION_SCHEMA_VERSION),
 }
 
 
@@ -684,18 +692,25 @@ def _capacity_error(field: str, limit: int, count: int, *, unit: str = "entries"
     )
 
 
+# Control characters other than tab and newline (refused in ledger text), and all of them.
+_CONTROL_CHARACTERS = re.compile("[\x00-\x08\x0b-\x1f]")
+_ALL_CONTROL_CHARACTERS = re.compile("[\x00-\x1f]")
+
+
 def _check_json(value: object, field: str = "state") -> None:
     """Shape and size check; ``field`` is the nearest enclosing object key, named in capacity errors."""
     if isinstance(value, str):
-        if len(value) > 16_384 or any(ord(char) < 32 and char not in "\n\t" for char in value):
+        if len(value) > 16_384 or _CONTROL_CHARACTERS.search(value):
             raise ValueError("state contains control characters or oversized text")
     elif isinstance(value, list):
         # An archived stub (a Core-written object carrying ``archived``) does not count toward the
-        # hot item cap; the whole list stays bounded by STATE_ARCHIVED_LIST_MAX.
+        # hot item cap; the whole list stays bounded by STATE_ARCHIVED_LIST_MAX. Requirements are
+        # never evicted and are capped at STATE_ARCHIVED_LIST_MAX.
         if len(value) > STATE_LIST_MAX:
             hot = sum(not (isinstance(item, dict) and "archived" in item) for item in value)
-            if hot > STATE_LIST_MAX:
-                raise _capacity_error(field, STATE_LIST_MAX, hot)
+            limit = STATE_ARCHIVED_LIST_MAX if field == "requirements" else STATE_LIST_MAX
+            if hot > limit:
+                raise _capacity_error(field, limit, hot)
             if len(value) > STATE_ARCHIVED_LIST_MAX:
                 raise _capacity_error(field, STATE_ARCHIVED_LIST_MAX, len(value), unit="entries including archived stubs")
         for item in value:
@@ -947,11 +962,33 @@ def _verification_result(value: object, source_ids: set[str] | None = None, *, s
     return value
 
 
+def _check_archive_json(value: object) -> None:
+    """JSON shape check for the archive index and settled table (their sizes are bounded by their own
+    validators and the hot file cap, not by the generic list cap)."""
+    if isinstance(value, str):
+        if len(value) > 16_384 or _ALL_CONTROL_CHARACTERS.search(value):
+            raise ValueError("state contains control characters or oversized text")
+    elif isinstance(value, list):
+        for item in value:
+            _check_archive_json(item)
+    elif isinstance(value, dict):
+        if len(value) > 64 or not all(isinstance(key, str) for key in value):
+            raise ValueError("state object exceeds limit")
+        for item in value.values():
+            _check_archive_json(item)
+    elif value is not None and type(value) not in {int, bool, float}:
+        raise ValueError("state contains unsupported JSON value")
+
+
 def _validate_state(root: Path, state: object) -> dict[str, object]:
-    _check_json(state)
+    if isinstance(state, dict):
+        _check_json({key: value for key, value in state.items() if key not in ("archive", "settled")})
+        _check_archive_json([state.get("archive"), state.get("settled")])
+    else:
+        _check_json(state)
     if not isinstance(state, dict):
         raise ValueError("invalid task state schema")
-    if (set(state) - {"evidence_continuity"} - _SCHEMA9_STATE_FIELDS - _SCHEMA10_STATE_FIELDS != _STATE_FIELDS
+    if (set(state) - {"evidence_continuity"} - _SCHEMA9_STATE_FIELDS - _SCHEMA10_STATE_FIELDS - _SCHEMA11_STATE_FIELDS != _STATE_FIELDS
             or state.get("schema_version") not in _SUPPORTED_SCHEMAS):
         raise ValueError("invalid task state schema")
     if type(state.get("revision")) is not int or state["revision"] < 1:
@@ -987,10 +1024,12 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
                       "or move long content into a Record or Artifact"),
         )
 
+    # Evicted ids (archive index) are present for every reference and reserved for uniqueness.
+    index_map = _validate_archive_index(state)
     sources = state.get("evidence_refs")
     if not isinstance(sources, list):
         raise ValueError("invalid source references")
-    source_ids: set[str] = set()
+    source_ids: set[str] = set(index_map["evidence_refs"])
     for source in sources:
         _evidence_ref(source, source_ids, stored=True)
         source_ids.add(str(source["id"]))
@@ -1000,7 +1039,7 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
     records = state.get("records")
     if not isinstance(records, list):
         raise ValueError("invalid task records")
-    record_ids: set[str] = set()
+    record_ids: set[str] = set(index_map["records"])
     for item in records:
         _record(item, source_ids, record_ids, stored=True)
         record_ids.add(str(item["id"]))
@@ -1026,7 +1065,10 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
         raise _capacity_error("verification_results", 256, _hot_count(results))
     if not isinstance(results, list):
         raise ValueError("invalid verification observations")
-    result_ids: set[str] = set()
+    result_ids: set[str] = set(index_map["verification_results"]) | set(index_map["check_runs"])
+    if len(result_ids) != len(index_map["verification_results"]) + len(index_map["check_runs"]):
+        raise ThalirisError(_errors.TASK_OBJECT_ID_COLLISION, "task object id collision",
+                            details={"ids": sorted(set(index_map["verification_results"]) & set(index_map["check_runs"]))[:8]})
     for result in results:
         _verification_result(result, source_ids, stored=True)
         if result["id"] in result_ids:
@@ -1052,9 +1094,9 @@ def _validate_state(root: Path, state: object) -> dict[str, object]:
     base_head = state.get("task_base_head")
     if base_head is not None and (not isinstance(base_head, str) or not re.fullmatch(r"[0-9a-f]{40,64}", base_head)):
         raise ValueError("invalid task base head")
-    _validate_continuity(state)
+    _validate_continuity(state, index_map)
     _validate_verification_state(state)
-    _validate_archive_index(state)
+    _validate_archive_totals(state, index_map)
     return state
 
 
@@ -1072,18 +1114,20 @@ def _state_capacity_error(size: int, state: dict[str, object] | None = None, *, 
     reason = ""
     if state is not None:
         try:
-            pending, unresolved, _ = _continuity_open(state)
-        except (KeyError, TypeError, AttributeError):
-            pending, unresolved = [], []
+            pending, unresolved, _ = _continuity_open(state, latest=False)
+            evicted = len(_indexed_ids(state))
+        except (KeyError, TypeError, AttributeError, ValueError):
+            pending, unresolved, evicted = [], [], 0
         details_extra = {"open_observation_edges": len(pending), "unresolved_judgments": len(unresolved),
-                         "archived_items": sum(1 for _ in _archived_items(state))}
-        reason = (f"Core already moved every settled item body into archive segments{' in this write' if archived else ''}; "
+                         "archived_items": sum(1 for _ in _archived_items(state)) + evicted}
+        reason = (f"Core already evicted every settled object into archive segments{' in this write' if archived else ''}; "
                   f"what stays hot is open evidence ({len(pending)} unincorporated observation edges, {len(unresolved)} "
-                  "unresolved judgments), current records and sources, check declarations and the task surface; ")
+                  "unresolved judgments, the observations and handoffs they need), current records and the sources they "
+                  "cite, requirements, check declarations, the archive index and the task surface; ")
     error = _capacity_error(
         "state_file", STATE_MAX_BYTES, size, unit="bytes", message="task state exceeds 512 KiB",
         recovery=("the task state is unchanged; " + reason + "judge the open observations or resolve the unresolved "
-                  "judgments so they can be archived, shorten current records, or close this task (task-close still "
+                  "judgments so they can be evicted, shorten current records, or close this task (task-close still "
                   "works) and start a new one that cites this Task ID"))
     if error.details is not None:
         error.details.update(details_extra)
@@ -1091,7 +1135,7 @@ def _state_capacity_error(size: int, state: dict[str, object] | None = None, *, 
 
 
 def _state_payload(root: Path, state: dict[str, object]) -> bytes:
-    """Validate and serialize a state as the current schema; no archiving (see ``_write_state``)."""
+    """Validate and serialize a state as the current schema; no eviction (see ``_write_state``)."""
     state["schema_version"] = _STATE_SCHEMA_VERSION
     state = _validate_state(root, state)
     payload = _serialize_state(state)
@@ -1101,93 +1145,158 @@ def _state_payload(root: Path, state: dict[str, object]) -> bytes:
 
 
 def _write_state(root: Path, state: dict[str, object]) -> None:
-    """Write a state as the current schema, archiving settled bodies when the hot ledger is under pressure.
+    """Write a state as the current schema, evicting settled objects when the hot ledger is under pressure.
 
     Pressure is a serialized size above ``STATE_ARCHIVE_HIGH_WATER_BYTES`` or a hot list above its
-    item cap (or close to it). The archive pass works on a copy: the segment file is written first,
-    then the state that references it. Any refusal leaves the disk state and ``state`` unchanged; a
-    segment written before a failed state write is an unreferenced orphan, which is harmless.
+    item cap (or close to it). Evicted sources that hot objects cite again are re-hydrated first
+    (best effort). The eviction pass works on a copy: the segment file is written first, then the
+    state that references it. Any refusal leaves the disk state and ``state`` unchanged; a segment
+    written before a failed state write is an unreferenced orphan, which is harmless.
     """
     path = _state_path(root)
+    _register_archive_root(root, state)
     state["schema_version"] = _STATE_SCHEMA_VERSION
+    working = state
+    if _cited_evicted_sources(state):
+        working = copy.deepcopy(state)
+        if not _rehydrate_cited_sources(root, working):
+            working = state
     pressure: ThalirisError | None = None
     try:
-        _validate_state(root, state)
+        _validate_state(root, working)
     except ThalirisError as exc:
         if exc.code != _errors.TASK_STATE_CAPACITY_EXCEEDED or (exc.details or {}).get("field") not in _ARCHIVE_COLLECTIONS:
             raise
         pressure = exc
-    payload = _serialize_state(state)
-    crowded = _crowded_collections(state)
+    payload = _serialize_state(working)
+    crowded = _crowded_collections(working)
+
+    def commit(candidate: dict[str, object], content: bytes) -> None:
+        _atomic_write(path, content)
+        if candidate is not state:
+            state.clear()
+            state.update(candidate)
+
     if pressure is None and len(payload) <= STATE_ARCHIVE_HIGH_WATER_BYTES and not crowded:
-        _atomic_write(path, payload)
+        commit(working, payload)
         return
     required = pressure is not None or len(payload) > STATE_MAX_BYTES
     try:
-        archived = _archive_settled(state, crowded)
+        keep = _hot_keep(working)
+        if not required and not crowded and _evictable_bytes(working, keep) < STATE_ARCHIVE_MIN_SAVINGS_BYTES:
+            # Mostly open evidence, current objects and aggregates: nothing worth a segment yet.
+            evicted = None
+        else:
+            evicted = _evict_settled(working, keep)
     except (KeyError, TypeError, AttributeError):
         if pressure is not None:
             raise pressure from None
-        archived = None
-    if archived is not None:
-        candidate, segment = archived
+        evicted = None
+    if evicted is not None:
+        candidate, segment = evicted
+        segments = [segment]
+        compacted = _compact_archive(root, candidate)
+        if compacted is not None:
+            candidate, merged = compacted
+            segments.append(merged)
         _validate_state(root, candidate)
         candidate_payload = _serialize_state(candidate)
         worthwhile = (required or bool(crowded)
                       or len(payload) - len(candidate_payload) >= STATE_ARCHIVE_MIN_SAVINGS_BYTES)
         if worthwhile and len(candidate_payload) <= STATE_MAX_BYTES:
-            _write_archive_segment(root, str(candidate["task_id"]), segment)
-            _atomic_write(path, candidate_payload)
-            state.clear()
-            state.update(candidate)
+            for raw in segments:
+                _write_archive_segment(root, str(candidate["task_id"]), raw)
+            commit(candidate, candidate_payload)
             return
         if required and len(candidate_payload) > STATE_MAX_BYTES:
             raise _state_capacity_error(len(candidate_payload), candidate, archived=True)
     if pressure is not None:
         raise pressure
     if len(payload) > STATE_MAX_BYTES:
-        raise _state_capacity_error(len(payload), state)
-    _atomic_write(path, payload)
+        raise _state_capacity_error(len(payload), working)
+    commit(working, payload)
 
 
-# --- Hot/cold archive segments (schema 10) ------------------------------------------------------
+# --- Hot/cold archive: eviction segments (schema 11) and schema-10 stubs ---------------------------
 #
-# The hot ledger (``state.json``) keeps every object that any gate, status view or validator reads.
-# When it is under pressure, a write moves the long bodies of *settled* objects into an immutable,
-# content-addressed segment ``.context/tasks/<task id>/archive/<sha256>.json`` and leaves a stub in
-# place: the same object with its id, every structural field, a short preview of each moved text
-# field, and ``archived: <segment sha256>``. Settledness is monotone (append-only continuity), so an
-# archived object never becomes open evidence again. Only explicit retrieval (task-get, promotion of
-# an archived source) reads segments; gates, status and the validator never do.
+# The hot ledger (``state.json``) holds what gates, status views and validators read about current
+# and open work. When a write would leave it under pressure (see ``_write_state``), Core *evicts*
+# every settled object (see ``_hot_keep``): the object leaves its hot list and moves, whole, into an
+# immutable, content-addressed segment ``.context/tasks/<task id>/archive/<sha256>.json`` that is
+# written temp-then-rename before the state that references it. The state's ``archive`` index keeps,
+# per segment,
+#
+# - ``ids``: the ids it holds per collection, compactly encoded (``_encode_ids``) together with the
+#   list position of every continuity object, so ledger order stays exact and the ids stay reserved:
+#   the validator treats them as present for every reference and for uniqueness, and they count
+#   toward no list cap;
+# - ``totals``: pre-aggregated facts about what it evicted (counts, dispatch usage, claims, judgment
+#   overrides, tamper and support dedupe keys).
+#
+# ``settled.latest`` keeps, per (requirement, candidate), the latest and the first evicted judgment
+# (id, outcome, override flag, observation count, positions). Hot readers combine hot objects with
+# these aggregates, so the close and withholding gates, evidence summaries, continuity status,
+# usage, claims and dedupes answer exactly as before the eviction. Segments are read only for
+# explicit retrieval (task-get, promotion of an evicted source) and for re-hydration: an evicted
+# object that new evidence needs again (a source it cites, a handoff that receives late usage,
+# claims, observations or a child, a judgment a new judgment addresses) returns to its exact hot
+# position.
+#
+# Schema 10 (Core 3ed67e1) left full-field stubs carrying ``archived: <sha256>`` in the hot lists,
+# with ``{sha256, revision, items, collections}`` index entries and version-1 segments. Such states
+# load unchanged; their stubs are evicted, as stubs, on the next pressured write, and retrieval
+# follows the chain from the eviction segment to the version-1 segment.
 
 ARCHIVE_SEGMENT_FORMAT = "thaliris-task-archive"
-ARCHIVE_SEGMENT_VERSION = 1
+ARCHIVE_SEGMENT_VERSION = 2
+_ARCHIVE_SEGMENT_VERSIONS = (1, 2)
 ARCHIVE_SEGMENT_MAX_BYTES = 16 * 1024 * 1024
-ARCHIVE_PREVIEW_CHARS = 64
-ARCHIVE_PREVIEW_SUFFIX = " …[archived]"
-# A text field at most this long stays in the stub unchanged.
-ARCHIVE_INLINE_MAX_CHARS = 128
-# Bytes the ``archived`` marker adds to a stub; an object is archived for size only when it saves more.
-_ARCHIVE_MARKER_BYTES = len(',"archived":""') + 64
-_ARCHIVE_INDEX_FIELDS = {"sha256", "revision", "items", "collections"}
-# The archivable collections and the body fields that move. Text fields keep a preview; list fields
-# move whole (``durable_paths`` is dropped from the stub, ``observed_files`` becomes ``[]``).
-_ARCHIVE_BODY_FIELDS: dict[str, tuple[str, ...]] = {
-    "evidence_refs": ("locator", "summary"),
-    "records": ("text",),
-    "verification_results": ("summary", "observed_files"),
-    "handoffs": ("durable_paths",),
-    "observations": ("text",),
-    "judgments": ("reasoning",),
-}
-_ARCHIVE_COLLECTIONS = tuple(_ARCHIVE_BODY_FIELDS)
+# The archive index holds at most this many segment entries, and all entries together at most
+# ``ARCHIVE_IDS_MAX`` reserved ids.
+ARCHIVE_INDEX_MAX = STATE_LIST_MAX
+ARCHIVE_IDS_MAX = 1_000_000
+# Above this many eviction entries, small segments are merged (see ``_compact_archive``).
+ARCHIVE_COMPACT_ENTRIES = 12
+ARCHIVE_COMPACT_SEGMENT_BYTES = 2 * 1024 * 1024
+ARCHIVE_COMPACT_MAX_BYTES = 8 * 1024 * 1024
+_ARCHIVE_INDEX_FIELDS = {"sha256", "revision", "items", "collections"}  # schema-10 stub segments
+_EVICTION_INDEX_FIELDS = {"sha256", "revision", "ids", "totals"}       # schema-11 eviction segments
+_ARCHIVE_COLLECTIONS = ("evidence_refs", "records", "verification_results", "handoffs", "observations", "judgments")
 _ARCHIVE_TOP_LEVEL = ("evidence_refs", "records", "verification_results")
+# Continuity lists are ordered; their evicted ids carry list positions.
+_POSITIONED = ("handoffs", "observations", "judgments")
+# Index collections: check-run results are indexed apart from other verification results because
+# ``record_check_run`` drops a check's results beyond its history, evicted or not.
+_INDEX_COLLECTIONS = ("evidence_refs", "records", "verification_results", "check_runs", "handoffs", "observations", "judgments")
+_OBJECT_TYPES = {"evidence_refs": "source", "records": "record", "verification_results": "verification",
+                 "check_runs": "verification"}
 _ARCHIVE_LIST_CAPS = {"verification_results": 256}
-# A hot list above 7/8 of its cap is crowded: the next archive pass also stubs settled objects
-# that have no long body, so they stop counting toward the cap.
+# A hot list above 7/8 of its cap is crowded and forces an eviction pass.
 _ARCHIVE_CROWDED_FRACTION = (7, 8)
-# Non-check verification results kept hot per kind; check runs keep their last two.
+# Verification results kept hot per check (or per kind for other results).
 _ARCHIVE_KEEP_RUNS = 2
+# Status lists show the last 8 overrides, handoffs without typed claims and truncated claim blocks;
+# those objects stay hot.
+_ARCHIVE_KEEP_LISTED = 8
+_SUPPORT_KEY_BYTES = 6
+_SUPPORT_KEYS_PER_STRING = 2040
+_ID_LABEL = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
+_ID_PARTS = re.compile(r"([A-Za-z0-9_.:-]*?)(0|[1-9][0-9]*)([A-Za-z_.:-]*)")
+_FRACTION = re.compile(r"(0|[1-9][0-9]{0,400})/([1-9][0-9]{0,400})")
+_USAGE_SUM_FIELDS = ("input_tokens", "output_tokens", "total_tokens", "cost_usd", "duration_ms", "tool_uses")
+_USAGE_GROUP_FIELDS = ("total_tokens", "cost_usd")
+_CLAIM_TALLIES = ("ingested", "missing", "malformed", "truncated")
+# The project root each loaded task's segments live under, so in-memory transactions (adapter-owned
+# locked writes) can re-hydrate evicted objects. Set by ``_load_state`` and ``_write_state``.
+_archive_roots: ContextVar[dict[str, Path]] = ContextVar("thaliris_archive_roots", default={})
+
+
+def _register_archive_root(root: Path, state: dict[str, object]) -> None:
+    task_id = state.get("task_id") if isinstance(state, dict) else None
+    if isinstance(task_id, str) and _archive_roots.get().get(task_id) != root:
+        roots = dict(_archive_roots.get())
+        roots[task_id] = root
+        _archive_roots.set(roots)
 
 
 def _hot_count(values: list[object]) -> int:
@@ -1195,6 +1304,8 @@ def _hot_count(values: list[object]) -> int:
 
 
 def _archive_collection(state: dict[str, object], name: str) -> list[dict[str, object]]:
+    if name == "check_runs":
+        name = "verification_results"
     if name in _ARCHIVE_TOP_LEVEL:
         values = state.get(name)
     else:
@@ -1203,6 +1314,7 @@ def _archive_collection(state: dict[str, object], name: str) -> list[dict[str, o
 
 
 def _archived_items(state: dict[str, object]):
+    """Schema-10 stubs still in the hot lists."""
     for name in _ARCHIVE_COLLECTIONS:
         for item in _archive_collection(state, name):
             if isinstance(item, dict) and "archived" in item:
@@ -1220,127 +1332,893 @@ def _crowded_collections(state: dict[str, object]) -> set[str]:
     return crowded
 
 
-def _settled_ids(state: dict[str, object]) -> dict[str, set[str]]:
-    """Ids of objects whose bodies may move to a segment; see docs/thaliris-task-authority.md.
+def _eviction_entries(state: dict[str, object]) -> list[dict[str, object]]:
+    return [entry for entry in state.get("archive") or [] if isinstance(entry, dict) and "ids" in entry]
 
-    Hot (never archived): unincorporated observations, unresolved judgments, observations an
-    unresolved judgment cites, handoffs with open observations or no returned result yet, current
-    (unsuperseded) records, the last two runs of every declared check, and every source that a hot
-    object, an artifact or a current record cites (with its source chain). Requirements, checks,
-    artifacts, authority and closure are never archived. A latest judgment may be archived: its stub
-    keeps id, requirement_ref, candidate, outcome, observation_refs, judgment_refs and any override.
+
+# --- compact id encoding ---
+
+def _id_parts(identifier: str) -> tuple[str, int, str] | None:
+    """(prefix, number, suffix) around the last canonical digit run of an id, or None."""
+    match = _ID_PARTS.fullmatch(identifier)
+    return (match.group(1), int(match.group(2)), match.group(3)) if match else None
+
+
+def _id_sort_key(identifier: str) -> tuple[str, str, int, str]:
+    parts = _id_parts(identifier)
+    return (identifier, "", -1, identifier) if parts is None else (parts[0], parts[2], parts[1], identifier)
+
+
+def _id_run(prefix: str, start: int, count: int, suffix: str, step: int) -> list[object]:
+    run: list[object] = [prefix, start, count]
+    if suffix or step != 1:
+        run.append(suffix)
+    if step != 1:
+        run.append(step)
+    return run
+
+
+def _run_fields(element: list[object]) -> tuple[str, int, int, str, int]:
+    """(prefix, start, count, suffix, step) of an id run."""
+    return (element[0], element[1], element[2], element[3] if len(element) > 3 else "", element[4] if len(element) > 4 else 1)
+
+
+def _encode_ids(pairs: list[tuple[str, int | None]], positioned: bool) -> list[object]:
+    """Encode ids (with list positions when ``positioned``) as a compact list.
+
+    Elements: an id string occupies the next position; a run ``[prefix, start, count]``,
+    ``[prefix, start, count, suffix]`` or ``[prefix, start, count, suffix, step]`` stands for
+    ``count`` ids ``prefix + str(start + k * step) + suffix`` at consecutive positions; an integer
+    sets the position of the next id (positions start at 0). ``pairs`` are in position order when
+    positioned; otherwise they are sorted so numbered ids form runs.
     """
+    if not positioned:
+        pairs = sorted(pairs, key=lambda pair: _id_sort_key(pair[0]))
+    encoded: list[object] = []
+    cursor = 0
+    previous: tuple[str, int, str] | None = None
+    for identifier, position in pairs:
+        if positioned and position != cursor:
+            encoded.append(position)
+            previous = None
+        parts = _id_parts(identifier)
+        extended = False
+        if previous is not None and parts is not None and parts[0] == previous[0] and parts[2] == previous[2]:
+            last = encoded[-1]
+            if isinstance(last, list):
+                step = _run_fields(last)[4]
+                if parts[1] == previous[1] + step:
+                    last[2] += 1
+                    extended = True
+            elif isinstance(last, str) and parts[1] > previous[1]:
+                encoded[-1] = _id_run(previous[0], previous[1], 2, previous[2], parts[1] - previous[1])
+                extended = True
+        if not extended:
+            encoded.append(identifier)
+        previous = parts
+        if positioned:
+            cursor = int(position) + 1
+    # A two-id run is longer than the two ids unless it is a plain consecutive pair.
+    compact: list[object] = []
+    for element in encoded:
+        if isinstance(element, list) and element[2] == 2 and len(element) > 3:
+            prefix, start, _, suffix, step = _run_fields(element)
+            compact += [f"{prefix}{start}{suffix}", f"{prefix}{start + step}{suffix}"]
+        else:
+            compact.append(element)
+    return compact
+
+
+def _decode_ids(encoded: list[object], positioned: bool):
+    """Yield (id, position or None) from ``_encode_ids`` output."""
+    cursor = 0
+    for element in encoded:
+        if type(element) is int:
+            cursor = element
+        elif isinstance(element, str):
+            yield element, (cursor if positioned else None)
+            cursor += 1
+        else:
+            prefix, start, count, suffix, step = _run_fields(element)
+            for offset in range(count):
+                yield f"{prefix}{start + offset * step}{suffix}", (cursor if positioned else None)
+                cursor += 1
+
+
+def _encoded_ids_problem(encoded: object, positioned: bool) -> tuple[str | None, int]:
+    """(problem, number of ids) for an encoded id list."""
+    if not isinstance(encoded, list) or not encoded:
+        return "a non-empty encoded id list", 0
+    cursor, total, after_position = 0, 0, False
+    for element in encoded:
+        if type(element) is int:
+            if not positioned or element < cursor or after_position:
+                return "increasing positions only in continuity collections, each followed by an id", total
+            cursor, after_position = element, True
+            continue
+        after_position = False
+        if isinstance(element, str):
+            if not _ID_LABEL.fullmatch(element):
+                return "task object ids", total
+            count = 1
+        elif isinstance(element, list) and len(element) in (3, 4, 5):
+            prefix, start, count, suffix, step = _run_fields(element)
+            if (not isinstance(prefix, str) or type(start) is not int or start < 0 or type(count) is not int or count < 2
+                    or not isinstance(suffix, str) or type(step) is not int or step < 1
+                    or (len(element) == 4 and not suffix) or (len(element) == 5 and step == 1)):
+                return "id runs [prefix, start, count >= 2, suffix?, step >= 2?]", total
+            end = start + (count - 1) * step
+            first, last = f"{prefix}{start}{suffix}", f"{prefix}{end}{suffix}"
+            if (not _ID_LABEL.fullmatch(first) or not _ID_LABEL.fullmatch(last) or _id_parts(first) != (prefix, start, suffix)
+                    or _id_parts(last) != (prefix, end, suffix)):
+                return "canonical id runs of task object ids", total
+        else:
+            return "id strings, id runs and positions", total
+        total += count
+        cursor += count
+        if total > ARCHIVE_IDS_MAX:
+            return f"at most {ARCHIVE_IDS_MAX} ids", total
+    if after_position:
+        return "a position followed by an id", total
+    return None, total
+
+
+# What the index decodes to is a pure function of the ``archive`` list, so it is cached by the
+# digest of its compact serialization (a few hundred microseconds) instead of decoding every
+# reserved id on every read and validation. Cached values are shared: callers must not mutate them.
+_ARCHIVE_DERIVED: dict[str, dict[str, object]] = {}
+_ARCHIVE_DERIVED_MAX = 8
+
+
+def _archive_derived(state: dict[str, object]) -> dict[str, object]:
+    """Decoded eviction index: ``map`` (collection -> id -> (entry number, position)), ``ids`` (all
+    evicted ids), sorted evicted ``positions`` and ``at`` (position -> id) per continuity list,
+    per-entry ``counts`` and ``observations``, and ``problem`` (code, message, details) or None."""
+    archive = state.get("archive") or []
+    key = hashlib.sha256(json.dumps(archive, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+    derived = _ARCHIVE_DERIVED.get(key)
+    if derived is not None:
+        return derived
+    result: dict[str, dict[str, tuple[int, int | None]]] = {name: {} for name in _INDEX_COLLECTIONS}
+    counts: dict[int, dict[str, int]] = {}
+    observations: dict[int, set[str]] = {}
+    problem: tuple[str, str, dict[str, object]] | None = None
+    total = 0
+    for number, entry in enumerate(archive):
+        if not isinstance(entry, dict) or not isinstance(entry.get("ids"), dict):
+            continue
+        for name, encoded in entry["ids"].items():
+            bucket = result.get(name)
+            found, count = _encoded_ids_problem(encoded, name in _POSITIONED) if bucket is not None else ("a known collection", 0)
+            total += count
+            if found or total > ARCHIVE_IDS_MAX:
+                problem = problem or (_errors.TASK_STATE_INVALID, "invalid archive index ids",
+                                      {"segment": entry.get("sha256"), "collection": name,
+                                       "expected": found or f"at most {ARCHIVE_IDS_MAX} evicted ids"})
+                continue
+            tally = counts.setdefault(number, {})
+            for identifier, position in _decode_ids(encoded, name in _POSITIONED):
+                if identifier in bucket:
+                    problem = problem or (_errors.TASK_OBJECT_ID_COLLISION, "task object id collision",
+                                          {"ids": [identifier], "collection": name})
+                bucket[identifier] = (number, position)
+                tally[name] = tally.get(name, 0) + 1
+                if name == "observations":
+                    observations.setdefault(number, set()).add(identifier)
+    ids: set[str] = set()
+    for name, bucket in result.items():
+        ids.update(bucket)
+    if problem is None and len(ids) != sum(len(bucket) for bucket in result.values()):
+        seen: set[str] = set()
+        duplicates = sorted({identifier for bucket in result.values() for identifier in bucket if identifier in seen or seen.add(identifier)})
+        problem = (_errors.TASK_OBJECT_ID_COLLISION, "task object id collision", {"ids": duplicates[:8]})
+    positions: dict[str, list[int]] = {}
+    at: dict[str, dict[int, str]] = {}
+    for name in _POSITIONED:
+        at[name] = {position: identifier for identifier, (_, position) in result[name].items()}
+        positions[name] = sorted(at[name])
+        if problem is None and len(at[name]) != len(result[name]):
+            problem = (_errors.TASK_STATE_INVALID, "invalid archive index ids",
+                       {"collection": name, "expected": "one evicted object per list position"})
+    derived = {"map": result, "ids": ids, "positions": positions, "at": at, "counts": counts,
+               "observations": observations, "problem": problem}
+    if len(_ARCHIVE_DERIVED) >= _ARCHIVE_DERIVED_MAX:
+        _ARCHIVE_DERIVED.pop(next(iter(_ARCHIVE_DERIVED)))
+    _ARCHIVE_DERIVED[key] = derived
+    return derived
+
+
+_EMPTY_INDEX_MAP: dict[str, dict[str, tuple[int, int | None]]] = {name: {} for name in _INDEX_COLLECTIONS}
+
+
+def _index_map(state: dict[str, object]) -> dict[str, dict[str, tuple[int, int | None]]]:
+    """Evicted ids per index collection: id -> (archive entry number, list position or None). Read-only."""
+    if not _eviction_entries(state):
+        return _EMPTY_INDEX_MAP
+    return _archive_derived(state)["map"]  # type: ignore[return-value]
+
+
+def _indexed_ids(state: dict[str, object], index_map: dict[str, dict[str, tuple[int, int | None]]] | None = None) -> set[str]:
+    """Every evicted id (a copy)."""
+    if not _eviction_entries(state):
+        return set()
+    if index_map is None:
+        return set(_archive_derived(state)["ids"])  # type: ignore[arg-type]
+    return {identifier for bucket in index_map.values() for identifier in bucket}
+
+
+def _known_ids(state: dict[str, object], name: str) -> set[str]:
+    """Hot and evicted ids of one top-level collection (``verification_results`` includes check runs)."""
+    ids = {str(item["id"]) for item in _archive_collection(state, name)}
+    if _eviction_entries(state):
+        index_map = _index_map(state)
+        ids.update(index_map[name])
+        if name == "verification_results":
+            ids.update(index_map["check_runs"])
+    return ids
+
+
+def _hot_positions(state: dict[str, object], name: str,
+                   index_map: dict[str, dict[str, tuple[int, int | None]]] | None = None) -> list[int]:
+    """Ledger positions of the hot objects of a continuity list (evicted positions are skipped)."""
+    hot = _archive_collection(state, name)
+    if not _eviction_entries(state):
+        return list(range(len(hot)))
+    if index_map is None:
+        evicted: list[int] = _archive_derived(state)["positions"][name]  # type: ignore[index]
+    else:
+        evicted = sorted(position for _, position in index_map[name].values())
+    positions: list[int] = []
+    cursor, skip = 0, 0
+    while len(positions) < len(hot):
+        if skip < len(evicted) and evicted[skip] == cursor:
+            skip += 1
+        else:
+            positions.append(cursor)
+        cursor += 1
+    return positions
+
+
+def _collection_totals(state: dict[str, object]) -> dict[str, int]:
+    """Hot plus evicted object counts per archivable collection (check runs count as verification results)."""
+    totals = {name: len(_archive_collection(state, name)) for name in _ARCHIVE_COLLECTIONS}
+    for entry in _eviction_entries(state):
+        for name, count in entry["totals"].get("counts", {}).items():
+            target = "verification_results" if name == "check_runs" else name
+            totals[target] = totals.get(target, 0) + count
+    return totals
+
+
+# --- pre-aggregated totals ---
+
+def _fraction_text(value: Fraction) -> str:
+    return f"{value.numerator}/{value.denominator}"
+
+
+def _usage_value(usage: dict[str, object], field: str) -> object:
+    value = usage[field]
+    if value is None and field == "total_tokens" and usage["input_tokens"] is not None and usage["output_tokens"] is not None:
+        value = usage["input_tokens"] + usage["output_tokens"]
+    return value
+
+
+class _UsageSum:
+    """Exact usage sums: integer token/duration sums and an exact rational cost sum.
+
+    ``view`` gives the shape ``usage_summary`` reports. Cost is summed exactly and rounded once,
+    so the total does not depend on the order (or the segments) the values come from.
+    """
+
+    def __init__(self, fields: tuple[str, ...] = _USAGE_SUM_FIELDS) -> None:
+        self.fields = fields
+        self.handoffs = 0
+        self.present = {field: 0 for field in fields}
+        self.sums: dict[str, object] = {field: (Fraction(0) if field == "cost_usd" else 0) for field in fields}
+        self.floats = 0
+
+    def add(self, usage: dict[str, object], sign: int = 1) -> None:
+        self.handoffs += sign
+        for field in self.fields:
+            value = _usage_value(usage, field)
+            if value is None:
+                continue
+            self.present[field] += sign
+            if field == "cost_usd":
+                self.sums[field] += sign * Fraction(value)
+                self.floats += sign * (type(value) is float)
+            else:
+                self.sums[field] += sign * value
+
+    def merge(self, other: "_UsageSum", sign: int = 1) -> None:
+        self.handoffs += sign * other.handoffs
+        for field in self.fields:
+            self.present[field] += sign * other.present[field]
+            self.sums[field] += sign * other.sums[field]
+        self.floats += sign * other.floats
+
+    def view(self) -> dict[str, object]:
+        result: dict[str, object] = {"handoffs": self.handoffs}
+        for field in self.fields:
+            if not self.present[field]:
+                result[field] = None
+            elif field == "cost_usd":
+                total = self.sums[field]
+                result[field] = round(float(total), 6) if self.floats else round(int(total), 6)
+            else:
+                result[field] = self.sums[field]
+        return result
+
+    def export(self) -> list[object]:
+        values: list[object] = [self.handoffs]
+        for field in self.fields:
+            values += [self.present[field], _fraction_text(self.sums[field]) if field == "cost_usd" else self.sums[field]]
+        return values + [self.floats]
+
+    @classmethod
+    def load(cls, values: list[object], fields: tuple[str, ...] = _USAGE_SUM_FIELDS) -> "_UsageSum":
+        total = cls(fields)
+        total.handoffs = values[0]
+        for offset, field in enumerate(fields):
+            present, value = values[1 + 2 * offset], values[2 + 2 * offset]
+            total.present[field] = present
+            if field == "cost_usd":
+                numerator, denominator = _FRACTION.fullmatch(value).groups()
+                total.sums[field] = Fraction(int(numerator), int(denominator))
+            else:
+                total.sums[field] = value
+        total.floats = values[-1]
+        return total
+
+    def problem(self) -> str | None:
+        if self.handoffs < 1 or not 0 <= self.floats <= self.present.get("cost_usd", 0):
+            return "usage totals with at least one handoff"
+        for field in self.fields:
+            if not 0 <= self.present[field] <= self.handoffs or self.sums[field] < 0 or (not self.present[field] and self.sums[field]):
+                return "usage totals with non-negative sums of at most one value per handoff"
+        return None
+
+
+def _usage_sum_problem(values: object, fields: tuple[str, ...]) -> str | None:
+    if not isinstance(values, list) or len(values) != 2 + 2 * len(fields):
+        return "usage totals [handoffs, present, sum, ..., floats]"
+    if not all(type(value) is int for index, value in enumerate(values) if index != 2 + 2 * fields.index("cost_usd")):
+        return "integer usage totals"
+    cost = values[2 + 2 * fields.index("cost_usd")]
+    if not isinstance(cost, str) or not _FRACTION.fullmatch(cost):
+        return "an exact cost sum `numerator/denominator`"
+    return _UsageSum.load(values, fields).problem()
+
+
+def _support_key(candidate: object, requirement: object, evidence: object) -> bytes:
+    return hashlib.sha256(json.dumps([candidate, requirement, evidence], ensure_ascii=False).encode("utf-8")).digest()[:_SUPPORT_KEY_BYTES]
+
+
+class _Totals:
+    """Aggregates of evicted objects; ``export`` is the index entry ``totals`` form."""
+
+    def __init__(self) -> None:
+        self.counts: dict[str, int] = {}
+        self.usage = _UsageSum()
+        self.by_role: dict[str, _UsageSum] = {}
+        self.by_model: dict[str, _UsageSum] = {}
+        self.outcomes: dict[str, int] = {}
+        self.claims = dict.fromkeys(_CLAIM_TALLIES, 0)
+        self.supports: dict[str, int] = {}
+        self.support_keys: dict[str, set[bytes]] = {}
+        self.overrides = 0
+        self.mechanism: dict[tuple[str, str], str] = {}
+
+    def add(self, name: str, item: dict[str, object], sign: int = 1) -> None:
+        self.counts[name] = self.counts.get(name, 0) + sign
+        if name == "handoffs":
+            usage = item.get("usage")
+            if isinstance(usage, dict):
+                self.usage.add(usage, sign)
+                for groups, key in ((self.by_role, str(item["producer"])), (self.by_model, str(usage["model"] or "unknown"))):
+                    groups.setdefault(key, _UsageSum(_USAGE_GROUP_FIELDS)).add(usage, sign)
+                outcome = str(usage["outcome"] or "unknown")
+                self.outcomes[outcome] = self.outcomes.get(outcome, 0) + sign
+            claims = item.get("claims")
+            if isinstance(claims, dict):
+                self.claims["ingested"] += sign
+                self.claims["missing"] += sign * (claims["status"] == "missing")
+                self.claims["malformed"] += sign * (claims["status"] == "malformed")
+                self.claims["truncated"] += sign * bool(claims.get("truncated"))
+                for support in claims.get("supports", []):
+                    self.supports[str(support["requirement"])] = self.supports.get(str(support["requirement"]), 0) + sign
+                    if sign > 0 and claims["status"] == "present":
+                        self.support_keys.setdefault(str(item["candidate"]), set()).add(
+                            _support_key(item["candidate"], support["requirement"], support["evidence"]))
+        elif name == "observations" and isinstance(item.get("mechanism"), dict):
+            key = (str(item["mechanism"]["check_id"]), str(item["mechanism"]["files_digest"]))
+            if sign > 0:
+                self.mechanism[key] = str(item["id"])
+            elif self.mechanism.get(key) == item["id"]:
+                del self.mechanism[key]
+        elif name == "judgments" and "override_reason" in item:
+            self.overrides += sign
+
+    def merge(self, other: "_Totals") -> None:
+        for name, count in other.counts.items():
+            self.counts[name] = self.counts.get(name, 0) + count
+        self.usage.merge(other.usage)
+        for mine, theirs, fields in ((self.by_role, other.by_role, _USAGE_GROUP_FIELDS), (self.by_model, other.by_model, _USAGE_GROUP_FIELDS)):
+            for key, value in theirs.items():
+                mine.setdefault(key, _UsageSum(fields)).merge(value)
+        for key, count in other.outcomes.items():
+            self.outcomes[key] = self.outcomes.get(key, 0) + count
+        for key in _CLAIM_TALLIES:
+            self.claims[key] += other.claims[key]
+        for key, count in other.supports.items():
+            self.supports[key] = self.supports.get(key, 0) + count
+        for key, values in other.support_keys.items():
+            self.support_keys.setdefault(key, set()).update(values)
+        self.overrides += other.overrides
+        self.mechanism.update(other.mechanism)
+
+    def export(self) -> dict[str, object]:
+        totals: dict[str, object] = {"counts": {name: count for name, count in sorted(self.counts.items()) if count}}
+        if self.usage.handoffs:
+            totals["usage"] = {
+                "all": self.usage.export(),
+                "by_role": [[key, *value.export()] for key, value in sorted(self.by_role.items()) if value.handoffs],
+                "by_model": [[key, *value.export()] for key, value in sorted(self.by_model.items()) if value.handoffs],
+                "outcomes": [[key, count] for key, count in sorted(self.outcomes.items()) if count],
+            }
+        if self.claims["ingested"]:
+            totals["claims"] = [self.claims[key] for key in _CLAIM_TALLIES]
+        ones = [(key, None) for key, count in self.supports.items() if count == 1]
+        more = [[key, count] for key, count in sorted(self.supports.items()) if count > 1]
+        if ones or more:
+            totals["supports"] = [_encode_ids(ones, False) if ones else [], more]
+        keys: list[list[str]] = []
+        for candidate, values in sorted(self.support_keys.items()):
+            ordered = sorted(values)
+            for start in range(0, len(ordered), _SUPPORT_KEYS_PER_STRING):
+                chunk = b"".join(ordered[start:start + _SUPPORT_KEYS_PER_STRING])
+                keys.append([candidate, base64.urlsafe_b64encode(chunk).decode("ascii").rstrip("=")])
+        if keys:
+            totals["support_keys"] = keys
+        if self.overrides:
+            totals["overrides"] = self.overrides
+        if self.mechanism:
+            totals["mechanism"] = [[check, digest, identifier] for (check, digest), identifier in sorted(self.mechanism.items())]
+        return totals
+
+    @classmethod
+    def load(cls, totals: dict[str, object]) -> "_Totals":
+        result = cls()
+        result.counts = dict(totals.get("counts", {}))
+        usage = totals.get("usage")
+        if usage:
+            result.usage = _UsageSum.load(usage["all"])
+            result.by_role = {row[0]: _UsageSum.load(row[1:], _USAGE_GROUP_FIELDS) for row in usage["by_role"]}
+            result.by_model = {row[0]: _UsageSum.load(row[1:], _USAGE_GROUP_FIELDS) for row in usage["by_model"]}
+            result.outcomes = {row[0]: row[1] for row in usage["outcomes"]}
+        if "claims" in totals:
+            result.claims = dict(zip(_CLAIM_TALLIES, totals["claims"]))
+        if "supports" in totals:
+            ones, more = totals["supports"]
+            result.supports = {identifier: 1 for identifier, _ in _decode_ids(ones, False)}
+            result.supports.update((row[0], row[1]) for row in more)
+        for candidate, text in totals.get("support_keys", []):
+            raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+            result.support_keys.setdefault(candidate, set()).update(
+                raw[start:start + _SUPPORT_KEY_BYTES] for start in range(0, len(raw), _SUPPORT_KEY_BYTES))
+        result.overrides = totals.get("overrides", 0)
+        result.mechanism = {(row[0], row[1]): row[2] for row in totals.get("mechanism", [])}
+        return result
+
+
+def _archive_totals(state: dict[str, object]) -> _Totals:
+    """All eviction entries' totals combined (a fresh object the caller may extend)."""
+    combined = _Totals()
+    entries = _eviction_entries(state)
+    if not entries:
+        return combined
+    derived = _archive_derived(state)
+    cached = derived.get("totals")
+    if cached is None:
+        cached = _Totals()
+        for entry in entries:
+            cached.merge(_Totals.load(entry["totals"]))
+        derived["totals"] = cached
+    combined.merge(cached)  # type: ignore[arg-type]
+    return combined
+
+
+def _totals_problem(totals: object, counts: dict[str, int], entry_observations: set[str],
+                    requirements: set[str]) -> str | None:
+    """Check what is checkable in one entry's totals against its decoded ids."""
+    allowed = {"counts", "usage", "claims", "supports", "support_keys", "overrides", "mechanism"}
+    if not isinstance(totals, dict) or set(totals) - allowed or totals.get("counts") != counts:
+        return "totals whose counts match the entry's ids"
+    handoffs = counts.get("handoffs", 0)
+    usage = totals.get("usage")
+    if usage is not None:
+        if not isinstance(usage, dict) or set(usage) != {"all", "by_role", "by_model", "outcomes"}:
+            return "usage totals {all, by_role, by_model, outcomes}"
+        problem = _usage_sum_problem(usage["all"], _USAGE_SUM_FIELDS)
+        if problem:
+            return problem
+        all_handoffs = usage["all"][0]
+        if all_handoffs > handoffs:
+            return "usage totals for at most the evicted handoffs"
+        for field in ("by_role", "by_model"):
+            rows = usage[field]
+            if not isinstance(rows, list) or not rows or not all(isinstance(row, list) and row and isinstance(row[0], str) and 0 < len(row[0]) <= 128 for row in rows):
+                return f"usage {field} rows [name, ...totals]"
+            if len({row[0] for row in rows}) != len(rows):
+                return f"unique usage {field} names"
+            for row in rows:
+                problem = _usage_sum_problem(row[1:], _USAGE_GROUP_FIELDS)
+                if problem:
+                    return problem
+            if sum(row[1] for row in rows) != all_handoffs:
+                return f"usage {field} rows that add up to the usage total"
+        rows = usage["outcomes"]
+        if (not isinstance(rows, list) or not all(isinstance(row, list) and len(row) == 2 and isinstance(row[0], str)
+                                                   and type(row[1]) is int and row[1] >= 1 for row in rows)
+                or len({row[0] for row in rows}) != len(rows) or sum(row[1] for row in rows) != all_handoffs):
+            return "usage outcome counts that add up to the usage total"
+    claims = totals.get("claims")
+    if claims is not None:
+        if (not isinstance(claims, list) or len(claims) != len(_CLAIM_TALLIES) or not all(type(value) is int and value >= 0 for value in claims)
+                or not 1 <= claims[0] <= handoffs or claims[1] + claims[2] > claims[0] or claims[3] > claims[0]):
+            return "claims tallies [ingested, missing, malformed, truncated] for at most the evicted handoffs"
+    supports = totals.get("supports")
+    if supports is not None:
+        if not isinstance(supports, list) or len(supports) != 2 or not isinstance(supports[1], list) or claims is None:
+            return "support counts [requirements with one support, [[requirement, count >= 2], ...]]"
+        ones: list[str] = []
+        if supports[0]:
+            problem, _ = _encoded_ids_problem(supports[0], False)
+            if problem:
+                return "support counts: " + problem
+            ones = [identifier for identifier, _ in _decode_ids(supports[0], False)]
+        more = supports[1]
+        if not all(isinstance(row, list) and len(row) == 2 and type(row[1]) is int and row[1] >= 2 for row in more):
+            return "support counts [[requirement, count >= 2], ...]"
+        named = ones + [row[0] for row in more]
+        if not named or len(set(named)) != len(named) or not set(named) <= requirements:
+            return "support counts per registered requirement"
+    keys = totals.get("support_keys", [])
+    if not isinstance(keys, list):
+        return "support dedupe keys"
+    for row in keys:
+        if not isinstance(row, list) or len(row) != 2 or not isinstance(row[0], str) or not _ID_LABEL.fullmatch(row[0]) or not isinstance(row[1], str):
+            return "support dedupe keys [candidate, base64]"
+        try:
+            raw = base64.urlsafe_b64decode(row[1] + "=" * (-len(row[1]) % 4))
+        except (ValueError, TypeError):
+            return "support dedupe keys [candidate, base64]"
+        if not raw or len(raw) % _SUPPORT_KEY_BYTES:
+            return f"support dedupe keys of {_SUPPORT_KEY_BYTES} bytes each"
+    overrides = totals.get("overrides", 0)
+    if type(overrides) is not int or overrides < 0 or overrides > counts.get("judgments", 0) or ("overrides" in totals and not overrides):
+        return "an override count of at most the evicted judgments"
+    mechanism = totals.get("mechanism", [])
+    if (not isinstance(mechanism, list) or not all(
+            isinstance(row, list) and len(row) == 3 and isinstance(row[0], str) and _CHECK_ID.fullmatch(row[0])
+            and _is_hex64(row[1]) and row[2] in entry_observations for row in mechanism)
+            or len({(row[0], row[1]) for row in mechanism}) != len(mechanism)):
+        return "tamper dedupe keys [check id, files digest, evicted observation id]"
+    return None
+
+
+# --- the latest evicted judgment per (requirement, candidate) ---
+
+def _outcome_code(item: dict[str, object]) -> int:
+    return _JUDGMENT_OUTCOMES.index(item["outcome"]) + (4 if "override_reason" in item else 0)
+
+
+def _judgment_at(state: dict[str, object], positions: list[int] | None = None) -> dict[int, str]:
+    """Judgment id per ledger position (evicted and hot)."""
+    if not _eviction_entries(state):
+        return {}
+    at = dict(_archive_derived(state)["at"]["judgments"])  # type: ignore[index]
+    judgments = (state.get("evidence_continuity") or {}).get("judgments", [])
+    at.update(zip(_hot_positions(state, "judgments") if positions is None else positions, (item["id"] for item in judgments)))
+    return at
+
+
+def _settled_latest_rows(state: dict[str, object], at: dict[int, str] | None = None):
+    """Yield (requirement, candidate, [first, last, id, code, observation count]) from ``settled.latest``.
+
+    A row is ``[requirement, outcome code, last position, first position?, observation count?]``
+    (first defaults to last, the count to 1); the latest id is the judgment at the last position.
+    """
+    settled = state.get("settled")
+    if not settled:
+        return
+    at = _judgment_at(state) if at is None else at
+    for candidate, rows in settled.get("latest", []):
+        for row in rows:
+            first = row[3] if len(row) > 3 else row[2]
+            count = row[4] if len(row) > 4 else 1
+            yield row[0], candidate, [first, row[2], at.get(row[2]), row[1], count]
+
+
+def _judgment_keys(state: dict[str, object]) -> list[tuple[tuple[str, str], list[object]]]:
+    """Every (requirement, candidate) judged in this task with [first position, last position, latest id,
+    outcome code, observation count], in order of first judgment (hot and evicted combined)."""
+    keys: dict[tuple[str, str], list[object]] = {}
+    judgments = (state.get("evidence_continuity") or {}).get("judgments", [])
+    positions = _hot_positions(state, "judgments")
+    if state.get("settled"):
+        for requirement, candidate, row in _settled_latest_rows(state, _judgment_at(state, positions)):
+            keys[(requirement, candidate)] = row
+    for item, position in zip(judgments, positions):
+        key = (item["requirement_ref"], item["candidate"])
+        row = keys.get(key)
+        latest = [position, item["id"], _outcome_code(item), len(item["observation_refs"])]
+        if row is None:
+            keys[key] = [position, *latest]
+        else:
+            row[0] = min(row[0], position)
+            if position >= row[1]:
+                row[1:] = latest
+    return sorted(keys.items(), key=lambda pair: pair[1][0])
+
+
+def _latest_rows_problem(state: dict[str, object], index_map: dict[str, dict[str, tuple[int, int | None]]],
+                         requirements: set[str]) -> str | None:
+    settled = state.get("settled")
+    if settled is None:
+        return None
+    if not isinstance(settled, dict) or set(settled) != {"latest"} or not isinstance(settled["latest"], list):
+        return "a settled table {latest: [[candidate, rows], ...]}"
+    judgments = (state.get("evidence_continuity") or {}).get("judgments", [])
+    total = len(judgments) + len(index_map["judgments"])
+    at = _judgment_at(state)
+    seen: set[tuple[str, str]] = set()
+    for group in settled["latest"]:
+        if (not isinstance(group, list) or len(group) != 2 or not isinstance(group[0], str) or not _ID_LABEL.fullmatch(group[0])
+                or not isinstance(group[1], list) or not group[1]):
+            return "latest judgment groups [candidate, rows]"
+        for row in group[1]:
+            if (not isinstance(row, list) or not 3 <= len(row) <= 5 or not all(type(value) is int for value in row[1:])
+                    or row[0] not in requirements or (group[0], row[0]) in seen):
+                return "latest judgment rows [requirement, outcome code, last, first?, observations?] per registered requirement"
+            seen.add((group[0], row[0]))
+            code, last = row[1], row[2]
+            first = row[3] if len(row) > 3 else last
+            count = row[4] if len(row) > 4 else 1
+            if code not in range(5) or not 0 <= first <= last < total or not 1 <= count <= 64 or last not in at:
+                return "latest judgment rows whose positions name judgments of this task"
+    return None
+
+
+def _merge_latest(state: dict[str, object], evicted: list[tuple[dict[str, object], int]]) -> None:
+    """Fold evicted judgments (with their positions) into ``settled.latest``."""
+    keys = {(requirement, candidate): row for requirement, candidate, row in _settled_latest_rows(state, {})}
+    for item, position in evicted:
+        key = (item["requirement_ref"], item["candidate"])
+        latest = [position, item["id"], _outcome_code(item), len(item["observation_refs"])]
+        row = keys.get(key)
+        if row is None:
+            keys[key] = [position, *latest]
+        else:
+            row[0] = min(row[0], position)
+            if position >= row[1]:
+                row[1:] = latest
+    groups: dict[str, list[list[object]]] = {}
+    for (requirement, candidate), (first, last, _, code, count) in sorted(keys.items(), key=lambda pair: (pair[0][1], pair[1][0])):
+        row: list[object] = [requirement, code, last]
+        if first != last or count != 1:
+            row.append(first)
+        if count != 1:
+            row.append(count)
+        groups.setdefault(candidate, []).append(row)
+    if groups:
+        state["settled"] = {"latest": [[candidate, rows] for candidate, rows in groups.items()]}
+
+
+# --- what stays hot ---
+
+def _hot_keep(state: dict[str, object]) -> dict[str, set[str]]:
+    """Ids of hot objects that must stay hot; every other object of an archivable list may be evicted.
+
+    Hot: open evidence (unincorporated observations, unresolved judgments and the observations they
+    cite, handoffs with open observations or no returned result yet), every judgment that cites a hot
+    observation (incorporation and citation of hot observations are computed from hot judgments) and
+    every judgment that resolves a hot repair/unknown judgment, the handoff of every hot observation,
+    the last ``CHANGES_SINCE_RECENT_MAX`` handoffs, observations and judgments (``changes_since``),
+    the last 8 overridden judgments, handoffs without typed claims and handoffs with truncated claims
+    (status lists), current records and records written in the last ``CHANGES_SINCE_RECENT_MAX``
+    revisions, the last two runs of every declared check (and of every other verification kind), and
+    every source a hot object, an artifact or a hot source cites. Requirements, checks, artifacts,
+    authority and closure are never evicted.
+    """
+    tail = CHANGES_SINCE_RECENT_MAX
     data = state.get("evidence_continuity") or {}
     observations = data.get("observations", [])
     judgments = data.get("judgments", [])
     handoffs = data.get("handoffs", [])
-    pending, unresolved, _ = _continuity_open(state)
-    open_observations = {item["observation_id"] for item in pending}
-    open_judgments = {item["id"] for item in unresolved}
-    by_id = {judgment["id"]: judgment for judgment in judgments}
-    open_observations |= {ref for identifier in open_judgments for ref in by_id[identifier]["observation_refs"]}
-    open_handoffs = {item["handoff_id"] for item in observations if item["id"] in open_observations and item.get("handoff_id")}
+    pending, unresolved, _ = _continuity_open(state, latest=False)
+    unresolved_ids = {item["id"] for item in unresolved}
+    by_id = {item["id"]: item for item in judgments}
+    keep_obs = {item["observation_id"] for item in pending}
+    for identifier in unresolved_ids:
+        keep_obs.update(by_id[identifier]["observation_refs"])
+    open_obs = set(keep_obs)
+    keep_obs.update(item["id"] for item in observations[-tail:])
+    keep_obs &= {item["id"] for item in observations}
+    keep_j = set(unresolved_ids) | {item["id"] for item in judgments[-tail:]}
+    keep_j.update([item["id"] for item in judgments if "override_reason" in item][-_ARCHIVE_KEEP_LISTED:])
+    keep_j.update(item["id"] for item in judgments if any(ref in keep_obs for ref in item["observation_refs"]))
+    order = {item["id"]: index for index, item in enumerate(judgments)}
+    frontier = list(keep_j)
+    while frontier:
+        identifier = frontier.pop()
+        judgment = by_id[identifier]
+        if judgment["outcome"] not in ("repair", "unknown") or identifier in unresolved_ids:
+            continue
+        basis = set(judgment["observation_refs"])
+        for later in judgments[order[identifier] + 1:]:
+            if later["id"] not in keep_j and (identifier in later.get("judgment_refs", []) or (
+                    later["requirement_ref"] == judgment["requirement_ref"] and basis <= set(later["observation_refs"]))):
+                keep_j.add(later["id"])
+                frontier.append(later["id"])
     returned = {item["handoff_id"] for item in observations if item.get("handoff_id")}
-    settled: dict[str, set[str]] = {name: set() for name in _ARCHIVE_COLLECTIONS}
-    settled["observations"] = {item["id"] for item in observations if item["id"] not in open_observations}
-    settled["judgments"] = {item["id"] for item in judgments if item["id"] not in open_judgments}
-    settled["handoffs"] = {item["id"] for item in handoffs if item["id"] not in open_handoffs and (
+    keep_h = {item["id"] for item in handoffs if not (
         item["id"] in returned or "claims" in item or (isinstance(item.get("usage"), dict) and item["usage"].get("outcome")))}
+    keep_h.update(item["handoff_id"] for item in observations
+                  if (item["id"] in keep_obs or item["id"] in open_obs) and item.get("handoff_id"))
+    keep_h.update(item["id"] for item in handoffs[-tail:])
+    keep_h.update([item["id"] for item in handoffs if "claims" in item and item["claims"]["status"] != "present"][-_ARCHIVE_KEEP_LISTED:])
+    keep_h.update([item["id"] for item in handoffs if "claims" in item and item["claims"].get("truncated")][-_ARCHIVE_KEEP_LISTED:])
     records = state.get("records", [])
     superseded = {ref for item in records for ref in item.get("supersedes", [])}
-    settled["records"] = {item["id"] for item in records if item["id"] in superseded}
+    keep_r = {item["id"] for item in records if item["id"] not in superseded or item["revision"] > state["revision"] - tail}
     runs: dict[tuple[str, str], list[str]] = {}
     for item in state.get("verification_results", []):
         key = ("check", str(item["check_id"])) if "check_id" in item else ("kind", str(item.get("kind")))
         runs.setdefault(key, []).append(item["id"])
-    settled["verification_results"] = {identifier for ids in runs.values() for identifier in ids[:-_ARCHIVE_KEEP_RUNS]}
-    # Sources stay hot while anything hot cites them.
-    hot_refs: set[str] = set()
+    keep_v = {identifier for ids in runs.values() for identifier in ids[-_ARCHIVE_KEEP_RUNS:]}
+    cited: set[str] = set()
     for item in observations:
-        if item["id"] not in settled["observations"]:
-            hot_refs.update(item.get("source_refs", []))
+        if item["id"] in keep_obs:
+            cited.update(item.get("source_refs", []))
     for item in records:
-        if item["id"] not in settled["records"]:
-            hot_refs.update(item.get("source_refs", []))
+        if item["id"] in keep_r:
+            cited.update(item.get("source_refs", []))
     for item in state.get("artifact_refs", []):
-        hot_refs.update(item.get("source_refs", []))
+        cited.update(item.get("source_refs", []))
     for item in state.get("verification_results", []):
-        if item["id"] not in settled["verification_results"]:
-            hot_refs.update(item.get("source_refs", []))
+        if item["id"] in keep_v:
+            cited.update(item.get("source_refs", []))
     sources = {item["id"]: item for item in state.get("evidence_refs", [])}
-    frontier = [ref for ref in hot_refs if ref in sources]
+    frontier = [ref for ref in cited if ref in sources]
+    keep_s = set(frontier)
     while frontier:
         for parent in sources[frontier.pop()].get("source_refs", []):
-            if parent not in hot_refs and parent in sources:
-                hot_refs.add(parent)
+            if parent not in keep_s and parent in sources:
+                keep_s.add(parent)
                 frontier.append(parent)
-    settled["evidence_refs"] = set(sources) - hot_refs
-    return settled
+    return {"evidence_refs": keep_s, "records": keep_r, "verification_results": keep_v, "handoffs": keep_h,
+            "observations": keep_obs, "judgments": keep_j}
 
 
-def _archive_preview(value: str) -> str:
-    return value[:ARCHIVE_PREVIEW_CHARS].rstrip() + ARCHIVE_PREVIEW_SUFFIX
+# --- the eviction pass ---
+
+def _segment_bytes(task_id: str, revision: int, items: list[dict[str, object]]) -> bytes:
+    segment = {"format": ARCHIVE_SEGMENT_FORMAT, "version": ARCHIVE_SEGMENT_VERSION, "task_id": task_id,
+               "revision": revision, "items": items}
+    return (json.dumps(segment, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
 
-def _archive_stub(name: str, item: dict[str, object]) -> tuple[dict[str, object], dict[str, object], int]:
-    """(stub without its marker, moved fields, bytes saved before the marker) for one object."""
-    stub = dict(item)
-    moved: dict[str, object] = {}
-    saved = 0
-    for field in _ARCHIVE_BODY_FIELDS[name]:
-        value = item.get(field)
-        if isinstance(value, str) and len(value) > ARCHIVE_INLINE_MAX_CHARS:
-            preview = _archive_preview(value)
-            moved[field] = value
-            stub[field] = preview
-            saved += _compact_size(value) - _compact_size(preview)
-        elif isinstance(value, list) and value and _compact_size(value) > ARCHIVE_INLINE_MAX_CHARS:
-            moved[field] = value
-            if field == "durable_paths":
-                del stub[field]
-                saved += _compact_size(value) + len(f',"{field}":')
-            else:
-                stub[field] = []
-                saved += _compact_size(value) - 2
-    return stub, moved, saved
+def _evictable_bytes(state: dict[str, object], keep: dict[str, set[str]]) -> int:
+    """Serialized bytes an eviction pass would remove (an estimate that ignores the index entry it adds)."""
+    return sum(_compact_size(item) + 1 for name in _ARCHIVE_COLLECTIONS for item in _archive_collection(state, name)
+               if item["id"] not in keep[name])
 
 
-def _archive_settled(state: dict[str, object], crowded: set[str]) -> tuple[dict[str, object], bytes] | None:
-    """Build (archived copy of ``state``, segment bytes), or None when nothing would move.
+def _evict_settled(state: dict[str, object], keep: dict[str, set[str]] | None = None) -> tuple[dict[str, object], bytes] | None:
+    """Build (state with every settled object evicted, segment bytes), or None when nothing is settled.
 
-    Pure: nothing is written. An object is archived when it is settled and either its moved bodies
-    save more than its marker costs, or its collection is crowded (then it is stubbed even with
-    nothing to move, so it stops counting toward the hot item cap).
+    Pure: nothing is written. Evicted objects (schema-10 stubs included, as they are) leave their
+    hot lists; the new index entry lists their ids and positions and carries their totals, and
+    evicted judgments are folded into ``settled.latest``.
     """
-    settled = _settled_ids(state)
+    archive = state.get("archive") or []
+    if len(archive) >= ARCHIVE_INDEX_MAX:
+        return None
+    keep = _hot_keep(state) if keep is None else keep
     candidate = copy.deepcopy(state)
-    entries: list[dict[str, object]] = []
-    stubs: list[dict[str, object]] = []
-    collections: dict[str, int] = {}
+    index_map = _index_map(candidate)
+    items: list[dict[str, object]] = []
+    pairs: dict[str, list[tuple[str, int | None]]] = {}
+    totals = _Totals()
+    judgments: list[tuple[dict[str, object], int]] = []
     for name in _ARCHIVE_COLLECTIONS:
         values = _archive_collection(candidate, name)
-        for position, item in enumerate(values):
-            if "archived" in item or item["id"] not in settled[name]:
+        positions = _hot_positions(candidate, name, index_map) if name in _POSITIONED else [None] * len(values)
+        kept: list[dict[str, object]] = []
+        for item, position in zip(values, positions):
+            if item["id"] in keep[name]:
+                kept.append(item)
                 continue
-            stub, moved, saved = _archive_stub(name, item)
-            if saved <= _ARCHIVE_MARKER_BYTES and name not in crowded:
-                continue
-            values[position] = stub
-            stubs.append(stub)
-            entries.append({"collection": name, "id": item["id"], "fields": moved})
-            collections[name] = collections.get(name, 0) + 1
-    if not entries:
+            index_name = "check_runs" if name == "verification_results" and "check_id" in item else name
+            record: dict[str, object] = {"collection": index_name, "id": item["id"], "object": item}
+            if position is not None:
+                record["position"] = position
+            items.append(record)
+            pairs.setdefault(index_name, []).append((str(item["id"]), position))
+            totals.add(index_name, item)
+            if name == "judgments":
+                judgments.append((item, int(position)))
+        values[:] = kept
+    if not items:
         return None
-    segment = {"format": ARCHIVE_SEGMENT_FORMAT, "version": ARCHIVE_SEGMENT_VERSION, "task_id": candidate["task_id"],
-               "revision": candidate["revision"], "items": entries}
-    raw = (json.dumps(segment, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-    sha = hashlib.sha256(raw).hexdigest()
-    for stub in stubs:
-        stub["archived"] = sha
-    index = candidate.setdefault("archive", [])
-    index.append({"sha256": sha, "revision": candidate["revision"], "items": len(entries), "collections": collections})
+    raw = _segment_bytes(str(candidate["task_id"]), int(candidate["revision"]), items)
+    entry = {"sha256": hashlib.sha256(raw).hexdigest(), "revision": candidate["revision"],
+             "ids": {name: _encode_ids(values, name in _POSITIONED) for name, values in sorted(pairs.items())},
+             "totals": totals.export()}
+    candidate["archive"] = [*archive, entry]
+    _merge_latest(candidate, judgments)
     return candidate, raw
 
+
+def _compact_archive(root: Path, state: dict[str, object]) -> tuple[dict[str, object], bytes] | None:
+    """Merge small eviction segments into one when the index holds many of them.
+
+    Above ``ARCHIVE_COMPACT_ENTRIES`` eviction entries, the entries whose segment files are below
+    ``ARCHIVE_COMPACT_SEGMENT_BYTES`` (up to ``ARCHIVE_COMPACT_MAX_BYTES`` in all) are read,
+    verified and merged into one new segment holding exactly the objects they still claim; their
+    index entries become one entry with the merged ids and the summed totals. Pure apart from
+    reading segments: returns (new state, new segment bytes), or None when nothing qualifies or a
+    segment cannot be read (the index then stays as it is).
+    """
+    archive = state.get("archive") or []
+    entries = [(number, entry) for number, entry in enumerate(archive) if isinstance(entry, dict) and "ids" in entry]
+    if len(entries) <= ARCHIVE_COMPACT_ENTRIES:
+        return None
+    task_id = str(state["task_id"])
+    chosen: list[tuple[int, dict[str, object]]] = []
+    total = 0
+    for number, entry in entries:
+        try:
+            size = _archive_segment_path(root, task_id, str(entry["sha256"])).stat().st_size
+        except (OSError, ValueError):
+            continue
+        if size < ARCHIVE_COMPACT_SEGMENT_BYTES and total + size <= ARCHIVE_COMPACT_MAX_BYTES:
+            chosen.append((number, entry))
+            total += size
+    if len(chosen) < 2:
+        return None
+    items: list[dict[str, object]] = []
+    pairs: dict[str, list[tuple[str, int | None]]] = {}
+    totals = _Totals()
+    for _, entry in chosen:
+        try:
+            segment = _read_archive_segment(root, task_id, str(entry["sha256"]))
+        except ThalirisError:
+            return None
+        claimed: dict[tuple[str, str], int | None] = {}
+        for name, encoded in entry["ids"].items():
+            for identifier, position in _decode_ids(encoded, name in _POSITIONED):
+                claimed[(name, identifier)] = position
+                pairs.setdefault(name, []).append((identifier, position))
+        held = [item for item in segment["items"] if isinstance(item, dict)
+                and claimed.get((item.get("collection"), item.get("id")), "absent") == item.get("position")]
+        if len(held) != len(claimed):
+            return None
+        items.extend(held)
+        totals.merge(_Totals.load(entry["totals"]))
+    raw = _segment_bytes(task_id, int(state["revision"]), items)
+    merged = {"sha256": hashlib.sha256(raw).hexdigest(), "revision": state["revision"],
+              "ids": {name: _encode_ids(sorted(values, key=lambda pair: pair[1]) if name in _POSITIONED else values, name in _POSITIONED)
+                      for name, values in sorted(pairs.items())},
+              "totals": totals.export()}
+    numbers = {number for number, _ in chosen}
+    first = min(numbers)
+    candidate = {**state, "archive": [merged if number == first else entry for number, entry in enumerate(archive)
+                                      if number == first or number not in numbers]}
+    return candidate, raw
+
+
+# --- segments ---
 
 def _archive_segment_path(root: Path, task_id: str, sha256: str) -> Path:
     if str(uuid.UUID(task_id)) != task_id or not _is_hex64(sha256):
@@ -1366,8 +2244,9 @@ def _write_archive_segment(root: Path, task_id: str, raw: bytes) -> None:
 def _archive_unavailable(identifier: str, sha: object, reason: str, object_type: str | None = None) -> ThalirisError:
     return ThalirisError(
         _errors.TASK_ARCHIVE_UNAVAILABLE, "archived task object body is unavailable",
-        recovery=("restore the segment file with its exact bytes (its sha256 is its name) from a copy; the stub "
-                  "fields stay in the hot ledger, and gates, task-status and every other write keep working"),
+        recovery=("restore the segment file with its exact bytes (its sha256 is its name) from a copy; the hot "
+                  "ledger and its archive index are intact, and gates, task-status and every write that does not "
+                  "need this object keep working"),
         details={"id": identifier, "segment": sha if isinstance(sha, str) else None, "reason": reason,
                  **({"object_type": object_type} if object_type else {})})
 
@@ -1393,18 +2272,18 @@ def _read_archive_segment(root: Path, task_id: str, sha: str, identifier: str = 
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise _archive_unavailable(identifier, sha, "invalid JSON") from exc
     if (not isinstance(segment, dict) or segment.get("format") != ARCHIVE_SEGMENT_FORMAT
-            or segment.get("version") != ARCHIVE_SEGMENT_VERSION or segment.get("task_id") != task_id
+            or segment.get("version") not in _ARCHIVE_SEGMENT_VERSIONS or segment.get("task_id") != task_id
             or not isinstance(segment.get("items"), list)):
         raise _archive_unavailable(identifier, sha, "not a segment of this task")
     return segment
 
 
 def hydrate_archived(root: Path, state: dict[str, object], collection: str, item: dict[str, object]) -> dict[str, object]:
-    """The full object for a stub (the stub itself when it is not archived).
+    """The full object for a schema-10 stub (the item itself when it carries no ``archived`` marker).
 
-    Reads the referenced segment and verifies its sha256; raises TASK_ARCHIVE_UNAVAILABLE when it is
-    missing, damaged or does not hold this object. Stub fields win over segment fields (a handoff
-    stub may gain usage or claims after archiving); the segment supplies only the moved bodies.
+    Reads the referenced version-1 segment and verifies its sha256; raises TASK_ARCHIVE_UNAVAILABLE
+    when it is missing, damaged or does not hold this object. Stub fields win over segment fields (a
+    handoff stub may gain usage or claims after archiving); the segment supplies only moved bodies.
     """
     sha = item.get("archived")
     if sha is None:
@@ -1422,55 +2301,289 @@ def hydrate_archived(root: Path, state: dict[str, object], collection: str, item
     raise _archive_unavailable(identifier, sha, "segment does not hold this object")
 
 
-def _validate_archive_index(state: dict[str, object]) -> None:
-    """Cross-check the ``archive`` index against every stub; segment contents are never read here."""
+def _evicted_object(root: Path, state: dict[str, object], name: str, identifier: str,
+                    located: tuple[int, int | None]) -> tuple[dict[str, object], str]:
+    """(object exactly as it was evicted, segment sha) for an indexed id; a schema-10 stub stays a stub."""
+    entry = state["archive"][located[0]]
+    sha = str(entry["sha256"])
+    segment = _read_archive_segment(root, str(state["task_id"]), sha, identifier)
+    for item in segment["items"]:
+        if (isinstance(item, dict) and item.get("collection") == name and item.get("id") == identifier
+                and item.get("position") == located[1] and isinstance(item.get("object"), dict)
+                and item["object"].get("id") == identifier):
+            return item["object"], sha
+    raise _archive_unavailable(identifier, sha, "segment does not hold this object")
+
+
+def archived_object(root: Path, state: dict[str, object], identifier: str) -> tuple[str, dict[str, object], str] | None:
+    """(index collection, full object, segment sha) of an evicted id, or None when it is not evicted."""
+    if not _eviction_entries(state):
+        return None
+    index_map = _index_map(state)
+    for name in _INDEX_COLLECTIONS:
+        located = index_map[name].get(identifier)
+        if located is not None:
+            item, sha = _evicted_object(root, state, name, identifier, located)
+            hot_name = "verification_results" if name == "check_runs" else name
+            return name, hydrate_archived(root, state, hot_name, item), sha
+    return None
+
+
+def _remove_from_index(state: dict[str, object], removed: list[tuple[str, str, dict[str, object] | None]]) -> None:
+    """Drop ids from their entries and subtract what those objects contributed to the entry totals.
+
+    ``removed`` holds (index collection, id, object or None for count-only objects). An entry left
+    without ids is dropped; ``settled.latest`` keeps naming a re-hydrated judgment (now hot at the
+    same position), which keeps every latest/first answer unchanged.
+    """
+    if not removed:
+        return
+    index_map = _index_map(state)
+    by_entry: dict[int, list[tuple[str, str, dict[str, object] | None]]] = {}
+    for name, identifier, item in removed:
+        by_entry.setdefault(index_map[name][identifier][0], []).append((name, identifier, item))
+    archive = list(state["archive"])
+    for number, members in by_entry.items():
+        entry = archive[number]
+        gone = {(name, identifier) for name, identifier, _ in members}
+        ids: dict[str, list[object]] = {}
+        for name, encoded in entry["ids"].items():
+            remaining = [(identifier, position) for identifier, position in _decode_ids(encoded, name in _POSITIONED)
+                         if (name, identifier) not in gone]
+            if remaining:
+                ids[name] = _encode_ids(remaining, name in _POSITIONED)
+        totals = _Totals.load(entry["totals"])
+        for name, identifier, item in members:
+            if item is None:
+                totals.counts[name] -= 1
+            else:
+                totals.add(name, item, -1)
+        archive[number] = {**entry, "ids": ids, "totals": totals.export()} if ids else None
+    remaining_entries = [entry for entry in archive if entry is not None]
+    if remaining_entries:
+        state["archive"] = remaining_entries
+    else:
+        state.pop("archive", None)
+    if not _eviction_entries(state):
+        # Every evicted object is hot again, so hot judgments alone answer every latest/first question.
+        state.pop("settled", None)
+
+
+def _rehydrate(root: Path, state: dict[str, object], wanted: list[tuple[str, str]]) -> None:
+    """Return evicted objects to their hot lists, at their exact positions, all or nothing.
+
+    ``wanted`` holds (index collection, id). Raises TASK_ARCHIVE_UNAVAILABLE (state unchanged) when
+    a segment cannot be read.
+    """
+    index_map = _index_map(state)
+    restored: list[tuple[str, str, dict[str, object], int | None]] = []
+    seen: set[tuple[str, str]] = set()
+    for name, identifier in wanted:
+        if (name, identifier) in seen or identifier not in index_map[name]:
+            continue
+        seen.add((name, identifier))
+        located = index_map[name][identifier]
+        item, _ = _evicted_object(root, state, name, identifier, located)
+        restored.append((name, identifier, copy.deepcopy(item), located[1]))
+    if not restored:
+        return
+    for hot_name in {("verification_results" if name == "check_runs" else name) for name, _, _, _ in restored}:
+        values = _archive_collection(state, hot_name)
+        returning = [(position, item) for name, _, item, position in restored
+                     if ("verification_results" if name == "check_runs" else name) == hot_name]
+        if hot_name in _POSITIONED:
+            merged = sorted([*zip(_hot_positions(state, hot_name, index_map), values), *returning], key=lambda pair: pair[0])
+            values[:] = [item for _, item in merged]
+        else:
+            values.extend(item for _, item in returning)
+    _remove_from_index(state, [(name, identifier, item) for name, identifier, item, _ in restored])
+
+
+def _rehydrate_from_state(state: dict[str, object], wanted: list[tuple[str, str]]) -> None:
+    """``_rehydrate`` for in-memory transactions: the segments are read under the root ``_load_state`` saw."""
+    if not wanted:
+        return
+    root = _archive_roots.get().get(str(state.get("task_id")))
+    if root is None:
+        raise ThalirisError(_errors.TASK_ARCHIVE_UNAVAILABLE, "archived task object body is unavailable",
+                            recovery="load the task through Core so its archive segments can be read; nothing was recorded",
+                            details={"ids": [identifier for _, identifier in wanted][:8], "reason": "no project root is known for this task"})
+    _rehydrate(root, state, wanted)
+
+
+def _cited_evicted_sources(state: dict[str, object]) -> list[str]:
+    """Evicted source ids that hot objects (observations, records, artifacts, results, sources) cite."""
+    if not _eviction_entries(state):
+        return []
+    indexed = _index_map(state)["evidence_refs"]
+    if not indexed:
+        return []
+    cited: set[str] = set()
+    for item in (state.get("evidence_continuity") or {}).get("observations", []):
+        cited.update(item.get("source_refs", []))
+    for name in ("records", "artifact_refs", "verification_results", "evidence_refs"):
+        for item in state.get(name, []):
+            if isinstance(item, dict):
+                cited.update(item.get("source_refs", []))
+    return sorted(cited & indexed.keys())
+
+
+def _rehydrate_cited_sources(root: Path, state: dict[str, object]) -> bool:
+    """Best effort: bring back evicted sources that hot objects cite again; an unreadable segment
+    leaves them evicted (they stay valid references). Returns whether anything came back."""
+    changed = False
+    unavailable: set[str] = set()
+    wanted = _cited_evicted_sources(state)
+    while wanted:
+        try:
+            _rehydrate(root, state, [("evidence_refs", identifier) for identifier in wanted])
+            changed = True
+        except ThalirisError as exc:
+            if exc.code != _errors.TASK_ARCHIVE_UNAVAILABLE:
+                raise
+            for identifier in wanted:
+                try:
+                    _rehydrate(root, state, [("evidence_refs", identifier)])
+                    changed = True
+                except ThalirisError as single:
+                    if single.code != _errors.TASK_ARCHIVE_UNAVAILABLE:
+                        raise
+                    unavailable.add(identifier)
+        wanted = [identifier for identifier in _cited_evicted_sources(state) if identifier not in unavailable]
+    return changed
+
+
+def _forget_check_runs(state: dict[str, object], check_id: str, below: int) -> None:
+    """Drop evicted results of one check with a run number below ``below`` (``record_check_run`` history)."""
+    if not _eviction_entries(state):
+        return
+    prefix = f"{check_id}.r"
+    dropped = []
+    for identifier in _index_map(state)["check_runs"]:
+        number = identifier[len(prefix):]
+        if identifier.startswith(prefix) and number.isdigit() and str(int(number)) == number and int(number) < below:
+            dropped.append(("check_runs", identifier, None))
+    _remove_from_index(state, dropped)
+
+
+# --- validation ---
+
+def _validate_archive_index(state: dict[str, object]) -> dict[str, dict[str, tuple[int, int | None]]]:
+    """Validate the ``archive`` index and ``settled`` table shapes; returns the evicted-id map.
+
+    Segment contents are never read here. Cross-checks that need the hot lists (references,
+    uniqueness against hot ids, totals and latest rows) run in ``_validate_archive_totals``.
+    """
     index = state.get("archive")
     stubs = list(_archived_items(state))
+    empty: dict[str, dict[str, tuple[int, int | None]]] = {name: {} for name in _INDEX_COLLECTIONS}
     if index is None:
         if stubs:
             raise ThalirisError(_errors.TASK_STATE_INVALID, "archived stub without an archive index",
                                 details={"id": str(stubs[0][1].get("id"))})
-        return
+        if "settled" in state:
+            raise ThalirisError(_errors.TASK_STATE_INVALID, "settled table without an archive index")
+        return empty
     if state.get("schema_version") < _ARCHIVE_SCHEMA_VERSION:
         raise ThalirisError(_errors.TASK_STATE_INVALID, "archive segments require task schema 10",
                             recovery="preserve the state and use a compatible reader")
-    if not isinstance(index, list) or not 1 <= len(index) <= STATE_LIST_MAX:
+    if not isinstance(index, list) or not 1 <= len(index) <= ARCHIVE_INDEX_MAX:
         raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid archive index",
-                            details={"expected": f"a list of 1 to {STATE_LIST_MAX} segment entries"})
-    entries: dict[str, dict[str, object]] = {}
+                            details={"expected": f"a list of 1 to {ARCHIVE_INDEX_MAX} segment entries"})
+    legacy: dict[str, dict[str, object]] = {}
+    shas: set[str] = set()
+    evicting = False
     for entry in index:
-        if (not isinstance(entry, dict) or set(entry) != _ARCHIVE_INDEX_FIELDS or not _is_hex64(entry["sha256"])
-                or entry["sha256"] in entries
-                or type(entry["revision"]) is not int or not 1 <= entry["revision"] <= state["revision"]
-                or type(entry["items"]) is not int or entry["items"] < 1
-                or not isinstance(entry["collections"], dict) or not entry["collections"]
-                or set(entry["collections"]) - set(_ARCHIVE_COLLECTIONS)
-                or not all(type(count) is int and count >= 1 for count in entry["collections"].values())
-                or sum(entry["collections"].values()) != entry["items"]):
+        if isinstance(entry, dict) and set(entry) == _ARCHIVE_INDEX_FIELDS:
+            if (not _is_hex64(entry["sha256"]) or type(entry["revision"]) is not int or not 1 <= entry["revision"] <= state["revision"]
+                    or type(entry["items"]) is not int or entry["items"] < 1
+                    or not isinstance(entry["collections"], dict) or not entry["collections"]
+                    or set(entry["collections"]) - set(_ARCHIVE_COLLECTIONS)
+                    or not all(type(count) is int and count >= 1 for count in entry["collections"].values())
+                    or sum(entry["collections"].values()) != entry["items"]):
+                raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid archive index",
+                                    details={"expected": "unique {sha256, revision, items, collections} entries"})
+            legacy[entry["sha256"]] = entry
+        elif isinstance(entry, dict) and set(entry) == _EVICTION_INDEX_FIELDS:
+            evicting = True
+            ids = entry["ids"]
+            if (not _is_hex64(entry["sha256"]) or type(entry["revision"]) is not int or not 1 <= entry["revision"] <= state["revision"]
+                    or not isinstance(ids, dict) or not ids or set(ids) - set(_INDEX_COLLECTIONS)):
+                raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid archive index",
+                                    details={"expected": "unique {sha256, revision, ids, totals} entries"})
+        else:
             raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid archive index",
-                                details={"expected": "unique {sha256, revision, items, collections} entries"})
-        entries[entry["sha256"]] = entry
+                                details={"expected": "{sha256, revision, ids, totals} or schema-10 {sha256, revision, items, collections} entries"})
+        if entry["sha256"] in shas:
+            raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid archive index", details={"expected": "unique segment digests"})
+        shas.add(entry["sha256"])
+    if (evicting or "settled" in state) and state.get("schema_version") < _EVICTION_SCHEMA_VERSION:
+        raise ThalirisError(_errors.TASK_STATE_INVALID, "evicted ledger objects require task schema 11",
+                            recovery="preserve the state and use a compatible reader")
+    if "settled" in state and not evicting:
+        raise ThalirisError(_errors.TASK_STATE_INVALID, "settled table without eviction segments")
+    result = empty
+    if evicting:
+        derived = _archive_derived(state)
+        if derived["problem"] is not None:
+            code, message, details = derived["problem"]  # type: ignore[misc]
+            raise ThalirisError(code, message, details=dict(details))
+        result = derived["map"]  # type: ignore[assignment]
     seen: dict[tuple[str, str], int] = {}
     for name, item in stubs:
         sha = item["archived"]
-        if not isinstance(sha, str) or sha not in entries:
+        if not isinstance(sha, str) or sha not in legacy:
             raise ThalirisError(_errors.TASK_STATE_INVALID, "archived stub names an unknown segment",
                                 details={"id": str(item.get("id")), "collection": name})
         key = (sha, name)
         seen[key] = seen.get(key, 0) + 1
-        if seen[key] > entries[sha]["collections"].get(name, 0):
+        if seen[key] > legacy[sha]["collections"].get(name, 0):
             raise ThalirisError(_errors.TASK_STATE_INVALID, "archived stubs exceed their segment entry",
                                 details={"segment": sha, "collection": name})
+    return result
+
+
+def _validate_archive_totals(state: dict[str, object], index_map: dict[str, dict[str, tuple[int, int | None]]]) -> None:
+    """Cross-check eviction totals and ``settled.latest`` against the ids and hot lists (what is checkable)."""
+    entries = state.get("archive") or []
+    if not _eviction_entries(state):
+        return
+    requirements = {item["id"] for item in (state.get("evidence_continuity") or {}).get("requirements", [])}
+    for name in _POSITIONED:
+        total = len(_archive_collection(state, name)) + len(index_map[name])
+        evicted_positions = _archive_derived(state)["positions"][name]  # type: ignore[index]
+        if evicted_positions and evicted_positions[-1] >= total:
+            raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid archive index ids",
+                                details={"collection": name, "expected": f"positions below {total}, the list length"})
+    derived = _archive_derived(state)
+    counts_by_entry: dict[int, dict[str, int]] = derived["counts"]  # type: ignore[assignment]
+    observations_by_entry: dict[int, set[str]] = derived["observations"]  # type: ignore[assignment]
+    for number, entry in enumerate(entries):
+        if "ids" not in entry:
+            continue
+        problem = _totals_problem(entry["totals"], counts_by_entry.get(number, {}), observations_by_entry.get(number, set()),
+                                  requirements)
+        if problem:
+            raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid archive totals",
+                                details={"segment": entry["sha256"], "expected": problem})
+    problem = _latest_rows_problem(state, index_map, requirements)
+    if problem:
+        raise ThalirisError(_errors.TASK_STATE_INVALID, "invalid settled latest judgments", details={"expected": problem})
 
 
 def archive_summary(state: dict[str, object]) -> dict[str, object] | None:
-    """Counts of archived stubs and segments, or None for a task that never archived."""
+    """Counts of archived objects and segments, or None for a task that never archived."""
     index = state.get("archive")
     if not index:
         return None
     by_collection: dict[str, int] = {}
     for name, _ in _archived_items(state):
         by_collection[name] = by_collection.get(name, 0) + 1
+    for entry in _eviction_entries(state):
+        for name, count in entry["totals"]["counts"].items():
+            target = "verification_results" if name == "check_runs" else name
+            by_collection[target] = by_collection.get(target, 0) + count
+    by_collection = dict(sorted(by_collection.items()))
     return {"segments": len(index), "archived_items": sum(by_collection.values()), "by_collection": by_collection,
             "last_revision": index[-1]["revision"],
             "retrieval": "task-get <id> returns the full object from its segment"}
@@ -1480,11 +2593,12 @@ def task_state_capacity() -> dict[str, int]:
     """The task-state bounds adapters must use instead of hard-coding them.
 
     ``max_bytes`` bounds the hot ledger file on disk (every read and write); archive segments are
-    separate files. ``list_max`` bounds the hot objects of a ledger list, ``archived_list_max`` a list
-    including archived stubs.
+    separate files. ``list_max`` bounds the hot objects of a ledger list (requirements:
+    ``archived_list_max``); evicted objects count toward no list cap.
     """
     return {"max_bytes": STATE_MAX_BYTES, "archive_high_water_bytes": STATE_ARCHIVE_HIGH_WATER_BYTES,
             "list_max": STATE_LIST_MAX, "archived_list_max": STATE_ARCHIVED_LIST_MAX,
+            "requirements_max": STATE_ARCHIVED_LIST_MAX, "archive_index_max": ARCHIVE_INDEX_MAX,
             "schema_version": _STATE_SCHEMA_VERSION, "supported_schemas": list(_SUPPORTED_SCHEMAS)}
 
 
@@ -1533,17 +2647,18 @@ def _load_state(root: Path, *, active: bool = False) -> dict[str, object]:
         raise ThalirisError(_errors.TASK_NOT_ACTIVE, "current task is not ACTIVE",
                             recovery="start a new task; a DONE task accepts no writes",
                             details={"task_id": state["task_id"], "status": state["status"]})
+    _register_archive_root(root, state)
     return state
 
 
 def _task_object_ids(state: dict[str, object]) -> set[str]:
-    """Return the single task-wide identity set for addressable objects."""
+    """Return the single task-wide identity set for addressable objects (evicted ids stay reserved)."""
     return {
         str(item["id"])
         for field in ("evidence_refs", "records", "artifact_refs", "verification_results")
         for item in state[field]
     } | {str(item["id"]) for item in state.get("checks", [])} | {
-        str(item["id"]) for values in state.get("evidence_continuity", {}).values() for item in values}
+        str(item["id"]) for values in state.get("evidence_continuity", {}).values() for item in values} | _indexed_ids(state)
 
 
 INPUT_ENCODINGS = ("UTF-8", "UTF-8 with BOM", "UTF-16 with BOM")
@@ -1742,7 +2857,7 @@ def task_update(root: Path, actor: str, base_revision: int, input_file: str | No
             additions = partial["evidence_refs"]
             if not isinstance(additions, list):
                 raise ValueError("evidence_refs must be append-only additions")
-            known_source_ids = {str(item["id"]) for item in state["evidence_refs"]}
+            known_source_ids = _known_ids(state, "evidence_refs")
             for item in additions:
                 _evidence_ref(item, known_source_ids)
                 if any(ref not in known_source_ids for ref in item.get("source_refs", [])):
@@ -1754,8 +2869,8 @@ def task_update(root: Path, actor: str, base_revision: int, input_file: str | No
             additions = partial["records"]
             if not isinstance(additions, list) or not additions:
                 raise ValueError("records must be append-only additions")
-            known_sources = {str(item["id"]) for item in state["evidence_refs"]}
-            known_records = {str(item["id"]) for item in state["records"]}
+            known_sources = _known_ids(state, "evidence_refs")
+            known_records = _known_ids(state, "records")
             for item in additions:
                 record = _normalize_new_record(item, producer=actor, revision=base_revision + 1, known_sources=known_sources, known_records=known_records)
                 state["records"].append(record)
@@ -1846,20 +2961,28 @@ def _continuity_error(code: str, message: str, kind: str | None = None, index: i
     return ThalirisError(code, text, recovery=recovery, details=details)
 
 
-def _validate_continuity(state: dict[str, object]) -> None:
+def _validate_continuity(state: dict[str, object],
+                         index_map: dict[str, dict[str, tuple[int, int | None]]] | None = None) -> None:
     data = state.get("evidence_continuity")
     if "evidence_continuity" not in state:
         return
     if not isinstance(data, dict) or set(data) != set(_CONTINUITY_KINDS):
         raise ThalirisError(_errors.CONTINUITY_INVALID, "invalid evidence continuity",
                             details={"expected": list(_CONTINUITY_KINDS)})
-    owners: dict[str, tuple[str, dict[str, object]]] = {}
+    if index_map is None:
+        index_map = _index_map(state)
+    owners: dict[str, tuple[str, dict[str, object] | None]] = {}
+    indexed_all: set[str] = _archive_derived(state)["ids"] if _eviction_entries(state) else set()  # type: ignore[assignment]
     for field in ("records", "evidence_refs", "artifact_refs", "verification_results", "checks"):
         for item in state.get(field, []):
             if isinstance(item, dict):
                 owners[str(item.get("id"))] = (field, item)
     requirements, handoffs, observations = {}, {}, {}
-    sources = {item["id"] for item in state["evidence_refs"]}
+    # Evicted handoffs, observations and judgments are present for references; their fields were
+    # checked when they were appended, so checks that read a referent's fields skip evicted ones.
+    evicted_handoffs, evicted_observations, evicted_judgments = (
+        index_map["handoffs"], index_map["observations"], index_map["judgments"])
+    sources = {item["id"] for item in state["evidence_refs"]} | set(index_map["evidence_refs"])
 
     def label(kind, index, item, field, text):
         value = item[field]
@@ -1912,11 +3035,12 @@ def _validate_continuity(state: dict[str, object]) -> None:
                     got={"missing": missing, "unexpected": unexpected} if isinstance(item, dict) else item)
             label(kind, index, item, "id", "continuity id")
             identifier = item["id"]
-            if identifier in owners:
-                owner_kind, owner = owners[identifier]
+            if identifier in owners or identifier in indexed_all:
+                owner_kind, owner = owners.get(identifier) or (
+                    next(name for name, bucket in index_map.items() if identifier in bucket), None)
                 extra = {"existing_collection": owner_kind}
                 recovery = "choose an id that is unused in this task; nothing was recorded"
-                if kind == "observations" and owner_kind == "observations":
+                if kind == "observations" and owner_kind == "observations" and owner is not None:
                     extra["existing_handoff_id"] = owner.get("handoff_id")
                     extra["handoff_id"] = item.get("handoff_id")
                     qualified = f"{item.get('handoff_id')}.{identifier}"
@@ -1958,7 +3082,7 @@ def _validate_continuity(state: dict[str, object]) -> None:
                     raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "handoff requires requirement refs", kind, index, item,
                                             field="requirement_refs", expected="non-empty for a root handoff (parent_handoff_id null)")
                 parent = item["parent_handoff_id"]
-                if parent is not None:
+                if parent is not None and not (isinstance(parent, str) and parent in evicted_handoffs and parent not in handoffs):
                     if not isinstance(parent, str) or parent not in handoffs:
                         raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "invalid parent handoff provenance", kind, index, item,
                                                 field="parent_handoff_id", expected="null or the id of an earlier registered handoff", got=parent)
@@ -2000,17 +3124,23 @@ def _validate_continuity(state: dict[str, object]) -> None:
                                                 field="claim", expected=problem)
                 local = local or mechanical  # both are detached from any native handoff
                 handoff = handoffs.get(item["handoff_id"]) if not local else None
-                if handoff is None and not local:
+                if handoff is None and not local and item["handoff_id"] in evicted_handoffs:
+                    # The handoff was evicted after this observation was checked against it (a new
+                    # observation re-hydrates its handoff first, see ``_append_continuity_items``):
+                    # only the registered-requirement and source checks below can run.
+                    refs(kind, index, item, "requirement_refs", requirements, "registered task requirement ids")
+                elif handoff is None and not local:
                     raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "observation handoff provenance conflict", kind, index, item,
                                             field="handoff_id", expected="the id of a registered handoff", got=item["handoff_id"])
-                for field in (() if local else ("producer", "candidate")):
+                for field in (() if local or handoff is None else ("producer", "candidate")):
                     if item[field] != handoff[field]:
                         raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "observation handoff provenance conflict", kind, index, item,
                                                 field=field, expected=f"{handoff[field]!r} as registered on handoff {handoff['id']}", got=item[field])
-                selected_refs = requirements if local else handoff["requirement_refs"]
-                refs(kind, index, item, "requirement_refs", selected_refs,
-                     "registered task requirement ids" if local else f"a subset of handoff {handoff['id']}'s requirement_refs {handoff['requirement_refs']}")
-                if not item["requirement_refs"] and (local or handoff["requirement_refs"]) and "claim" not in item:
+                if local or handoff is not None:
+                    selected_refs = requirements if local else handoff["requirement_refs"]
+                    refs(kind, index, item, "requirement_refs", selected_refs,
+                         "registered task requirement ids" if local else f"a subset of handoff {handoff['id']}'s requirement_refs {handoff['requirement_refs']}")
+                if (local or handoff is not None) and not item["requirement_refs"] and (local or handoff["requirement_refs"]) and "claim" not in item:
                     raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "observation requires requirement refs", kind, index, item,
                                             field="requirement_refs", expected="non-empty registered requirement ids" if local else f"non-empty; handoff {handoff['id']} carries {handoff['requirement_refs']}")
                 source_refs = item["source_refs"]
@@ -2038,13 +3168,15 @@ def _validate_continuity(state: dict[str, object]) -> None:
                     if problem or item["outcome"] != "satisfied":
                         raise _continuity_error(_errors.CONTINUITY_INVALID, "invalid judgment override", kind, index, item,
                                                 field="override_reason", expected=problem or "an override only on a satisfied judgment")
-                refs(kind, index, item, "observation_refs", observations,
+                refs(kind, index, item, "observation_refs", observations.keys() | evicted_observations.keys() if evicted_observations else observations,
                      "exact ids of observations registered in this task (as stored, e.g. adapter handoff-qualified ids)",
                      suggest=similar_observations)
                 prior = {j["id"]: j for j in data["judgments"][:index]}
-                refs(kind, index, item, "judgment_refs", prior,
+                refs(kind, index, item, "judgment_refs", prior.keys() | evicted_judgments.keys() if evicted_judgments else prior,
                      "ids of judgments that precede this one in list order (earlier items of the same batch count)")
-                foreign = [ref for ref in item.get("judgment_refs", []) if prior[ref]["requirement_ref"] != item["requirement_ref"]]
+                # An evicted judgment's requirement was checked when the citing judgment was appended
+                # (a new judgment re-hydrates the judgments it addresses first).
+                foreign = [ref for ref in item.get("judgment_refs", []) if ref in prior and prior[ref]["requirement_ref"] != item["requirement_ref"]]
                 if foreign:
                     raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "judgment continuity requirement conflict", kind, index, item,
                                             field="judgment_refs", expected=f"judgments about the same requirement {item['requirement_ref']}",
@@ -2062,14 +3194,17 @@ def _validate_continuity(state: dict[str, object]) -> None:
                                             field=body_field, expected="non-empty text of at most 16384 characters")
 
 
-def _continuity_open(state: dict[str, object]) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
-    """Return (unincorporated, unresolved judgments, latest judgments) in ledger order."""
+def _continuity_open(state: dict[str, object], *, latest: bool = True) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
+    """Return (unincorporated, unresolved judgments, latest judgments) in ledger order.
+
+    Open evidence is never evicted, and every judgment that cites a hot observation or resolves a
+    hot judgment stays hot (``_hot_keep``), so the first two come from the hot lists alone. Latest
+    judgments combine hot judgments with ``settled.latest`` (``_judgment_keys``); ``latest=False``
+    skips them.
+    """
     data = state.get("evidence_continuity", {})
     judgments = data.get("judgments", [])
     incorporated = {(j["requirement_ref"], ref) for j in judgments for ref in j["observation_refs"]}
-    latest = {}
-    for judgment in judgments:
-        latest[(judgment["requirement_ref"], judgment["candidate"])] = judgment
     pending = [{"requirement_ref": ref, "observation_id": observation["id"], "candidate": observation["candidate"], "handoff_id": observation["handoff_id"]}
                for observation in data.get("observations", []) for ref in observation["requirement_refs"] if (ref, observation["id"]) not in incorporated]
     cited = {ref for j in judgments for ref in j["observation_refs"]}
@@ -2086,7 +3221,9 @@ def _continuity_open(state: dict[str, object]) -> tuple[list[dict[str, object]],
                for later in judgments[index + 1:]):
             continue
         unresolved.append({key: j[key] for key in ("id", "candidate", "requirement_ref", "outcome")})
-    latest_items = [{**{key: item[key] for key in ("id", "candidate", "requirement_ref", "outcome")}, "observation_ref_count": len(item["observation_refs"])} for item in latest.values()]
+    latest_items = [{"id": row[2], "candidate": candidate, "requirement_ref": requirement,
+                     "outcome": _JUDGMENT_OUTCOMES[row[3] % 4], "observation_ref_count": row[4]}
+                    for (requirement, candidate), row in _judgment_keys(state)] if latest else []
     return pending, unresolved, latest_items
 
 
@@ -2323,17 +3460,53 @@ def append_observations(state: dict[str, object], entries: list[tuple[str, dict[
     return _append_continuity_items(state, [("observations", actor, payload) for actor, payload in entries])
 
 
+def _continuity_referents(state: dict[str, object], additions: list[tuple[str, str | None, object]]) -> list[tuple[str, str]]:
+    """Evicted objects whose fields new continuity additions are checked against: the handoff of a new
+    observation, the parent of a new handoff and the judgments a new judgment addresses."""
+    if not _eviction_entries(state):
+        return []
+    index_map = _index_map(state)
+    wanted: list[tuple[str, str]] = []
+    for kind, _, value in additions:
+        if not isinstance(value, dict):
+            continue
+        if kind == "observations" and isinstance(value.get("handoff_id"), str) and value["handoff_id"] in index_map["handoffs"]:
+            wanted.append(("handoffs", value["handoff_id"]))
+        elif kind == "handoffs" and isinstance(value.get("parent_handoff_id"), str) and value["parent_handoff_id"] in index_map["handoffs"]:
+            wanted.append(("handoffs", value["parent_handoff_id"]))
+        elif kind == "judgments" and isinstance(value.get("judgment_refs"), list):
+            wanted.extend(("judgments", ref) for ref in value["judgment_refs"] if isinstance(ref, str) and ref in index_map["judgments"])
+    return wanted
+
+
 def _append_continuity_items(state: dict[str, object], additions: list[tuple[str, str | None, object]],
                              *, bump: bool = True, trusted: bool = False) -> list[str]:
     """Validate and commit continuity additions atomically in memory.
 
     ``trusted`` marks additions built by Core itself (gate overrides, mechanical
     observations, ingested typed claims); only those may carry Core-assigned fields.
+    Evicted objects the additions are checked against are re-hydrated first (see
+    ``_continuity_referents``); on any error ``state`` is left unchanged.
     """
+    wanted = _continuity_referents(state, additions)
+    if not wanted:
+        return _append_continuity_hot(state, additions, bump=bump, trusted=trusted)
+    snapshot = copy.deepcopy(state)
+    try:
+        _rehydrate_from_state(state, wanted)
+        return _append_continuity_hot(state, additions, bump=bump, trusted=trusted)
+    except BaseException:
+        state.clear()
+        state.update(snapshot)
+        raise
+
+
+def _append_continuity_hot(state: dict[str, object], additions: list[tuple[str, str | None, object]],
+                           *, bump: bool = True, trusted: bool = False) -> list[str]:
     stamp = state["revision"] + 1
     evidence_refs = copy.deepcopy(state["evidence_refs"])
     data = copy.deepcopy(state["evidence_continuity"]) if "evidence_continuity" in state else {name: [] for name in _CONTINUITY_KINDS}
-    known_sources = {item["id"] for item in evidence_refs}
+    known_sources = {item["id"] for item in evidence_refs} | _known_ids(state, "evidence_refs")
     appended: list[str] = []
     for batch_index, (kind, actor, value) in enumerate(additions):
         index = len(data[kind])
@@ -2423,6 +3596,22 @@ def task_get(root: Path, object_id: str) -> dict[str, object]:
         ("check", state.get("checks", [])),
     ) + tuple((kind, values) for kind, values in state.get("evidence_continuity", {}).items())
     matches = [(kind, item) for kind, values in collections for item in values if item.get("id") == identifier]
+    if not matches and _eviction_entries(state):
+        located = next(((name, bucket[identifier]) for name, bucket in _index_map(state).items() if identifier in bucket), None)
+        if located is not None:
+            # Evicted: the full object comes from its verified segment (a schema-10 stub inside it is
+            # completed from its own version-1 segment).
+            name, position = located
+            kind = _OBJECT_TYPES.get(name, name)
+            try:
+                item, sha = _evicted_object(root, state, name, identifier, position)
+                item = hydrate_archived(root, state, "verification_results" if name == "check_runs" else name, item)
+            except ThalirisError as exc:
+                if exc.details is not None:
+                    exc.details["object_type"] = kind
+                raise
+            return {"ok": True, "task_id": state["task_id"], "revision": state["revision"], "object_type": kind,
+                    "object": item, "archived": {"segment": sha, "evicted": True}}
     if len(matches) != 1:
         recovery = None
         if identifier == state["task_id"]:
@@ -2497,6 +3686,8 @@ def _task_status_packet(state: dict[str, object], evidence_offset: int = 0, *, v
         raise ValueError("invalid status view")
     goal = str(state["goal"])
     artifact_ids = [str(item["id"]) for item in state["artifact_refs"]]
+    # Counts include evicted objects (hot plus archive index totals).
+    totals = _collection_totals(state)
     if view == "compact":
         continuity = state.get("evidence_continuity", {})
         packet: dict[str, object] = {
@@ -2514,11 +3705,11 @@ def _task_status_packet(state: dict[str, object], evidence_offset: int = 0, *, v
             "Active Work": state["active_work"],
             "Pending Results": state["pending_results"],
             "Counts": {
-                "records": len(state["records"]),
-                "sources": len(state["evidence_refs"]),
+                "records": totals["records"],
+                "sources": totals["evidence_refs"],
                 "artifacts": len(state["artifact_refs"]),
-                "verification_observations": len(state["verification_results"]),
-                **{kind: len(continuity.get(kind, [])) for kind in _CONTINUITY_KINDS},
+                "verification_observations": totals["verification_results"],
+                **{kind: totals.get(kind, len(continuity.get(kind, []))) for kind in _CONTINUITY_KINDS},
             },
             "Recent Artifact IDs": artifact_ids[-8:],
             "Evidence": evidence_summary(state, evidence_offset),
@@ -2538,10 +3729,10 @@ def _task_status_packet(state: dict[str, object], evidence_offset: int = 0, *, v
             "Active Work": state["active_work"],
             "Pending Results": state["pending_results"],
             "Counts": {
-                "records": len(state["records"]),
-                "sources": len(state["evidence_refs"]),
+                "records": totals["records"],
+                "sources": totals["evidence_refs"],
                 "artifacts": len(state["artifact_refs"]),
-                "verification_observations": len(state["verification_results"]),
+                "verification_observations": totals["verification_results"],
             },
             "Recent Artifact IDs": artifact_ids[-8:],
             "Active Artifact Count": len(_artifact_activity(state["artifact_refs"])),
@@ -2604,7 +3795,7 @@ def task_artifact(root: Path, base_revision: int, artifact_id: str, path: str, s
         check_revision(state, base_revision)
         if artifact_id in _task_object_ids(state):
             raise ValueError("task object id already exists")
-        known_sources = {str(item["id"]) for item in state["evidence_refs"]}
+        known_sources = _known_ids(state, "evidence_refs")
         refs = evidence_refs or []
         if any(ref not in known_sources for ref in refs):
             raise ValueError("artifact source reference is unknown")
@@ -2665,7 +3856,7 @@ def task_record_verification(root: Path, base_revision: int, result_id: str, kin
             raise ValueError("task object id already exists")
         if source_refs is not None and source_paths is not None:
             raise ValueError("provide source refs or source paths, not both")
-        known_sources = {str(item["id"]) for item in state["evidence_refs"]}
+        known_sources = _known_ids(state, "evidence_refs")
         refs = source_refs or []
         if not all(isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs) or any(ref not in known_sources for ref in refs):
             raise ValueError("verification source reference is unknown")
@@ -3211,6 +4402,8 @@ def _mechanical_tamper(state: dict[str, object], view: dict[str, object]) -> lis
     """Observations still owed for changed check files: one per (check, new files digest)."""
     recorded = {(item["mechanism"]["check_id"], item["mechanism"]["files_digest"])
                 for item in state.get("evidence_continuity", {}).get("observations", []) if "mechanism" in item}
+    if _eviction_entries(state):
+        recorded |= _archive_totals(state).mechanism.keys()
     taken = _task_object_ids(state)
     pending: list[dict[str, object]] = []
     for entry in view["checks"]:
@@ -3554,6 +4747,8 @@ def record_check_run(root: Path, state: dict[str, object], actor: str, run: dict
             for item in state["verification_results"] if str(item["id"]) not in drop]
     snapshot = copy.deepcopy(state)
     try:
+        # Evicted results of this check older than the kept history are dropped as hot ones are.
+        _forget_check_runs(state, str(declaration["id"]), number - (CHECK_RESULT_HISTORY - 1))
         state["verification_results"] = kept + [result]
         state["schema_version"] = max(state["schema_version"], _VERIFICATION_SCHEMA_VERSION)
         view = verification_view(root, state, tree=str(run["tree_identity"]))
@@ -3612,10 +4807,15 @@ def task_verify(root: Path, actor: str, check_id: str, *, base_revision: int | N
 # --- close gate ---
 
 def _latest_requirement_judgments(state: dict[str, object]) -> dict[str, dict[str, object]]:
-    latest: dict[str, dict[str, object]] = {}
-    for judgment in state.get("evidence_continuity", {}).get("judgments", []):
-        latest[str(judgment["requirement_ref"])] = judgment
-    return latest
+    """Per requirement (in order of its first judgment), its latest judgment over hot and evicted judgments:
+    ``{id, requirement_ref, candidate, outcome, overridden}`` (what the close gate and surfacing read)."""
+    latest: dict[str, tuple[int, dict[str, object]]] = {}
+    for (requirement, candidate), (_, last, identifier, code, _) in _judgment_keys(state):
+        current = latest.get(requirement)
+        if current is None or last > current[0]:
+            latest[requirement] = (last, {"id": identifier, "requirement_ref": requirement, "candidate": candidate,
+                                          "outcome": _JUDGMENT_OUTCOMES[code % 4], "overridden": code >= 4})
+    return {requirement: item for requirement, (_, item) in latest.items()}
 
 
 def surfaced_requirements(state: dict[str, object]) -> dict[str, object]:
@@ -3636,7 +4836,7 @@ def surfaced_requirements(state: dict[str, object]) -> dict[str, object]:
         judgment = latest.get(str(requirement["id"]))
         entry: dict[str, object] = {"requirement": requirement["id"], "kind": kind, "latest_judgment": None if judgment is None else {
             "id": judgment["id"], "outcome": judgment["outcome"], "candidate": judgment["candidate"],
-            "overridden": "override_reason" in judgment}}
+            "overridden": judgment["overridden"]}}
         if uncovered:
             entry["reason"] = "no-declared-check"
         entries.append(entry)
@@ -3699,9 +4899,13 @@ def close_state(root: Path | None, state: dict[str, object], *, override_reason:
 # --- typed claims and handoff usage ---
 
 def _handoff(state: dict[str, object], handoff_id: object) -> dict[str, object]:
+    """The hot handoff with this id; an evicted handoff is re-hydrated first (it is about to change)."""
     for item in state.get("evidence_continuity", {}).get("handoffs", []):
         if item["id"] == handoff_id:
             return item
+    if isinstance(handoff_id, str) and _eviction_entries(state) and handoff_id in _index_map(state)["handoffs"]:
+        _rehydrate_from_state(state, [("handoffs", handoff_id)])
+        return _handoff(state, handoff_id)
     raise ThalirisError(_errors.HANDOFF_NOT_FOUND, "handoff is not registered",
                         recovery="use the id of a handoff registered in this task; nothing was recorded",
                         details={"handoff_id": _preview(handoff_id)})
@@ -3773,6 +4977,8 @@ def ingest_claims(state: dict[str, object], handoff_id: str, text: object) -> di
             counted = {(support["requirement"], support["evidence"]) for other in data["handoffs"]
                        if other["candidate"] == handoff["candidate"] and other.get("claims", {}).get("status") == "present"
                        for support in other["claims"]["supports"]}
+            # Supports already counted on evicted handoffs of this candidate (dedupe keys in the index).
+            evicted_keys = _archive_totals(state).support_keys.get(str(handoff["candidate"]), set()) if _eviction_entries(state) else set()
             declared = {str(check["id"]) for check in state.get("checks", [])}
             supports: list[dict[str, object]] = []
             pending: list[dict[str, object]] = []
@@ -3781,7 +4987,7 @@ def ingest_claims(state: dict[str, object], handoff_id: str, text: object) -> di
                 assigned = claim["requirement"] in handoff["requirement_refs"]
                 if assigned and claim["polarity"] == "supports":
                     key = (claim["requirement"], claim["evidence"])
-                    if key in counted:
+                    if key in counted or (evicted_keys and _support_key(handoff["candidate"], claim["requirement"], claim["evidence"]) in evicted_keys):
                         duplicates += 1
                     else:
                         counted.add(key)
@@ -4093,17 +5299,20 @@ def lane_advisories(root: Path | None, state: dict[str, object], contract: dict[
 def _verification_section(state: dict[str, object], view: dict[str, object] | None, live: bool) -> dict[str, object] | None:
     continuity = state.get("evidence_continuity", {})
     overrides = [item for item in continuity.get("judgments", []) if "override_reason" in item]
+    archived = _archive_totals(state) if _eviction_entries(state) else _Totals()
+    override_total = len(overrides) + archived.overrides
     requirements = continuity.get("requirements", [])
     kinds = any({"kind", "surface"} & item.keys() for item in requirements)
-    if view is None and not overrides and not kinds:
+    if view is None and not override_total and not kinds:
         return None
     section: dict[str, object] = {}
     if view is not None:
         entries = view["checks"]
         tallies = {status: sum(entry["status"] == status for entry in entries) for status in CHECK_STATUSES}
         ordered = sorted(entries, key=lambda entry: entry["status"] == "green")
-        recorded = {(item["mechanism"]["check_id"], item["mechanism"]["files_digest"]): item["id"]
-                    for item in continuity.get("observations", []) if "mechanism" in item}
+        recorded = dict(archived.mechanism)
+        recorded.update({(item["mechanism"]["check_id"], item["mechanism"]["files_digest"]): item["id"]
+                         for item in continuity.get("observations", []) if "mechanism" in item})
         section.update({
             "live": live, "tree_identity": view["tree_identity"] or ("NOT_COMPUTED" if live else TREE_UNKNOWN),
             "checks_total": len(entries), **tallies,
@@ -4126,11 +5335,12 @@ def _verification_section(state: dict[str, object], view: dict[str, object] | No
                      if item.get("kind", REQUIREMENT_KIND_DEFAULT) != REQUIREMENT_KIND_DEFAULT and item["id"] not in covered]
         if uncovered:
             section["uncovered_requirements"] = uncovered[:32]
-    if overrides or "closure" in state:
+    if override_total or "closure" in state:
+        # The last 8 overridden judgments always stay hot (``_hot_keep``).
         listed = [{"judgment_id": item["id"], "requirement_ref": item["requirement_ref"],
                    "override_reason": item["override_reason"][:160], "overridden_checks": [check["id"] for check in item["overridden_checks"]][:8]}
                   for item in overrides[-8:]]
-        section["overrides"] = {"total": len(overrides), "judgments": listed}
+        section["overrides"] = {"total": override_total, "judgments": listed}
         closure = state.get("closure")
         if closure is not None and closure["gate"] == "overridden":
             section["overrides"]["close"] = {"override_reason": closure["override_reason"][:160],
@@ -4139,67 +5349,65 @@ def _verification_section(state: dict[str, object], view: dict[str, object] | No
 
 
 def _claims_section(state: dict[str, object]) -> dict[str, object] | None:
+    """Claims totals over hot and evicted handoffs; the listed ids come from hot handoffs (the last 8
+    of each list always stay hot, see ``_hot_keep``)."""
     handoffs = [item for item in state.get("evidence_continuity", {}).get("handoffs", []) if "claims" in item]
-    if not handoffs:
+    archived = _archive_totals(state) if _eviction_entries(state) else _Totals()
+    if not handoffs and not archived.claims["ingested"]:
         return None
     without = [item["id"] for item in handoffs if item["claims"]["status"] != "present"]
-    supports: dict[str, int] = {}
+    supports: dict[str, int] = dict(archived.supports)
     for item in handoffs:
         for requirement, count in _support_counts(item["claims"].get("supports", [])).items():
             supports[requirement] = supports.get(requirement, 0) + count
     truncated = [item["id"] for item in handoffs if item["claims"].get("truncated")]
+    truncated_total = len(truncated) + archived.claims["truncated"]
     section: dict[str, object] = {
-        "handoffs_ingested": len(handoffs),
+        "handoffs_ingested": len(handoffs) + archived.claims["ingested"],
         "handoffs_without_typed_claims": {
-            "total": len(without), "ids": without[-8:],
-            "missing": sum(item["claims"]["status"] == "missing" for item in handoffs),
-            "malformed": sum(item["claims"]["status"] == "malformed" for item in handoffs)},
+            "total": len(without) + archived.claims["missing"] + archived.claims["malformed"], "ids": without[-8:],
+            "missing": sum(item["claims"]["status"] == "missing" for item in handoffs) + archived.claims["missing"],
+            "malformed": sum(item["claims"]["status"] == "malformed" for item in handoffs) + archived.claims["malformed"]},
         "supports": dict(sorted(supports.items())[:32]),
     }
-    if truncated:
-        section["handoffs_with_truncated_claims"] = {"total": len(truncated), "ids": truncated[-8:]}
+    if truncated_total:
+        section["handoffs_with_truncated_claims"] = {"total": truncated_total, "ids": truncated[-8:]}
     return section
 
 
 def _usage_totals(records: list[dict[str, object]]) -> dict[str, object]:
-    totals: dict[str, object] = {"handoffs": len(records)}
-    for field in ("input_tokens", "output_tokens", "total_tokens", "cost_usd", "duration_ms", "tool_uses"):
-        values = []
-        for record in records:
-            value = record[field]
-            if value is None and field == "total_tokens" and record["input_tokens"] is not None and record["output_tokens"] is not None:
-                value = record["input_tokens"] + record["output_tokens"]
-            if value is not None:
-                values.append(value)
-        totals[field] = (round(sum(values), 6) if field == "cost_usd" else sum(values)) if values else None
-    return totals
+    """Totals of usage records; cost is summed exactly and rounded once (see ``_UsageSum``)."""
+    totals = _UsageSum()
+    for record in records:
+        totals.add(record)
+    return totals.view()
 
 
-def _usage_groups(groups: dict[str, list[dict[str, object]]]) -> dict[str, object]:
-    ranked = sorted(groups.items(), key=lambda pair: (-len(pair[1]), pair[0]))
-    result = {name: {key: value for key, value in _usage_totals(records).items() if key in ("handoffs", "total_tokens", "cost_usd")}
-              for name, records in ranked[:8]}
+def _usage_groups(groups: dict[str, _UsageSum]) -> dict[str, object]:
+    ranked = sorted(((name, total) for name, total in groups.items() if total.handoffs), key=lambda pair: (-pair[1].handoffs, pair[0]))
+    result = {name: total.view() for name, total in ranked[:8]}
     if len(ranked) > 8:
-        rest = [record for _, records in ranked[8:] for record in records]
-        result["(other)"] = {key: value for key, value in _usage_totals(rest).items() if key in ("handoffs", "total_tokens", "cost_usd")}
+        rest = _UsageSum(_USAGE_GROUP_FIELDS)
+        for _, total in ranked[8:]:
+            rest.merge(total)
+        result["(other)"] = rest.view()
     return result
 
 
 def usage_summary(state: dict[str, object]) -> dict[str, object] | None:
-    """Small aggregate of adapter-reported dispatch usage: totals, by role (handoff producer) and by model."""
-    handoffs = [item for item in state.get("evidence_continuity", {}).get("handoffs", []) if "usage" in item]
-    if not handoffs:
+    """Small aggregate of adapter-reported dispatch usage: totals, by role (handoff producer) and by model.
+
+    Hot handoffs and the usage totals of evicted handoffs combine exactly. ``outcomes`` lists
+    outcomes in order of first appearance, evicted handoffs (oldest segment first) before hot ones.
+    """
+    totals = _archive_totals(state) if _eviction_entries(state) else _Totals()
+    for item in state.get("evidence_continuity", {}).get("handoffs", []):
+        if "usage" in item:
+            totals.add("handoffs", {"producer": item["producer"], "usage": item["usage"]})
+    if not totals.usage.handoffs:
         return None
-    by_role: dict[str, list[dict[str, object]]] = {}
-    by_model: dict[str, list[dict[str, object]]] = {}
-    outcomes: dict[str, int] = {}
-    for item in handoffs:
-        usage = item["usage"]
-        by_role.setdefault(str(item["producer"]), []).append(usage)
-        by_model.setdefault(str(usage["model"] or "unknown"), []).append(usage)
-        outcomes[str(usage["outcome"] or "unknown")] = outcomes.get(str(usage["outcome"] or "unknown"), 0) + 1
-    return {"totals": _usage_totals([item["usage"] for item in handoffs]), "by_role": _usage_groups(by_role),
-            "by_model": _usage_groups(by_model), "outcomes": outcomes}
+    return {"totals": totals.usage.view(), "by_role": _usage_groups(totals.by_role),
+            "by_model": _usage_groups(totals.by_model), "outcomes": {key: count for key, count in totals.outcomes.items() if count}}
 
 
 def _feature_sections(root: Path | None, state: dict[str, object], contract: dict[str, object] | None) -> dict[str, object]:
@@ -4239,7 +5447,8 @@ def task_promote(root: Path, actor: str, base_revision: int, input_file: str | N
         check_revision(state, base_revision)
         sources = {str(item["id"]): item for item in state["evidence_refs"]}
         artifacts = {str(item["id"]): item for item in state["artifact_refs"]}
-        known_refs = set(sources) | set(artifacts)
+        evicted_sources = _index_map(state)["evidence_refs"] if _eviction_entries(state) else {}
+        known_refs = set(sources) | set(artifacts) | set(evicted_sources)
         writes: dict[str, bytes] = {}
         promoted: list[str] = []
         promotion_ids: set[str] = set()
@@ -4275,6 +5484,8 @@ def task_promote(root: Path, actor: str, base_revision: int, input_file: str | N
                 if key in described:
                     return
                 source = sources.get(source_id)
+                if source is None and source_id in evicted_sources:
+                    source, _ = _evicted_object(root, state, "evidence_refs", source_id, evicted_sources[source_id])
                 if source is None:
                     raise ValueError("artifact provenance source reference is unknown")
                 # Durable provenance needs the full locator and summary, never an archive preview.

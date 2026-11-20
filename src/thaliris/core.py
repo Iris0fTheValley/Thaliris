@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from typing import Callable
 import uuid
 
 if os.name == "nt":
@@ -1163,7 +1164,7 @@ def _state_payload(root: Path, state: dict[str, object]) -> bytes:
     return payload
 
 
-def _write_state(root: Path, state: dict[str, object]) -> None:
+def _write_state(root: Path, state: dict[str, object], *, publish: Callable[[Path, bytes], None] | None = None) -> None:
     """Write a state as the current schema, evicting settled objects when the hot ledger is under pressure.
 
     Pressure is a serialized size above ``STATE_ARCHIVE_HIGH_WATER_BYTES`` or a hot list above its
@@ -1172,6 +1173,8 @@ def _write_state(root: Path, state: dict[str, object]) -> None:
     state that references it. Any refusal leaves the disk state and ``state`` unchanged; a segment
     written before a failed state write is an unreferenced orphan, which is harmless. After a
     compaction write, unreferenced segments are collected (see "segment garbage collection").
+    An authority publisher receives the final bytes in place of the ordinary ledger write,
+    under the archive lock and before collection. The caller still owns the task lock.
     """
     path = _state_path(root)
     _register_archive_root(root, state)
@@ -1191,8 +1194,19 @@ def _write_state(root: Path, state: dict[str, object]) -> None:
     payload = _serialize_state(working)
     crowded = _crowded_collections(working)
 
-    def commit(candidate: dict[str, object], content: bytes) -> None:
-        _atomic_write(path, content)
+    def commit(candidate: dict[str, object], content: bytes, *, collect: bool = False) -> None:
+        if publish is not None or collect:
+            task_id = str(candidate["task_id"])
+            with _archive_gc_lock(root, task_id):
+                prior_refs = _durable_refs(path, task_id) if collect else None
+                (_atomic_write if publish is None else publish)(path, content)
+                if prior_refs is not None:
+                    try:
+                        _collect_archive_segments(root, task_id, _segment_refs(candidate) | prior_refs)
+                    except (OSError, ValueError):
+                        pass
+        else:
+            _atomic_write(path, content)
         if candidate is not state:
             state.clear()
             state.update(candidate)
@@ -1227,17 +1241,7 @@ def _write_state(root: Path, state: dict[str, object]) -> None:
             task_id = str(candidate["task_id"])
             for raw in segments:
                 _write_archive_segment(root, task_id, raw)
-            if compacted is None:
-                commit(candidate, candidate_payload)
-            else:
-                with _archive_gc_lock(root, task_id):
-                    prior_refs = _durable_refs(path, task_id)
-                    commit(candidate, candidate_payload)
-                    if prior_refs is not None:
-                        try:
-                            _collect_archive_segments(root, task_id, _segment_refs(candidate) | prior_refs)
-                        except (OSError, ValueError):
-                            pass
+            commit(candidate, candidate_payload, collect=compacted is not None)
             return
         if required and len(candidate_payload) > STATE_MAX_BYTES:
             raise _state_capacity_error(len(candidate_payload), candidate, archived=True)
@@ -2284,8 +2288,8 @@ def _write_archive_segment(root: Path, task_id: str, raw: bytes) -> None:
 # - the state just written;
 # - the state it replaced (read from disk before the write): a one-write grace window for readers that
 #   loaded the prior state and for an authority anchor whose snapshot is that prior state;
-# - every authority anchor snapshot, as pinned by ``pin_anchor_segments`` in the task's
-#   ``archive-pins.json`` (``AuthorityStore`` pins on establish, checkpoint, mode switch and recovery).
+# - every snapshot pinned in the task's ``archive-pins.json``: live authority anchors and
+#   retained authority recovery backups.
 #
 # A pins file that cannot be read, or a prior state that cannot be read as this task's ledger, skips
 # collection. Earlier segment versions may be referenced by pre-pinning external anchors, whose
@@ -2368,31 +2372,40 @@ def pin_anchor_segments(root: Path, task_id: str, anchor_key: str, snapshots: li
     (or none, when the anchor retires). A damaged registry is left intact and disables collection.
     Nothing is written for a task that never archived.
     """
-    if not isinstance(anchor_key, str) or not _ID_LABEL.fullmatch(anchor_key):
-        raise ValueError("invalid anchor pin key")
+    _pin_archive_snapshots(root, task_id, {anchor_key: snapshots})
+
+
+def _pin_archive_snapshots(root: Path, task_id: str, snapshots_by_key: dict[str, list[bytes | None]]) -> None:
+    """Publish one registry update for the given snapshot owners under the archive lock."""
     pins = _read_pins(root, task_id)
     if pins is None:
         raise ValueError("archive pin registry is missing or unreadable")
-    refs: set[str] = set()
-    for raw in snapshots:
-        snapshot_refs = _state_bytes_refs(raw, task_id)
-        if snapshot_refs is None:
-            raise ValueError("cannot pin an unreadable archive snapshot")
-        refs |= snapshot_refs
     current = dict(pins)
-    if refs:
-        current[anchor_key] = sorted(refs)
-    else:
-        current.pop(anchor_key, None)
+    for key, snapshots in snapshots_by_key.items():
+        if not isinstance(key, str) or not _ID_LABEL.fullmatch(key):
+            raise ValueError("invalid archive pin key")
+        refs: set[str] = set()
+        for raw in snapshots:
+            snapshot_refs = _state_bytes_refs(raw, task_id)
+            if snapshot_refs is None:
+                raise ValueError("cannot pin an unreadable archive snapshot")
+            refs |= snapshot_refs
+        if refs:
+            current[key] = sorted(refs)
+        else:
+            current.pop(key, None)
     if not current and not pins:
         return
     path = _pins_path(root, task_id)
-    if current != pins:
-        record = {"format": ARCHIVE_PINS_FORMAT, "version": ARCHIVE_PINS_VERSION, "task_id": task_id, "anchors": current}
-        _atomic_write(path, (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
     marker = path.with_name("archive-pins-required")
     if marker.is_symlink():
         raise ValueError("unsafe archive pin registry marker")
+    if current != pins:
+        record = {"format": ARCHIVE_PINS_FORMAT, "version": ARCHIVE_PINS_VERSION, "task_id": task_id, "anchors": current}
+        payload = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        if len(payload) > ARCHIVE_PINS_MAX_BYTES:
+            raise ValueError("archive pin registry exceeds its readable size limit")
+        _atomic_write(path, payload)
     if not marker.exists():
         # Publish the registry expectation before the first archived anchor. Keep the expectation
         # and an empty registry after retirement, so loss does not masquerade as having no anchors.

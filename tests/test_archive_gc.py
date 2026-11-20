@@ -1,6 +1,7 @@
 """Segment garbage collection after compaction: unreferenced segments go, anchored ones stay."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -207,6 +208,175 @@ def test_pin_failure_cannot_publish_an_anchor_with_missing_pins(tmp_path, monkey
     with pytest.raises(OSError, match="pin storage unavailable"):
         store.establish(core._load_state(root), INTENT)
     assert not store.path().exists()
+
+
+@pytest.mark.parametrize("operation", ["mode", "recover"])
+@pytest.mark.parametrize("fault", ["missing", "corrupt", "write"])
+def test_authority_pin_failure_precedes_ledger_and_native_mutations(tmp_path, monkeypatch, operation, fault):
+    root = repo(tmp_path)
+    pressured(monkeypatch, entries=100)
+    for n in range(4):
+        settle(root, n)
+    protected = root / ".context/config.json"
+    baseline = protected.read_bytes()
+    new_file = root / "protected.txt"
+    native = tmp_path / "native.json"
+    native.write_bytes(b"current native state")
+    store = authority.AuthorityStore(root, tmp_path / "ext",
+                                     protected_paths=(".context/config.json", "protected.txt"))
+    # Leave some settled objects hot so the mode change will have new refs to publish.
+    with monkeypatch.context() as hot:
+        hot.setattr(core, "STATE_ARCHIVE_HIGH_WATER_BYTES", core.STATE_MAX_BYTES)
+        for n in range(4, 7):
+            settle(root, n)
+    state = core._load_state(root)
+    task_id = state["task_id"]
+    store.establish(state, INTENT)
+    anchor_bytes = store.path().read_bytes()
+    expected = authority.digest(store.path())
+    pin_path = core._pins_path(root, task_id)
+    intact_pins = pin_path.read_bytes()
+    assert pin_path.with_name("archive-pins-required").is_file()
+
+    if operation == "recover":
+        settle(root, 7)
+        protected.write_bytes(b"current project state")
+        new_file.write_bytes(b"added since establish")
+    else:
+        # Exercise the mode publisher while the normal state writer also needs
+        # the collector lock.
+        monkeypatch.setattr(core, "ARCHIVE_COMPACT_ENTRIES", 3)
+    native_restores = []
+
+    def restore_adapter(record):
+        native_restores.append(record["task_id"])
+        native.write_bytes(b"restored native state")
+
+    def apply():
+        if operation == "mode":
+            return store.switch_mode(expected, state["revision"], "adaptive", "Switch modes")
+        return store.recover(expected, "Restore authority", archive_paths={"native.json": native},
+                             restore_adapter=restore_adapter)
+
+    state_path = core._state_path(root)
+    before = state_path.read_bytes(), protected.read_bytes(), new_file.read_bytes() if new_file.exists() else None
+    real_write = core._atomic_write
+
+    def fail_registry(target, content):
+        if target == pin_path:
+            raise OSError("pin publication failed")
+        real_write(target, content)
+
+    with monkeypatch.context() as faults:
+        if fault == "missing":
+            pin_path.unlink()
+        elif fault == "corrupt":
+            pin_path.write_bytes(b"damaged pins")
+        else:
+            faults.setattr(core, "_atomic_write", fail_registry)
+        if fault == "write":
+            with pytest.raises(OSError, match="pin publication failed"):
+                apply()
+        else:
+            with pytest.raises(ValueError, match="pin registry is missing or unreadable"):
+                apply()
+        assert pin_path.exists() == (fault != "missing")
+        if pin_path.exists():
+            assert pin_path.read_bytes() == (b"damaged pins" if fault == "corrupt" else intact_pins)
+
+    assert state_path.read_bytes() == before[0]
+    assert store.path().read_bytes() == anchor_bytes
+    assert protected.read_bytes() == before[1]
+    assert (new_file.read_bytes() if new_file.exists() else None) == before[2]
+    assert native.read_bytes() == b"current native state" and native_restores == []
+    assert not (store.directory / "recovery").exists()
+
+    pin_path.write_bytes(intact_pins)
+    assert apply()["ok"]
+    assert store.check()["contract"]["execution_mode"] == ("adaptive" if operation == "mode" else "delegated")
+    assert protected.read_bytes() == baseline and not new_file.exists()
+    if operation == "recover":
+        assert native_restores == [task_id] and native.read_bytes() == b"restored native state"
+    else:
+        assert core._segment_refs(state) - core._segment_refs(core._load_state(root))
+
+
+def test_mode_anchor_publish_failure_restores_exact_ledger(tmp_path, monkeypatch):
+    root = repo(tmp_path)
+    store = authority.AuthorityStore(root, tmp_path / "ext")
+    state = core._load_state(root)
+    store.establish(state, INTENT)
+    anchor = store.path()
+    previous = core._state_path(root).read_bytes()
+    anchor_bytes = anchor.read_bytes()
+    real_write = core._atomic_write
+
+    def fail_anchor(target, content):
+        if target == anchor:
+            raise OSError("anchor publication failed")
+        real_write(target, content)
+
+    monkeypatch.setattr(core, "_atomic_write", fail_anchor)
+    with pytest.raises(OSError, match="anchor publication failed"):
+        store.switch_mode(authority.digest(anchor), state["revision"], "adaptive", "Switch modes")
+    assert core._state_path(root).read_bytes() == previous and anchor.read_bytes() == anchor_bytes
+    assert store.check()["contract"] == INTENT
+
+
+@pytest.mark.parametrize("fail_after_backup", [False, True])
+def test_recovery_backup_ledger_and_old_anchor_remain_readable_after_collection(tmp_path, monkeypatch, fail_after_backup):
+    root = repo(tmp_path)
+    pressured(monkeypatch)
+    for n in range(6):
+        settle(root, n)
+    store = authority.AuthorityStore(root, tmp_path / "ext")
+    anchored = core._load_state(root)
+    task_id = anchored["task_id"]
+    store.establish(anchored, INTENT)
+    anchor_refs = core._segment_refs(anchored)
+    anchor_bytes = store.path().read_bytes()
+    for n in range(6, 12):
+        settle(root, n)
+    ledger_path = core._state_path(root)
+    displaced_bytes = ledger_path.read_bytes()
+    displaced_refs = core._segment_refs(json.loads(displaced_bytes))
+    assert displaced_refs - anchor_refs
+    backups = []
+
+    def restore_adapter(record):
+        backups.append(Path(record["recoveries"][-1]["archive"]))
+        if fail_after_backup:
+            raise OSError("native restoration failed")
+
+    expected = authority.digest(store.path())
+    if fail_after_backup:
+        with pytest.raises(OSError, match="native restoration failed"):
+            store.recover(expected, "Restore authority", restore_adapter=restore_adapter)
+        assert store.path().read_bytes() == anchor_bytes
+    else:
+        assert store.recover(expected, "Restore authority", restore_adapter=restore_adapter)["ok"]
+    archive, = backups
+    saved_ledger = archive / ledger_path.relative_to(root)
+    assert saved_ledger.read_bytes() == displaced_bytes
+    assert (archive / "authority.json").read_bytes() == anchor_bytes
+    recovery_id = archive.name.rsplit("-", 1)[1]
+    assert set(core._read_pins(root, task_id)["recovery-" + recovery_id]) == anchor_refs | displaced_refs
+
+    for n in range(12, 38):
+        settle(root, n)
+        store.checkpoint()
+    core.task_close(root, core._load_state(root)["revision"])
+    store.checkpoint()
+    current = core._load_state(root)
+    backup_only = (anchor_refs | displaced_refs) - core._segment_refs(current)
+    assert backup_only & anchor_refs and backup_only & displaced_refs
+    assert all(core._read_archive_segment(root, task_id, sha)["version"] == 3 for sha in backup_only)
+    saved_anchor = json.loads((archive / "authority.json").read_bytes())
+    anchored_ledger = json.loads(base64.b64decode(saved_anchor["snapshots"][ledger_path.relative_to(root).as_posix()]))
+    for source, observation in [(anchored_ledger, "O0"), (json.loads(saved_ledger.read_bytes()), "O10")]:
+        _, archived, sha = core.archived_object(root, source, observation)
+        assert sha in backup_only and archived["text"].startswith(f"observation {observation[1:]} ")
+    assert set(core._read_pins(root, task_id)) == {"recovery-" + recovery_id}
 
 
 def test_checkpoints_move_the_pin_and_retirement_releases_it(tmp_path, monkeypatch):

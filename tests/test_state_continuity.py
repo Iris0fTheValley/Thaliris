@@ -47,7 +47,7 @@ def test_valid_v6_state_is_read_as_current_and_becomes_current_on_the_next_write
     state_before = json.loads(v6_bytes)
 
     shown = core.task_show(root)["state"]
-    assert shown["schema_version"] == core._STATE_SCHEMA_VERSION == 11
+    assert shown["schema_version"] == core._STATE_SCHEMA_VERSION == 12
     assert (shown["task_id"], shown["goal"], shown["revision"], shown["records"]) == (
         started["task_id"], "keep me", state_before["revision"], state_before["records"])
     assert core.task_status(root)["Task"]["revision"] == state_before["revision"]
@@ -69,7 +69,7 @@ def test_v6_done_state_is_readable(tmp_path):
     assert core.task_show(root)["state"]["status"] == "DONE"
 
 
-@pytest.mark.parametrize("version", [5, 0, 12, 99])
+@pytest.mark.parametrize("version", [5, 0, 13, 99])
 def test_other_schema_versions_are_still_refused_with_the_diagnostic(tmp_path, version):
     root = repo(tmp_path)
     core.task_start(root, "refuse", None, None)

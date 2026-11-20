@@ -423,6 +423,35 @@ class AuthorityStore:
         """Persist an adapter-authorized record; this is not an authority grant."""
         core._atomic_write(self.path(), (json.dumps(record, sort_keys=True, indent=2) + "\n").encode())
 
+    def _state_snapshot(self, record: dict) -> bytes | None:
+        name = core._state_path(self.root, record["task_id"]).relative_to(self.root).as_posix()
+        encoded = record["snapshots"].get(name)
+        return None if encoded is None else base64.b64decode(encoded, validate=True)
+
+    def _capture_state(self, record: dict) -> bytes | None:
+        """Use the same ledger bytes for the snapshot, the digest and the identity check."""
+        path = core._state_path(self.root, record["task_id"])
+        if path.is_symlink() or path.exists() and not path.is_file():
+            raise ValueError("TASK_AUTHORITY_UNSAFE_PATH")
+        try:
+            raw = core.read_state_bytes(path)
+        except FileNotFoundError:
+            raw = None
+        record["state_sha256"] = "ABSENT" if raw is None else hashlib.sha256(raw).hexdigest()
+        record["snapshots"][path.relative_to(self.root).as_posix()] = None if raw is None else base64.b64encode(raw).decode()
+        return raw
+
+    def _write_with_pins(self, record: dict, previous: bytes | None, current: bytes | None) -> None:
+        """Called under the archive lock. A failure can leave extra pins, never a new unpinned anchor."""
+        location = str(self.path().resolve())
+        key = "anchor-" + hashlib.sha256(os.path.normcase(location).encode("utf-8")).hexdigest()[:32]
+        core.pin_anchor_segments(self.root, record["task_id"], key, [previous, current])
+        self.write(record)
+        try:
+            core.pin_anchor_segments(self.root, record["task_id"], key, [current] if record["status"] == "ACTIVE" else [])
+        except (OSError, ValueError):
+            pass  # The previous and current snapshot segments are still pinned.
+
     def establish(self, state: dict, intent: dict, *, adapter_fields: dict | None = None) -> dict:
         intent = validate_contract(intent)
         fields = adapter_fields or {}
@@ -431,25 +460,22 @@ class AuthorityStore:
         # Only an existing ACTIVE Core ledger can be anchored. No second task
         # state or host-specific task identity is created here.
         self.task_id = state["task_id"]
-        current = json.loads(core._state_path(self.root, self.task_id).read_text(encoding="utf-8"))
-        if current.get("task_id") != state["task_id"] or current.get("goal") != state["goal"] or current.get("status") != "ACTIVE":
-            raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
-        prior = self.read()
-        if prior is not None:
-            raise ValueError("TASK_AUTHORITY_ALREADY_ACTIVE" if prior["status"] == "ACTIVE" else "TASK_AUTHORITY_RETIRED_NO_REESTABLISH")
-        if prior is not None:
-            core._atomic_write(self.directory / "history" / f"{self.path().stem}-{prior['task_id']}.json", self.path().read_bytes())
-        record = {"version": 1, "project": str(self.root.resolve()), "task_id": state["task_id"],
-                  "goal": state["goal"], "contract": intent, "status": "ACTIVE",
-                  "provenance": "SELECTED_TASK_INTENT",
-                  "state_sha256": digest(core._state_path(self.root, self.task_id)),
-                  "security": {name: digest(self.root / name) for name in self.protected_paths},
-                  "history": prior.get("history", []) + [{"task_id": prior["task_id"], "goal": prior["goal"],
-                      "status": prior["status"], "contract": prior["contract"]}] if prior else [], **fields}
-        record["snapshots"] = {name: base64.b64encode((self.root / name).read_bytes()).decode()
-                               if digest(self.root / name) != "ABSENT" else None
-                               for name in (*self.protected_paths, core._state_path(self.root, self.task_id).relative_to(self.root).as_posix())}
-        self.write(record)
+        with core._archive_gc_lock(self.root, self.task_id):
+            record = {"version": 1, "project": str(self.root.resolve()), "task_id": self.task_id,
+                      "goal": state["goal"], "contract": intent, "status": "ACTIVE",
+                      "provenance": "SELECTED_TASK_INTENT",
+                      "security": {name: digest(self.root / name) for name in self.protected_paths},
+                      "history": [], **fields}
+            record["snapshots"] = {name: base64.b64encode((self.root / name).read_bytes()).decode()
+                                   if record["security"][name] != "ABSENT" else None for name in self.protected_paths}
+            raw = self._capture_state(record)
+            current = {} if raw is None else json.loads(raw)
+            if current.get("task_id") != self.task_id or current.get("goal") != state["goal"] or current.get("status") != "ACTIVE":
+                raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
+            prior = self.read()
+            if prior is not None:
+                raise ValueError("TASK_AUTHORITY_ALREADY_ACTIVE" if prior["status"] == "ACTIVE" else "TASK_AUTHORITY_RETIRED_NO_REESTABLISH")
+            self._write_with_pins(record, None, raw)
         return record
 
     def check(self, *, evidence: Mapping[str, tuple[Path, str]] | None = None) -> dict | None:
@@ -480,19 +506,26 @@ class AuthorityStore:
         The task identity and selected contract are never changed. Deletion
         retires authority as ABANDONED; it does not prove task completion.
         """
-        record = self.read()
-        if record is None or record["status"] != "ACTIVE":
+        task_id = self.task_id or core.selected_task(self.root)
+        if task_id is None:
+            self.read()  # exact legacy anchor, if present
+            task_id = self.task_id
+        if task_id is None:
             return
-        record["state_sha256"] = digest(core._state_path(self.root, self.task_id))
-        record["snapshots"][core._state_path(self.root, self.task_id).relative_to(self.root).as_posix()] = base64.b64encode(core._state_path(self.root, self.task_id).read_bytes()).decode() if record["state_sha256"] != "ABSENT" else None
-        if record["state_sha256"] == "ABSENT":
-            record["status"] = "ABANDONED"
-        else:
-            state = json.loads(core._state_path(self.root, self.task_id).read_text(encoding="utf-8"))
-            if state["task_id"] != record["task_id"] or state["goal"] != record["goal"]:
-                raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
-            record["status"] = state["status"]
-        self.write(record)
+        with core._archive_gc_lock(self.root, task_id):
+            record = self.read()
+            if record is None or record["status"] != "ACTIVE":
+                return
+            previous = self._state_snapshot(record)
+            current = self._capture_state(record)
+            if current is None:
+                record["status"] = "ABANDONED"
+            else:
+                state = json.loads(current)
+                if state["task_id"] != task_id or state["goal"] != record["goal"]:
+                    raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
+                record["status"] = state["status"]
+            self._write_with_pins(record, previous, current)
 
     def switch_mode(self, expected: str, base_revision: int, mode: str, human_instruction: str) -> dict:
         """Apply an adapter-authorized selection; all other intent stays frozen.
@@ -516,12 +549,11 @@ class AuthorityStore:
             record.setdefault("mode_history", []).append({"execution_mode": record["contract"]["execution_mode"],
                 "human_instruction": human_instruction, "revision": base_revision})
             record["contract"] = {**record["contract"], "execution_mode": mode}
+            previous = self._state_snapshot(record)
             state["revision"] += 1
             core._write_state(self.root, state)
-            state_path = core._state_path(self.root, record["task_id"])
-            record["state_sha256"] = digest(state_path)
-            record["snapshots"][state_path.relative_to(self.root).as_posix()] = base64.b64encode(state_path.read_bytes()).decode()
-            self.write(record)
+            with core._archive_gc_lock(self.root, record["task_id"]):
+                self._write_with_pins(record, previous, self._capture_state(record))
         return {"ok": True, "task_id": record["task_id"], "revision": state["revision"], "execution_mode": mode}
 
     def recover(self, expected: str, reason: str, *,
@@ -586,7 +618,8 @@ class AuthorityStore:
             checks = evidence(record) if callable(evidence) else evidence
             if json.dumps(_truth(record), sort_keys=True) != truth:
                 raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
-            self.write(record)
+            with core._archive_gc_lock(self.root, record["task_id"]):
+                self._write_with_pins(record, None, self._state_snapshot(record))
             self.check(evidence=checks)
         return {"ok": True, "status": "TASK_AUTHORITY_RECOVERED", "task_id": record["task_id"],
                 "authority_provenance": record.get("provenance")}

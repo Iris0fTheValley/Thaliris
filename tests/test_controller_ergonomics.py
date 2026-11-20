@@ -343,16 +343,18 @@ def core_050():
             del sys.modules[name]
 
 
-def test_states_written_by_this_core_validate_under_core_050(tmp_path, core_050):
+def test_core_050_refuses_states_written_by_this_core(tmp_path, core_050):
     old = core_050
     setup(tmp_path)
 
     def check(label):
-        state = json.loads(json.dumps(core._load_state(tmp_path)))
-        try:
+        path = core._state_path(tmp_path)
+        raw = path.read_bytes()
+        state = json.loads(raw)
+        assert state["schema_version"] == core._STATE_SCHEMA_VERSION, label
+        with pytest.raises(ValueError, match="invalid task state schema"):
             old._validate_state(tmp_path, state)
-        except Exception as exc:  # noqa: BLE001 - name the operation that broke Core 0.5.0 compatibility
-            raise AssertionError(f"Core 0.5.0 rejects the state after {label}: {exc}") from exc
+        assert path.read_bytes() == raw, label
 
     check("task-start, register and task-update")
     core.task_observe(tmp_path, "child-a", observation("O1"))

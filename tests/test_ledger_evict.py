@@ -156,6 +156,14 @@ def test_long_task_keeps_every_write_below_the_cap(tmp_path, monkeypatch):
     claims = core._claims_section(state)
     assert claims["handoffs_ingested"] == 3000 and claims["handoffs_without_typed_claims"]["missing"] == 200
     assert core.surfaced_requirements(state)["surfaced_total"] == 2980
+    # Segment collection keeps the archive bounded: every referenced segment is on disk, and what is
+    # not referenced is at most the last compaction's grace generation plus segments written since.
+    on_disk = {path.stem: path.stat().st_size for path in segments(root, task_id)}
+    referenced = core._segment_refs(state)
+    assert referenced <= on_disk.keys()
+    unreferenced = sum(size for sha, size in on_disk.items() if sha not in referenced)
+    assert unreferenced <= 2 * core.ARCHIVE_COMPACT_MAX_BYTES, unreferenced
+    print(f"\nstress: archive {sum(on_disk.values())} B on disk, {unreferenced} B unreferenced, {len(on_disk)} files")
     print(f"\nstress: final hot {final} B, max hot {max(sizes)} B, segments {len(segments(root, task_id))}, "
           f"index entries {len(state['archive'])}, writes {len(durations)}, "
           f"mean write {1000 * sum(durations) / len(durations):.0f} ms, max write {1000 * max(durations):.0f} ms")
@@ -590,7 +598,7 @@ def test_a_schema_10_ledger_from_3ed67e1_loads_answers_the_same_and_is_evicted_f
         expected["changes_since"].pop(field)
     raw = core._state_path(root).read_bytes()
     state = core._load_state(root)
-    assert json.loads(raw)["schema_version"] == 10 and state["schema_version"] == core._STATE_SCHEMA_VERSION == 11
+    assert json.loads(raw)["schema_version"] == 10 and state["schema_version"] == core._STATE_SCHEMA_VERSION == 12
     assert sum(1 for _ in core._archived_items(state)) == 126 and core._state_path(root).read_bytes() == raw
     assert fixture_views(state) == expected
     stub_ids = {item["id"] for _, item in core._archived_items(state)}
@@ -599,7 +607,7 @@ def test_a_schema_10_ledger_from_3ed67e1_loads_answers_the_same_and_is_evicted_f
     monkeypatch.setattr(core, "STATE_ARCHIVE_MIN_SAVINGS_BYTES", 0)
     core.task_update(root, "controller", state["revision"], write_json(root, "u", {"pending_results": ["evict the stubs"]}))
     after = core._load_state(root)
-    assert after["schema_version"] == 11 and json.loads(core._state_path(root).read_bytes())["schema_version"] == 11
+    assert after["schema_version"] == 12 and json.loads(core._state_path(root).read_bytes())["schema_version"] == 12
     assert evicted_ids(after) & stub_ids and sum(1 for _ in core._archived_items(after)) < 126
     assert fixture_views(after) == expected
     # Retrieval follows the chain: eviction segment, then the schema-10 segment with the moved body.
@@ -614,11 +622,11 @@ def test_a_schema_10_ledger_from_3ed67e1_loads_answers_the_same_and_is_evicted_f
     assert core.evidence_summary(core._load_state(root))["unincorporated_total"] == 2
 
 
-def test_schema_promotion_reaches_11_and_newer_schemas_are_refused(tmp_path):
+def test_schema_promotion_reaches_12_and_newer_schemas_are_refused(tmp_path):
     root = repo(tmp_path)
     state = core._load_state(root)
-    assert core.task_state_capacity()["schema_version"] == 11 and 10 in core.task_state_capacity()["supported_schemas"]
-    state["schema_version"] = 12
+    assert core.task_state_capacity()["schema_version"] == 12 and 10 in core.task_state_capacity()["supported_schemas"]
+    state["schema_version"] = 13
     core._state_path(root).write_bytes(core._serialize_state(state))
     with pytest.raises(core.TaskStateSchemaIncompatible) as caught:
         core._load_state(root)

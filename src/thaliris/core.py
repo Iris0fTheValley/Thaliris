@@ -434,7 +434,9 @@ _STATE_NAME = ".context/state.json"
 # provenance, 9 the verification-first ledger (declared checks and their run results, requirement
 # kinds, typed claims, handoff usage and gate overrides), 10 compact serialization with hot/cold
 # archive segments (``archive`` index and ``archived`` stubs), and 11 full eviction of settled objects
-# (eviction entries in ``archive`` and the ``settled`` table). Every earlier supported schema is a
+# (eviction entries in ``archive`` and the ``settled`` table), and 12 cross-host managed children
+# (foreign-runner handoff fields, ``foreign-runner`` claim provenance and a usage ``cost_basis``).
+# Every earlier supported schema is a
 # valid subset of the next one, so promotion is a forward chain (``_COMPATIBLE_PRIOR_SCHEMAS``): a
 # state is read as the current schema in memory and is written as the current schema on its next
 # write. Only a schema newer than this code is refused (``STATE_SCHEMA_INCOMPATIBLE``: upgrade Core).
@@ -443,9 +445,10 @@ _CONTROLLER_LOCAL_SCHEMA_VERSION = 8
 _VERIFICATION_SCHEMA_VERSION = 9
 _ARCHIVE_SCHEMA_VERSION = 10
 _EVICTION_SCHEMA_VERSION = 11
-_STATE_SCHEMA_VERSION = _EVICTION_SCHEMA_VERSION  # the current schema; every write produces it
+_CROSS_HOST_SCHEMA_VERSION = 12
+_STATE_SCHEMA_VERSION = _CROSS_HOST_SCHEMA_VERSION  # the current schema; every write produces it
 _SUPPORTED_SCHEMAS = (_BASE_SCHEMA_VERSION, _CONTROLLER_LOCAL_SCHEMA_VERSION, _VERIFICATION_SCHEMA_VERSION,
-                      _ARCHIVE_SCHEMA_VERSION, _EVICTION_SCHEMA_VERSION)
+                      _ARCHIVE_SCHEMA_VERSION, _EVICTION_SCHEMA_VERSION, _CROSS_HOST_SCHEMA_VERSION)
 _SCHEMA9_STATE_FIELDS = {"checks", "closure"}
 _SCHEMA10_STATE_FIELDS = {"archive"}
 _SCHEMA11_STATE_FIELDS = {"settled"}
@@ -455,6 +458,21 @@ _SCHEMA9_CONTINUITY_FIELDS = {
     "observations": {"claim", "mechanism"},
     "judgments": {"override_reason", "overridden_checks"},
 }
+# Cross-host managed children (schema 12). A handoff carrying any of these fields is run by a
+# foreign Host's model in a separate process that the dispatching adapter's launcher starts; every
+# field is assigned by Core (see "Cross-host managed children" below). None of them grants authority.
+FOREIGN_HANDOFF_FIELDS = {"executor_host", "foreign_session_hash", "transport_agent_id_hash", "prompt_sha256",
+                          "run_state", "result_sha256", "result_source", "cancel_reason"}
+FOREIGN_HOSTS = ("claude", "codex")
+FOREIGN_READONLY_ROLES = ("investigator", "reviewer", "reasoning-specialist")
+# One-way: reserved -> launched -> bound -> completed | failed | cancelled, and reserved -> cancelled
+# (launched -> cancelled and bound -> cancelled too: cancel-on-dispose may come before the bind).
+FOREIGN_RUN_STATES = ("reserved", "launched", "bound", "completed", "failed", "cancelled")
+FOREIGN_LIVE_RUN_STATES = ("reserved", "launched", "bound")
+FOREIGN_RESULT_SOURCE = "foreign-runner"
+FOREIGN_RUNNER_PROVENANCE = "foreign-runner"
+FOREIGN_BODY_MAX_BYTES = 1024 * 1024
+FOREIGN_CANCEL_REASON_MAX = 512
 ROUTING_STATE_MAX_BYTES = 8 * 1024
 # The hot ledger file (``state.json``) never exceeds this many bytes. Adapters read the bound from
 # ``task_state_capacity()`` / ``read_state_bytes()`` instead of hard-coding it.
@@ -512,6 +530,7 @@ _COMPATIBLE_PRIOR_SCHEMAS = {
     _CONTROLLER_LOCAL_SCHEMA_VERSION: _promote_by_version(_VERIFICATION_SCHEMA_VERSION),
     _VERIFICATION_SCHEMA_VERSION: _promote_by_version(_ARCHIVE_SCHEMA_VERSION),
     _ARCHIVE_SCHEMA_VERSION: _promote_by_version(_EVICTION_SCHEMA_VERSION),
+    _EVICTION_SCHEMA_VERSION: _promote_by_version(_CROSS_HOST_SCHEMA_VERSION),
 }
 
 
@@ -1151,7 +1170,8 @@ def _write_state(root: Path, state: dict[str, object]) -> None:
     item cap (or close to it). Evicted sources that hot objects cite again are re-hydrated first
     (best effort). The eviction pass works on a copy: the segment file is written first, then the
     state that references it. Any refusal leaves the disk state and ``state`` unchanged; a segment
-    written before a failed state write is an unreferenced orphan, which is harmless.
+    written before a failed state write is an unreferenced orphan, which is harmless. After a
+    compaction write, unreferenced segments are collected (see "segment garbage collection").
     """
     path = _state_path(root)
     _register_archive_root(root, state)
@@ -1204,9 +1224,20 @@ def _write_state(root: Path, state: dict[str, object]) -> None:
         worthwhile = (required or bool(crowded)
                       or len(payload) - len(candidate_payload) >= STATE_ARCHIVE_MIN_SAVINGS_BYTES)
         if worthwhile and len(candidate_payload) <= STATE_MAX_BYTES:
+            task_id = str(candidate["task_id"])
             for raw in segments:
-                _write_archive_segment(root, str(candidate["task_id"]), raw)
-            commit(candidate, candidate_payload)
+                _write_archive_segment(root, task_id, raw)
+            if compacted is None:
+                commit(candidate, candidate_payload)
+            else:
+                with _archive_gc_lock(root, task_id):
+                    prior_refs = _durable_refs(path, task_id)
+                    commit(candidate, candidate_payload)
+                    if prior_refs is not None:
+                        try:
+                            _collect_archive_segments(root, task_id, _segment_refs(candidate) | prior_refs)
+                        except (OSError, ValueError):
+                            pass
             return
         if required and len(candidate_payload) > STATE_MAX_BYTES:
             raise _state_capacity_error(len(candidate_payload), candidate, archived=True)
@@ -1248,8 +1279,8 @@ def _write_state(root: Path, state: dict[str, object]) -> None:
 # follows the chain from the eviction segment to the version-1 segment.
 
 ARCHIVE_SEGMENT_FORMAT = "thaliris-task-archive"
-ARCHIVE_SEGMENT_VERSION = 2
-_ARCHIVE_SEGMENT_VERSIONS = (1, 2)
+ARCHIVE_SEGMENT_VERSION = 3  # first generation written with anchor pinning and eligible for GC
+_ARCHIVE_SEGMENT_VERSIONS = (1, 2, ARCHIVE_SEGMENT_VERSION)
 ARCHIVE_SEGMENT_MAX_BYTES = 16 * 1024 * 1024
 # The archive index holds at most this many segment entries, and all entries together at most
 # ``ARCHIVE_IDS_MAX`` reserved ids.
@@ -2027,8 +2058,9 @@ def _hot_keep(state: dict[str, object]) -> dict[str, set[str]]:
     the last 8 overridden judgments, handoffs without typed claims and handoffs with truncated claims
     (status lists), current records and records written in the last ``CHANGES_SINCE_RECENT_MAX``
     revisions, the last two runs of every declared check (and of every other verification kind), and
-    every source a hot object, an artifact or a hot source cites. Requirements, checks, artifacts,
-    authority and closure are never evicted.
+    every source a hot object, an artifact or a hot source cites. A foreign-runner handoff stays hot
+    while its run is live (reserved, launched or bound). Requirements, checks, artifacts, authority
+    and closure are never evicted.
     """
     tail = CHANGES_SINCE_RECENT_MAX
     data = state.get("evidence_continuity") or {}
@@ -2061,8 +2093,10 @@ def _hot_keep(state: dict[str, object]) -> dict[str, set[str]]:
                 keep_j.add(later["id"])
                 frontier.append(later["id"])
     returned = {item["handoff_id"] for item in observations if item.get("handoff_id")}
-    keep_h = {item["id"] for item in handoffs if not (
-        item["id"] in returned or "claims" in item or (isinstance(item.get("usage"), dict) and item["usage"].get("outcome")))}
+    # A foreign-runner handoff is unsettled exactly while its run is live; a settled run (completed,
+    # failed or cancelled) counts as returned.
+    keep_h = {item["id"] for item in handoffs if item.get("run_state") in FOREIGN_LIVE_RUN_STATES or ("run_state" not in item and not (
+        item["id"] in returned or "claims" in item or (isinstance(item.get("usage"), dict) and item["usage"].get("outcome"))))}
     keep_h.update(item["handoff_id"] for item in observations
                   if (item["id"] in keep_obs or item["id"] in open_obs) and item.get("handoff_id"))
     keep_h.update(item["id"] for item in handoffs[-tail:])
@@ -2241,6 +2275,160 @@ def _write_archive_segment(root: Path, task_id: str, raw: bytes) -> None:
     _atomic_write(target, raw)
 
 
+# --- segment garbage collection ---
+#
+# Compaction (and re-hydration) drop index entries; their segment files become unreferenced. After a
+# successful compaction write (the state that drops them is durably on disk), ``_collect_archive_segments``
+# deletes only verified version-3 segment files of the task that none of these references:
+#
+# - the state just written;
+# - the state it replaced (read from disk before the write): a one-write grace window for readers that
+#   loaded the prior state and for an authority anchor whose snapshot is that prior state;
+# - every authority anchor snapshot, as pinned by ``pin_anchor_segments`` in the task's
+#   ``archive-pins.json`` (``AuthorityStore`` pins on establish, checkpoint, mode switch and recovery).
+#
+# A pins file that cannot be read, or a prior state that cannot be read as this task's ledger, skips
+# collection. Earlier segment versions may be referenced by pre-pinning external anchors, whose
+# locations Core does not know. Keep those files even when the hot index no longer names them.
+
+ARCHIVE_PINS_FORMAT = "thaliris-archive-pins"
+ARCHIVE_PINS_VERSION = 1
+ARCHIVE_PINS_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _segment_refs(state: dict[str, object]) -> set[str]:
+    """Segment digests a state's archive index references (eviction and schema-10 entries)."""
+    archive = state.get("archive")
+    return {entry["sha256"] for entry in archive if isinstance(entry, dict) and _is_hex64(entry.get("sha256"))} if isinstance(archive, list) else set()
+
+
+def _state_bytes_refs(raw: bytes | None, task_id: str) -> set[str] | None:
+    """Segment digests the ledger bytes ``raw`` reference; None when they are not this task's ledger."""
+    if raw is None:
+        return set()
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        return None
+    if not isinstance(value, dict) or value.get("task_id") != task_id:
+        return None
+    archive = value.get("archive", [])
+    if not isinstance(archive, list) or not all(isinstance(entry, dict) and _is_hex64(entry.get("sha256")) for entry in archive):
+        return None
+    return _segment_refs(value)
+
+
+def _durable_refs(path: Path, task_id: str) -> set[str] | None:
+    try:
+        if not path.exists():
+            return set()
+        return _state_bytes_refs(read_state_bytes(path), task_id)
+    except (OSError, ValueError):
+        return None
+
+
+def _pins_path(root: Path, task_id: str) -> Path:
+    if str(uuid.UUID(task_id)) != task_id:
+        raise ValueError("invalid task id")
+    return _safe_without_final_symlink(root, f"{_CONTEXT_DIR}/tasks/{task_id}/archive-pins.json")
+
+
+def _archive_gc_lock(root: Path, task_id: str):
+    """Serialize collection with anchor snapshot capture and pin writes, inside any Core task lock."""
+    if str(uuid.UUID(task_id)) != task_id:
+        raise ValueError("invalid task id")
+    return _file_lock(_safe_without_final_symlink(root, f"{_CONTEXT_DIR}/tasks/{task_id}/archive-gc.lock"))
+
+
+def _read_pins(root: Path, task_id: str) -> dict[str, list[str]] | None:
+    """Anchor key -> pinned digests; None when an established registry is missing or unreadable."""
+    path = _pins_path(root, task_id)
+    if not path.exists():
+        marker = path.with_name("archive-pins-required")
+        return None if marker.exists() or marker.is_symlink() else {}
+    try:
+        if path.stat().st_size > ARCHIVE_PINS_MAX_BYTES:
+            return None
+        value = json.loads(path.read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        return None
+    if (not isinstance(value, dict) or value.get("format") != ARCHIVE_PINS_FORMAT or value.get("version") != ARCHIVE_PINS_VERSION
+            or value.get("task_id") != task_id or not isinstance(value.get("anchors"), dict)):
+        return None
+    anchors = value["anchors"]
+    if not all(isinstance(key, str) and isinstance(shas, list) and all(_is_hex64(sha) for sha in shas) for key, shas in anchors.items()):
+        return None
+    return {key: list(shas) for key, shas in anchors.items()}
+
+
+def pin_anchor_segments(root: Path, task_id: str, anchor_key: str, snapshots: list[bytes | None]) -> None:
+    """Replace the segments one authority anchor pins with those its ``snapshots`` (ledger bytes) reference.
+
+    Pass both the old and the new snapshot while the anchor record changes, then only the new one
+    (or none, when the anchor retires). A damaged registry is left intact and disables collection.
+    Nothing is written for a task that never archived.
+    """
+    if not isinstance(anchor_key, str) or not _ID_LABEL.fullmatch(anchor_key):
+        raise ValueError("invalid anchor pin key")
+    pins = _read_pins(root, task_id)
+    if pins is None:
+        raise ValueError("archive pin registry is missing or unreadable")
+    refs: set[str] = set()
+    for raw in snapshots:
+        snapshot_refs = _state_bytes_refs(raw, task_id)
+        if snapshot_refs is None:
+            raise ValueError("cannot pin an unreadable archive snapshot")
+        refs |= snapshot_refs
+    current = dict(pins)
+    if refs:
+        current[anchor_key] = sorted(refs)
+    else:
+        current.pop(anchor_key, None)
+    if not current and not pins:
+        return
+    path = _pins_path(root, task_id)
+    if current != pins:
+        record = {"format": ARCHIVE_PINS_FORMAT, "version": ARCHIVE_PINS_VERSION, "task_id": task_id, "anchors": current}
+        _atomic_write(path, (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"))
+    marker = path.with_name("archive-pins-required")
+    if marker.is_symlink():
+        raise ValueError("unsafe archive pin registry marker")
+    if not marker.exists():
+        # Publish the registry expectation before the first archived anchor. Keep the expectation
+        # and an empty registry after retirement, so loss does not masquerade as having no anchors.
+        _atomic_write(marker, b"thaliris-archive-pins\n")
+
+
+def _collect_archive_segments(root: Path, task_id: str, keep: set[str]) -> list[str]:
+    """Delete verified managed segments outside ``keep`` and all pins; return the deleted digests."""
+    pins = _read_pins(root, task_id)
+    if pins is None:
+        return []
+    keep = set(keep).union(*pins.values()) if pins else set(keep)
+    directory = _archive_segment_path(root, task_id, "0" * 64).parent
+    if directory != root.resolve() / ".context" / "tasks" / task_id / "archive" or not directory.is_dir():
+        return []
+    deleted: list[str] = []
+    for path in sorted(directory.iterdir()):
+        name = path.name
+        sha = name.removesuffix(".json")
+        if sha == name or not _is_hex64(sha) or sha in keep:
+            continue
+        try:
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                continue
+            segment = _read_archive_segment(root, task_id, sha)
+            after = path.lstat()
+            identity_fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+            if segment["version"] != ARCHIVE_SEGMENT_VERSION or any(getattr(after, key) != getattr(info, key) for key in identity_fields):
+                continue
+            path.unlink()
+            deleted.append(sha)
+        except (OSError, ThalirisError):
+            continue
+    return deleted
+
 def _archive_unavailable(identifier: str, sha: object, reason: str, object_type: str | None = None) -> ThalirisError:
     return ThalirisError(
         _errors.TASK_ARCHIVE_UNAVAILABLE, "archived task object body is unavailable",
@@ -2260,16 +2448,17 @@ def _read_archive_segment(root: Path, task_id: str, sha: str, identifier: str = 
     if not target.is_file():
         raise _archive_unavailable(identifier, sha, "missing")
     try:
-        if target.stat().st_size > ARCHIVE_SEGMENT_MAX_BYTES:
-            raise _archive_unavailable(identifier, sha, "oversized")
-        raw = target.read_bytes()
+        with target.open("rb") as stream:
+            raw = stream.read(ARCHIVE_SEGMENT_MAX_BYTES + 1)
     except OSError as exc:
         raise _archive_unavailable(identifier, sha, "unreadable") from exc
+    if len(raw) > ARCHIVE_SEGMENT_MAX_BYTES:
+        raise _archive_unavailable(identifier, sha, "oversized")
     if hashlib.sha256(raw).hexdigest() != sha:
         raise _archive_unavailable(identifier, sha, "sha256 mismatch")
     try:
         segment = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise _archive_unavailable(identifier, sha, "invalid JSON") from exc
     if (not isinstance(segment, dict) or segment.get("format") != ARCHIVE_SEGMENT_FORMAT
             or segment.get("version") not in _ARCHIVE_SEGMENT_VERSIONS or segment.get("task_id") != task_id
@@ -2896,7 +3085,7 @@ _CONTINUITY_SCHEMAS = {
 # facts have explicit provenance and no invented native handoff or actor.
 _CONTINUITY_OPTIONAL = {
     "requirements": {"kind", "surface"},
-    "handoffs": {"durable_paths", "claims", "usage", "archived"},
+    "handoffs": {"durable_paths", "claims", "usage", "archived", *sorted(FOREIGN_HANDOFF_FIELDS)},
     "observations": {"native_actor", "submitted_by", "native_status", "native_status_conflict", "observed_state", "provenance",
                      "claim", "mechanism", "archived"},
     "judgments": {"judgment_refs", "override_reason", "overridden_checks", "archived"},
@@ -2906,7 +3095,7 @@ _CONTINUITY_OPTIONAL = {
 # what it overrode.
 _CORE_ASSIGNED_CONTINUITY_FIELDS = {
     "requirements": set(),
-    "handoffs": {"claims", "usage", "archived"},
+    "handoffs": {"claims", "usage", "archived", *sorted(FOREIGN_HANDOFF_FIELDS)},
     "observations": {"claim", "mechanism", "archived"},
     "judgments": {"override_reason", "overridden_checks", "archived"},
 }
@@ -2978,6 +3167,7 @@ def _validate_continuity(state: dict[str, object],
             if isinstance(item, dict):
                 owners[str(item.get("id"))] = (field, item)
     requirements, handoffs, observations = {}, {}, {}
+    live_sessions: dict[str, str] = {}
     # Evicted handoffs, observations and judgments are present for references; their fields were
     # checked when they were appended, so checks that read a referent's fields skip evicted ones.
     evicted_handoffs, evicted_observations, evicted_judgments = (
@@ -3056,6 +3246,10 @@ def _validate_continuity(state: dict[str, object],
                 raise _continuity_error(_errors.CONTINUITY_INVALID, "verification-first continuity fields require task schema 9", kind, index, item,
                                         expected="schema 9; preserve the state and use a compatible reader",
                                         got=sorted(_SCHEMA9_CONTINUITY_FIELDS[kind] & item.keys()))
+            if state.get("schema_version") < _CROSS_HOST_SCHEMA_VERSION and _cross_host_fields(kind, item):
+                raise _continuity_error(_errors.CONTINUITY_INVALID, "cross-host continuity fields require task schema 12", kind, index, item,
+                                        expected="schema 12; preserve the state and use a compatible reader",
+                                        got=_cross_host_fields(kind, item))
             for field in sorted(fields - {"id", "parent_handoff_id", "requirement_refs", "source_refs", "observation_refs", "text", "reasoning"}
                                 - ({"handoff_id"} if kind == "observations" and item.get("provenance") in {"controller-local", MECHANISM_PRODUCER} else set())):
                 label(kind, index, item, field, field)
@@ -3081,7 +3275,22 @@ def _validate_continuity(state: dict[str, object],
                 if not item["requirement_refs"] and item["parent_handoff_id"] is None:
                     raise _continuity_error(_errors.CONTINUITY_REFERENCE_INVALID, "handoff requires requirement refs", kind, index, item,
                                             field="requirement_refs", expected="non-empty for a root handoff (parent_handoff_id null)")
+                problem = _foreign_handoff_problem(item)
+                if problem:
+                    raise _continuity_error(_errors.CONTINUITY_INVALID, "invalid foreign-runner handoff", kind, index, item,
+                                            field="run_state", expected=problem)
+                if item.get("run_state") in FOREIGN_LIVE_RUN_STATES and "foreign_session_hash" in item:
+                    if item["foreign_session_hash"] in live_sessions:
+                        raise _continuity_error(_errors.FOREIGN_RUN_INVALID, "foreign session is already bound to a live handoff", kind, index, item,
+                                                field="foreign_session_hash", expected="a session hash no other live foreign-runner handoff holds",
+                                                extra={"existing_handoff_id": live_sessions[item["foreign_session_hash"]]})
+                    live_sessions[item["foreign_session_hash"]] = identifier
                 parent = item["parent_handoff_id"]
+                if isinstance(parent, str) and parent in handoffs and "executor_host" in handoffs[parent]:
+                    # Foreign children run read-only and cannot delegate further (first version).
+                    raise _continuity_error(_errors.FOREIGN_DELEGATION_REFUSED, "a foreign-runner handoff cannot delegate", kind, index, item,
+                                            field="parent_handoff_id", expected="a parent handoff that is not run by a foreign Host",
+                                            got=parent, recovery="dispatch the work from the Controller's own Host instead; nothing was recorded")
                 if parent is not None and not (isinstance(parent, str) and parent in evicted_handoffs and parent not in handoffs):
                     if not isinstance(parent, str) or parent not in handoffs:
                         raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "invalid parent handoff provenance", kind, index, item,
@@ -3101,12 +3310,20 @@ def _validate_continuity(state: dict[str, object],
                                             field="native_status_conflict", expected="a boolean", got=item["native_status_conflict"])
                 local = item.get("provenance") == "controller-local"
                 mechanical = item.get("provenance") == MECHANISM_PRODUCER
+                foreign = item.get("provenance") == FOREIGN_RUNNER_PROVENANCE
+                claim_handoff = handoffs.get(item["handoff_id"]) if isinstance(item["handoff_id"], str) else None
                 if local and state.get("schema_version") < _CONTROLLER_LOCAL_SCHEMA_VERSION:
                     raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "Controller local provenance requires task schema 8", kind, index, item,
                                             expected="schema 8; preserve the state and use a compatible reader")
-                if "provenance" in item and not (local or mechanical):
+                if "provenance" in item and not (local or mechanical or foreign):
                     raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "invalid observation provenance", kind, index, item,
                                             field="provenance", expected="controller-local or omitted")
+                if (foreign and ("claim" not in item or not isinstance(item["handoff_id"], str)
+                                 or {"native_actor", "submitted_by", "native_status", "native_status_conflict", "observed_state"} & item.keys()
+                                 or (claim_handoff is not None and claim_handoff.get("result_source") != FOREIGN_RESULT_SOURCE))
+                        or (not foreign and "claim" in item and claim_handoff is not None and "executor_host" in claim_handoff)):
+                    raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "foreign-runner observation provenance conflict", kind, index, item,
+                                            field="provenance", expected="a typed claim of a handoff whose result the foreign runner recorded")
                 if local and (item["producer"] != "controller" or item["handoff_id"] is not None
                               or {"native_actor", "submitted_by", "native_status", "native_status_conflict"} & item.keys()):
                     raise _continuity_error(_errors.CONTINUITY_PROVENANCE_CONFLICT, "Controller local observation provenance conflict", kind, index, item,
@@ -3518,7 +3735,7 @@ def _append_continuity_hot(state: dict[str, object], additions: list[tuple[str, 
             raise _continuity_error(_errors.CONTINUITY_INVALID, "continuity objects carry no revision field", kind, index, item,
                                     field="revision", expected="omitted", extra={"batch_index": batch_index})
         assigned = sorted(_CORE_ASSIGNED_CONTINUITY_FIELDS[kind] & item.keys())
-        if kind == "observations" and item.get("provenance") == MECHANISM_PRODUCER:
+        if kind == "observations" and item.get("provenance") in (MECHANISM_PRODUCER, FOREIGN_RUNNER_PROVENANCE):
             assigned.append("provenance")
         if assigned and not trusted:
             raise _continuity_error(_errors.CONTINUITY_INVALID, "continuity field is assigned by Core", kind, index, item,
@@ -3935,6 +4152,10 @@ STATUS_CHECKS_MAX = 16
 USAGE_FIELDS = ("model", "effort", "input_tokens", "output_tokens", "total_tokens", "cost_usd", "duration_ms",
                 "tool_uses", "outcome")
 USAGE_OUTCOMES = ("completed", "failed", "disposed", "unknown")
+# Optional usage field (schema 12): how ``cost_usd`` was obtained. ``metered`` is billed per token;
+# ``subscription-notional`` is a list-price estimate for a subscription run that billed nothing per call.
+USAGE_OPTIONAL_FIELDS = ("cost_basis",)
+USAGE_COST_BASES = ("metered", "subscription-notional", "unknown")
 ADVISORY_DEFAULTS = {"max_files": 3, "max_changed_lines": 150, "controller_tool_output_tokens": 30_000}
 ADVISORY_LINE_COUNT_MAX_PATHS = 64
 ADVISORY_LINE_COUNT_MAX_FILE_BYTES = 1024 * 1024
@@ -3982,8 +4203,27 @@ def _files_digest(files: list[dict[str, object]]) -> str:
     return _canonical_sha256(sorted([str(item["path"]), str(item["sha256"])] for item in files))
 
 
+def _cross_host_fields(kind: str, item: dict[str, object]) -> list[str]:
+    """Schema-12 content of one continuity object (foreign-run fields, provenance, usage cost basis)."""
+    if kind == "handoffs":
+        found = sorted(FOREIGN_HANDOFF_FIELDS & item.keys())
+        usage = item.get("usage")
+        if isinstance(usage, dict) and set(USAGE_OPTIONAL_FIELDS) & usage.keys():
+            found.append("usage.cost_basis")
+        return found
+    if kind == "observations" and item.get("provenance") == FOREIGN_RUNNER_PROVENANCE:
+        return ["provenance"]
+    return []
+
+
 def _feature_schema(state: dict[str, object]) -> int:
     """The lowest schema version able to hold this state's content."""
+    data = state.get("evidence_continuity")
+    if isinstance(data, dict):
+        for kind in ("handoffs", "observations"):
+            values = data.get(kind)
+            if any(isinstance(item, dict) and _cross_host_fields(kind, item) for item in (values if isinstance(values, list) else [])):
+                return _CROSS_HOST_SCHEMA_VERSION
     if _SCHEMA9_STATE_FIELDS & state.keys():
         return _VERIFICATION_SCHEMA_VERSION
     results = state.get("verification_results")
@@ -4115,8 +4355,11 @@ def _claims_marker_problem(value: object) -> str | None:
 
 
 def _usage_problem(value: object) -> str | None:
-    if not isinstance(value, dict) or set(value) != set(USAGE_FIELDS):
-        return "a usage record with exactly the fields " + ", ".join(USAGE_FIELDS) + " (unknown values are null)"
+    if not isinstance(value, dict) or set(value) - set(USAGE_OPTIONAL_FIELDS) != set(USAGE_FIELDS):
+        return ("a usage record with exactly the fields " + ", ".join(USAGE_FIELDS) + " (unknown values are null)"
+                " and optionally " + ", ".join(USAGE_OPTIONAL_FIELDS))
+    if "cost_basis" in value and value["cost_basis"] not in USAGE_COST_BASES:
+        return "`cost_basis` one of " + ", ".join(USAGE_COST_BASES) + " when present"
     for key in ("model", "effort"):
         if value[key] is not None and (not isinstance(value[key], str) or not value[key].strip() or len(value[key]) > 128):
             return f"`{key}` a non-empty string of at most 128 characters, or null"
@@ -4898,14 +5141,22 @@ def close_state(root: Path | None, state: dict[str, object], *, override_reason:
 
 # --- typed claims and handoff usage ---
 
-def _handoff(state: dict[str, object], handoff_id: object) -> dict[str, object]:
-    """The hot handoff with this id; an evicted handoff is re-hydrated first (it is about to change)."""
+def _handoff(state: dict[str, object], handoff_id: object, *, rehydrate: bool = True) -> dict[str, object]:
+    """Read a handoff, rehydrating an evicted one only when the caller intends to mutate it."""
     for item in state.get("evidence_continuity", {}).get("handoffs", []):
         if item["id"] == handoff_id:
             return item
-    if isinstance(handoff_id, str) and _eviction_entries(state) and handoff_id in _index_map(state)["handoffs"]:
-        _rehydrate_from_state(state, [("handoffs", handoff_id)])
-        return _handoff(state, handoff_id)
+    if isinstance(handoff_id, str) and _eviction_entries(state):
+        located = _index_map(state)["handoffs"].get(handoff_id)
+        if located is not None:
+            root = _archive_roots.get().get(str(state["task_id"]))
+            if root is None:
+                raise _archive_unavailable(handoff_id, None, "no project root is known for this task")
+            if not rehydrate:
+                item, _ = _evicted_object(root, state, "handoffs", handoff_id, located)
+                return hydrate_archived(root, state, "handoffs", item)
+            _rehydrate(root, state, [("handoffs", handoff_id)])
+            return _handoff(state, handoff_id)
     raise ThalirisError(_errors.HANDOFF_NOT_FOUND, "handoff is not registered",
                         recovery="use the id of a handoff registered in this task; nothing was recorded",
                         details={"handoff_id": _preview(handoff_id)})
@@ -4942,9 +5193,20 @@ def ingest_claims(state: dict[str, object], handoff_id: str, text: object) -> di
     left as it is (``already_ingested``); a missing/malformed marker may be
     replaced once by a later readable block. One revision when anything is
     written; the caller writes the state.
+
+    A foreign-runner handoff (``executor_host`` set) takes claims only from its foreign result
+    (whose claim observations carry ``provenance="foreign-runner"``). Any other ingest, such as
+    the relay's own SubagentStop, changes nothing and
+    reports ``ingested_by: foreign-runner``: ``already_ingested`` once the result is recorded.
     """
-    handoff = _handoff(state, handoff_id)
-    parsed = parse_claim_block(text)
+    handoff = _handoff(state, handoff_id, rehydrate=False)
+    if "executor_host" in handoff:
+        return _foreign_ingest_refusal(handoff)
+    return _ingest_claims(state, _handoff(state, handoff_id), parse_claim_block(text))
+
+
+def _ingest_claims(state: dict[str, object], handoff: dict[str, object], parsed: dict[str, object],
+                   *, provenance: str | None = None) -> dict[str, object]:
     prior = handoff.get("claims")
     if prior is not None and (prior["status"] == "present" or parsed["status"] != "present"):
         return {"handoff_id": handoff["id"], "status": prior["status"], "already_ingested": True, "changed": False,
@@ -5003,6 +5265,7 @@ def ingest_claims(state: dict[str, object], handoff_id: str, text: object) -> di
             for identifier, claim in zip(ids, pending):
                 record = {key: claim[key] for key in ("requirement", "polarity", "basis", "evidence", "text_truncated", "normalized") if key in claim}
                 additions.append(("observations", str(handoff["producer"]), {
+                    **({"provenance": provenance} if provenance else {}),
                     "id": identifier, "candidate": handoff["candidate"], "handoff_id": handoff["id"],
                     "requirement_refs": [claim["requirement"]] if claim["assigned"] else [],
                     "source_refs": [identifier + ".s"], "text": claim["text"], "claim": record,
@@ -5015,7 +5278,7 @@ def ingest_claims(state: dict[str, object], handoff_id: str, text: object) -> di
                       "duplicates": duplicates, "supports": supports, "observations": ids}
             response.update(observations=ids, supports=_support_counts(supports), duplicates=duplicates)
         handoff["claims"] = marker
-        state["schema_version"] = max(state["schema_version"], _VERIFICATION_SCHEMA_VERSION)
+        state["schema_version"] = max(state["schema_version"], _VERIFICATION_SCHEMA_VERSION, _feature_schema(state))
         if additions:
             _append_continuity_items(state, additions, bump=False, trusted=True)
         else:
@@ -5068,21 +5331,39 @@ def set_handoff_usage(state: dict[str, object], handoff_id: str, usage: object) 
     non-null value replaces the stored one, null or absent keeps it. One
     revision; the caller writes the state. Returns the stored usage.
     """
+    handoff = _handoff(state, handoff_id, rehydrate=False)
+    if "executor_host" in handoff:
+        # A foreign-runner handoff's usage is the foreign model's, recorded with its result
+        # (``record_foreign_result``); the relay's own stop report does not overwrite it.
+        _merged_usage(handoff, usage)  # still refuse a malformed report
+        return dict(handoff["usage"]) if isinstance(handoff.get("usage"), dict) else {field: None for field in USAGE_FIELDS}
+    merged = _merged_usage(handoff, usage)
     handoff = _handoff(state, handoff_id)
-    if not isinstance(usage, dict) or not usage or set(usage) - set(USAGE_FIELDS):
-        unknown = sorted(set(usage) - set(USAGE_FIELDS))[:8] if isinstance(usage, dict) else []
+    handoff["usage"] = merged
+    state["schema_version"] = max(state["schema_version"], _VERIFICATION_SCHEMA_VERSION, _feature_schema(state))
+    state["revision"] += 1
+    return merged
+
+
+def _merged_usage(handoff: dict[str, object], usage: object) -> dict[str, object]:
+    """The handoff's usage merged with a report (see ``set_handoff_usage``); HANDOFF_USAGE_INVALID when malformed."""
+    allowed = set(USAGE_FIELDS) | set(USAGE_OPTIONAL_FIELDS)
+    if not isinstance(usage, dict) or not usage or set(usage) - allowed:
+        unknown = sorted(set(usage) - allowed)[:8] if isinstance(usage, dict) else []
         raise ThalirisError(_errors.HANDOFF_USAGE_INVALID, "invalid handoff usage",
                             recovery="report only the listed fields; nothing was recorded",
-                            details={"expected": "a non-empty object with any of " + ", ".join(USAGE_FIELDS), "unknown_fields": unknown})
+                            details={"expected": "a non-empty object with any of " + ", ".join((*USAGE_FIELDS, *USAGE_OPTIONAL_FIELDS)),
+                                     "unknown_fields": unknown})
     prior = handoff.get("usage") or {}
     merged = {field: usage[field] if usage.get(field) is not None else prior.get(field) for field in USAGE_FIELDS}
+    for field in USAGE_OPTIONAL_FIELDS:
+        value = usage.get(field) if usage.get(field) is not None else prior.get(field)
+        if value is not None:
+            merged[field] = value
     problem = _usage_problem(merged)
     if problem:
         raise ThalirisError(_errors.HANDOFF_USAGE_INVALID, "invalid handoff usage",
                             recovery="correct the named field; nothing was recorded", details={"expected": problem})
-    handoff["usage"] = merged
-    state["schema_version"] = max(state["schema_version"], _VERIFICATION_SCHEMA_VERSION)
-    state["revision"] += 1
     return merged
 
 
@@ -5095,10 +5376,438 @@ def task_handoff_usage(root: Path, handoff_id: str, input_file: str | dict[str, 
         state = _load_state(root, active=True)
         if base_revision is not None:
             check_revision(state, base_revision)
+        foreign = "executor_host" in _handoff(state, handoff_id, rehydrate=False)
         stored = set_handoff_usage(state, handoff_id, usage)
-        _write_state(root, state)
+        if not foreign:
+            _write_state(root, state)
+    if foreign:
+        return {**_task_ack(state, []), "handoff_id": handoff_id, "usage": stored,
+                "ignored": "foreign-runner usage is recorded with the foreign result"}
     return {**_task_ack(state, ["evidence_continuity"]), "handoff_id": handoff_id, "usage": stored}
 
+
+
+# --- cross-host managed children (schema 12) -------------------------------------------------------
+#
+# A Controller on one Host may dispatch a managed child to the other Host's model. That model runs as
+# a separate process (``claude -p`` or ``codex app-server``/``exec``) started by a deterministic
+# launcher in the dispatching adapter; a cheap relay subagent on the dispatching Host only carries
+# native notification and UI. Core records the run on the handoff (see FOREIGN_HANDOFF_FIELDS):
+#
+#   reserve_foreign_handoff  executor_host, prompt_sha256 (+ the prompt body), run_state reserved
+#   register_foreign_launch  foreign_session_hash and transport_agent_id_hash (set once), launched
+#   bind_foreign_session     the foreign Host's adapter recognises its pre-registered session: bound
+#   record_foreign_result    result_sha256 (+ body), result_source foreign-runner, claims, usage,
+#                            completed | failed
+#   cancel_foreign_run       cancelled (from reserved, launched or bound), with a bounded reason
+#
+# Every field is Core-assigned and every function runs under the ordinary task lock, revision and
+# validation rules. Nothing here grants authority: a binding only tells the foreign adapter which
+# handoff, role and candidate the session serves so it can deny Controller authority. Foreign-runner
+# handoffs cannot be the parent of another handoff (``FOREIGN_DELEGATION_REFUSED``). The prompt and
+# result bodies are content-addressed sidecar files ``tasks/<task id>/bodies/<sha256>.txt`` under the
+# context directory that eviction never moves. The protocol both adapters implement is
+# docs/thaliris-cross-host-protocol.md.
+
+_CONTEXT_DIR = _STATE_NAME.split("/")[0]
+
+
+def foreign_session_hash(session_id: str) -> str:
+    """The ``foreign_session_hash`` of a pre-registered foreign session id: sha256 of its UTF-8 bytes."""
+    if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256 or _ALL_CONTROL_CHARACTERS.search(session_id):
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, "invalid foreign session id",
+                            details={"expected": "a non-empty session id of at most 256 characters"})
+    try:
+        return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    except UnicodeEncodeError as exc:
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, "invalid foreign session id",
+                            details={"expected": "UTF-8 text"}) from exc
+
+
+def _foreign_handoff_problem(item: dict[str, object]) -> str | None:
+    """Static coherence of a handoff's foreign-run fields (transition order is enforced by the API)."""
+    present = FOREIGN_HANDOFF_FIELDS & item.keys()
+    if not present:
+        return None
+    if item.get("executor_host") not in FOREIGN_HOSTS or not {"prompt_sha256", "run_state"} <= present:
+        return "executor_host claude|codex together with prompt_sha256 and run_state"
+    if item.get("producer") not in FOREIGN_READONLY_ROLES:
+        return "a read-only foreign role: " + ", ".join(FOREIGN_READONLY_ROLES)
+    if item["run_state"] not in FOREIGN_RUN_STATES:
+        return "run_state one of " + ", ".join(FOREIGN_RUN_STATES)
+    for field in ("foreign_session_hash", "transport_agent_id_hash", "prompt_sha256", "result_sha256"):
+        if field in item and not _is_hex64(item[field]):
+            return f"`{field}` a lowercase sha256 hex digest"
+    run = item["run_state"]
+    if run == "reserved" and "foreign_session_hash" in item:
+        return "no foreign_session_hash before the launch"
+    if run in ("launched", "bound", "completed", "failed") and not {"foreign_session_hash", "transport_agent_id_hash"} <= present:
+        return "foreign_session_hash and transport_agent_id_hash once launched"
+    if "foreign_session_hash" in present and "transport_agent_id_hash" not in present:
+        return "transport_agent_id_hash whenever a foreign session was registered"
+    result = {"result_sha256", "result_source"} & present
+    if result and (len(result) != 2 or item["result_source"] != FOREIGN_RESULT_SOURCE):
+        return "result_sha256 together with result_source foreign-runner"
+    if (run in ("completed", "failed")) != bool(result):
+        return "a recorded result exactly on a completed or failed run"
+    if ("claims" in item) != bool(result) or ("usage" in item and not result):
+        return "claims exactly on a recorded result and usage only on a recorded result"
+    if (run == "cancelled") != ("cancel_reason" in item):
+        return "a cancel_reason exactly on a cancelled run"
+    if "cancel_reason" in item and (not isinstance(item["cancel_reason"], str) or not item["cancel_reason"].strip()
+                                    or len(item["cancel_reason"]) > FOREIGN_CANCEL_REASON_MAX
+                                    or _ALL_CONTROL_CHARACTERS.search(item["cancel_reason"])):
+        return f"cancel_reason a single-line text of 1 to {FOREIGN_CANCEL_REASON_MAX} characters"
+    return None
+
+
+def _foreign_ingest_refusal(handoff: dict[str, object]) -> dict[str, object]:
+    recorded = handoff.get("result_source") == FOREIGN_RESULT_SOURCE
+    prior = handoff.get("claims") or {}
+    return {"handoff_id": handoff["id"], "status": prior.get("status", "pending"), "already_ingested": recorded, "changed": False,
+            "ingested_by": FOREIGN_RESULT_SOURCE,
+            "reason": ("already ingested by foreign runner" if recorded else
+                       "claims of a foreign-runner handoff are ingested from its foreign result only"),
+            "observations": [], "unassigned": [], "supports": _support_counts(prior.get("supports", [])), "duplicates": 0,
+            "total": prior.get("total", 0), "truncated": prior.get("truncated", False), "invalid": prior.get("invalid", 0)}
+
+
+def _foreign_handoff(state: dict[str, object], handoff_id: object) -> dict[str, object]:
+    handoff = _handoff(state, handoff_id, rehydrate=False)
+    if "executor_host" not in handoff:
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, "handoff is not run by a foreign Host",
+                            recovery="use the id of a handoff reserved with reserve_foreign_handoff; nothing was recorded",
+                            details={"handoff_id": handoff["id"]})
+    return handoff
+
+
+def _run_conflict(handoff: dict[str, object], operation: str, allowed: tuple[str, ...]) -> ThalirisError:
+    return ThalirisError(_errors.FOREIGN_RUN_STATE_CONFLICT, f"foreign run cannot {operation} from run_state {handoff['run_state']}",
+                         recovery="re-read the handoff; run states only move forward and each step happens once; nothing was recorded",
+                         details={"handoff_id": handoff["id"], "run_state": handoff["run_state"], "expected": list(allowed)})
+
+
+def _hash_argument(value: object, field: str) -> str:
+    if not _is_hex64(value):
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, f"invalid {field}",
+                            details={"field": field, "expected": "a lowercase sha256 hex digest", "got": _preview(value)})
+    return str(value)
+
+
+def _body_path(root: Path, task_id: str, sha256: str) -> Path:
+    if str(uuid.UUID(task_id)) != task_id or not _is_hex64(sha256):
+        raise ValueError("invalid foreign body identity")
+    return _safe_without_final_symlink(root, f"{_CONTEXT_DIR}/tasks/{task_id}/bodies/{sha256}.txt")
+
+
+def _body_bytes(text: object, field: str, *, allow_empty: bool = False) -> bytes:
+    if not isinstance(text, str) or (not allow_empty and not text.strip()):
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, f"invalid foreign {field}",
+                            details={"field": field, "expected": "text" + ("" if allow_empty else " that is not blank")})
+    try:
+        raw = text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, f"invalid foreign {field}",
+                            details={"field": field, "expected": "UTF-8 text"}) from exc
+    if len(raw) > FOREIGN_BODY_MAX_BYTES:
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, f"foreign {field} is too large",
+                            details={"field": field, "limit": FOREIGN_BODY_MAX_BYTES, "count": len(raw), "unit": "UTF-8 bytes"})
+    return raw
+
+
+def _write_body(root: Path, task_id: str, sha: str, raw: bytes) -> None:
+    """Write a content-addressed body before the state that names it (an orphan body is harmless)."""
+    try:
+        target = _body_path(root, task_id, sha)
+        if not target.exists():
+            _atomic_write(target, raw)
+            return
+        if target.is_file() and target.stat().st_size == len(raw) and _file_digest(target) == sha:
+            return
+    except (OSError, ValueError) as exc:
+        raise ThalirisError(_errors.FOREIGN_BODY_UNAVAILABLE, "foreign body could not be stored", details={"sha256": sha}) from exc
+    raise ThalirisError(_errors.FOREIGN_BODY_UNAVAILABLE, "foreign body path holds different bytes", details={"sha256": sha})
+
+
+def _state_root(state: dict[str, object], root: Path | None) -> Path:
+    root = root or _archive_roots.get().get(str(state.get("task_id")))
+    if root is None:
+        raise ThalirisError(_errors.FOREIGN_BODY_UNAVAILABLE, "foreign body location is unknown",
+                            recovery="load the task through Core (or pass root) so its bodies can be written; nothing was recorded")
+    return root
+
+
+def reserve_foreign_handoff(state: dict[str, object], record: object, *, executor_host: str, prompt: str,
+                            transport_agent_id_hash: str | None = None, root: Path | None = None) -> dict[str, object]:
+    """Register one handoff that a foreign Host's model will run (``run_state: reserved``).
+
+    ``record`` is an ordinary handoff registration (``id, parent_handoff_id, candidate, producer,
+    requirement_refs`` and optionally ``durable_paths``); Core adds ``executor_host``, the prompt
+    digest and ``run_state``, plus ``transport_agent_id_hash`` when the relay is already known. The
+    prompt body is stored before the state. A parent that is itself foreign is refused. One
+    revision; the caller writes the state.
+    """
+    if executor_host not in FOREIGN_HOSTS:
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, "invalid executor host",
+                            details={"field": "executor_host", "expected": " or ".join(FOREIGN_HOSTS), "got": _preview(executor_host)})
+    if not isinstance(record, dict):
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, "invalid foreign handoff registration", details={"expected": "a handoff object"})
+    if record.get("producer") not in FOREIGN_READONLY_ROLES:
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, "invalid foreign handoff role",
+                            details={"field": "producer", "expected": list(FOREIGN_READONLY_ROLES)})
+    assigned = sorted(_CORE_ASSIGNED_CONTINUITY_FIELDS["handoffs"] & record.keys())
+    if assigned:
+        raise _continuity_error(_errors.CONTINUITY_INVALID, "continuity field is assigned by Core", "handoffs",
+                                len(_continuity(state)["handoffs"]), record, field=assigned[0], expected="omitted",
+                                extra={"fields": assigned})
+    raw = _body_bytes(prompt, "prompt")
+    sha = hashlib.sha256(raw).hexdigest()
+    item = {**record, "executor_host": executor_host, "prompt_sha256": sha, "run_state": "reserved"}
+    if transport_agent_id_hash is not None:
+        item["transport_agent_id_hash"] = _hash_argument(transport_agent_id_hash, "transport_agent_id_hash")
+    root = _state_root(state, root)
+    candidate = copy.deepcopy(state)
+    _append_continuity_items(candidate, [("handoffs", None, item)], trusted=True)
+    _write_body(root, str(state["task_id"]), sha, raw)
+    state.update(candidate)
+    return {"handoff_id": item["id"], "executor_host": executor_host, "prompt_sha256": sha, "run_state": "reserved"}
+
+
+def register_foreign_launch(state: dict[str, object], handoff_id: str, foreign_session_hash: str,
+                            transport_agent_id_hash: str) -> dict[str, object]:
+    """One-shot ``reserved -> launched``: pin the pre-registered foreign session and the relay identity.
+
+    Both are hashes. ``transport_agent_id_hash`` is set once: a value given at reservation must be
+    repeated exactly. A second launch, or a session hash a live run already holds, is refused. One
+    revision; the caller writes the state.
+    """
+    session = _hash_argument(foreign_session_hash, "foreign_session_hash")
+    transport = _hash_argument(transport_agent_id_hash, "transport_agent_id_hash")
+    handoff = _foreign_handoff(state, handoff_id)
+    if handoff["run_state"] != "reserved":
+        raise _run_conflict(handoff, "launch", ("reserved",))
+    if handoff.get("transport_agent_id_hash", transport) != transport:
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, "relay identity does not match the reservation",
+                            recovery="launch the run from the relay the handoff was reserved for; nothing was recorded",
+                            details={"handoff_id": handoff["id"], "field": "transport_agent_id_hash"})
+    snapshot = copy.deepcopy(state)
+    try:
+        handoff.update(foreign_session_hash=session, transport_agent_id_hash=transport, run_state="launched")
+        _validate_continuity(state)
+        state["revision"] += 1
+    except BaseException:
+        state.clear()
+        state.update(snapshot)
+        raise
+    return {"handoff_id": handoff["id"], "run_state": "launched", "executor_host": handoff["executor_host"]}
+
+
+def bind_foreign_session(state: dict[str, object], foreign_session_hash: str) -> tuple[dict[str, object] | None, bool]:
+    """(binding, changed) for a session hash, or (None, False) when no hot handoff holds exactly this hash.
+
+    The first bind of a launched run moves it to ``bound`` (one revision; the caller writes the
+    state); every later bind returns the same binding unchanged. A settled run still binds, so its
+    adapter can keep denying authority. The binding carries no authority: ``authority`` is always
+    ``none`` and the session is a FOREIGN_CHILD of the named handoff and role.
+    """
+    session = _hash_argument(foreign_session_hash, "foreign_session_hash")
+    matches = [item for item in _continuity(state)["handoffs"] if item.get("foreign_session_hash") == session]
+    if not matches:
+        return None, False
+    live = [item for item in matches if item["run_state"] in FOREIGN_LIVE_RUN_STATES]
+    handoff = (live or matches)[-1]
+    changed = False
+    if handoff["run_state"] == "launched" and state.get("status") == "ACTIVE":
+        handoff["run_state"] = "bound"
+        state["revision"] += 1
+        changed = True
+    binding = {"binding": "FOREIGN_CHILD", "authority": "none", "task_id": state["task_id"], "handoff_id": handoff["id"],
+               "role": handoff["producer"], "candidate": handoff["candidate"], "requirement_refs": list(handoff["requirement_refs"]),
+               "parent_handoff_id": handoff["parent_handoff_id"], "executor_host": handoff["executor_host"],
+               "run_state": handoff["run_state"], "live": handoff["run_state"] in FOREIGN_LIVE_RUN_STATES}
+    return binding, changed
+
+
+def record_foreign_result(state: dict[str, object], handoff_id: str, result_text: str, claims_block: str | None = None,
+                          usage: dict[str, object] | None = None, *, outcome: str = "completed",
+                          root: Path | None = None) -> dict[str, object]:
+    """Record a foreign run's result once: ``launched|bound -> completed|failed``.
+
+    Stores the result body and digest with ``result_source: foreign-runner``, records ``usage``
+    (``USAGE_FIELDS`` plus optional ``cost_basis``; a null outcome takes the run outcome) and
+    ingests the ``thaliris-claims`` block of ``claims_block`` (default: ``result_text``) with
+    ``provenance: foreign-runner`` on every claim observation. This is the handoff's only claims
+    ingest. A second result is refused. One revision; the caller writes the state.
+    """
+    if outcome not in ("completed", "failed"):
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, "invalid foreign run outcome",
+                            details={"field": "outcome", "expected": "completed or failed", "got": _preview(outcome)})
+    raw = _body_bytes(result_text, "result", allow_empty=True)
+    root = _state_root(state, root)
+    handoff = _foreign_handoff(state, handoff_id)
+    if "result_source" in handoff:
+        raise ThalirisError(_errors.FOREIGN_RUN_STATE_CONFLICT, "foreign result is already recorded",
+                            recovery="a foreign run records one result; nothing was recorded",
+                            details={"handoff_id": handoff["id"], "run_state": handoff["run_state"], "result_sha256": handoff["result_sha256"]})
+    if handoff["run_state"] not in ("launched", "bound"):
+        raise _run_conflict(handoff, "record a result", ("launched", "bound"))
+    parsed = parse_claim_block(result_text)
+    if claims_block is not None:
+        _body_bytes(claims_block, "claims_block", allow_empty=True)
+        if parse_claim_block(claims_block) != parsed:
+            raise ThalirisError(_errors.FOREIGN_RUN_INVALID, "foreign claims block differs from the result body",
+                                details={"field": "claims_block", "expected": "the final fenced claims block from result_text or null"})
+    snapshot = copy.deepcopy(state)
+    try:
+        merged = None
+        if usage is not None:
+            report = dict(usage) if isinstance(usage, dict) else usage
+            if isinstance(report, dict) and report.get("outcome") is None:
+                report["outcome"] = outcome
+            merged = _merged_usage(handoff, report)
+        sha = hashlib.sha256(raw).hexdigest()
+        handoff.update(run_state=outcome, result_sha256=sha, result_source=FOREIGN_RESULT_SOURCE)
+        if merged is not None:
+            handoff["usage"] = merged
+        claims = _ingest_claims(state, handoff, parsed, provenance=FOREIGN_RUNNER_PROVENANCE)
+        state["schema_version"] = max(state["schema_version"], _CROSS_HOST_SCHEMA_VERSION)
+        _write_body(root, str(state["task_id"]), sha, raw)
+    except BaseException:
+        state.clear()
+        state.update(snapshot)
+        raise
+    return {"handoff_id": handoff["id"], "run_state": outcome, "result_sha256": sha, "result_source": FOREIGN_RESULT_SOURCE,
+            "usage": merged, "claims": {key: value for key, value in claims.items() if key != "changed"}}
+
+
+def cancel_foreign_run(state: dict[str, object], handoff_id: str, reason: str) -> tuple[dict[str, object], bool]:
+    """(response, changed): ``reserved|launched|bound -> cancelled`` with a bounded reason.
+
+    Cancelling a cancelled run changes nothing; a completed or failed run cannot be cancelled. One
+    revision when changed; the caller writes the state.
+    """
+    if (not isinstance(reason, str) or not reason.strip() or len(reason) > FOREIGN_CANCEL_REASON_MAX
+            or _ALL_CONTROL_CHARACTERS.search(reason)):
+        raise ThalirisError(_errors.FOREIGN_RUN_INVALID, "invalid cancel reason",
+                            details={"field": "reason", "expected": f"a single-line text of 1 to {FOREIGN_CANCEL_REASON_MAX} characters"})
+    handoff = _foreign_handoff(state, handoff_id)
+    if handoff["run_state"] == "cancelled":
+        return {"handoff_id": handoff["id"], "run_state": "cancelled", "already_cancelled": True,
+                "cancel_reason": handoff["cancel_reason"]}, False
+    if handoff["run_state"] not in FOREIGN_LIVE_RUN_STATES:
+        raise _run_conflict(handoff, "be cancelled", FOREIGN_LIVE_RUN_STATES)
+    snapshot = copy.deepcopy(state)
+    try:
+        handoff.update(run_state="cancelled", cancel_reason=reason)
+        _validate_continuity(state)
+        state["revision"] += 1
+    except BaseException:
+        state.clear()
+        state.update(snapshot)
+        raise
+    return {"handoff_id": handoff["id"], "run_state": "cancelled", "already_cancelled": False, "cancel_reason": reason}, True
+
+
+def foreign_body(root: Path, state: dict[str, object], handoff_id: str, kind: str = "prompt") -> str:
+    """The verified prompt or result body of a foreign-runner handoff (FOREIGN_BODY_UNAVAILABLE when unreadable)."""
+    if kind not in ("prompt", "result"):
+        raise ValueError("foreign body kind must be prompt or result")
+    handoff = _foreign_handoff(state, handoff_id)
+    sha = handoff.get(f"{kind}_sha256")
+    if sha is None:
+        raise ThalirisError(_errors.FOREIGN_BODY_UNAVAILABLE, f"foreign {kind} is not recorded",
+                            details={"handoff_id": handoff["id"], "run_state": handoff["run_state"]})
+
+    def unavailable(reason: str) -> ThalirisError:
+        return ThalirisError(_errors.FOREIGN_BODY_UNAVAILABLE, f"foreign {kind} body is unavailable",
+                             recovery="restore the body file with its exact bytes (its sha256 is its name); the ledger is intact",
+                             details={"handoff_id": handoff["id"], "sha256": sha, "reason": reason})
+    try:
+        target = _body_path(root, str(state["task_id"]), str(sha))
+        if not target.is_file():
+            raise FileNotFoundError(target)
+        with target.open("rb") as stream:
+            raw = stream.read(FOREIGN_BODY_MAX_BYTES + 1)
+    except FileNotFoundError as exc:
+        raise unavailable("missing") from exc
+    except (OSError, ValueError) as exc:
+        raise unavailable("unreadable") from exc
+    if len(raw) > FOREIGN_BODY_MAX_BYTES:
+        raise unavailable("oversized")
+    if hashlib.sha256(raw).hexdigest() != sha:
+        raise unavailable("sha256 mismatch")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise unavailable("invalid UTF-8") from exc
+
+
+# Root-level, locked forms of the foreign-run functions. A supplied ``base_revision`` is enforced
+# strictly; without one the write is serialized by the task lock like ``task-observe``.
+
+def _foreign_transaction(root: Path, base_revision: int | None, body, *, active: bool = True, require_revision: bool = False):
+    root = _repo_root(root)
+    with _lock(root):
+        state = _load_state(root, active=active)
+        if base_revision is not None or require_revision:
+            check_revision(state, base_revision)
+        result, changed = body(root, state)
+        if changed:
+            _write_state(root, state)
+    return state, result, changed
+
+
+def task_foreign_reserve(root: Path, actor: str, base_revision: int, handoff: dict[str, object], *, executor_host: str,
+                         prompt: str, transport_agent_id_hash: str | None = None) -> dict[str, object]:
+    """Adapter-called: reserve a foreign-runner handoff (see ``reserve_foreign_handoff``); strict CAS."""
+    _bounded_label(actor, "continuity actor")
+    _refuse_reserved_actor(actor)
+    state, result, _ = _foreign_transaction(root, base_revision, lambda root, state: (reserve_foreign_handoff(
+        state, handoff, executor_host=executor_host, prompt=prompt, transport_agent_id_hash=transport_agent_id_hash, root=root), True),
+        require_revision=True)
+    return {**_task_ack(state, ["evidence_continuity"]), "foreign": result}
+
+
+def task_foreign_launch(root: Path, handoff_id: str, foreign_session_hash: str, transport_agent_id_hash: str,
+                        *, base_revision: int | None = None) -> dict[str, object]:
+    """Launcher-called: ``register_foreign_launch`` under the task lock."""
+    state, result, _ = _foreign_transaction(root, base_revision, lambda root, state: (register_foreign_launch(
+        state, handoff_id, foreign_session_hash, transport_agent_id_hash), True))
+    return {**_task_ack(state, ["evidence_continuity"]), "foreign": result}
+
+
+def task_foreign_bind(root: Path, foreign_session_hash: str, *, base_revision: int | None = None) -> dict[str, object]:
+    """Foreign-adapter-called: ``bind_foreign_session`` for the selected task (``binding`` null when none matches)."""
+    state, binding, changed = _foreign_transaction(root, base_revision, lambda root, state: bind_foreign_session(
+        state, foreign_session_hash), active=False)
+    return {**_task_ack(state, ["evidence_continuity"] if changed else []), "binding": binding}
+
+
+def task_foreign_result(root: Path, handoff_id: str, result_text: str, claims_block: str | None = None,
+                        usage: dict[str, object] | None = None, *, outcome: str = "completed",
+                        base_revision: int | None = None) -> dict[str, object]:
+    """Launcher-called: ``record_foreign_result`` under the task lock."""
+    state, result, _ = _foreign_transaction(root, base_revision, lambda root, state: (record_foreign_result(
+        state, handoff_id, result_text, claims_block, usage, outcome=outcome, root=root), True))
+    return {**_task_ack(state, ["evidence_continuity"]), "foreign": result}
+
+
+def task_foreign_cancel(root: Path, handoff_id: str, reason: str, *, base_revision: int | None = None) -> dict[str, object]:
+    """Adapter- or launcher-called: ``cancel_foreign_run`` under the task lock."""
+    state, result, changed = _foreign_transaction(root, base_revision, lambda root, state: cancel_foreign_run(state, handoff_id, reason))
+    return {**_task_ack(state, ["evidence_continuity"] if changed else []), "foreign": result}
+
+
+def task_foreign_body(root: Path, handoff_id: str, kind: str = "prompt") -> dict[str, object]:
+    """Launcher-called: the verified prompt (or result) body of a foreign-runner handoff of the selected task."""
+    root = _repo_root(root)
+    with _lock(root):
+        state = _load_state(root)
+        text = foreign_body(root, state, handoff_id, kind)
+        handoff = _foreign_handoff(state, handoff_id)
+    return {"ok": True, "task_id": state["task_id"], "handoff_id": handoff_id, "kind": kind,
+            "sha256": handoff[f"{kind}_sha256"], "run_state": handoff["run_state"], "role": handoff["producer"],
+            "candidate": handoff["candidate"], "executor_host": handoff["executor_host"], "text": text}
 
 # --- lane counter and advisories ---
 

@@ -240,7 +240,7 @@ promotion is a forward chain (7, 8, 9, 10): an older ledger is read as the curre
 schema in memory and written as the current schema on its next write; only a newer
 schema than the running Core is refused, with a recovery that names the upgrade.
 
-**Hot/cold ledger archive (schema 11).** The hot ledger stays within 512 KiB
+**Hot/cold ledger archive (schema 11; segment collection in 12).** The hot ledger stays within 512 KiB
 (`core.task_state_capacity()`). It is written as compact JSON, and a write whose hot
 state passes the 70% high-water mark (or a crowded hot list) evicts every settled object
 whole into an immutable, content-addressed segment

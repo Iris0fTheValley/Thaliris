@@ -133,9 +133,10 @@ managed depth two with one active Scanner is unaffected.
 Task state schemas form a forward chain: 7 (the base ledger), 8 (Controller-local
 evidence), 9 (the verification-first ledger: declared checks and their results,
 requirement kinds, typed claims, handoff usage, gate overrides), 10 (compact
-serialization and hot/cold archive segments with stubs) and 11 (full eviction of settled
-objects). Each schema is a valid subset of the next, so `_COMPATIBLE_PRIOR_SCHEMAS` lifts
-every supported prior version (6 through 10) step by
+serialization and hot/cold archive segments with stubs), 11 (full eviction of settled
+objects) and 12 (cross-host foreign-runner handoffs, `foreign-runner` claim provenance and
+a usage `cost_basis`). Each schema is a valid subset of the next, so `_COMPATIBLE_PRIOR_SCHEMAS` lifts
+every supported prior version (6 through 11) step by
 step to the current one. A state is validated once under the rules of its own on-disk
 version, then lifted in memory only: reading never rewrites the ledger, so an external
 anchor's recorded byte digest still matches and does not report
@@ -148,7 +149,7 @@ diagnostic; for a newer schema it carries `upgrade_required: true` and a
 procedure and the expected sha256. An older Core refuses a ledger a newer Core wrote;
 backward reading is not supported.
 
-### Capacity and the hot/cold archive (schema 11)
+### Capacity and the hot/cold archive (schemas 11 and 12)
 
 `core.task_state_capacity()` returns the bounds adapters use instead of hard-coding them
 (`max_bytes` 512 KiB for the hot ledger file, `archive_high_water_bytes`, `list_max`
@@ -198,8 +199,25 @@ the verification section, surfaced requirements, `changes_since` for the last 16
 revisions, status counts and the tamper and claim dedupes answer exactly as before
 eviction. Usage cost is summed exactly and rounded once, so its total does not depend on
 which segment a value sits in. When more than 12 eviction entries exist, small segments
-are merged into one (their entries become one entry with merged ids and summed totals);
-merged-away segment files stay on disk.
+are merged into one (their entries become one entry with merged ids and summed totals).
+
+**Segment collection (schema 12).** After a successful compaction write, Core can remove
+unreferenced version-3 segments. It verifies the filename digest and the segment's task
+identity before deletion. The sweep keeps the segments referenced by the current ledger,
+the preceding durable ledger, and every pinned authority snapshot. `AuthorityStore` pins the segments its
+snapshot references in `.context/tasks/<task id>/archive-pins.json` on establish,
+checkpoint, mode switch and recovery. Snapshot capture and pin updates are serialized
+with collection. Both the previous and current snapshots are pinned before the external
+anchor is replaced. A retired anchor's pins are released, and an interrupted update can
+leave extra pins. An unreadable pins file or prior ledger skips collection for that write.
+Version-3 orphans and segments dropped by re-hydration are eligible at a later compaction.
+Core retains version-1 and version-2 segments because external anchors written before
+pinning can still restore ledgers that refer to them.
+
+**Cross-host handoffs (schema 12).** Foreign-runner handoff fields, the `foreign-runner`
+claim provenance and the usage `cost_basis` are described in
+[the cross-host protocol](thaliris-cross-host-protocol.md). A live foreign run keeps its
+handoff hot; a settled one is evicted like any returned handoff, field for field.
 
 **Re-hydration.** An evicted object that new evidence needs again returns, whole, to its
 exact hot position and leaves its index entry (whose totals drop by exactly its

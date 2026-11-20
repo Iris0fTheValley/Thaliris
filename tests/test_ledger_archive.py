@@ -338,7 +338,8 @@ def test_task_get_returns_the_full_archived_object(tmp_path, monkeypatch):
     segment = next(path for path in segments(root, state["task_id"]) if path.stem == state["archive"][0]["sha256"])
     assert hashlib.sha256(segment.read_bytes()).hexdigest() == segment.stem
     body = json.loads(segment.read_bytes())
-    assert body["format"] == core.ARCHIVE_SEGMENT_FORMAT and body["task_id"] == state["task_id"] and body["version"] == 2
+    assert body["format"] == core.ARCHIVE_SEGMENT_FORMAT and body["task_id"] == state["task_id"]
+    assert body["version"] == core.ARCHIVE_SEGMENT_VERSION == 3
     assert {entry["collection"] for entry in body["items"]} >= {"observations", "judgments", "evidence_refs", "handoffs"}
 
 

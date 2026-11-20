@@ -437,20 +437,29 @@ class AuthorityStore:
             raw = core.read_state_bytes(path)
         except FileNotFoundError:
             raw = None
-        record["state_sha256"] = "ABSENT" if raw is None else hashlib.sha256(raw).hexdigest()
-        record["snapshots"][path.relative_to(self.root).as_posix()] = None if raw is None else base64.b64encode(raw).decode()
+        self._set_state_snapshot(record, path, raw)
         return raw
 
-    def _write_with_pins(self, record: dict, previous: bytes | None, current: bytes | None) -> None:
-        """Called under the archive lock. A failure can leave extra pins, never a new unpinned anchor."""
+    def _set_state_snapshot(self, record: dict, path: Path, raw: bytes | None) -> None:
+        record["state_sha256"] = "ABSENT" if raw is None else hashlib.sha256(raw).hexdigest()
+        record["snapshots"][path.relative_to(self.root).as_posix()] = None if raw is None else base64.b64encode(raw).decode()
+
+    def _anchor_pin_key(self) -> str:
         location = str(self.path().resolve())
-        key = "anchor-" + hashlib.sha256(os.path.normcase(location).encode("utf-8")).hexdigest()[:32]
-        core.pin_anchor_segments(self.root, record["task_id"], key, [previous, current])
-        self.write(record)
+        return "anchor-" + hashlib.sha256(os.path.normcase(location).encode("utf-8")).hexdigest()[:32]
+
+    def _trim_anchor_pins(self, record: dict, key: str, current: bytes | None) -> None:
         try:
             core.pin_anchor_segments(self.root, record["task_id"], key, [current] if record["status"] == "ACTIVE" else [])
         except (OSError, ValueError):
             pass  # The previous and current snapshot segments are still pinned.
+
+    def _write_with_pins(self, record: dict, previous: bytes | None, current: bytes | None) -> None:
+        """Called under the archive lock. A failure can leave extra pins, never a new unpinned anchor."""
+        key = self._anchor_pin_key()
+        core.pin_anchor_segments(self.root, record["task_id"], key, [previous, current])
+        self.write(record)
+        self._trim_anchor_pins(record, key, current)
 
     def establish(self, state: dict, intent: dict, *, adapter_fields: dict | None = None) -> dict:
         intent = validate_contract(intent)
@@ -549,11 +558,28 @@ class AuthorityStore:
             record.setdefault("mode_history", []).append({"execution_mode": record["contract"]["execution_mode"],
                 "human_instruction": human_instruction, "revision": base_revision})
             record["contract"] = {**record["contract"], "execution_mode": mode}
-            previous = self._state_snapshot(record)
             state["revision"] += 1
-            core._write_state(self.root, state)
-            with core._archive_gc_lock(self.root, record["task_id"]):
-                self._write_with_pins(record, previous, self._capture_state(record))
+
+            def publish(path: Path, current: bytes) -> None:
+                if digest(self.path()) != expected:
+                    raise ValueError("TASK_AUTHORITY_CHANGED")
+                previous = core.read_state_bytes(path)
+                if hashlib.sha256(previous).hexdigest() != record["state_sha256"]:
+                    raise ValueError("TASK_AUTHORITY_STATE_CHANGED")
+                self._set_state_snapshot(record, path, current)
+                key = self._anchor_pin_key()
+                core.pin_anchor_segments(self.root, record["task_id"], key, [previous, current])
+                core._atomic_write(path, current)
+                try:
+                    self.write(record)
+                except BaseException as exc:
+                    if digest(path) != record["state_sha256"]:
+                        raise ValueError("TASK_AUTHORITY_STATE_CHANGED") from exc
+                    core._atomic_write(path, previous)
+                    raise
+                self._trim_anchor_pins(record, key, current)
+
+            core._write_state(self.root, state, publish=publish)
         return {"ok": True, "task_id": record["task_id"], "revision": state["revision"], "execution_mode": mode}
 
     def recover(self, expected: str, reason: str, *,
@@ -594,32 +620,54 @@ class AuthorityStore:
                 _relative(self.directory, name)
                 if name in {"authority.json", *restored}:
                     raise ValueError("TASK_AUTHORITY_ARCHIVE_PATH_CONFLICT")
-            archive = self.directory / "recovery" / (expected + "-" + uuid.uuid4().hex)
-            archive.mkdir(parents=True, exist_ok=False)
-            core._atomic_write(archive / "authority.json", self.path().read_bytes())
-            for name in restored:
-                if digest(self.root / name) != "ABSENT":
-                    core._atomic_write(archive / name, (self.root / name).read_bytes())
-            for name, target in paths.items():
-                if digest(target) != "ABSENT":
-                    core._atomic_write(archive / name, target.read_bytes())
-            record.setdefault("recoveries", []).append({"reason": reason, "archive": str(archive)})
-            for name, content in restored.items():
-                target = self.root / name
-                if content is None:
-                    if target.is_file():
-                        target.unlink()
-                else:
-                    core._atomic_write(target, content)
-            if restore_adapter is not None:
-                restore_adapter(record)
+            task_id = record["task_id"]
+            recovery_id = uuid.uuid4().hex
+            archive = self.directory / "recovery" / (expected + "-" + recovery_id)
+            if _is_link(archive.parent):
+                raise ValueError("TASK_AUTHORITY_EXTERNAL_LOCATION_UNSAFE")
+            with core._archive_gc_lock(self.root, task_id):
+                anchor_bytes = self.path().read_bytes()
+                if hashlib.sha256(anchor_bytes).hexdigest() != expected:
+                    raise ValueError("TASK_AUTHORITY_CHANGED")
+                state_name = core._state_path(self.root, task_id).relative_to(self.root).as_posix()
+                previous = None
+                if state_name in restored and digest(self.root / state_name) != "ABSENT":
+                    previous = (self.root / state_name).read_bytes()
+                snapshot = restored.get(state_name)
+                # The archived anchor and the displaced ledger have their own lifetime. Preserve
+                # malformed conflict bytes too, but only use this task's recognized index as a pin.
+                displaced = previous if core._state_bytes_refs(previous, task_id) is not None else None
+                core._pin_archive_snapshots(self.root, task_id, {
+                    self._anchor_pin_key(): [snapshot],
+                    "recovery-" + recovery_id: [snapshot, displaced],
+                })
+                archive.mkdir(parents=True, exist_ok=False)
+                core._atomic_write(archive / "authority.json", anchor_bytes)
+                for name in restored:
+                    if name == state_name:
+                        if previous is not None:
+                            core._atomic_write(archive / name, previous)
+                    elif digest(self.root / name) != "ABSENT":
+                        core._atomic_write(archive / name, (self.root / name).read_bytes())
+                for name, target in paths.items():
+                    if digest(target) != "ABSENT":
+                        core._atomic_write(archive / name, target.read_bytes())
+                record.setdefault("recoveries", []).append({"reason": reason, "archive": str(archive)})
+                for name, content in restored.items():
+                    target = self.root / name
+                    if content is None:
+                        if target.is_file():
+                            target.unlink()
+                    else:
+                        core._atomic_write(target, content)
+                if restore_adapter is not None:
+                    restore_adapter(record)
+                    if json.dumps(_truth(record), sort_keys=True) != truth:
+                        raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
+                checks = evidence(record) if callable(evidence) else evidence
                 if json.dumps(_truth(record), sort_keys=True) != truth:
                     raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
-            checks = evidence(record) if callable(evidence) else evidence
-            if json.dumps(_truth(record), sort_keys=True) != truth:
-                raise ValueError("TASK_AUTHORITY_IDENTITY_CHANGED")
-            with core._archive_gc_lock(self.root, record["task_id"]):
-                self._write_with_pins(record, None, self._state_snapshot(record))
+                self.write(record)
             self.check(evidence=checks)
         return {"ok": True, "status": "TASK_AUTHORITY_RECOVERED", "task_id": record["task_id"],
                 "authority_provenance": record.get("provenance")}

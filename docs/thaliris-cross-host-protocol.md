@@ -3,12 +3,16 @@
 This is the contract the Claude Code adapter and the Codex adapter both implement so that a
 Controller on one Host can run a managed child on the other Host's model, recorded in the shared
 Core ledger. Core (task schema 12) owns the ledger fields and transitions described here; the
-adapters own the launcher, the relay and FOREIGN_CHILD recognition.
+adapters own the launcher, select and authorize the transport actor, and implement
+FOREIGN_CHILD recognition. The transport actor may be the dispatching Controller or an
+optional native relay.
 
 Status markers used below:
 
 - **confirmed by probe**: established by a live probe on 2026-11-18 (Claude Code `claude -p`, Codex
   `app-server` and `exec`, Windows host, subscription auth).
+- **validated by adapter owner**: the Codex-to-Claude path where the Controller directly invokes
+  the launcher through the checked dispatch entrypoint was validated on Codex 0.170.
 - **pending**: designed, not yet probe-confirmed. An adapter must verify it before relying on it.
 
 ## 1. Model
@@ -18,14 +22,16 @@ Neither Host runs the other vendor's models natively. A foreign model runs as a 
 
 | Piece | Lives on | Authority |
 |---|---|---|
-| Controller | dispatching Host | the task's Controller authority, unchanged |
-| Relay subagent | dispatching Host, a cheap native subagent | none; a notification shim for native background completion and UI |
+| Controller | dispatching Host | the task's Controller authority, unchanged; may be the selected transport actor where the adapter supports it |
+| Relay subagent | dispatching Host, a cheap native subagent | none; optional transport actor and notification shim for native background completion and UI |
 | Launcher (`xhost-run`) | dispatching adapter, deterministic code | writes only the Core fields of section 3, for one handoff |
 | Foreign child | foreign Host process | FOREIGN_CHILD: read-only role, no Controller authority, cannot delegate |
 | Foreign adapter | foreign Host's Thaliris hooks | recognises the session and lowers its authority |
 
 No secret travels in the environment. An environment marker may only **lower** authority; nothing
-read from the environment, from the child's output or from a foreign field can raise it.
+read from the environment, from the child's output or from a foreign field can raise it. The
+dispatch adapter authorizes the selected transport actor and obtains its native identity from the
+checked Controller session or relay hook context; an environment value cannot establish that identity.
 
 The first version ships **read-only foreign roles only** (investigator, reviewer, reasoning
 specialist). Foreign children cannot delegate further.
@@ -41,7 +47,7 @@ eviction and re-hydration unchanged, and a handoff stays hot while its run is li
 | `executor_host` | `reserve_foreign_handoff` | `claude` or `codex`: the Host whose model runs the child |
 | `prompt_sha256` | `reserve_foreign_handoff` | sha256 of the prompt body (UTF-8) |
 | `run_state` | every step | see section 2.1 |
-| `transport_agent_id_hash` | reservation or launch, once | sha256 of the relay's native agent id |
+| `transport_agent_id_hash` | reservation or launch, once | sha256 of the selected transport actor's native id: the Controller session id or a relay's agent id |
 | `foreign_session_hash` | `register_foreign_launch`, once | sha256 of the pre-registered foreign session id |
 | `result_sha256`, `result_source` | `record_foreign_result`, once | digest of the result text; `result_source` is always `foreign-runner` |
 | `cancel_reason` | `cancel_foreign_run` | bounded single-line reason, present exactly on `cancelled` |
@@ -69,7 +75,7 @@ reserved ──launch──▶ launched ──bind──▶ bound ──result�
   `record_foreign_result` refuses a second result; a settled run (`completed`, `failed`) cannot be
   cancelled; cancelling a cancelled run is a no-op (`already_cancelled: true`).
 - Static coherence is validated on every load and write: no session hash before the launch; session
-  and relay hashes from the launch on; a result exactly on `completed`/`failed`; claims only after the
+  and transport-actor hashes from the launch on; a result exactly on `completed`/`failed`; claims only after the
   result; a cancel reason exactly on `cancelled`.
 - A `foreign_session_hash` is unique among live runs (`reserved`, `launched`, `bound`).
 - `bound` records the dispatcher's pre-workload binding. It carries no evidence that the
@@ -93,9 +99,13 @@ Every refusal leaves the state unchanged.
 | `foreign_body(root, state, handoff_id, kind="prompt")` | `task_foreign_body(root, handoff_id, kind="prompt")` | read a digest-verified body |
 | `foreign_session_hash(session_id)` | | sha256 hex of the session id |
 
-Error codes: `FOREIGN_RUN_INVALID` (malformed input, not a foreign handoff, relay mismatch, a session
-hash already live), `FOREIGN_RUN_STATE_CONFLICT` (out of order or repeated), `FOREIGN_DELEGATION_REFUSED`
+Error codes: `FOREIGN_RUN_INVALID` (malformed input, not a foreign handoff, a launch transport hash
+that differs from the reservation, or a session hash already live), `FOREIGN_RUN_STATE_CONFLICT`
+(out of order or repeated), `FOREIGN_DELEGATION_REFUSED`
 (a handoff whose parent is a foreign-runner handoff), `FOREIGN_BODY_UNAVAILABLE`.
+
+Core validates the recorded hash format and reservation consistency; it does not authenticate the
+transport actor. The dispatching adapter owns actor selection, native identity checks and authorization.
 
 **No nested delegation.** Any handoff registration (foreign or ordinary) whose parent has
 `executor_host` is refused with `FOREIGN_DELEGATION_REFUSED`.
@@ -113,25 +123,30 @@ handoff's usage (`ignored` in the response); the relay's own token use is not re
 xhost-run --handoff <handoff id>
 ```
 
-The relay is told to run exactly this command and nothing else. The dispatching adapter's PreToolUse
-hook recognises the command and **injects the relay's native identity** (its agent id, from the hook
-payload; never from the model's text or the environment) and the task id. The launcher then:
+The dispatching Controller or an optional relay runs exactly this command through the dispatching
+adapter's checked entrypoint. The adapter selects the supported actor, performs its authorization
+checks, and binds the task id plus the actor's native identity to the one-use dispatch. For a
+Controller transport, the identity is the exact owning Controller native session id; for a relay,
+it is the native agent id from the hook payload. The identity comes from the checked session or hook
+context, never from model text or the environment. The launcher then:
 
 1. Loads the task, refuses unless the handoff exists, has `executor_host`, is `reserved`, and (if
-   the reservation carried one) its `transport_agent_id_hash` equals sha256 of the injected relay id.
+   the reservation carried one) its `transport_agent_id_hash` equals sha256 of the selected actor id.
 2. Reads the digest-verified prompt and acquires the foreign session id (section 4).
 3. Before releasing the workload, uses one checked dispatch-side transaction to call
-   `register_foreign_launch` with the session and relay hashes, then `bind_foreign_session` with
+   `register_foreign_launch` with the session and transport-actor hashes, then `bind_foreign_session` with
    the registered session hash. It verifies the binding, commits the `bound` ledger and
    checkpoints the dispatching Host's authority. It also publishes the deny-only selector
    from section 6 before releasing the workload.
 4. Runs the workload with the capability shape of section 5 and the lowering environment marker
    from section 6. It collects the final result and usage.
 5. Calls `record_foreign_result(state, handoff, result_text, None, usage, outcome=..., root=root)`
-   inside a checked dispatch-side transaction. The result, claims and usage reach Core whether
-   or not the relay survives. The dispatching Host checkpoints the result write.
-6. Prints a short summary for the relay (handoff id, run state, result digest, claim counts). The
-   relay returns that summary as its final message, which carries no claims of its own.
+   inside a checked dispatch-side transaction. The launcher writes the result, claims and usage;
+   when a relay is selected, its survival is not required for that write. The dispatching Host
+   checkpoints the result write.
+6. Prints a short summary (handoff id, run state, result digest, claim counts) to the selected
+   transport actor. If a relay is selected, it returns that summary as its final message, which
+   carries no claims of its own.
 
 One run per handoff: the launch step is one-shot in Core, so a second `xhost-run` for the same
 handoff fails with `FOREIGN_RUN_STATE_CONFLICT` before any process starts.
@@ -259,15 +274,16 @@ of `cost_basis`; readers that need billed cost must filter on `cost_basis`.
 - The launcher enforces a per-role wall-clock timeout. On timeout it kills the **whole process tree**
   (Windows: job object or `taskkill /T /F`; POSIX: process group), then records `outcome: failed`
   with whatever result text it has, or cancels if the run never produced output.
-- When the relay is disposed, interrupted or its Host session ends, the dispatching adapter calls
+- When the selected transport actor is disposed, interrupted or its Host session ends, the dispatching adapter calls
   `task_foreign_cancel(root, handoff, reason)` and kills the launcher's tree. A result that arrives
   after the cancel is refused by Core (`FOREIGN_RUN_STATE_CONFLICT`) and discarded.
 - One run per handoff: Core's one-shot launch makes a second launcher fail before it spawns anything.
   A retry is a new handoff.
 
-## 10. What the relay may and may not do
+## 10. What an optional relay may and may not do
 
-May: run exactly `xhost-run --handoff <id>` once, wait for it, and return its summary verbatim.
+When selected by the dispatching adapter, a relay may run exactly `xhost-run --handoff <id>` once,
+wait for it, and return its summary verbatim.
 
 May not: read or edit project files, run any other command, spawn agents, call Core, write claims
 (its SubagentStop ingest is a no-op by design), report usage that overwrites the foreign model's,

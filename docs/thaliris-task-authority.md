@@ -87,10 +87,24 @@ fencing and its restoration callback; it must preserve intent and the original
 security baseline. Recovery also accepts callables for the archive and evidence
 maps; they receive the locked anchor record so native paths are derived after
 the CAS and active-status checks. Core holds the repository lock during recovery.
-Other mutations run at the adapter's previously checked command boundary; the
-repository/anchor checkpoint is not a multi-file transaction. Interrupted
-writes can require recovery to the prior anchor. `checkpoint` retires deleted
-state as ABANDONED and never reactivates a retired anchor.
+A mode switch checks the expected anchor and ledger, prepares the next ledger
+bytes, pins the old and new snapshots, writes the ledger, then publishes the
+anchor. If required pins cannot be read or updated, the mode change is not
+published. If anchor publication fails after the ledger write, Core restores the
+exact previous ledger bytes; extra pins may remain after a failed publication.
+
+Recovery pins the target ledger snapshot for the live anchor and separately pins
+the prior anchor snapshot and displaced ledger for its backup before creating the
+backup or restoring project files and invoking the adapter callback. If this pin
+update fails, recovery aborts before those actions. After restoration begins,
+arbitrary project or native callback side effects are not rolled back. A failure
+before the new anchor is written leaves the old anchor digest available for a
+same-digest retry, and the per-attempt recovery backup and its independent pins
+remain retained. The adapter's previously checked command boundary still governs
+other mutations; a checkpoint does not make earlier adapter writes a multi-file
+transaction. Interrupted writes can require recovery to the prior anchor.
+`checkpoint` retires deleted state as ABANDONED and never reactivates a retired
+anchor.
 
 For Codex, Host actor assurance and native death proof remain UNKNOWN. Core
 does not generate either claim. External anchors and evidence are private local
@@ -208,9 +222,14 @@ the preceding durable ledger, and every pinned authority snapshot. `AuthoritySto
 snapshot references in `.context/tasks/<task id>/archive-pins.json` on establish,
 checkpoint, mode switch and recovery. Snapshot capture and pin updates are serialized
 with collection. Both the previous and current snapshots are pinned before the external
-anchor is replaced. A retired anchor's pins are released, and an interrupted update can
-leave extra pins. An unreadable pins file or prior ledger skips collection for that write.
+anchor is replaced. A retired anchor's live-authority pins are released, and an interrupted
+update can leave extra pins. An unreadable pins file or prior ledger skips collection for that write.
 Version-3 orphans and segments dropped by re-hydration are eligible at a later compaction.
+Recovery backups keep independent pins for their archived anchor and displaced ledger,
+so those snapshots remain readable through later collection and authority retirement.
+Mode and recovery mutations fail closed if the required pin registry cannot be read or
+updated; an ordinary collection write instead skips collection when its prior ledger or
+pin registry is unreadable.
 Core retains version-1 and version-2 segments because external anchors written before
 pinning can still restore ledgers that refer to them.
 

@@ -1097,6 +1097,6 @@ def test_cli_new_writes_require_an_explicit_task_id(tmp_path, capsys):
         assert "explicit --task-id required" in json.loads(capsys.readouterr().out)["error"]
 
 
-def test_version_is_0_6_1():
+def test_version_is_0_6_2():
     from thaliris import __version__
-    assert __version__ == "0.6.1"
+    assert __version__ == "0.6.2"
